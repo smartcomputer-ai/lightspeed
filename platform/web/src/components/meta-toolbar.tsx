@@ -2,6 +2,7 @@ import { cloneElement, useEffect, useLayoutEffect, useRef, useState, type CSSPro
 import { Link } from "react-router-dom";
 import { CollapseToolsIcon, ExpandToolsIcon, type IconComponent } from "@/icons";
 import { useUserPreferences } from "@/lib/user-preferences";
+import { prefersReducedMotion } from "@/lib/reduced-motion";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusDotRings, type BotTone } from "@/components/bot/status";
@@ -403,7 +404,7 @@ const SWITCH_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 /// the layout transition time; not at all for viewers who prefer reduced
 /// motion, or where elements cannot animate.
 function animateSwitch(node: HTMLElement, before: Map<string, DOMRect>, after: Map<string, DOMRect>) {
-  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  if (prefersReducedMotion()) return;
   const duration = Number.parseFloat(getComputedStyle(node).getPropertyValue("--layout-transition-duration")) || 200;
   const timing = { duration, easing: SWITCH_EASING };
   for (const element of drawnItems(node)) {

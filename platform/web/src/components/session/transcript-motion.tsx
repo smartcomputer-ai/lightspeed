@@ -1,5 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { TranscriptSection } from "@/lib/sessions/run-sections";
+import { prefersReducedMotion, subscribeReducedMotion } from "@/lib/reduced-motion";
 import { cn } from "@/lib/utils";
 
 const MotionContext = createContext<(key: string) => boolean>(() => false);
@@ -54,18 +55,17 @@ export function TranscriptEntrance({ motionKey, immediate = false, className, ch
     const finish = (event: AnimationEvent) => {
       if (event.target === node && event.animationName === "transcript-enter") setEntering(false);
     };
-    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const checkMotion = () => {
-      if (reducedMotion?.matches) setEntering(false);
+      if (prefersReducedMotion()) setEntering(false);
     };
     node.addEventListener("animationend", finish);
     node.addEventListener("animationcancel", finish);
-    reducedMotion?.addEventListener("change", checkMotion);
+    const unsubscribe = subscribeReducedMotion(checkMotion);
     checkMotion();
     return () => {
       node.removeEventListener("animationend", finish);
       node.removeEventListener("animationcancel", finish);
-      reducedMotion?.removeEventListener("change", checkMotion);
+      unsubscribe();
     };
   }, [entering, immediate]);
   // When a whole activity box arrives, its contents move with it. Later

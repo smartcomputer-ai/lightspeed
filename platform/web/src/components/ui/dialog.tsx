@@ -9,6 +9,7 @@ import { DialogCloseIcon } from "@/icons";
 import { Starscape } from "@/components/starscape/starscape"
 import { DIALOG_STARSCAPE } from "@/components/starscape/prewarm"
 import { prefersReducedMotion } from "@/lib/reduced-motion"
+import { SETTINGS, useSetting } from "@/lib/settings"
 
 /// How long a dialog's warp runs: it shrinks away, the starscape rushes up
 /// to warp, and from 0.5s the backdrop and starscape fade out over 1s. By
@@ -64,6 +65,8 @@ function DialogOverlay({
 /// it off: the dialog shrinks away, the starscape rushes up to warp, and
 /// everything fades out while it does (see dialogWarpMs, after which the
 /// caller closes it); with reduced motion it all just fades. Turned off before then, the dialog comes back.
+/// With the starscape turned off in Preferences, the backdrop has none and
+/// the warp only shrinks and fades the dialog.
 function DialogContent({
   className,
   children,
@@ -76,6 +79,7 @@ function DialogContent({
   starscape?: boolean
   warp?: boolean
 }) {
+  const [starscapeShown] = useSetting(SETTINGS.starscape)
   return (
     <DialogPortal>
       <DialogOverlay
@@ -88,7 +92,7 @@ function DialogContent({
             : "[transition:opacity_300ms_ease-out]"
         )}
       >
-        {starscape && (
+        {starscape && starscapeShown && (
           <Starscape
             dialog
             warp={warp}

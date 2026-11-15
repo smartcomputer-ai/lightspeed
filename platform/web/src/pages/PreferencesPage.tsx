@@ -9,7 +9,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { demoMode } from "@/lib/demo-mode";
+import { SETTINGS, useSetting, type ReducedMotion } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
 import { DarkThemeIcon, LightThemeIcon, SystemThemeIcon } from "@/icons";
 
@@ -20,7 +22,8 @@ export function PreferencesPage() {
     <>
       <PageHeader title="Preferences" description="How Lightspeed looks and works for you." />
       <div className="grid gap-6">
-        <ThemeCard />
+        <AppearanceCard />
+        <AccessibilityCard />
         <DemoDataCard />
       </div>
     </>
@@ -48,8 +51,9 @@ function DemoDataCard() {
   );
 }
 
-function ThemeCard() {
+function AppearanceCard() {
   const { theme, setTheme } = useTheme();
+  const [starscape, setStarscape] = useSetting(SETTINGS.starscape);
   const options: { value: Theme; label: string; icon: typeof LightThemeIcon }[] = [
     { value: "light", label: "Light", icon: LightThemeIcon },
     { value: "dark", label: "Dark", icon: DarkThemeIcon },
@@ -61,17 +65,67 @@ function ThemeCard() {
       <CardHeader>
         <CardTitle>Appearance</CardTitle>
       </CardHeader>
-      <CardContent className="flex gap-2">
-        {options.map(({ value, label, icon: Icon }) => (
-          <Button
-            key={value}
-            variant={theme === value ? "secondary" : "outline"}
-            onClick={() => setTheme(value)}
-          >
-            <Icon data-icon="inline-start" />
-            {label}
-          </Button>
-        ))}
+      <CardContent className="grid gap-6">
+        <section aria-labelledby="theme-label" className="grid gap-2">
+          <h3 id="theme-label" className="text-sm font-medium">Theme</h3>
+          <div className="flex gap-2">
+            {options.map(({ value, label, icon: Icon }) => (
+              <Button
+                key={value}
+                variant={theme === value ? "secondary" : "outline"}
+                aria-pressed={theme === value}
+                onClick={() => setTheme(value)}
+              >
+                <Icon data-icon="inline-start" />
+                {label}
+              </Button>
+            ))}
+          </div>
+        </section>
+        <section aria-labelledby="starscape-label" className="grid gap-2">
+          <h3 id="starscape-label" className="text-sm font-medium">Starscape</h3>
+          <label className="flex w-fit cursor-action items-center gap-2 text-sm text-muted-foreground">
+            <Switch checked={starscape} onCheckedChange={setStarscape} />
+            Show the starscape in the sidebar and behind dialogs
+          </label>
+        </section>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AccessibilityCard() {
+  const [reducedMotion, setReducedMotion] = useSetting(SETTINGS.reducedMotion);
+  const options: { value: ReducedMotion; label: string }[] = [
+    { value: "on", label: "On" },
+    { value: "off", label: "Off" },
+    { value: "system", label: "System" },
+  ];
+
+  return (
+    <Card id="accessibility" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>Accessibility</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-2">
+        <div>
+          <h3 id="reduced-motion-label" className="text-sm font-medium">Reduced motion</h3>
+          <p className="text-sm text-muted-foreground">
+            Turns off animations and moving backgrounds. System follows your device's setting.
+          </p>
+        </div>
+        <div role="group" aria-labelledby="reduced-motion-label" className="flex gap-2">
+          {options.map(({ value, label }) => (
+            <Button
+              key={value}
+              variant={reducedMotion === value ? "secondary" : "outline"}
+              aria-pressed={reducedMotion === value}
+              onClick={() => setReducedMotion(value)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );

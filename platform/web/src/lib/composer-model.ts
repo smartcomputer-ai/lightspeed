@@ -89,27 +89,6 @@ export function effortShortLabel(effort: string | undefined): string {
   return effort === "xhigh" ? "XHigh" : effortLabel(effort);
 }
 
-export function readRunChoice(key: string): RunChoice {
-  try {
-    const value = record(JSON.parse(window.localStorage.getItem(key) ?? "{}"));
-    return {
-      ...(typeof value.model === "string" && value.model ? { model: value.model } : {}),
-      ...(typeof value.reasoningEffort === "string" && value.reasoningEffort ? { reasoningEffort: value.reasoningEffort } : {}),
-    };
-  } catch {
-    return {};
-  }
-}
-
-export function writeRunChoice(key: string, choice: RunChoice): void {
-  try {
-    if (Object.keys(choice).length) window.localStorage.setItem(key, JSON.stringify(choice));
-    else window.localStorage.removeItem(key);
-  } catch {
-    // The choice still applies in this view when storage is blocked.
-  }
-}
-
 /// The session config after saving the choice as its default: the model
 /// name and reasoning effort change, everything else stays as stored.
 export function configWithRunChoice(config: Record<string, unknown>, choice: ComposerModelChoice): Record<string, unknown> {

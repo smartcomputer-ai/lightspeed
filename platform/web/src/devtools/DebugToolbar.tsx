@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CodeCopy } from "./CodeCopy";
 import { describeElement, formatReport, type ElementReport } from "./element-report";
+import { SETTINGS, useSetting } from "@/lib/settings";
 import {
-  DESIGN_STORAGE_KEY,
   DESIGN_WINDOW_NAME,
   applyOverrides,
   designConfigurationUrl,
@@ -14,12 +14,12 @@ import {
   isEmpty,
   loadOverrides,
   openChannel,
+  subscribeOverrides,
   type DesignMessage,
 } from "./design-tokens";
 
 /// Marks the toolbar's own DOM so the picker never selects it.
 const DEVTOOLS_ATTRIBUTE = "data-devtools";
-const OPEN_KEY = "lightspeed:debug-toolbar";
 
 /// The debug toolbar: Ctrl+D shows or hides it in the bottom-right corner.
 /// Feedback picks an element on the page and opens a report about it to
@@ -32,19 +32,14 @@ export default function DebugToolbar() {
 
 function Toolbar() {
   const designActive = useDesignOverrides();
-  const [open, setOpen] = useState(() => readOpen());
+  const [open, setOpen] = useSetting(SETTINGS.debugToolbarOpen);
   const [picking, setPicking] = useState(false);
   const [report, setReport] = useState<ElementReport | null>(null);
 
   const show = useCallback((next: boolean) => {
     setOpen(next);
     if (!next) setPicking(false);
-    try {
-      sessionStorage.setItem(OPEN_KEY, next ? "1" : "0");
-    } catch {
-      // Storage can be unavailable (private mode); the toolbar still works.
-    }
-  }, []);
+  }, [setOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -118,47 +113,31 @@ function Toolbar() {
 }
 
 /// Applies the saved design-token overrides now and every change the editor
-/// publishes later, and answers the editor's pings so it can show where its
+/// saves later, and answers the editor's pings so it can show where its
 /// changes land. Returns whether any override is in effect.
 function useDesignOverrides(): boolean {
   const [active, setActive] = useState(() => !isEmpty(loadOverrides()));
   useEffect(() => {
     const id = Math.random().toString(36).slice(2);
     applyOverrides(loadOverrides());
+    const unsubscribe = subscribeOverrides((overrides) => {
+      applyOverrides(overrides);
+      setActive(!isEmpty(overrides));
+    });
     const channel = openChannel();
     if (channel) {
       channel.onmessage = (event: MessageEvent<DesignMessage>) => {
-        const message = event.data;
-        if (message.type === "overrides") {
-          applyOverrides(message.overrides);
-          setActive(!isEmpty(message.overrides));
-        } else if (message.type === "ping") {
+        if (event.data.type === "ping") {
           channel.postMessage({ type: "pong", id, href: window.location.href } satisfies DesignMessage);
         }
       };
     }
-    // Another tab of this origin changed or cleared the saved overrides.
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== DESIGN_STORAGE_KEY) return;
-      const overrides = loadOverrides();
-      applyOverrides(overrides);
-      setActive(!isEmpty(overrides));
-    };
-    window.addEventListener("storage", onStorage);
     return () => {
+      unsubscribe();
       channel?.close();
-      window.removeEventListener("storage", onStorage);
     };
   }, []);
   return active;
-}
-
-function readOpen(): boolean {
-  try {
-    return sessionStorage.getItem(OPEN_KEY) === "1";
-  } catch {
-    return false;
-  }
 }
 
 function isDevtools(target: EventTarget | null): boolean {

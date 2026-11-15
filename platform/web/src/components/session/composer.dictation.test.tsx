@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
 import { waitForUi } from "@/test/wait-for-ui";
 import { SessionComposer } from "./composer";
+import { settings } from "@/lib/settings";
 
 const mocks = vi.hoisted(() => ({ capture: vi.fn(), transcribe: vi.fn(), cancel: vi.fn(), api: vi.fn() }));
 vi.mock("@/api", async original => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -61,6 +62,7 @@ it("appends to the latest edited draft and waits for an explicit send", async ()
   await type("Edited while transcribing.");
   await act(async () => finish("Spoken text."));
   expect(container.querySelector("textarea")!.value).toBe("Edited while transcribing. Spoken text.");
+  await settings.flush();
   expect(localStorage.getItem("voice-test")).toBe("Edited while transcribing. Spoken text.");
   expect(container.textContent).toContain("Review and edit before sending");
   expect(onSend).not.toHaveBeenCalled();
@@ -94,6 +96,7 @@ it.each(["Send message", "Enter"])("stops recording on %s and sends once the tra
   await act(async () => finish("Spoken."));
   expect(onSend).toHaveBeenCalledExactlyOnceWith({ text: "Spoken.", attachments: [] }, null);
   expect(input.value).toBe("");
+  await settings.flush();
   expect(localStorage.getItem("voice-test")).toBeNull();
 });
 it("discards the recording on Escape", async () => {
@@ -130,6 +133,7 @@ it("cancels on navigation without modifying the saved draft", async () => {
   await act(async () => root.render(null));
   await act(async () => finish("Late text"));
   expect(mocks.transcribe.mock.calls[0]![2].aborted).toBe(true);
+  await settings.flush();
   expect(localStorage.getItem("voice-test")).toBe("Saved draft");
   expect(onSend).not.toHaveBeenCalled();
 });

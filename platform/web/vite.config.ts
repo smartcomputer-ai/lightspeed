@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -22,6 +23,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: demo ? { outDir: "dist-demo" } : undefined,
+    test: {
+      setupFiles: ["./src/test/fresh-settings.ts"],
+    },
     server: {
       port: demo ? 5175 : 5173,
       // Fail instead of hopping to 5174: only :5173 is a trusted auth origin,

@@ -21,6 +21,7 @@ afterEach(async () => {
   container.remove();
   localStorage.clear();
   document.documentElement.classList.remove("dark");
+  delete document.documentElement.dataset.motion;
   vi.unstubAllGlobals();
 });
 
@@ -35,6 +36,48 @@ it("remembers the chosen theme and applies it", async () => {
   await act(async () => button("Light")!.click());
   expect(localStorage.getItem("lightspeed:theme")).toBe("light");
   expect(document.documentElement.classList.contains("dark")).toBe(false);
+});
+
+it("turns the starscape off and on again", async () => {
+  await show();
+  const toggle = container.querySelector<HTMLElement>('#appearance [data-slot="switch"]')!;
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  await act(async () => toggle.click());
+  expect(localStorage.getItem("lightspeed:starscape")).toBe("off");
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  await act(async () => toggle.click());
+  expect(localStorage.getItem("lightspeed:starscape")).toBeNull();
+});
+
+it("offers reduced motion on, off, or as the system asks, which is the default", async () => {
+  let systemReduces = true;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("reduced-motion") && systemReduces,
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+  await show();
+  const card = container.querySelector("#accessibility")!;
+  const choice = (label: string) => [...card.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label)!;
+  const motion = () => document.documentElement.dataset.motion;
+
+  expect(choice("System").getAttribute("aria-pressed")).toBe("true");
+  expect(motion()).toBe("reduce");
+
+  await act(async () => choice("Off").click());
+  expect(localStorage.getItem("lightspeed:reduced-motion")).toBe("off");
+  expect(choice("Off").getAttribute("aria-pressed")).toBe("true");
+  expect(motion()).toBe("full");
+
+  await act(async () => choice("On").click());
+  expect(localStorage.getItem("lightspeed:reduced-motion")).toBe("on");
+  expect(motion()).toBe("reduce");
+
+  systemReduces = false;
+  await act(async () => choice("System").click());
+  expect(localStorage.getItem("lightspeed:reduced-motion")).toBeNull();
+  expect(motion()).toBe("full");
 });
 
 // Demo mode stays on once enabled, so this order matters: off, then on.

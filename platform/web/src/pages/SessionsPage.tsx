@@ -136,13 +136,10 @@ import { cn } from "@/lib/utils";
 import {
   metadataFilterFromSearchParams,
   parseMetadataPair,
-  readSessionMetadataFilter,
-  readSessionListPreferences,
   hiddenSessionsNote,
   searchParamsWithMetadataFilter,
-  writeSessionMetadataFilter,
-  writeSessionListPreferences,
 } from "@/lib/sessions/list-preferences";
+import { SETTINGS, settings, useSetting } from "@/lib/settings";
 import { DetailHeader } from "@/components/detail-header";
 import { useDocumentTitle } from "@/lib/document-title";
 import {
@@ -242,7 +239,7 @@ function SessionList({
   const [filterDraft, setFilterDraft] = useState("");
   const [metadataKeyDraft, setMetadataKeyDraft] = useState("");
   const filterEntries = Object.entries(metadataFilter);
-  const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
+  const [preferences, setPreferences] = useSetting(SETTINGS.sessionList(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
   const watchConnected = useWatchConnected(universeId);
   // One read for the whole list: each row's environment by name and status.
@@ -303,27 +300,23 @@ function SessionList({
   const restoredFilterUniverse = useRef<string | null>(null);
 
   useEffect(() => {
-    writeSessionListPreferences(universeId, preferences);
-  }, [preferences, universeId]);
-
-  useEffect(() => {
     if (restoredFilterUniverse.current !== universeId) {
       restoredFilterUniverse.current = universeId;
       if (searchParams.has("metadata")) {
-        writeSessionMetadataFilter(universeId, metadataFilter);
+        rememberMetadataFilter(universeId, metadataFilter);
         return;
       }
-      const stored = readSessionMetadataFilter(universeId);
+      const stored = settings.get(SETTINGS.sessionMetadataFilter(universeId));
       if (Object.keys(stored).length > 0) {
         setSearchParams(searchParamsWithMetadataFilter(searchParams, stored), { replace: true });
       }
       return;
     }
-    writeSessionMetadataFilter(universeId, metadataFilter);
+    rememberMetadataFilter(universeId, metadataFilter);
   }, [metadataFilter, searchParams, setSearchParams, universeId]);
 
   const updateMetadataFilter = (next: Record<string, string>) => {
-    writeSessionMetadataFilter(universeId, next);
+    rememberMetadataFilter(universeId, next);
     setSearchParams(searchParamsWithMetadataFilter(searchParams, next), { replace: true });
     setSelected(new Set());
   };
@@ -750,6 +743,14 @@ export async function runBatched<T, R>(
 
 /// The confirmation of a bulk close or delete, opened by its selection
 /// action (the selection bar's button or a selected row's menu).
+/// Keeps the list's metadata filter for the universe's next visit. The URL
+/// holds the filter while the list is open.
+function rememberMetadataFilter(universeId: string, filter: Record<string, string>) {
+  settings.set(SETTINGS.sessionMetadataFilter(universeId), filter).catch(() => {
+    // URL-backed filtering still works when browser storage does not.
+  });
+}
+
 function BulkActionDialog({
   action,
   count,

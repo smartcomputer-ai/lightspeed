@@ -36,7 +36,7 @@ it("shares the choice across consumers, persists reloads, and scopes it to the u
   expect(container.textContent).toBe("falsefalse");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="bot"]')!.click());
   expect(container.textContent).toBe("truetrue");
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true, showSessionResources: true, collapseCompletedRuns: true, sidebarWidth: null, sidebarCollapsed: false, listWidth: null, keepMetaExpanded: false });
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true });
   await act(async () => root.render(null));
   await render();
   expect(container.textContent).toBe("truetrue");
@@ -79,8 +79,24 @@ it("stores the run collapse choice beside the statistics choice and reads it bac
   expect(container.textContent).toBe("truefalse");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="collapse"]')!.click());
   expect(container.textContent).toBe("falsefalse");
-  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: false, showSessionResources: true, collapseCompletedRuns: false, sidebarWidth: null, sidebarCollapsed: false, listWidth: null, keepMetaExpanded: false });
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ collapseCompletedRuns: false });
   localStorage.setItem(key, '{"showRunStatistics":true}');
   await act(async () => window.dispatchEvent(new StorageEvent("storage", { key })));
   expect(container.textContent).toBe("truetrue");
+});
+
+it("keeps dragged widths on the device, reading widths stored with the preferences until set again", async () => {
+  function Widths() {
+    const { sidebarWidth, listWidth, setListWidth } = useUserPreferences();
+    return <button aria-label="widths" onClick={() => setListWidth(null)}>{`${sidebarWidth}/${listWidth}`}</button>;
+  }
+  localStorage.setItem(key, JSON.stringify({ showRunStatistics: true, sidebarWidth: 280, listWidth: 400 }));
+  localStorage.setItem("lightspeed:layout:alice", JSON.stringify({ sidebarWidth: 300 }));
+  await act(async () => root.render(<UserPreferencesProvider userId="alice"><Widths /></UserPreferencesProvider>));
+  expect(container.textContent).toBe("300/400");
+  // Resetting a width moved to the device also clears the old copy, so it
+  // does not come back.
+  await act(async () => container.querySelector("button")!.click());
+  expect(container.textContent).toBe("300/null");
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ showRunStatistics: true, sidebarWidth: 280 });
 });

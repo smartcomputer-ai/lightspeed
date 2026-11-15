@@ -1,8 +1,11 @@
 /// Live design-token overrides for debug mode. The design-configuration
 /// window edits them; every app window applies them as one injected style
-/// sheet that redefines the CSS variables from index.css. Overrides persist
-/// in localStorage (so a reload keeps them) and travel over a
-/// BroadcastChannel (so open windows update while a control moves).
+/// sheet that redefines the CSS variables from index.css. Overrides are a
+/// device setting (lib/settings), so a reload keeps them and every open
+/// window follows them while a control moves. A BroadcastChannel only lets
+/// the editor find the windows its changes land in.
+
+import { SETTINGS, settings } from "@/lib/settings";
 
 export type ThemeName = "light" | "dark";
 
@@ -522,23 +525,24 @@ export function isEmpty(overrides: DesignOverrides): boolean {
   return !Object.keys(overrides.shared).length && !Object.keys(overrides.light).length && !Object.keys(overrides.dark).length;
 }
 
-export const DESIGN_STORAGE_KEY = "lightspeed:design-overrides";
 const CHANNEL_NAME = "lightspeed:design-tokens";
 const STYLE_ID = "lightspeed-design-overrides";
 
+/// The editor pings; every app window answers with where it is.
 export type DesignMessage =
-  | { type: "overrides"; overrides: DesignOverrides }
   | { type: "ping" }
   | { type: "pong"; id: string; href: string };
 
+/// The saved overrides; missing, unreadable or malformed ones start from the
+/// stylesheet defaults.
 export function loadOverrides(): DesignOverrides {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(DESIGN_STORAGE_KEY) ?? "null") as DesignOverrides | null;
-    if (parsed && typeof parsed === "object" && parsed.shared && parsed.light && parsed.dark) return withThemedShadows(parsed);
-  } catch {
-    // Missing, unreadable or malformed: start from the stylesheet defaults.
-  }
-  return EMPTY_OVERRIDES;
+  const stored = settings.get(SETTINGS.designOverrides);
+  return isEmpty(stored) ? EMPTY_OVERRIDES : withThemedShadows(stored);
+}
+
+/// Calls back with the overrides whenever they change in another window.
+export function subscribeOverrides(onChange: (overrides: DesignOverrides) => void): () => void {
+  return settings.subscribe(SETTINGS.designOverrides, () => onChange(loadOverrides()));
 }
 
 /// Overrides saved while both themes shared one shadow scale kept it under
@@ -563,12 +567,9 @@ function withThemedShadows(overrides: DesignOverrides): DesignOverrides {
 }
 
 export function saveOverrides(overrides: DesignOverrides): void {
-  try {
-    if (isEmpty(overrides)) localStorage.removeItem(DESIGN_STORAGE_KEY);
-    else localStorage.setItem(DESIGN_STORAGE_KEY, JSON.stringify(overrides));
-  } catch {
-    // Without storage the overrides still apply live; they just do not survive a reload.
-  }
+  settings.set(SETTINGS.designOverrides, overrides).catch(() => {
+    // Without storage the overrides apply in this window only, until it reloads.
+  });
 }
 
 export function openChannel(): BroadcastChannel | null {

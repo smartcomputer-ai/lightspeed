@@ -7,6 +7,7 @@ import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
 import { Starscape } from "@/components/starscape/starscape";
 import { useIsDark } from "@/lib/theme";
+import { SETTINGS, useSetting } from "@/lib/settings";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,10 +54,12 @@ export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-32";
 
 /// The header's sky, centred on the universe icon and fading out around it,
 /// the stars straight on the sidebar. Dark theme only: on a light sidebar
-/// the white stars would not show.
+/// the white stars would not show. Not at all with the starscape turned off
+/// in Preferences.
 export function HeaderStarscape({ iconRef }: { iconRef: RefObject<HTMLElement | null> }) {
   const dark = useIsDark();
-  if (!dark) return null;
+  const [shown] = useSetting(SETTINGS.starscape);
+  if (!dark || !shown) return null;
   return (
     <Starscape
       anchor={iconRef}

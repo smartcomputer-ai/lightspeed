@@ -2,7 +2,7 @@ import type { RunView } from "@lightspeed-ai/sdk";
 import { sessionSteerSchema } from "@lightspeed-ai/platform-shared";
 import { ApiError } from "@/api";
 import type { ComposerMessage } from "@/components/session/composer";
-import { readSessionDraft, writeSessionDraft } from "./draft";
+import { SETTINGS, settings } from "@/lib/settings";
 
 export interface QueuedMessageRecovery {
   id: string;
@@ -11,8 +11,6 @@ export interface QueuedMessageRecovery {
   error: string;
   sending?: boolean;
 }
-
-const recoveryKey = (scope: string) => `lightspeed:sessions:queued-steering:${scope}`;
 
 // A cancelled run can be restored only once, including across reloads and
 // lost POST responses. Run submission ids are scoped to the session.
@@ -25,29 +23,26 @@ export function steeringWasNotSubmitted(error: unknown): boolean {
 }
 
 export function readQueuedRecovery(scope: string): QueuedMessageRecovery[] {
-  try {
-    const values: unknown = JSON.parse(readSessionDraft(recoveryKey(scope)) || "[]");
-    if (!Array.isArray(values)) return [];
-    return values.flatMap((value) => {
-      const input = sessionSteerSchema.safeParse(value?.message);
-      if (!input.success || typeof value?.id !== "string" || typeof value?.error !== "string") return [];
-      return [{ id: value.id, scope, error: value.error, message: {
-        text: input.data.text, attachments: input.data.attachments.map((attachment) => ({ ...attachment, size: 0 })),
-      } }];
-    });
-  } catch { return []; }
+  return settings.get(SETTINGS.queuedSteering(scope)).map((item) => ({
+    id: item.id,
+    scope,
+    error: item.error,
+    message: { text: item.message.text, attachments: item.message.attachments.map((attachment) => ({ ...attachment, size: 0 })) },
+  }));
 }
 
 /** Save before cancellation so interrupted conversions can be recovered after reload. */
 export function storeQueuedRecovery(scope: string, id: string, recovery?: QueuedMessageRecovery) {
   const saved = readQueuedRecovery(scope).filter((item) => item.id !== id);
   if (recovery) saved.push(recovery);
-  writeSessionDraft(recoveryKey(scope), saved.length ? JSON.stringify(saved.map((item) => ({
+  settings.set(SETTINGS.queuedSteering(scope), saved.map((item) => ({
     id: item.id, error: item.error, message: {
       text: item.message.text,
       attachments: item.message.attachments.map(({ blobRef, mime, kind, name }) => ({ blobRef, mime, kind, name })),
     },
-  }))) : "");
+  }))).catch(() => {
+    // Recovery still works within this page when storage is blocked.
+  });
 }
 
 /** Recover complete input before cancelling; queue labels are bounded previews. */

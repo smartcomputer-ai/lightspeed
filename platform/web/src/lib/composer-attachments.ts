@@ -10,6 +10,8 @@ import {
 } from "@lightspeed-ai/platform-shared";
 import { api } from "@/api";
 import { blobBase64 } from "@/lib/blob-base64";
+import { SETTINGS, settings } from "@/lib/settings";
+import type { StoredAttachment } from "@/lib/settings/registry";
 
 /// One file in the composer. Uploads start when the file is added, so
 /// sending is instant; only a ready attachment is sent.
@@ -62,32 +64,11 @@ export function checkAttachment(
   return { mime: type.mime, kind: type.kind };
 }
 
-function restore(key: string): ComposerAttachment[] {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((value): ComposerAttachment[] => {
-      const item = value as Partial<ComposerAttachment>;
-      return typeof item.id === "string" && typeof item.name === "string" && typeof item.mime === "string"
-        && (item.kind === "image" || item.kind === "document") && typeof item.size === "number"
-        && typeof item.blobRef === "string"
-        ? [{ id: item.id, name: item.name, mime: item.mime, kind: item.kind, size: item.size, blobRef: item.blobRef, status: "ready" }]
-        : [];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function persist(key: string, items: ComposerAttachment[]) {
-  try {
-    const ready = items.filter((item) => item.status === "ready")
-      .map(({ id, name, mime, kind, size, blobRef }) => ({ id, name, mime, kind, size, blobRef }));
-    if (ready.length) window.localStorage.setItem(key, JSON.stringify(ready));
-    else window.localStorage.removeItem(key);
-  } catch {
-    // Attachments stay usable in this view when storage is blocked or full.
-  }
+/// Ready attachments as kept beside the draft; uploads still running or
+/// failed are not kept.
+function stored(items: readonly ComposerAttachment[]): StoredAttachment[] {
+  return items.filter((item) => item.status === "ready" && item.blobRef)
+    .map(({ id, name, mime, kind, size, blobRef }) => ({ id, name, mime, kind, size, blobRef: blobRef! }));
 }
 
 function refusalNotice(refusals: string[]): string {
@@ -101,15 +82,21 @@ function refusalNotice(refusals: string[]): string {
 /// Composer attachments for one draft. Ready attachments are saved beside
 /// the draft text, so they survive navigation the way the text does; a
 /// restored attachment points at an uploaded blob and has no thumbnail.
-export function useComposerAttachments(universeId: string | undefined, apiKind: string | undefined, storageKey: string) {
-  const [items, setItems] = useState<ComposerAttachment[]>(() => restore(storageKey));
+export function useComposerAttachments(universeId: string | undefined, apiKind: string | undefined, draftKey: string) {
+  const setting = SETTINGS.composerAttachments(draftKey);
+  const [items, setItems] = useState<ComposerAttachment[]>(() =>
+    settings.get(setting).map((item) => ({ ...item, status: "ready" as const })));
   const [notice, setNotice] = useState<string>();
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const files = useRef(new Map<string, File>());
   const uploads = useRef(new Map<string, AbortController>());
 
-  useEffect(() => persist(storageKey, items), [storageKey, items]);
+  useEffect(() => {
+    settings.set(setting, stored(items)).catch(() => {
+      // Attachments stay usable in this view when storage is blocked or full.
+    });
+  }, [setting, items]);
   useEffect(() => () => {
     for (const controller of uploads.current.values()) controller.abort();
     for (const item of itemsRef.current) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
