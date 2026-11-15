@@ -11,9 +11,9 @@ export interface IconRole {
 }
 
 export interface RoleGlyph {
-  /// The icon's name in its library, such as `Trash2`.
+  /// The icon's name in its library, such as `TrashIcon`.
   glyph: string;
-  /// The module it comes from, such as `lucide-react`.
+  /// The module it comes from, such as `@phosphor-icons/react`.
   library: string;
 }
 
@@ -32,7 +32,7 @@ export function iconRoles(rolesSource: string): IconRole[] {
 }
 
 /// The icon a library module draws each role with. Entries look like
-/// `DeleteIcon: Trash2,` or `DeleteIcon: wrap(Trash),`; the glyph's library
+/// `DeleteIcon: TrashIcon,` or `DeleteIcon: duotone(TrashIcon),`; the glyph's library
 /// is whichever import brings it in.
 export function libraryGlyphs(librarySource: string): Map<string, RoleGlyph> {
   const origins = new Map<string, string>();

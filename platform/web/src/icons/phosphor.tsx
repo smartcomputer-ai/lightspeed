@@ -158,7 +158,7 @@ import { BotFaceIcon, BotFace, BotIcon } from "@/components/icons/bot";
 import { GitHubLogo, OpenAiLogo, AnthropicLogo } from "@/components/icons/logos";
 import type { IconComponent, IconLibrary } from "./roles";
 
-/// Draws a Phosphor icon in one weight at Lucide's default 24px, so icons
+/// Draws a Phosphor icon in one weight at 24px by default, so icons
 /// without a size class keep their footprint.
 function weighted(Glyph: PhosphorIcon, weight: "duotone" | "regular"): IconComponent {
   const Weighted: IconComponent = ({ size = 24, ...props }) => (

@@ -40,17 +40,17 @@ export interface IconSet {
   it("reads the icon a library draws each role with", () => {
     const source = `
 import { Plus, Trash as TrashGlyph } from "some-icons";
-import { IconX } from "@tabler/icons-react";
+import { XIcon } from "@phosphor-icons/react";
 import type { IconLibrary } from "./roles";
 export const set = { icons: {
   AddIcon: Plus,
   DeleteIcon: wrap(TrashGlyph),
-  DialogCloseIcon: IconX,
+  DialogCloseIcon: XIcon,
 } };`;
     expect(Object.fromEntries(libraryGlyphs(source))).toEqual({
       AddIcon: { glyph: "Plus", library: "some-icons" },
       DeleteIcon: { glyph: "TrashGlyph", library: "some-icons" },
-      DialogCloseIcon: { glyph: "IconX", library: "@tabler/icons-react" },
+      DialogCloseIcon: { glyph: "XIcon", library: "@phosphor-icons/react" },
     });
   });
 
@@ -66,7 +66,7 @@ export const set = { icons: {
   it("keeps icon libraries behind src/icons", () => {
     // Components import roles from @/icons, so a concept keeps one icon and
     // the library can be swapped in one place.
-    const libraries = /from\s*["'](lucide-react|@tabler\/icons-react|@phosphor-icons\/[\w-]+|@\/components\/icons\/[\w-]+)["']/;
+    const libraries = /from\s*["'](@phosphor-icons\/[\w-]+|@\/components\/icons\/[\w-]+)["']/;
     const offenders = sourceFiles(SRC)
       .filter((file) => !file.startsWith(ICONS + path.sep) && !/\.test\.tsx?$/.test(file))
       .filter((file) => libraries.test(read(file)))

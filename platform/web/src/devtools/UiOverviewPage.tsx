@@ -1934,8 +1934,6 @@ function UniverseIconZoomSpecimen() {
 }
 
 const LIBRARY_LABELS: Record<string, string> = {
-  "lucide-react": "lucide",
-  "@tabler/icons-react": "tabler",
   "@phosphor-icons/react": "phosphor",
   "@/components/icons/bot": "own",
   "@/components/icons/logos": "own",

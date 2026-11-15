@@ -14,7 +14,7 @@ import { phosphor as library } from "./phosphor";
 
 export type { IconComponent, IconSet, IconLibrary } from "./roles";
 
-/// The active library's name, such as `lucide`.
+/// The active library's name, such as `phosphor`.
 export const ICON_LIBRARY = library.name;
 
 function tagged(Icon: IconComponent, attribute: string, value: string): IconComponent {

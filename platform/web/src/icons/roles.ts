@@ -1,6 +1,6 @@
 /// The icon contract: every role the app draws, named by what it stands
 /// for rather than how it looks. An icon library implements it as an
-/// `IconLibrary` (see lucide.ts); `index.ts` picks one at build time and
+/// `IconLibrary` (see phosphor.tsx); `index.ts` picks one at build time and
 /// re-exports its roles, which is what components import from `@/icons`.
 ///
 /// Adding a role means adding it here, to every library, and to the export
@@ -264,7 +264,7 @@ export interface IconSet {
 
 /// One complete implementation of the contract.
 export interface IconLibrary {
-  /// Short name shown in the UI overview, such as `lucide`.
+  /// Short name shown in the UI overview, such as `phosphor`.
   name: string;
   icons: IconSet;
 }
