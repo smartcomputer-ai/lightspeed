@@ -2,8 +2,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ListRow, type ListRowTree } from "./list-pane";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ListLayout, ListRow, type ListExpand, type ListRowTree } from "./list-pane";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -104,4 +104,84 @@ it("draws a muted row's title in its second line's colours", async () => {
   expect(title("closed").className).toContain("text-(--list-second-line-rest)");
   expect(title("closed").className).toContain("group-hover/row:text-muted-foreground");
   expect(title("closed").dataset.muted).toBe("true");
+});
+
+describe("dedicated expansion", () => {
+  async function renderExpandable(expand: ListExpand, open = false, onToggle = vi.fn()) {
+    await act(async () => root.render(
+      <MemoryRouter>
+        <ListLayout expand={expand}>
+          <ul>
+            <ListRow to="/parent" title="Parent" expander={{ open, onToggle }} tree={{ depth: 0, children: open }} caretRoom />
+            <ListRow to="/leaf" title="Leaf" caretRoom />
+            <ListRow to="/alone" title="Alone" />
+          </ul>
+        </ListLayout>
+      </MemoryRouter>,
+    ));
+    return onToggle;
+  }
+  const caret = () => container.querySelector<HTMLButtonElement>('[data-slot="list-row-caret"]');
+  const rooms = () => container.querySelectorAll('[data-slot="list-row-caret-room"]').length;
+
+  it("keeps the caret's room on a row with a caret and its siblings, and draws the caret beside the link", async () => {
+    const onToggle = await renderExpandable("dedicated");
+    // Parent and Leaf are siblings with a caret among them; Alone's group has none.
+    expect(rooms()).toBe(2);
+    expect(row("alone").querySelector('[data-slot="list-row-caret-room"]')).toBeNull();
+    expect(caret()!.getAttribute("aria-expanded")).toBe("false");
+    expect(caret()!.getAttribute("aria-label")).toBe("Expand");
+    // Beside the row's link, never inside it.
+    expect(row("parent").contains(caret())).toBe(false);
+    await act(async () => caret()!.click());
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("opens with the right arrow and closes with the left on the focused row", async () => {
+    let onToggle = await renderExpandable("dedicated");
+    const press = async (key: string) => act(async () => { row("parent").dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+    await press("ArrowLeft");
+    expect(onToggle).not.toHaveBeenCalled();
+    await press("ArrowRight");
+    expect(onToggle).toHaveBeenCalledOnce();
+
+    onToggle = await renderExpandable("dedicated", true);
+    expect(caret()!.getAttribute("aria-label")).toBe("Collapse");
+    await press("ArrowRight");
+    expect(onToggle).not.toHaveBeenCalled();
+    await press("ArrowLeft");
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
+
+  it("draws no caret or room in a list that does not expand", async () => {
+    await renderExpandable("none");
+    expect(caret()).toBeNull();
+    expect(rooms()).toBe(0);
+  });
+});
+
+describe("title expansion", () => {
+  it("draws the caret after the title's text, outside the link, and keeps no room before the content", async () => {
+    const onToggle = vi.fn();
+    await act(async () => root.render(
+      <MemoryRouter>
+        <ListLayout expand="title">
+          <ul>
+            <ListRow to="/parent" title="Parent" expander={{ open: false, onToggle }} caretRoom />
+            <ListRow to="/leaf" title="Leaf" caretRoom />
+          </ul>
+        </ListLayout>
+      </MemoryRouter>,
+    ));
+    const parent = row("parent");
+    const room = parent.querySelector('[data-slot="list-row-caret-room"]')!;
+    // The room follows the title's text in the title line.
+    expect(room.previousElementSibling!.textContent).toBe("Parent");
+    // caretRoom keeps nothing: the caret moves with the text.
+    expect(row("leaf").querySelector('[data-slot="list-row-caret-room"]')).toBeNull();
+    const caret = container.querySelector<HTMLButtonElement>('[data-slot="list-row-caret"]')!;
+    expect(parent.contains(caret)).toBe(false);
+    await act(async () => caret.click());
+    expect(onToggle).toHaveBeenCalledOnce();
+  });
 });

@@ -74,7 +74,7 @@ describe("conversationTabs", () => {
     expect(tabs.inline.map((tab) => tab.label)).toEqual(["Main"]);
     expect(tabs.overflow).toEqual([]);
   });
-  it("keeps the most recent threads inline and folds the rest, sub-agents included", () => {
+  it("keeps the most recent threads inline and folds the rest, leaving sub-agents to the header", () => {
     const current = state(
       {
         sessions: [
@@ -91,14 +91,17 @@ describe("conversationTabs", () => {
     expect(tabs.inline.map((tab) => tab.label)).toEqual(["Main", "PR-4", "PR-3", "PR-2"]);
     // Each tab shows what its session is doing, however the run started.
     expect(tabs.inline.map((tab) => tab.activity)).toEqual(["idle", "working", "waiting", "idle"]);
-    expect(tabs.overflow.map((tab) => tab.label)).toEqual(["PR-1", "reviewer"]);
-    expect(tabs.overflow[1]?.hint).toBe("sub-agent of PR-4");
+    // Sub-agents are listed by the header's sub-agent item, not as tabs.
+    expect(tabs.overflow.map((tab) => tab.label)).toEqual(["PR-1"]);
+    const selected = conversationTabs(current, "sub-1");
+    expect(selected.inline.at(-1)).toMatchObject({ id: "sub-1", label: "reviewer", kind: "subagent", hint: "sub-agent of PR-4" });
   });
-  it("resolves a nested sub-agent's parent from descendant display names", () => {
+  it("resolves a selected nested sub-agent's parent from descendant display names", () => {
     const parent = subagent("sub-parent-id", "planner", "bot:v1:triage", 4);
     const child = subagent("sub-child-id", "reviewer", "sub-parent-id", 5);
-    const tabs = conversationTabs(state({}, [parent, child]), undefined);
-    expect(tabs.overflow.find((tab) => tab.id === "sub-child-id")?.hint)
+    const tabs = conversationTabs(state({}, [parent, child]), "sub-child-id");
+    expect(tabs.overflow).toEqual([]);
+    expect(tabs.inline.find((tab) => tab.id === "sub-child-id")?.hint)
       .toBe("sub-agent of planner");
   });
   it("always shows the selected conversation inline", () => {

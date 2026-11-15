@@ -147,14 +147,18 @@ function botSessionsOf(universe: UniverseState, record: BotRecord): SessionSumma
 }
 
 export function listItemOf(universe: UniverseState, record: BotRecord): BotListItem {
+  // Its sessions and their sub-agents: how many are open, and how many busy.
+  const sessions = botSessionsOf(universe, record);
   return {
     ...botViewOf(record),
+    openSessionCount: sessions.filter((session) => session.lifecycleStatus !== "closed").length,
+    activeSessionCount: sessions.filter((session) => session.activity !== "idle").length,
     access: demoAccess(),
     triggerCount: record.triggers.size,
     pendingCount: record.events.filter((event) => event.outcome === null || event.outcome === undefined)
       .length,
     lastEvent: record.events.at(-1) ?? null,
-    activity: foldActivity(botSessionsOf(universe, record).map((session) => session.activity)),
+    activity: foldActivity(sessions.map((session) => session.activity)),
   };
 }
 
@@ -1110,7 +1114,8 @@ export function botRoutes(store: DemoStore): Hono {
   app.get("/:id/bots/:botId", (c) => {
     const found = botFor(store, c);
     if (!found) return notFound(c);
-    return c.json({ bot: botViewOf(found.record) });
+    // As the server: the bot and its audience.
+    return c.json({ bot: botViewOf(found.record), access: demoAccess() });
   });
 
   /// Whole-document replace with an expected revision; an unknown id

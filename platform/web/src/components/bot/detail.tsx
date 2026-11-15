@@ -1,12 +1,13 @@
 import { useSessionCompaction } from "@/lib/sessions/compaction";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ActivityIcon, DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
+import { DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
 import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
 import { DetailHeader } from "@/components/detail-header";
 import { MetaToolbar } from "@/components/meta-toolbar";
 import { botMetaItems } from "./bot-meta";
-import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView, type SessionView } from "@/api";
+import { compactSessionId, sessionName } from "@/components/session/session-meta";
+import { api, botLabel, type BotControllerSnapshot, type BotEventListResponse, type BotStateView, type BotView, type SessionView } from "@/api";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,14 +25,13 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { activityTone, foldActivity } from "@/components/activity-dot";
-import type { SessionActivity } from "@lightspeed-ai/sdk";
+import type { ResourceAccessSummary, SessionActivity } from "@lightspeed-ai/sdk";
 import { cn } from "@/lib/utils";
 import { useDocumentTitle } from "@/lib/document-title";
-import { useActionPermissions } from "@/lib/permissions";
+import { useActionPermissions, usePermissionIdentity } from "@/lib/permissions";
 import { BotActivity } from "./activity";
 import { BotActionsMenu } from "./bot-actions-menu";
 import { BotChat } from "./chat";
@@ -57,9 +57,9 @@ export interface ConversationTab {
 
 /**
  * A bot's conversations as tabs: Main, then the most recently active
- * threads inline, everything else — older threads and sub-agents under
- * their parent — behind +N. The selected conversation is always inline, so
- * a deep link never lands in the overflow.
+ * threads inline, older threads behind +N. Sub-agents are not tabs: the
+ * header's sub-agent item lists them. The selected conversation is always
+ * inline, a sub-agent too, so a deep link never lands in the overflow.
  */
 export function conversationTabs(
   state: BotStateView | undefined,
@@ -111,23 +111,28 @@ export function conversationTabs(
     };
   });
   const inline = [main, ...threads.slice(0, INLINE_THREADS)];
-  const overflow = [...threads.slice(INLINE_THREADS), ...subagents];
+  const overflow = threads.slice(INLINE_THREADS);
   if (selectedId !== undefined && !inline.some((tab) => tab.id === selectedId)) {
     const index = overflow.findIndex((tab) => tab.id === selectedId);
+    const subagent = subagents.find((tab) => tab.id === selectedId);
     if (index >= 0) inline.push(...overflow.splice(index, 1));
+    else if (subagent) inline.push(subagent);
     else inline.push({ id: selectedId, label: `${selectedId.slice(0, 14)}…`, hint: "conversation", activity: activity(selectedId), closed: false, kind: "thread" });
   }
   return { inline, overflow };
 }
 
 /**
- * One bot: a header that answers "is it working?", then one row for its
- * conversations and Activity. Settings is a global bot action in the header.
+ * One bot: a header that answers "is it working?", with its sub-agents and
+ * its activity among the meta items, then one row for its conversations.
+ * Activity and Settings open in dialogs over the conversation, each kept in
+ * the address (?activity=open, ?settings=open) so a link or reload reopens it.
  */
 export function BotDetail({
   universeId,
   handle,
   bot,
+  access,
   state,
   stateError,
   view,
@@ -136,12 +141,15 @@ export function BotDetail({
   universeId: string;
   handle: string;
   bot: BotView;
+  /** Who sees the bot and who created it, for its sharing mark. */
+  access?: ResourceAccessSummary;
   state?: BotStateView;
   stateError?: string;
   view: BotTab;
   sessionId: string | undefined;
 }) {
   const permissions = useActionPermissions(universeId);
+  const viewerId = usePermissionIdentity();
   const manage = permissions.can("manageBot");
   const invoke = permissions.can("invokeBot");
   const queryClient = useQueryClient();
@@ -149,13 +157,11 @@ export function BotDetail({
   const base = `/u/${handle}/bots/${bot.botId}`;
   const controller = state?.controller ?? undefined;
   const status = botStatus(bot, controller, stateError, foldActivity((state?.sessions ?? []).map((session) => session.activity)));
-  const selected = view === "chat" ? (sessionId ?? controller?.mainSessionId) : undefined;
-  const { inline, overflow } = conversationTabs(
-    state,
-    view === "chat" ? selected : undefined,
-  );
+  const selected = sessionId ?? controller?.mainSessionId;
+  const { inline, overflow } = conversationTabs(state, selected);
+  const activityOpen = searchParams.get("activity") === "open";
   useDocumentTitle([
-    view === "activity" ? "Activity" : inline.find((tab) => tab.id === selected)?.label,
+    activityOpen ? "Activity" : inline.find((tab) => tab.id === selected)?.label,
     botLabel(bot),
   ]);
   const sessionHref = (id: string) => (id === controller?.mainSessionId ? base : `${base}/chat/${encodeURIComponent(id)}`);
@@ -175,6 +181,16 @@ export function BotDetail({
     },
   });
   const pending = controller?.pendingDeliveries ?? 0;
+  // Who delegated to a sub-agent: a conversation by its tab label, else
+  // another sub-agent by name.
+  const conversationLabel = new Map((controller?.sessions ?? []).map((session) => [session.sessionId, session.kind === "main" ? "Main" : session.label]));
+  const sessionsById = new Map((state?.sessions ?? []).map((session) => [session.id, session]));
+  const parentOf = (session: { origin?: { parentSessionId: string } | null }) => {
+    const parentId = session.origin?.parentSessionId;
+    if (!parentId) return undefined;
+    const parent = sessionsById.get(parentId);
+    return conversationLabel.get(parentId) ?? (parent ? sessionName(parent) : compactSessionId(parentId, 12));
+  };
   const settingsOpen = searchParams.get("settings") === "open";
   const setSettingsOpen = (open: boolean) => {
     const next = new URLSearchParams(searchParams);
@@ -182,6 +198,24 @@ export function BotDetail({
     else next.delete("settings");
     setSearchParams(next, { replace: !open });
   };
+  const setActivityOpen = (open: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    if (open) next.set("activity", "open");
+    else next.delete("activity");
+    setSearchParams(next, { replace: !open });
+  };
+  // The former activity page's address opens the dialog over Main.
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (view === "activity") navigate(`${base}?activity=open`, { replace: true });
+  }, [view, base, navigate]);
+  // The newest event, for the activity item's tooltip; the dialog loads the rest.
+  const latestEvent = useQuery({
+    queryKey: ["bot-events", universeId, bot.botId, "latest"],
+    queryFn: () => api<BotEventListResponse>("GET", `/api/v1/universes/${universeId}/bots/${bot.botId}/events?limit=1`),
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -195,7 +229,13 @@ export function BotDetail({
               error: stateError ?? controller?.lastError,
               pending,
               closed: bot.closedAtMs != null,
-              activityHref: `${base}/activity`,
+              activity: { open: () => setActivityOpen(true), latest: latestEvent.data?.events?.[0] ?? null },
+              ...(access ? { access, viewerId } : {}),
+              subAgents: {
+                sessions: (state?.sessions ?? []).filter((session) => session.origin),
+                href: sessionHref,
+                parentOf,
+              },
             })}
             place="header"
             full
@@ -223,7 +263,7 @@ export function BotDetail({
       <nav className="flex h-10 shrink-0 items-stretch gap-0.5 overflow-x-auto overflow-y-hidden overscroll-y-none touch-pan-x touch-pinch-zoom border-b px-2" aria-label="Bot conversations and activity">
         {controller ? (
           inline.map((tab) => {
-            const active = view === "chat" && selected === tab.id;
+            const active = selected === tab.id;
             return (
               <span
                 key={tab.id}
@@ -271,20 +311,17 @@ export function BotDetail({
           </span>
         )}
         {overflow.length > 0 && <OverflowTabs tabs={overflow} sessionHref={sessionHref} />}
-        <span className="my-2.5 mx-1.5 w-px shrink-0 bg-border" aria-hidden />
-        <TabLink to={`${base}/activity`} active={view === "activity"}>
-          <ActivityIcon className="size-4" />
-          Activity
-          {pending > 0 && (
-            <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{pending}</span>
-          )}
-        </TabLink>
       </nav>
-      {view === "chat" ? (
-        <BotChat universeId={universeId} handle={handle} bot={bot} state={state} stateError={stateError} sessionId={sessionId} />
-      ) : (
+      <BotChat universeId={universeId} handle={handle} bot={bot} state={state} stateError={stateError} sessionId={sessionId} />
+      <BotEditorDialog
+        open={activityOpen}
+        onOpenChange={setActivityOpen}
+        title={`Activity (${botLabel(bot)})`}
+        description="The events this bot received and how it handled them."
+        contentClassName="sm:max-w-5xl"
+      >
         <BotActivity universeId={universeId} handle={handle} bot={bot} state={state} stateError={stateError} manage={manage} invoke={invoke} />
-      )}
+      </BotEditorDialog>
       <BotEditorDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -298,38 +335,8 @@ export function BotDetail({
   );
 }
 
-function TabLink({
-  to,
-  active,
-  title,
-  children,
-}: {
-  to: string;
-  active: boolean;
-  title?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <NavLink
-      to={to}
-      end
-      title={title}
-      className={cn(
-        "flex max-w-48 shrink-0 items-center gap-1.5 border-b-2 px-2.5 py-2 text-sm whitespace-nowrap",
-        active
-          ? "border-primary font-medium text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {children}
-    </NavLink>
-  );
-}
-
 function OverflowTabs({ tabs, sessionHref }: { tabs: ConversationTab[]; sessionHref: (id: string) => string }) {
   const navigate = useNavigate();
-  const threads = tabs.filter((tab) => tab.kind !== "subagent");
-  const subagents = tabs.filter((tab) => tab.kind === "subagent");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -344,23 +351,12 @@ function OverflowTabs({ tabs, sessionHref }: { tabs: ConversationTab[]; sessionH
         <DropdownCaretIcon className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-96 min-w-64 overflow-y-auto">
-        {threads.length > 0 && (
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>Threads</DropdownMenuLabel>
-            {threads.map((tab) => (
-              <OverflowItem key={tab.id} tab={tab} onSelect={() => navigate(sessionHref(tab.id))} />
-            ))}
-          </DropdownMenuGroup>
-        )}
-        {threads.length > 0 && subagents.length > 0 && <DropdownMenuSeparator />}
-        {subagents.length > 0 && (
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>Sub-agents</DropdownMenuLabel>
-            {subagents.map((tab) => (
-              <OverflowItem key={tab.id} tab={tab} onSelect={() => navigate(sessionHref(tab.id))} />
-            ))}
-          </DropdownMenuGroup>
-        )}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Threads</DropdownMenuLabel>
+          {tabs.map((tab) => (
+            <OverflowItem key={tab.id} tab={tab} onSelect={() => navigate(sessionHref(tab.id))} />
+          ))}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );

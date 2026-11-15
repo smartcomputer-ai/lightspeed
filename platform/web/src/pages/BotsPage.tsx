@@ -1,26 +1,33 @@
+import { Fragment, useState, type ReactNode } from "react";
 import { useWatchConnected } from "@/lib/universe-watch";
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
-import { useQuery } from "@tanstack/react-query";
-import { AddIcon, BotAvatarIcon } from "@/icons";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { AddIcon, BotAvatarIcon, SessionSubThreadIcon, SubAgentIcon } from "@/icons";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   api,
   botLabel,
+  type BotEventOutcome,
   type BotListItem,
   type BotListResponse,
   type BotStateReadResponse,
+  type BotStateView,
   type BotView,
 } from "@/api";
+import { activityLabel, activityTone, sessionDotState } from "@/components/activity-dot";
+import type { SessionActivity } from "@lightspeed-ai/sdk";
+import { sessionName } from "@/components/session/session-meta";
 import { BotDetail, type BotTab } from "@/components/bot/detail";
 import { BotCreateDialog } from "@/pages/BotCreatePage";
 import { BotAvatar } from "@/components/bot/face";
-import { StatusDot, outcomeLabel, relativeTime, type BotTone } from "@/components/bot/status";
+import { StatusDot, outcomeLabel, relativeTime, type BotTone, type StatusTone } from "@/components/bot/status";
 import { Button } from "@/components/ui/button";
 import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
-import { useActionPermissions } from "@/lib/permissions";
+import { useActionPermissions, usePermissionIdentity } from "@/lib/permissions";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ListGroupLabel,
   ListPane,
@@ -30,9 +37,11 @@ import {
   ListMark,
   ListRow,
   ListRowLine,
+  type ListRowTree,
 } from "@/components/list-pane";
 import { requestRowMenu } from "@/lib/row-menu";
 import { botMetaItems } from "@/components/bot/bot-meta";
+import type { MetaItem } from "@/components/meta-toolbar";
 
 const ROSTER_REFRESH_MS = 5_000;
 
@@ -60,6 +69,7 @@ export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
           universeId={universe.id}
           handle={handle!}
           activeId={botId}
+          activeSessionId={sessionId}
           create={create}
           onCreate={() => setCreateOpen(true)}
         />
@@ -151,12 +161,15 @@ function BotsPane({
   universeId,
   handle,
   activeId,
+  activeSessionId,
   create,
   onCreate,
 }: {
   universeId: string;
   handle: string;
   activeId: string | undefined;
+  /** The conversation open in the selected bot; none for Main. */
+  activeSessionId: string | undefined;
   create: boolean;
   onCreate: () => void;
 }) {
@@ -170,6 +183,25 @@ function BotsPane({
   const roster = bots.data?.bots ?? [];
   const groups = rosterGroups(roster);
   const navigate = useNavigate();
+  const viewerId = usePermissionIdentity();
+  const { isOpen, toggle, openBots } = useOpenRows(activeId);
+  // Each open bot's conversations, from its state: read only while its row
+  // is open. The selected bot's page reads the same query and keeps it
+  // fresh; another open bot's refreshes slowly, and stops once closed.
+  const states = useQueries({
+    queries: openBots.map((botId) => ({
+      queryKey: ["bot-state", universeId, botId],
+      queryFn: () => api<BotStateReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}/state`),
+      refetchInterval: botId === activeId ? (false as const) : OPEN_BOT_REFRESH_MS,
+      refetchIntervalInBackground: false,
+    })),
+  });
+  const stateOf = new Map(openBots.map((botId, index) => [botId, states[index]?.data?.state]));
+  const activeState = activeId ? stateOf.get(activeId) : undefined;
+  const mainSessionId = activeState?.controller?.mainSessionId;
+  const onMain = activeSessionId === undefined || activeSessionId === mainSessionId;
+  // The selected conversation stays in sight: the rows above it open, once.
+  useOpenPath(activeId, onMain ? undefined : activeSessionId, activeState, toggle.openAll);
 
   return (
     <>
@@ -182,51 +214,368 @@ function BotsPane({
           </Button>
         )}
       />
-      <ListPaneBody>
+      <ListPaneBody expand="title">
         <ListPaneState
           loading={bots.isLoading}
           error={bots.error}
           hasData={Boolean(bots.data)}
           empty={roster.length === 0 && "No bots yet."}
         />
-        {groups.map((group) => (
-          <div key={group.title}>
-            {groups.length > 1 && <ListGroupLabel>{group.title}</ListGroupLabel>}
-            <ul>
-              {group.bots.map((bot) => {
-                const line = rosterLine(bot);
-                return (
-                  <ListRow
-                    key={bot.botId}
-                    to={`/u/${handle}/bots/${bot.botId}`}
-                    active={bot.botId === activeId}
-                    // Right-click: the bot (opened if it is not) and its
-                    // page's ⋯ menu, at the pointer.
-                    entryProps={{
-                      onContextMenu: (event) => {
-                        event.preventDefault();
-                        if (bot.botId !== activeId) navigate(`/u/${handle}/bots/${bot.botId}`);
-                        requestRowMenu("bot", bot.botId, event);
-                      },
-                    }}
-                    leading={<BotAvatar botId={bot.botId} size={30} />}
-                    indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
-                    title={botLabel(bot)}
-                    marks={botMetaItems({ status: { label: line.text, tone: line.tone }, pending: bot.pendingCount, closed: bot.closedAtMs != null })}
-                    meta={bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)}
-                  >
-                    <ListRowLine tone={line.tone === "attention" ? "destructive" : undefined} title={line.text}>
-                      {line.text}
-                    </ListRowLine>
-                  </ListRow>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
+        {groups.map((group) => {
+          // Whether a bot has conversations to open: from its state once
+          // read, else from the list's count of its open sessions (Main is
+          // one of them). Without either it is not known, and gets no caret.
+          const subRowsOf = (bot: BotListItem) => {
+            const state = stateOf.get(bot.botId);
+            return state ? botSubRows(state) : undefined;
+          };
+          const opens = (bot: BotListItem) => {
+            const rows = subRowsOf(bot);
+            return rows ? rows.length > 0 : (bot.openSessionCount ?? 0) > 1;
+          };
+          const caretRoom = group.bots.some(opens);
+          return (
+            <div key={group.title}>
+              {groups.length > 1 && <ListGroupLabel>{group.title}</ListGroupLabel>}
+              <ul>
+                {group.bots.map((bot) => {
+                  const line = rosterLine(bot);
+                  const selected = bot.botId === activeId;
+                  const base = `/u/${handle}/bots/${bot.botId}`;
+                  const key = botKey(bot.botId);
+                  const expandable = opens(bot);
+                  const open = expandable && isOpen(key);
+                  const children = open ? subRowsOf(bot) ?? [] : [];
+                  return (
+                    <Fragment key={bot.botId}>
+                      <ListRow
+                        to={base}
+                        // The bot's row stands for its Main conversation.
+                        active={selected && onMain}
+                        tree={{ depth: 0, children: children.length > 0 }}
+                        {...(expandable ? {
+                          expander: {
+                            open,
+                            onToggle: () => toggle(key),
+                            label: `${open ? "Hide" : "Show"} ${botLabel(bot)}'s conversations`,
+                          },
+                        } : {})}
+                        caretRoom={caretRoom}
+                        // Right-click: the bot (opened if it is not) and its
+                        // page's ⋯ menu, at the pointer.
+                        entryProps={{
+                          onContextMenu: (event) => {
+                            event.preventDefault();
+                            if (bot.botId !== activeId) navigate(`/u/${handle}/bots/${bot.botId}`);
+                            requestRowMenu("bot", bot.botId, event);
+                          },
+                        }}
+                        leading={<BotAbout bot={bot}><BotAvatar botId={bot.botId} size={30} /></BotAbout>}
+                        indicator={<ListMark label={TONE_LABEL[line.tone]} tip={TONE_LABEL[line.tone]}><StatusDot tone={line.tone} /></ListMark>}
+                        title={botLabel(bot)}
+                        marks={botMetaItems({
+                          status: { label: line.text, tone: line.tone },
+                          pending: bot.pendingCount,
+                          closed: bot.closedAtMs != null,
+                          access: bot.access,
+                          viewerId,
+                        })}
+                        meta={bot.lastEvent && relativeTime(bot.lastEvent.receivedAtMs)}
+                      >
+                        <ListRowLine tone={line.tone === "attention" ? "destructive" : undefined} title={line.text}>
+                          {line.text}
+                        </ListRowLine>
+                      </ListRow>
+                      {children.length > 0 && (
+                        <BotSubRows
+                          rows={children}
+                          depth={1}
+                          lines={[]}
+                          activeSessionId={selected && !onMain ? activeSessionId : undefined}
+                          href={(sessionId) => `${base}/chat/${encodeURIComponent(sessionId)}`}
+                          isOpen={isOpen}
+                          toggle={toggle}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
       </ListPaneBody>
     </>
   );
+}
+
+/// A bot's avatar with what the bot is for on hover: its name, description
+/// and brief. Without either there is nothing to add to its row.
+function BotAbout({ bot, children }: { bot: BotListItem; children: ReactNode }) {
+  const description = bot.description?.trim();
+  const brief = bot.brief?.trim();
+  if (!description && !brief) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="flex" />}>{children}</TooltipTrigger>
+      <TooltipContent className="grid max-w-80 gap-1 text-left">
+        <span className="font-medium">{botLabel(bot)}</span>
+        {description && <span>{description}</span>}
+        {brief && <span className="line-clamp-6 whitespace-pre-line opacity-80">{brief}</span>}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/// How often an open bot that is not selected re-reads its conversations.
+const OPEN_BOT_REFRESH_MS = 15_000;
+
+/// Keys of the open rows: a bot's and a conversation's, apart.
+const botKey = (botId: string) => `bot:${botId}`;
+const sessionKey = (sessionId: string) => `session:${sessionId}`;
+
+/// Which rows of the bots list are open. Selecting a bot opens it, one level
+/// down; anything opened or closed by hand stays so while the list lives.
+function useOpenRows(activeId: string | undefined) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set(activeId ? [botKey(activeId)] : []));
+  const [opened, setOpened] = useState(activeId);
+  if (activeId !== opened) {
+    // Opened on selection, during render: the bot's state loads with it.
+    setOpened(activeId);
+    if (activeId && !open.has(botKey(activeId))) setOpen(new Set([...open, botKey(activeId)]));
+  }
+  const toggle = Object.assign(
+    (key: string) =>
+      setOpen((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    {
+      openAll: (keys: string[]) =>
+        setOpen((current) => (keys.every((key) => current.has(key)) ? current : new Set([...current, ...keys]))),
+    },
+  );
+  const openBots = [...open].filter((key) => key.startsWith("bot:")).map((key) => key.slice("bot:".length));
+  return { isOpen: (key: string) => open.has(key), toggle, openBots };
+}
+
+/// Opens the rows above the selected conversation, once per selection, so a
+/// deep link or a pick from the header lands on a visible row; closing them
+/// by hand afterwards sticks.
+function useOpenPath(
+  activeId: string | undefined,
+  sessionId: string | undefined,
+  state: BotStateView | undefined,
+  openAll: (keys: string[]) => void,
+) {
+  const [done, setDone] = useState<string | null>(null);
+  const target = activeId && sessionId ? `${activeId}/${sessionId}` : null;
+  if (target && target !== done && state) {
+    setDone(target);
+    const path = pathTo(botSubRows(state), sessionId!);
+    if (path) openAll([botKey(activeId!), ...path.map(sessionKey)]);
+  }
+}
+
+/// The ids of the rows above the one with `id`, outermost first; null when
+/// it is not among them.
+function pathTo(rows: BotSubRow[], id: string, above: string[] = []): string[] | null {
+  for (const row of rows) {
+    if (row.id === id) return above;
+    const found = pathTo(row.children, id, [...above, row.id]);
+    if (found) return found;
+  }
+  return null;
+}
+
+/// One sub-row under a selected bot: a thread, or a sub-agent under the
+/// conversation that delegated to it.
+export interface BotSubRow {
+  id: string;
+  title: string;
+  /** The title's tooltip: what kind of conversation it is. */
+  hint?: string;
+  /** Its second line: a thread's latest work (as the bot's own row says it), or a sub-agent's profile and state. */
+  line: string;
+  /** The line reports a failure: drawn in the danger color. */
+  failed?: boolean;
+  tone: StatusTone;
+  /** A closed sub-agent: drawn faded. */
+  closed: boolean;
+  /** What it is, as the mark in its meta toolbar: a thread (or one-off) of the bot, or a sub-agent. */
+  kind: { thread: true; label: string } | { thread: false; profile?: string };
+  /** When it last changed. */
+  atMs?: number;
+  children: BotSubRow[];
+}
+
+/// A bot's conversations as sub-rows of its row, which stands for Main:
+/// its threads, most recently active first, and each sub-agent under the
+/// conversation that delegated to it (one of Main's under the bot itself).
+/// Everything comes from the bot's state, already read: nothing more is.
+export function botSubRows(state: BotStateView | undefined): BotSubRow[] {
+  const controller = state?.controller;
+  if (!controller) return [];
+  const sessions = state?.sessions ?? [];
+  const summaryOf = new Map(sessions.map((session) => [session.id, session]));
+  // Each thread's delivery in flight, and its latest finished one.
+  const activeOf = new Map((controller.activeDeliveries ?? []).map((delivery) => [delivery.sessionId, delivery]));
+  const recentOf = new Map<string, NonNullable<typeof controller.recentDeliveries>[number]>();
+  for (const delivery of controller.recentDeliveries ?? []) {
+    const known = recentOf.get(delivery.sessionId);
+    if (!known || delivery.finishedAtMs > known.finishedAtMs) recentOf.set(delivery.sessionId, delivery);
+  }
+  const threads: BotSubRow[] = (controller.sessions ?? [])
+    .filter((session) => session.kind !== "main")
+    .sort((left, right) => (right.lastActiveAtMs ?? 0) - (left.lastActiveAtMs ?? 0))
+    .map((session) => {
+      const summary = summaryOf.get(session.sessionId);
+      const kind = session.kind === "perKey" ? "Thread" : "One-off";
+      const { line, tone, failed } = threadLine({
+        activity: summary?.activity,
+        active: activeOf.get(session.sessionId),
+        recent: recentOf.get(session.sessionId),
+        preview: summary?.lastMessagePreview ?? undefined,
+        kind,
+      });
+      return {
+        id: session.sessionId,
+        title: session.label,
+        hint: `${kind}: ${session.label}`,
+        kind: { thread: true, label: kind },
+        line,
+        ...(failed ? { failed } : {}),
+        tone,
+        closed: false,
+        ...(session.lastActiveAtMs == null ? {} : { atMs: session.lastActiveAtMs }),
+        children: [],
+      };
+    });
+  const byId = new Map<string, BotSubRow>(threads.map((row) => [row.id, row]));
+  const subagents = sessions.filter((session) => session.origin);
+  for (const session of subagents) {
+    const state = sessionDotState(session);
+    const closed = session.lifecycleStatus === "closed";
+    byId.set(session.id, {
+      id: session.id,
+      title: sessionName(session),
+      kind: { thread: false, ...(session.origin?.agent?.profileId ? { profile: session.origin.agent.profileId } : {}) },
+      line: [session.origin?.agent?.profileId, state.label ?? (closed ? "Closed" : "Idle")].filter(Boolean).join(" · "),
+      tone: state.tone,
+      closed,
+      atMs: session.updatedAtMs,
+      children: [],
+    });
+  }
+  // Hang each sub-agent off its parent; Main's (and any whose parent is not
+  // listed) off the bot.
+  const rows = [...threads];
+  for (const session of subagents) {
+    const row = byId.get(session.id)!;
+    const parent = byId.get(session.origin!.parentSessionId);
+    if (parent && parent !== row) parent.children.push(row);
+    else rows.push(row);
+  }
+  return rows;
+}
+
+/// A sub-row's kind as a mark in its meta toolbar: the sub-thread icon on a
+/// thread or one-off, the sub-agent icon on a sub-agent.
+export function subRowKindMark(row: Pick<BotSubRow, "kind">): MetaItem {
+  return row.kind.thread
+    ? { key: "kind", label: row.kind.label, icon: SessionSubThreadIcon, tooltip: `${row.kind.label}: a conversation of the bot beside Main` }
+    : {
+      key: "kind",
+      label: "Sub-agent",
+      icon: SubAgentIcon,
+      tooltip: row.kind.profile ? `Sub-agent, running ${row.kind.profile}` : "Sub-agent",
+    };
+}
+
+/// A thread's second line, as the bot's own row words its latest work: what
+/// waits on it, the event it is working on, how its latest delivery ended
+/// and the bot's summary of it, else its latest message, else its kind.
+export function threadLine({ activity, active, recent, preview, kind }: {
+  activity: SessionActivity | undefined;
+  active: { seqs: number[] } | undefined;
+  recent: { seqs: number[]; outcome: BotEventOutcome; summary?: string | null } | undefined;
+  preview: string | undefined;
+  kind: string;
+}): { line: string; tone: StatusTone; failed: boolean } {
+  const seq = (seqs: number[]) => (seqs.length ? Math.max(...seqs) : undefined);
+  if (activity === "waiting") return { line: activityLabel("waiting")!, tone: "waiting", failed: false };
+  if (active) {
+    const on = seq(active.seqs);
+    return { line: on === undefined ? "Working" : `Working on #${on}`, tone: "live", failed: false };
+  }
+  if (activity === "working") return { line: activityLabel("working")!, tone: "live", failed: false };
+  if (recent) {
+    const failed = recent.outcome === "runFailed" || recent.outcome === "blocked";
+    const on = seq(recent.seqs);
+    const detail = recent.summary?.trim() || preview?.trim() || kind;
+    return {
+      line: `${on === undefined ? "" : `#${on} `}${outcomeLabel(recent.outcome)} · ${detail}`,
+      tone: failed ? "attention" : "idle",
+      failed,
+    };
+  }
+  return { line: preview?.trim() || kind, tone: activityTone(activity), failed: false };
+}
+
+/// A level of an open bot's sub-rows, and below each open one the next
+/// level. A row with children gets a caret; when any of the level has one,
+/// the rest keep its room, so their titles line up.
+function BotSubRows({ rows, depth, lines, activeSessionId, href, isOpen, toggle }: {
+  rows: BotSubRow[];
+  depth: number;
+  /** Per ancestor level below the bot: whether that ancestor has a later sibling. */
+  lines: boolean[];
+  activeSessionId: string | undefined;
+  href: (sessionId: string) => string;
+  isOpen: (key: string) => boolean;
+  toggle: (key: string) => void;
+}) {
+  const caretRoom = rows.some((row) => row.children.length > 0);
+  return rows.map((row, index) => {
+    const last = index === rows.length - 1;
+    const key = sessionKey(row.id);
+    const open = row.children.length > 0 && isOpen(key);
+    const tree: ListRowTree = { depth, last, lines, children: open };
+    return (
+      <Fragment key={row.id}>
+        <ListRow
+          to={href(row.id)}
+          active={row.id === activeSessionId}
+          tree={tree}
+          {...(row.children.length > 0 ? {
+            expander: { open, onToggle: () => toggle(key), label: `${open ? "Hide" : "Show"} the sub-agents of ${row.title}` },
+          } : {})}
+          caretRoom={caretRoom}
+          indicator={<StatusDot tone={row.tone} />}
+          title={row.title}
+          {...(row.hint ? { titleHint: row.hint } : {})}
+          marks={[subRowKindMark(row)]}
+          muted={row.closed}
+          meta={row.atMs !== undefined && relativeTime(row.atMs)}
+        >
+          <ListRowLine tone={row.failed ? "destructive" : undefined} title={row.line}>{row.line}</ListRowLine>
+        </ListRow>
+        {open && (
+          <BotSubRows
+            rows={row.children}
+            depth={depth + 1}
+            lines={[...lines, !last]}
+            activeSessionId={activeSessionId}
+            href={href}
+            isOpen={isOpen}
+            toggle={toggle}
+          />
+        )}
+      </Fragment>
+    );
+  });
 }
 
 function BotWorkspace({
@@ -269,6 +618,7 @@ function BotWorkspace({
       universeId={universeId}
       handle={handle}
       bot={bot.data.bot}
+      access={bot.data.access}
       {...(state.data?.state ? { state: state.data.state } : {})}
       {...(state.error ? { stateError: state.error.message } : {})}
       view={view}

@@ -58,6 +58,8 @@ export interface IconSet {
   ToolsIcon: IconComponent;
   SubAgentIcon: IconComponent;
   ParentAgentIcon: IconComponent;
+  SessionMainThreadIcon: IconComponent;
+  SessionSubThreadIcon: IconComponent;
   CodeModeIcon: IconComponent;
   WebIcon: IconComponent;
   TimerIcon: IconComponent;

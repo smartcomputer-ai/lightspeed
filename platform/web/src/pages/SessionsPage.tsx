@@ -156,6 +156,7 @@ import {
   ListRow,
   ListRowLine,
   ListSelectionButtons,
+  type ListRowExpander,
   type ListRowTree,
   type ListSelectionAction,
 } from "@/components/list-pane";
@@ -285,6 +286,7 @@ function SessionList({
 
   const sessions = pages.data?.pages.flatMap((page) => page.sessions) ?? [];
   const tree = buildSessionTree(sessions);
+  const openRows = useOpenSessionRows(tree, activeId);
   const visibleIds = sessions.map((session) => session.id);
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
   const permissions = useActionPermissions(universeId);
@@ -673,7 +675,7 @@ function SessionList({
           </button>
         </ListPaneToolbar>
       )}
-      <ListPaneBody>
+      <ListPaneBody expand="title">
         <ListPaneState
           loading={pages.isLoading}
           error={pages.error}
@@ -693,6 +695,7 @@ function SessionList({
               node={node}
               handle={handle}
               activeId={activeId}
+              openRows={openRows}
               depth={0}
               selecting={selecting}
               selected={selected}
@@ -792,13 +795,53 @@ function BulkActionDialog({
   );
 }
 
-type SessionNode = { session: SessionSummary; children: SessionNode[] };
+export type SessionNode = { session: SessionSummary; children: SessionNode[] };
 
 /// Group sub-agent sessions under their parent when the parent is in the
 /// loaded page set; the parent row counts them. Children whose parent is not
 /// loaded stay at the top level, their lineage in the title's tooltip; list
 /// order (most recently updated first) is preserved at every level.
-function buildSessionTree(sessions: SessionSummary[]): SessionNode[] {
+/// Which sessions show their sub-agents. Selecting a session opens it, one
+/// level down, and the rows above it, so it is in sight, once per selection
+/// (as soon as it is loaded); anything opened or closed by hand stays so
+/// while the list is shown.
+export function useOpenSessionRows(tree: SessionNode[], activeId: string | undefined) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [openedFor, setOpenedFor] = useState<string | undefined | null>(null);
+  if (activeId !== openedFor) {
+    const path = activeId === undefined ? [] : sessionPath(tree, activeId);
+    if (path !== null) {
+      setOpenedFor(activeId);
+      const ids = activeId === undefined ? path : [...path, activeId];
+      if (ids.some((id) => !open.has(id))) setOpen(new Set([...open, ...ids]));
+    }
+  }
+  return {
+    isOpen: (id: string) => open.has(id),
+    toggle: (id: string) =>
+      setOpen((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+  };
+}
+
+type OpenSessionRows = ReturnType<typeof useOpenSessionRows>;
+
+/// The ids of the sessions above the one with `id`, outermost first; null
+/// when it is not loaded.
+function sessionPath(nodes: SessionNode[], id: string, above: string[] = []): string[] | null {
+  for (const node of nodes) {
+    if (node.session.id === id) return above;
+    const found = sessionPath(node.children, id, [...above, node.session.id]);
+    if (found) return found;
+  }
+  return null;
+}
+
+export function buildSessionTree(sessions: SessionSummary[]): SessionNode[] {
   const byId = new Map(sessions.map((session) => [session.id, { session, children: [] as SessionNode[] }]));
   const roots: SessionNode[] = [];
   for (const node of byId.values()) {
@@ -827,6 +870,7 @@ function SessionTreeItem({
   node,
   handle,
   activeId,
+  openRows,
   depth,
   last = true,
   lines = [],
@@ -835,6 +879,8 @@ function SessionTreeItem({
   node: SessionNode;
   handle: string;
   activeId: string | undefined;
+  /// Which rows show their sub-agents (a caret after the title opens and closes them).
+  openRows: OpenSessionRows;
   depth: number;
   /// The last of its siblings.
   last?: boolean;
@@ -843,23 +889,34 @@ function SessionTreeItem({
 } & SessionRowControls) {
   // What its children pass on: below the root, whether this row's own line runs on.
   const childLines = depth > 0 ? [...lines, !last] : [];
+  const id = node.session.id;
+  const count = node.children.length;
+  const open = count > 0 && openRows.isOpen(id);
   return (
     <>
       <SessionListItem
         session={node.session}
         handle={handle}
-        active={node.session.id === activeId}
-        tree={{ depth, last, lines, children: node.children.length > 0 }}
-        subAgentCount={node.children.length}
+        active={id === activeId}
+        tree={{ depth, last, lines, children: open }}
+        {...(count > 0 ? {
+          expander: {
+            open,
+            onToggle: () => openRows.toggle(id),
+            label: `${open ? "Hide" : "Show"} ${count} sub-agent${count === 1 ? "" : "s"}`,
+          },
+        } : {})}
+        subAgentCount={count}
         firstSubAgent={node.children[0] && sessionName(node.children[0].session)}
         {...controls}
       />
-      {node.children.map((child, index) => (
+      {open && node.children.map((child, index) => (
         <SessionTreeItem
           key={child.session.id}
           node={child}
           handle={handle}
           activeId={activeId}
+          openRows={openRows}
           depth={depth + 1}
           last={index === node.children.length - 1}
           lines={childLines}
@@ -875,6 +932,7 @@ function SessionListItem({
   handle,
   active,
   tree,
+  expander,
   subAgentCount = 0,
   firstSubAgent,
   selecting,
@@ -891,6 +949,8 @@ function SessionListItem({
   active: boolean;
   /// Its place in the tree of sessions and their sub-agents.
   tree: ListRowTree;
+  /// Opens and closes its sub-agents.
+  expander?: ListRowExpander;
   /// Sub-agent sessions listed directly under this row.
   subAgentCount?: number;
   /// The first sub-agent's name, for the count's tooltip.
@@ -924,6 +984,7 @@ function SessionListItem({
         ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}`, actions: selectionActions }
         : undefined}
       tree={tree}
+      {...(expander ? { expander } : {})}
       indicator={<SessionDot session={session} />}
       title={displayName || session.id}
       // A closed session's title fades to its second line's colour.

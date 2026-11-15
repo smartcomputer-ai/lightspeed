@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDocumentTitle } from "@/lib/document-title";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICON_COLORS, UNIVERSE_ICONS, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
@@ -103,7 +103,7 @@ import { GROUP_ORDER, StepRow, groupStyle } from "@/components/session/tool-trac
 import { BotAvatar } from "@/components/bot/face";
 import { idColor, idHue } from "@/lib/identity-colors";
 import { UNIVERSE_NAV } from "@/components/universe-nav";
-import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListRowTree } from "@/components/list-pane";
+import { ListGroupLabel, ListPaneBody, ListPaneHeader, ListPaneToolbar, ListRow, ListRowLine, PaneBar, type ListExpand, type ListRowTree } from "@/components/list-pane";
 import { LightspeedLogo, LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { Starscape } from "@/components/starscape/starscape";
 import { PAGE_NEBULA_SEED, PageNebula } from "@/components/starscape/page-nebula";
@@ -111,6 +111,7 @@ import { UniverseIcon } from "@/components/universe-icon";
 import { HEADER_STARSCAPE_FADE, HeaderStarscape } from "@/components/universe-switcher";
 import { collectRoleUsage, iconRoles, libraryGlyphs, type IconRole, type RoleGlyph } from "./icon-usage";
 import { MetaBotExample, MetaModesExample, MetaSessionListExample, MetaSessionPageExample } from "./meta-toolbar-examples";
+import { ExpandableBotListExample, ExpandableSessionListExample, ExpandSwitch } from "./list-expander-examples";
 import { MetaDetailsInToolbarExample, MetaDetailsLongListExample, MetaDetailsPartsExample, MetaDetailsUsagesExample } from "./meta-details-examples";
 
 /// Every shared UI component and its variations, one page per category,
@@ -424,19 +425,134 @@ function TypographySection() {
           </div>
         ))}
       </Specimen>
-      <Specimen title="Text styles" className="grid gap-2">
-        <p className="text-sm">Body text in the foreground color.</p>
-        <p className="text-sm text-muted-foreground">Muted text for descriptions and hints.</p>
-        <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Group heading</p>
-        <p className="font-mono text-sm">font-mono: session-01HZX4K2 · ~/workspace/src/index.ts</p>
-        <p className="text-sm">
-          Inline <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">code</code>, a{" "}
-          <a href="#typography" className="underline underline-offset-4 hover:text-primary">link</a>, and{" "}
-          <kbd className="rounded border bg-muted px-1 font-mono text-xs">⌘K</kbd>.
-        </p>
-        <p className="text-sm text-destructive">Destructive text for errors.</p>
+      <Specimen title="Text styles" note="as the browser resolves them, in the current theme" className="grid gap-5">
+        {TEXT_STYLES.map((style) => <TextStyleRow key={style.name} style={style} />)}
       </Specimen>
     </Category>
+  );
+}
+
+/// A text style of the overview: the element it styles, its classes, and a
+/// sample. An inline style sits in a sentence of body text (`context`).
+interface TextStyleSpec {
+  name: string;
+  tag: "p" | "code" | "a" | "kbd";
+  className: string;
+  text: string;
+  context?: [before: string, after: string];
+}
+
+const TEXT_STYLES: TextStyleSpec[] = [
+  { name: "Body", tag: "p", className: "text-sm", text: "Body text in the foreground color." },
+  { name: "Muted", tag: "p", className: "text-sm text-muted-foreground", text: "Muted text for descriptions and hints." },
+  { name: "Group heading", tag: "p", className: "text-xs font-medium tracking-wide text-muted-foreground uppercase", text: "Group heading" },
+  { name: "Monospace", tag: "p", className: "font-mono text-sm", text: "session-01HZX4K2 · ~/workspace/src/index.ts" },
+  { name: "Inline code", tag: "code", className: "rounded bg-muted px-1 py-0.5 font-mono text-xs", text: "code", context: ["Inline ", " in body text."] },
+  { name: "Link", tag: "a", className: "underline underline-offset-4 hover:text-primary", text: "link", context: ["A ", " in body text."] },
+  { name: "Keyboard key", tag: "kbd", className: "rounded border bg-muted px-1 font-mono text-xs", text: "⌘K", context: ["Press ", " to search."] },
+  { name: "Destructive", tag: "p", className: "text-sm text-destructive", text: "Destructive text for errors." },
+];
+
+/// The weight steps the theme may define as --font-weight-<step>.
+const WEIGHT_STEPS = ["thin", "extralight", "light", "normal", "medium", "semibold", "bold", "extrabold", "black"];
+
+/// A computed weight's name: the theme's step with that value (index.css
+/// redefines normal and medium), "page default" for the weight <html> sets,
+/// or none.
+function weightName(weight: string): string | undefined {
+  const root = getComputedStyle(document.documentElement);
+  const step = WEIGHT_STEPS.find((name) => root.getPropertyValue(`--font-weight-${name}`).trim() === weight);
+  if (step) return step;
+  return root.fontWeight === weight ? "page default" : undefined;
+}
+
+/// What the browser resolved for an element's type.
+interface ResolvedType {
+  /// The first family of the stack: the one drawn once its font has loaded.
+  family: string;
+  stack: string;
+  weight: string;
+  weightName?: string;
+  size: string;
+  lineHeight: string;
+  tracking: string;
+  transform: string;
+  features: string;
+  color: string;
+}
+
+function resolveType(element: Element): ResolvedType {
+  const style = getComputedStyle(element);
+  const stack = style.fontFamily;
+  return {
+    family: (stack.split(",")[0] ?? "").trim().replace(/^["']|["']$/g, ""),
+    stack,
+    weight: style.fontWeight,
+    weightName: weightName(style.fontWeight),
+    size: style.fontSize,
+    lineHeight: style.lineHeight,
+    tracking: style.letterSpacing,
+    transform: style.textTransform,
+    features: style.fontFeatureSettings,
+    color: style.color,
+  };
+}
+
+/// An element's resolved type, read again when the theme or a design
+/// override on <html> changes, and once web fonts have loaded.
+function useResolvedType(element: HTMLElement | null): ResolvedType | null {
+  const [type, setType] = useState<ResolvedType | null>(null);
+  useLayoutEffect(() => {
+    if (!element) return;
+    let live = true;
+    const read = () => { if (live) setType(resolveType(element)); };
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
+    void document.fonts?.ready.then(read);
+    return () => {
+      live = false;
+      observer.disconnect();
+    };
+  }, [element]);
+  return type;
+}
+
+function TextStyleRow({ style }: { style: TextStyleSpec }) {
+  const [element, setElement] = useState<HTMLElement | null>(null);
+  const type = useResolvedType(element);
+  const styled = createElement(
+    style.tag,
+    { ref: setElement, className: style.className, ...(style.tag === "a" ? { href: "#typography" } : {}) },
+    style.text,
+  );
+  const facts = type ? [
+    type.weight && `${type.weight}${type.weightName ? ` ${type.weightName}` : ""}`,
+    type.size && `${type.size} / ${type.lineHeight}`,
+    type.tracking && type.tracking !== "normal" && type.tracking !== "0px" && `tracking ${type.tracking}`,
+    type.transform && type.transform !== "none" && type.transform,
+    type.features && type.features !== "normal" && `features ${type.features}`,
+  ].filter((fact): fact is string => Boolean(fact)) : [];
+  return (
+    <div className="grid gap-1.5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-x-4">
+      <span className="text-xs font-medium sm:pt-0.5">{style.name}</span>
+      <div className="grid min-w-0 gap-1">
+        {style.context ? <p className="text-sm">{style.context[0]}{styled}{style.context[1]}</p> : styled}
+        {type && (
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            {type.family && <span title={type.stack}><Caption>{type.family}</Caption></span>}
+            {facts.map((fact) => <Caption key={fact}>{fact}</Caption>)}
+            {type.color && (
+              <span className="inline-flex items-center gap-1">
+                <span className="size-2.5 shrink-0 rounded-full border" style={{ background: type.color }} />
+                <Caption>{type.color}</Caption>
+              </span>
+            )}
+          </span>
+        )}
+        <Caption>{`<${style.tag}> ${style.className}`}</Caption>
+      </div>
+    </div>
   );
 }
 
@@ -1165,6 +1281,16 @@ function ListsSection() {
   return (
     <Category id="lists">
       <BotListExample />
+      <Specimen
+        title="Expandable rows (dedicated)"
+        note={'ListPaneBody expand="dedicated" with ListRow expander: a caret before the content opens and closes the row\'s children, beside opening its detail; every row keeps the caret\'s room. Dots and tree lines stay put.'}
+        className="flex-col items-start"
+      >
+        <ExpandableBotListExample />
+      </Specimen>
+      <Specimen title="Expandable rows without avatars (dedicated)" note="As the sessions list would draw sub-agents" className="items-start">
+        <ExpandableSessionListExample />
+      </Specimen>
       <FileListExample />
     </Category>
   );
@@ -1184,21 +1310,61 @@ function BotListExample() {
     });
   // A tree two levels deep: each row says whether it is the last of its
   // siblings, which ancestor lines run past it, and whether it has children.
-  const rows = [
-    { id: "planner", title: "Release planner", tone: "live" as BotTone, meta: "2m", line: "Working on #12 · message", tree: { depth: 0, children: true } },
-    { id: "deploy", title: "Deploy checks", tone: "idle" as BotTone, meta: "1h", line: "#9 handled · All green", tree: { depth: 1, last: false, lines: [], children: true } },
-    { id: "smoke", title: "Smoke test", tone: "idle" as BotTone, meta: "1h", line: "Passed in 42s", tree: { depth: 2, last: false, lines: [true] } },
-    { id: "canary", title: "Canary watch", tone: "live" as BotTone, meta: "4m", line: "Watching error rates", tree: { depth: 2, last: true, lines: [true] } },
-    { id: "notes", title: "Release notes", tone: "idle" as BotTone, meta: "2h", line: "Drafted 6 entries", tree: { depth: 1, last: true, lines: [] } },
-    { id: "triage", title: "Issue triage", tone: "attention" as BotTone, meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", tree: { depth: 0 } },
+  // `parent` lets a closed row hide what hangs below it.
+  const all: Array<{ id: string; parent?: string; title: string; tone: BotTone; meta: ReactNode; line: string; tree: ListRowTree }> = [
+    { id: "planner", title: "Release planner", tone: "live", meta: "2m", line: "Working on #12 · message", tree: { depth: 0, children: true } },
+    { id: "deploy", parent: "planner", title: "Deploy checks", tone: "idle", meta: "1h", line: "#9 handled · All green", tree: { depth: 1, last: false, lines: [], children: true } },
+    { id: "smoke", parent: "deploy", title: "Smoke test", tone: "idle", meta: "1h", line: "Passed in 42s", tree: { depth: 2, last: false, lines: [true] } },
+    { id: "canary", parent: "deploy", title: "Canary watch", tone: "live", meta: "4m", line: "Watching error rates", tree: { depth: 2, last: true, lines: [true] } },
+    { id: "notes", parent: "planner", title: "Release notes", tone: "idle", meta: "2h", line: "Drafted 6 entries", tree: { depth: 1, last: true, lines: [] } },
+    { id: "triage", title: "Issue triage", tone: "attention", meta: <Badge variant="secondary">3</Badge>, line: "#4 run failed · Provider error", tree: { depth: 0 } },
   ];
+  // Expand off shows the whole tree; dedicated and title open and close each
+  // row with children from its caret (before the content, or in the title).
+  const [expand, setExpand] = useState<ListExpand>("none");
+  const carets = expand !== "none";
+  const [open, setOpen] = useState<Set<string>>(() => new Set(["planner"]));
+  const flip = (id: string) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const parentOf = new Map(all.map((row) => [row.id, row.parent]));
+  // Siblings keep the caret's room when any of them can open.
+  const groupOpens = new Set(all.filter((row) => row.tree.children).map((row) => row.parent ?? ""));
+  const shown = (row: (typeof all)[number]) => {
+    for (let up = row.parent; up; up = parentOf.get(up)) if (!open.has(up)) return false;
+    return true;
+  };
+  const rows = (carets ? all.filter(shown) : all).map((row) => {
+    const opens = carets && Boolean(row.tree.children);
+    const isOpen = open.has(row.id);
+    return {
+      ...row,
+      // A closed row drops no line to children it is not showing.
+      tree: opens ? { ...row.tree, children: isOpen } : row.tree,
+      opener: opens ? { open: isOpen, onToggle: () => flip(row.id), label: `${isOpen ? "Hide" : "Show"} what is under ${row.title}` } : undefined,
+      caretRoom: groupOpens.has(row.parent ?? ""),
+    };
+  });
   return (
     <Specimen
       title="List pane"
-      note="ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow (nested with tree), ListRowLine; PaneBar sets the header height"
+      note='ListPaneHeader, ListPaneToolbar, ListPaneBody, ListGroupLabel, ListRow (nested with tree), ListRowLine; PaneBar sets the header height. Expand off: the tree shows whole. Dedicated (ListPaneBody expand="dedicated"): a caret before the content opens and closes each row with children (ListRow expander). Title (expand="title"): the same caret, right after the title text.'
       className="block p-0"
     >
-      <div className="flex h-[30rem] overflow-hidden rounded-xl">
+      <ExpandSwitch
+        value={expand}
+        onChange={setExpand}
+        hint={{
+          none: "Every row shows, nested under its parent.",
+          dedicated: "A caret before the content opens and closes a row's children; clicking the row opens it.",
+          title: "A caret after the title opens and closes a row's children; clicking the row opens it.",
+        }[expand]}
+      />
+      <div className="flex h-[30rem] overflow-hidden rounded-b-xl">
         <div className="flex w-80 shrink-0 flex-col border-r">
           <ListPaneHeader
             title="Bots"
@@ -1215,13 +1381,15 @@ function BotListExample() {
               <span className="text-muted-foreground">{picked.size} selected</span>
             </ListPaneToolbar>
           )}
-          <ListPaneBody>
+          <ListPaneBody expand={expand}>
             <ListGroupLabel>Active</ListGroupLabel>
             <ul>
               {rows.map((row) => (
                 <ListRow
                   key={row.id}
                   to={`#${row.id}`}
+                  {...(row.opener ? { expander: row.opener } : {})}
+                  caretRoom={row.caretRoom}
                   active={row.id === "planner"}
                   selection={selecting ? { checked: picked.has(row.id), onToggle: () => toggle(row.id), label: `Select ${row.title}` } : undefined}
                   tree={row.tree}
@@ -1301,12 +1469,15 @@ const WORKSPACE_FILES: ExampleFile[] = [
 /// The rows of a file tree that show: each file and folder, and the contents
 /// of the open folders, with its place in the tree (whether it is the last of
 /// its siblings, which ancestor lines run past it, whether children follow).
-function visibleFiles(files: ExampleFile[], open: Set<string>, depth = 0, lines: boolean[] = []): Array<{ file: ExampleFile; tree: ListRowTree }> {
+/// `foldersBeside`: a sibling (or the file itself) is a folder, so with a
+/// dedicated caret the files of that folder keep its room.
+function visibleFiles(files: ExampleFile[], open: Set<string>, depth = 0, lines: boolean[] = []): Array<{ file: ExampleFile; tree: ListRowTree; foldersBeside: boolean }> {
+  const foldersBeside = files.some((file) => file.children !== undefined);
   return files.flatMap((file, index) => {
     const last = index === files.length - 1;
     const shown = file.children && open.has(file.id) ? file.children : [];
     const tree: ListRowTree = { depth, last, lines, children: shown.length > 0 };
-    return [{ file, tree }, ...visibleFiles(shown, open, depth + 1, depth === 0 ? [] : [...lines, !last])];
+    return [{ file, tree, foldersBeside }, ...visibleFiles(shown, open, depth + 1, depth === 0 ? [] : [...lines, !last])];
   });
 }
 
@@ -1345,6 +1516,15 @@ function FileActionsMenu({ name, folder }: { name: string; folder: boolean }) {
 
 /// The file list: the list pane in files mode, compressed, showing a
 /// workspace's folders and files as a tree, each with its icon.
+/// Every example file's and folder's title, by id.
+const WORKSPACE_FILE_TITLES = new Map<string, string>();
+(function collect(files: ExampleFile[]) {
+  for (const file of files) {
+    WORKSPACE_FILE_TITLES.set(file.id, file.title);
+    if (file.children) collect(file.children);
+  }
+})(WORKSPACE_FILES);
+
 function FileListExample() {
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(() => new Set(["list-pane"]));
@@ -1369,13 +1549,28 @@ function FileListExample() {
     ...row,
     tree: { ...row.tree, nextOpen: all[index + 1]?.tree.children ?? false },
   }));
+  // How folders open: by clicking the row (off: ListRow toggle), or by a
+  // caret of their own while the row selects the folder (dedicated, or
+  // title with the caret after the name).
+  const [expand, setExpand] = useState<ListExpand>("none");
+  const [current, setCurrent] = useState("list-pane");
+  const carets = expand !== "none";
   return (
     <Specimen
       title="File list"
-      note='The list pane in files mode, compressed (ListPaneBody mode="files" compressed): folders open and close (ListRow toggle), each file shows its type (ListRow fileName) and its ⋯ menu on hover (ListRow actions)'
+      note='The list pane in files mode, compressed (ListPaneBody mode="files" compressed): folders open and close, each file shows its type (ListRow fileName) and its ⋯ menu on hover (ListRow actions). Expand off: a folder row is a toggle (ListRow toggle). Dedicated (ListPaneBody expand="dedicated"): a caret before the content opens it (ListRow expander) and the row selects it. Title (expand="title"): the same caret, after the name.'
       className="block p-0"
     >
-      <div className="flex h-[30rem] overflow-hidden rounded-xl">
+      <ExpandSwitch
+        value={expand}
+        onChange={setExpand}
+        hint={{
+          none: "Clicking a folder row opens and closes it.",
+          dedicated: "A caret before the name opens a folder; clicking the row selects it.",
+          title: "A caret after the name opens a folder; clicking the row selects it.",
+        }[expand]}
+      />
+      <div className="flex h-[30rem] overflow-hidden rounded-b-xl">
         <div className="flex w-80 shrink-0 flex-col border-r">
           <ListPaneHeader
             title="Workspace"
@@ -1392,20 +1587,24 @@ function FileListExample() {
               <span className="text-muted-foreground">{picked.size} selected</span>
             </ListPaneToolbar>
           )}
-          <ListPaneBody mode="files" compressed>
+          <ListPaneBody mode="files" expand={expand} compressed>
             <ListGroupLabel>Files</ListGroupLabel>
             {/* The rows' top line. */}
             <ul className="border-t">
-              {rows.map(({ file, tree }) => {
-                // A folder opens and closes; a file opens its detail.
+              {rows.map(({ file, tree, foldersBeside }) => {
+                // A folder opens and closes (by its row, or by its caret
+                // while its row selects it); a file opens its detail.
                 const folder = file.children !== undefined;
                 const isOpen = open.has(file.id);
+                const opener = { open: isOpen, onToggle: () => flip(file.id) };
                 return (
                   <ListRow
                     key={file.id}
-                    to={folder ? undefined : `#${file.id}`}
-                    toggle={folder ? { open: isOpen, onToggle: () => flip(file.id) } : undefined}
-                    active={file.id === "list-pane"}
+                    to={folder && !carets ? undefined : `#${file.id}`}
+                    {...(folder ? (carets ? { expander: opener } : { toggle: opener }) : {})}
+                    caretRoom={foldersBeside}
+                    entryProps={{ onClick: () => { if (!folder || carets) setCurrent(file.id); } }}
+                    active={file.id === current}
                     selection={selecting ? { checked: picked.has(file.id), onToggle: () => toggle(file.id), label: `Select ${file.title}` } : undefined}
                     tree={tree}
                     fileName={file.title}
@@ -1422,8 +1621,8 @@ function FileListExample() {
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
           <PaneBar as="header">
-            <span className="truncate text-sm font-semibold">list-pane.tsx</span>
-            <span className="text-xs text-muted-foreground">src/components</span>
+            <span className="truncate text-sm font-semibold">{WORKSPACE_FILE_TITLES.get(current) ?? current}</span>
+            <span className="text-xs text-muted-foreground">{carets ? "folders can be selected" : "files only"}</span>
           </PaneBar>
           <p className="p-4 text-sm text-muted-foreground">The selected file.</p>
         </div>
@@ -1818,6 +2017,8 @@ const RESOURCE_ENTITIES: PlainEntity[] = [
   { entity: "Tools", icon: Icons.ToolsIcon, source: "session/session-resources.tsx" },
   { entity: "Sub-agents", icon: Icons.SubAgentIcon, source: "session/session-resources.tsx" },
   { entity: "Parent agent", icon: Icons.ParentAgentIcon, source: "session/session-meta.tsx" },
+  { entity: "Main thread", icon: Icons.SessionMainThreadIcon, source: "pages/BotsPage.tsx" },
+  { entity: "Thread", icon: Icons.SessionSubThreadIcon, source: "pages/BotsPage.tsx" },
   { entity: "Code mode", icon: Icons.CodeModeIcon, source: "session/session-resources.tsx" },
   { entity: "Web", icon: Icons.WebIcon, source: "session/session-resources.tsx" },
   { entity: "Timers", icon: Icons.TimerIcon, source: "session/session-resources.tsx" },
