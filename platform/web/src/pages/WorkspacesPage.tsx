@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import { AddIcon, FileIcon, WorkspaceIcon } from "@/icons";
+import { AddIcon, FileIcon, PreviewIcon, SourceViewIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -572,24 +572,28 @@ function FileDetail({
                 kind: "choice" as const,
                 key: "view",
                 label: "Markdown view",
+                appearance: "toggle" as const,
                 value: preview ? "preview" : "source",
                 options: [
-                  { value: "source", label: "Source" },
-                  { value: "preview", label: "Preview", hint: "Preview Markdown" },
+                  { value: "source", label: "Source", icon: <SourceViewIcon data-icon="inline-start" /> },
+                  { value: "preview", label: "Preview", hint: "Preview Markdown", icon: <PreviewIcon data-icon="inline-start" /> },
                 ],
                 onChange: (value: string) => onPreviewChange(value === "preview"),
               }]
             : []),
           ...(canEditFiles && textEditor
             ? [{
+                kind: "save" as const,
                 key: "save",
                 label: "Save",
-                text: save.isPending ? "Saving…" : dirty ? "Save" : "Saved",
+                dirty,
+                saving: save.isPending,
+                // A failed save, while its changes are still unsaved.
+                error: editor.error !== null && dirty,
                 hint: "Save (⌘S / Ctrl+S)",
                 keyShortcuts: "Meta+S Control+S",
-                primary: true,
                 disabled: !canSave,
-                onSelect: saveCurrent,
+                onSave: saveCurrent,
               }]
             : []),
           // The file's actions (rename, download, delete, …), as its row's

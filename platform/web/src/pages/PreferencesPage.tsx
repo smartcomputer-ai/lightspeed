@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/page";
 import { DemoModeNote } from "@/components/onboarding/demo-mode-note";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Card,
   CardContent,
@@ -13,7 +14,14 @@ import { Switch } from "@/components/ui/switch";
 import { demoMode } from "@/lib/demo-mode";
 import { SETTINGS, useSetting, type ReducedMotion } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
-import { DarkThemeIcon, LightThemeIcon, SystemThemeIcon } from "@/icons";
+import {
+  DarkThemeIcon,
+  LightThemeIcon,
+  ReducedMotionOffIcon,
+  ReducedMotionOnIcon,
+  ReducedMotionSystemIcon,
+  SystemThemeIcon,
+} from "@/icons";
 
 /// The signed-in person's own preferences, above any universe like the
 /// account page.
@@ -68,19 +76,14 @@ function AppearanceCard() {
       <CardContent className="grid gap-6">
         <section aria-labelledby="theme-label" className="grid gap-2">
           <h3 id="theme-label" className="text-sm font-medium">Theme</h3>
-          <div className="flex gap-2">
+          <ButtonGroup aria-labelledby="theme-label">
             {options.map(({ value, label, icon: Icon }) => (
-              <Button
-                key={value}
-                variant={theme === value ? "secondary" : "outline"}
-                aria-pressed={theme === value}
-                onClick={() => setTheme(value)}
-              >
+              <Button key={value} aria-pressed={theme === value} onClick={() => setTheme(value)}>
                 <Icon data-icon="inline-start" />
                 {label}
               </Button>
             ))}
-          </div>
+          </ButtonGroup>
         </section>
         <section aria-labelledby="starscape-label" className="grid gap-2">
           <h3 id="starscape-label" className="text-sm font-medium">Starscape</h3>
@@ -96,10 +99,10 @@ function AppearanceCard() {
 
 function AccessibilityCard() {
   const [reducedMotion, setReducedMotion] = useSetting(SETTINGS.reducedMotion);
-  const options: { value: ReducedMotion; label: string }[] = [
-    { value: "on", label: "On" },
-    { value: "off", label: "Off" },
-    { value: "system", label: "System" },
+  const options: { value: ReducedMotion; label: string; icon: typeof ReducedMotionOnIcon }[] = [
+    { value: "on", label: "Reduced", icon: ReducedMotionOnIcon },
+    { value: "off", label: "Normal", icon: ReducedMotionOffIcon },
+    { value: "system", label: "System", icon: ReducedMotionSystemIcon },
   ];
 
   return (
@@ -114,18 +117,14 @@ function AccessibilityCard() {
             Turns off animations and moving backgrounds. System follows your device's setting.
           </p>
         </div>
-        <div role="group" aria-labelledby="reduced-motion-label" className="flex gap-2">
-          {options.map(({ value, label }) => (
-            <Button
-              key={value}
-              variant={reducedMotion === value ? "secondary" : "outline"}
-              aria-pressed={reducedMotion === value}
-              onClick={() => setReducedMotion(value)}
-            >
+        <ButtonGroup aria-labelledby="reduced-motion-label">
+          {options.map(({ value, label, icon: Icon }) => (
+            <Button key={value} aria-pressed={reducedMotion === value} onClick={() => setReducedMotion(value)}>
+              <Icon data-icon="inline-start" />
               {label}
             </Button>
           ))}
-        </div>
+        </ButtonGroup>
       </CardContent>
     </Card>
   );

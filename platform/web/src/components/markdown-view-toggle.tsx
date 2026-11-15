@@ -1,16 +1,22 @@
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PreviewIcon, SourceViewIcon } from "@/icons";
+import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 
+/// Source or Preview for a Markdown file: a toggle group.
 export function MarkdownViewToggle({ preview, onPreviewChange }: {
   preview: boolean;
   onPreviewChange: (preview: boolean) => void;
 }) {
   return (
-    <Tabs value={preview ? "preview" : "source"}
-      onValueChange={(value) => onPreviewChange(value === "preview")}>
-      <TabsList aria-label="Markdown view" activateOnFocus>
-        <TabsTrigger value="source">Source</TabsTrigger>
-        <TabsTrigger value="preview" title="Preview Markdown">Preview</TabsTrigger>
-      </TabsList>
-    </Tabs>
+    <ButtonGroup aria-label="Markdown view">
+      <Button size="sm" aria-pressed={!preview} onClick={() => onPreviewChange(false)}>
+        <SourceViewIcon data-icon="inline-start" />
+        Source
+      </Button>
+      <Button size="sm" aria-pressed={preview} title="Preview Markdown" onClick={() => onPreviewChange(true)}>
+        <PreviewIcon data-icon="inline-start" />
+        Preview
+      </Button>
+    </ButtonGroup>
   );
 }

@@ -2,9 +2,12 @@ import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState, t
 import { useDocumentTitle } from "@/lib/document-title";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { DEFAULT_UNIVERSE_ICON, UNIVERSE_ICON_COLORS, UNIVERSE_ICONS, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
-import { AddIcon, BotIcon, CopyIcon, CopyLinkIcon, DarkThemeIcon, DeleteIcon, DownloadIcon, EditIcon, EmailIcon, InboxIcon, MoreIcon, NewFileIcon, NewFolderIcon, LightThemeIcon, NotificationIcon, RefreshIcon, SearchIcon, SelectModeIcon, SettingsIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
+import { AddIcon, BotIcon, CopyIcon, CopyLinkIcon, DarkThemeIcon, DeleteIcon, DownloadIcon, EditIcon, EmailIcon, InboxIcon, MoreIcon, NewFileIcon, NewFolderIcon, LightThemeIcon, NotificationIcon, PreviewIcon, RefreshIcon, SaveIcon, SearchIcon, SelectedIcon, SelectModeIcon, SettingsIcon, SourceViewIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import { SaveButton } from "@/components/ui/save-button";
+import { AnimatedLoadingIcon } from "@/components/ui/animated-loading-icon";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -780,7 +783,150 @@ function ButtonsSection() {
         <Button variant="outline" aria-invalid>Invalid</Button>
         <Button variant="outline" aria-expanded>Expanded</Button>
       </Specimen>
+      <Specimen
+        title="Dirty state"
+        note="ui/save-button: Save while there are unsaved changes, Saving… while it saves, Saved when there is nothing to save, Save failed when the save did not succeed"
+        className="grid gap-4"
+      >
+        <DirtyStateSample />
+        <div className="flex flex-wrap items-center gap-3">
+          <SaveButton dirty={false} />
+          <SaveButton dirty />
+          <SaveButton dirty saving />
+          <SaveButton dirty error />
+        </div>
+      </Specimen>
+      <Specimen
+        title="Button group"
+        note="ui/button-group: buttons that belong together, joined with square inner corners; secondary unless a button says otherwise"
+      >
+        <ButtonGroup aria-label="Actions">
+          <Button><EditIcon data-icon="inline-start" />Edit</Button>
+          <Button variant="destructive"><DeleteIcon data-icon="inline-start" />Delete</Button>
+          <Button variant="default"><SaveIcon data-icon="inline-start" />Save</Button>
+        </ButtonGroup>
+      </Specimen>
+      <Specimen
+        title="Toggle group"
+        note="ui/button-group as a toggle: the aria-pressed choice is primary; on the page and on a card"
+        className="grid gap-4 sm:grid-cols-2"
+      >
+        <ToggleGroupSamples />
+      </Specimen>
+      <Specimen
+        title="Toggle group with check marks"
+        note="checkMarks: a check ends each toggle button, faint for the choices not taken"
+        className="grid gap-4 sm:grid-cols-2"
+      >
+        <ToggleGroupSamples checkMarks />
+      </Specimen>
     </Category>
+  );
+}
+
+/// A field whose edits make the save button dirty; saving takes a moment,
+/// then the saved text is the field's.
+function DirtyStateSample() {
+  const [saved, setSaved] = useState("Lightspeed");
+  const [text, setText] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [fail, setFail] = useState(false);
+  const save = () => {
+    setSaving(true);
+    window.setTimeout(() => {
+      if (!fail) setSaved(text);
+      setFailed(fail);
+      setSaving(false);
+    }, 1500);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Input
+        aria-label="Name"
+        value={text}
+        onChange={(event) => {
+          setText(event.target.value);
+          setFailed(false);
+        }}
+        className="w-64"
+      />
+      <SaveButton dirty={text !== saved} saving={saving} error={failed} onClick={save} />
+      <label className="flex cursor-action items-center gap-2 text-sm text-muted-foreground">
+        <Switch checked={fail} onCheckedChange={setFail} />
+        Make saves fail
+      </label>
+    </div>
+  );
+}
+
+/// Each toggle sample on the page and on a card.
+function ToggleGroupSamples({ checkMarks = false }: { checkMarks?: boolean }) {
+  return (
+    <>
+      <div className="grid content-start gap-2">
+        <Caption>page</Caption>
+        <ThemeToggleGroup checkMarks={checkMarks} />
+        <p className="text-xs text-muted-foreground">On the page it needs the large shadow added behind it.</p>
+      </div>
+      <Card size="sm">
+        <CardContent className="grid gap-2">
+          <Caption>card</Caption>
+          <ThemeToggleGroup checkMarks={checkMarks} />
+        </CardContent>
+      </Card>
+      <div className="grid content-start gap-2">
+        <Caption>page</Caption>
+        <SourcePreviewToggleGroup checkMarks={checkMarks} />
+      </div>
+      <Card size="sm">
+        <CardContent className="grid gap-2">
+          <Caption>card</Caption>
+          <SourcePreviewToggleGroup checkMarks={checkMarks} />
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+/// A button group used as a toggle: one choice pressed at a time. A sample
+/// only; it does not change the theme.
+function ThemeToggleGroup({ checkMarks }: { checkMarks: boolean }) {
+  const [theme, setTheme] = useState<"light" | "dark" | "system">("dark");
+  const options = [
+    { value: "light", label: "Light", icon: LightThemeIcon },
+    { value: "dark", label: "Dark", icon: DarkThemeIcon },
+    { value: "system", label: "System", icon: SystemThemeIcon },
+  ] as const;
+  return (
+    <ButtonGroup aria-label="Theme" checkMarks={checkMarks}>
+      {options.map(({ value, label, icon: Icon }) => (
+        <Button key={value} aria-pressed={theme === value} onClick={() => setTheme(value)}>
+          <Icon data-icon="inline-start" />
+          {label}
+        </Button>
+      ))}
+    </ButtonGroup>
+  );
+}
+
+/// A two-way toggle between a document's source and its rendered preview.
+/// A sample only.
+function SourcePreviewToggleGroup({ checkMarks }: { checkMarks: boolean }) {
+  const [view, setView] = useState<"source" | "preview">("preview");
+  const options = [
+    { value: "source", label: "Source", icon: SourceViewIcon },
+    { value: "preview", label: "Preview", icon: PreviewIcon },
+  ] as const;
+  return (
+    <ButtonGroup aria-label="View" checkMarks={checkMarks}>
+      {options.map(({ value, label, icon: Icon }) => (
+        <Button key={value} aria-pressed={view === value} onClick={() => setView(value)}>
+          <Icon data-icon="inline-start" />
+          {label}
+        </Button>
+      ))}
+    </ButtonGroup>
   );
 }
 
@@ -1816,6 +1962,27 @@ const LIBRARY_SOURCE =
     ([file, source]) => file.startsWith("/src/icons/") && source.includes(`name: "${Icons.ICON_LIBRARY}"`),
   )?.[1] ?? "";
 
+/// Icons that move: begun and stopped here to watch them come and go.
+function AnimatedIconsSpecimen() {
+  const [loading, setLoading] = useState(true);
+  return (
+    <Specimen
+      title="Animated icons"
+      note="ui/animated-loading-icon: the loading icon spinning; it grows in from a fifth while it fades in when begun, and fades and shrinks away when stopped"
+      className="flex flex-wrap items-center gap-6"
+    >
+      <span className="flex items-center gap-3">
+        <AnimatedLoadingIcon active={loading} className="[&_svg]:size-6" />
+        <Caption>animated loading</Caption>
+      </span>
+      <ButtonGroup aria-label="Animated loading">
+        <Button aria-pressed={loading} onClick={() => setLoading(true)}>Begin</Button>
+        <Button aria-pressed={!loading} onClick={() => setLoading(false)}>Stop</Button>
+      </ButtonGroup>
+    </Specimen>
+  );
+}
+
 function IconsSection() {
   const roles = useMemo(() => {
     const usage = collectRoleUsage(APP_SOURCES);
@@ -1860,6 +2027,7 @@ function IconsSection() {
           </Specimen>
         );
       })}
+      {!needle && <AnimatedIconsSpecimen />}
       {!needle && (
         <Specimen
           title={`Universe icons (${UNIVERSE_ICONS.length})`}

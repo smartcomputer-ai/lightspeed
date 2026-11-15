@@ -49,6 +49,12 @@ export interface IconSet {
   LightThemeIcon: IconComponent;
   DarkThemeIcon: IconComponent;
   SystemThemeIcon: IconComponent;
+  /** Reduced motion on: everything moves less (a walk, not a run). */
+  ReducedMotionOnIcon: IconComponent;
+  /** Reduced motion off: full motion. */
+  ReducedMotionOffIcon: IconComponent;
+  /** Reduced motion as the system asks. */
+  ReducedMotionSystemIcon: IconComponent;
   GitHubLogo: IconComponent;
   OpenAiLogo: IconComponent;
   AnthropicLogo: IconComponent;
@@ -95,6 +101,8 @@ export interface IconSet {
   AttachIcon: IconComponent;
   EditIcon: IconComponent;
   EditFilesIcon: IconComponent;
+  /** Save changes (the save button). */
+  SaveIcon: IconComponent;
   DeleteIcon: IconComponent;
   ArchiveIcon: IconComponent;
   /** Closing a session, and the mark of a closed one. */
@@ -111,6 +119,10 @@ export interface IconSet {
   ConfigureIcon: IconComponent;
   FilterIcon: IconComponent;
   SelectModeIcon: IconComponent;
+  /** Show a document as its source text (markup, code), next to Preview. */
+  SourceViewIcon: IconComponent;
+  /** Show a document rendered, as it will look, next to Source. */
+  PreviewIcon: IconComponent;
   SendIcon: IconComponent;
   SubmitIcon: IconComponent;
   QueueIcon: IconComponent;

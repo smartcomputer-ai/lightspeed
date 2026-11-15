@@ -49,7 +49,7 @@ it("turns the starscape off and on again", async () => {
   expect(localStorage.getItem("lightspeed:starscape")).toBeNull();
 });
 
-it("offers reduced motion on, off, or as the system asks, which is the default", async () => {
+it("offers reduced or normal motion, or as the system asks, which is the default", async () => {
   let systemReduces = true;
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: query.includes("reduced-motion") && systemReduces,
@@ -65,12 +65,12 @@ it("offers reduced motion on, off, or as the system asks, which is the default",
   expect(choice("System").getAttribute("aria-pressed")).toBe("true");
   expect(motion()).toBe("reduce");
 
-  await act(async () => choice("Off").click());
+  await act(async () => choice("Normal").click());
   expect(localStorage.getItem("lightspeed:reduced-motion")).toBe("off");
-  expect(choice("Off").getAttribute("aria-pressed")).toBe("true");
+  expect(choice("Normal").getAttribute("aria-pressed")).toBe("true");
   expect(motion()).toBe("full");
 
-  await act(async () => choice("On").click());
+  await act(async () => choice("Reduced").click());
   expect(localStorage.getItem("lightspeed:reduced-motion")).toBe("on");
   expect(motion()).toBe("reduce");
 
