@@ -78,6 +78,7 @@ export function MetaDetailsRow({
   badges = [],
   muted = false,
   mono = false,
+  current = false,
   href,
   external = false,
   onSelect,
@@ -97,6 +98,8 @@ export function MetaDetailsRow({
   muted?: boolean;
   /** The name is code (a path, a hash): monospace, broken anywhere instead of cut. */
   mono?: boolean;
+  /** What the page shows now, e.g. the open conversation: highlighted, and announced as the current page. */
+  current?: boolean;
   /** Opens this app path; with `external`, this address in a new tab. */
   href?: string;
   external?: boolean;
@@ -140,13 +143,13 @@ export function MetaDetailsRow({
       </span>
     </>
   );
-  const acts = cn(ROW_CLASS, ROW_ACTS_CLASS);
+  const acts = cn(ROW_CLASS, ROW_ACTS_CLASS, current && "bg-foreground/5");
   return (
-    <li data-slot="meta-details-row">
+    <li data-slot="meta-details-row" data-current={current || undefined}>
       {href !== undefined && external ? (
         <PopoverClose nativeButton={false} render={<a href={href} target="_blank" rel="noopener noreferrer" />} className={acts}>{body}</PopoverClose>
       ) : href !== undefined ? (
-        <PopoverClose nativeButton={false} render={<Link to={href} />} className={acts}>{body}</PopoverClose>
+        <PopoverClose nativeButton={false} render={<Link to={href} aria-current={current ? "page" : undefined} />} className={acts}>{body}</PopoverClose>
       ) : onSelect ? (
         <PopoverClose onClick={onSelect} className={acts}>{body}</PopoverClose>
       ) : (

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -14,7 +14,12 @@ vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "universe", isLoading: false }),
   useFeature: () => true,
 }));
-vi.mock("@/pages/SessionsPage", () => ({ SessionDetail: () => <div>Readable transcript</div> }));
+// The conversation, with the header the bot page gives it (its switcher and ⋯ menu).
+vi.mock("@/pages/SessionsPage", () => ({
+  SessionDetail: ({ embeddedHeader }: { embeddedHeader?: { title: ReactNode; actions?: ReactNode } }) => (
+    <div>{embeddedHeader?.title}{embeddedHeader?.actions}Readable transcript</div>
+  ),
+}));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));

@@ -6,7 +6,7 @@ import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/compo
 import { SessionDot } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
 import { requestRowMenu } from "@/lib/row-menu";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -1436,6 +1436,7 @@ export function SessionDetail({
   sessionId,
   backTo = `/u/${handle}/sessions`,
   embedded = false,
+  embeddedHeader,
   sessionHref,
 }: {
   universeId: string;
@@ -1448,6 +1449,13 @@ export function SessionDetail({
    * talks to it, so there is nothing to override.
    */
   embedded?: boolean;
+  /**
+   * Embedded, a header of its own in place of the page's: `title` names
+   * what is open (a switcher, say), beside the session's meta toolbar as
+   * its page shows it (without who drives it: the surrounding page says
+   * that), and `actions` its ⋯ menu.
+   */
+  embeddedHeader?: { title: ReactNode; actions?: ReactNode };
   /** Where lineage links go; defaults to the Sessions page. */
   sessionHref?: (sessionId: string) => string;
 }) {
@@ -1648,7 +1656,7 @@ export function SessionDetail({
     lineage,
     lineageHref: sessionHref ?? ((target: string) => `/u/${handle}/sessions/${target}`),
     resources: resourcesShown
-      ? sessionResourceItems({ resources, handle, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
+      ? sessionResourceItems({ resources, handle, universeId, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
       : [],
   }) : [];
   const showStrip = SHOW_META_STRIP && meta.length > 0 && (resourcesShown || hasLineage(lineage));
@@ -2082,6 +2090,24 @@ export function SessionDetail({
           )}
         </div>
       )}
+      {embedded && embeddedHeader && (
+        // As the page's header, for a session inside another page: what is
+        // open, its state and what it can reach, then its ⋯.
+        <DetailHeader
+          title={embeddedHeader.title}
+          titleClassName="overflow-visible"
+          tags={meta.length > 0 && (
+            <MetaToolbar
+              items={meta.filter((item) => item.key !== SESSION_META.controller)}
+              place="header"
+              full
+              label="Conversation details"
+              className="grow"
+            />
+          )}
+          actions={embeddedHeader.actions ? [{ kind: "custom", key: "conversation", node: embeddedHeader.actions }] : []}
+        />
+      )}
       {!embedded && (
         <>
         {/* Left is state: what it is, who sees it, who drives it, what it is
@@ -2094,7 +2120,6 @@ export function SessionDetail({
             kind: "custom",
             key: "session",
             node: <SessionActionsMenu
-              variant="more"
               sessionId={sessionId}
               metadata={session.data?.metadata}
               open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotIcon /> } : undefined}

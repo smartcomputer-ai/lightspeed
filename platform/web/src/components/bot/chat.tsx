@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { LoadingIcon } from "@/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api, botLabel, type BotControllerSnapshot, type BotStateView, type BotView } from "@/api";
@@ -16,7 +16,7 @@ const introduced = new Set<string>();
  * One of the bot's conversations, full width: the transcript and composer.
  * The composer sends a plain message to that session — an ordinary client
  * run queued behind whatever the bot is doing. Which conversation is shown
- * is the tab row's business.
+ * is the page's business: `header` names it and holds its menu.
  */
 export function BotChat({
   universeId,
@@ -25,6 +25,7 @@ export function BotChat({
   state,
   stateError,
   sessionId,
+  header,
 }: {
   universeId: string;
   handle: string;
@@ -32,6 +33,8 @@ export function BotChat({
   state?: BotStateView;
   stateError?: string;
   sessionId: string | undefined;
+  /// The conversation's header: what is open (a switcher) and its ⋯ menu.
+  header?: { title: ReactNode; actions?: ReactNode };
 }) {
   const base = `/u/${handle}/bots/${bot.botId}`;
   const controller = state?.controller ?? undefined;
@@ -81,6 +84,7 @@ export function BotChat({
       sessionId={selected}
       backTo={base}
       embedded
+      {...(header ? { embeddedHeader: header } : {})}
       sessionHref={sessionHref}
     />
   );

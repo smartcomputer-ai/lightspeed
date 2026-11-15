@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BotEventView, BotListItem, BotStateView, SessionSummary } from "@/api";
-import { botSubRows, rosterLine, subRowKindMark, threadLine } from "./BotsPage";
+import { rosterLine } from "./BotsPage";
+import { botSubRows, subRowKindMark, threadLine } from "@/components/bot/conversations";
 import { SessionSubThreadIcon } from "@/icons";
 import { BOT_TEMPLATES } from "@/components/bot/templates";
 import { capabilitySummary } from "@/components/bot/setup-summary";

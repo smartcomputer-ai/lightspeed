@@ -2015,7 +2015,7 @@ const RESOURCE_ENTITIES: PlainEntity[] = [
   { entity: "Environment", icon: Icons.EnvironmentIcon, source: "session/session-resources.tsx" },
   { entity: "Workspace", icon: Icons.WorkspaceIcon, source: "session/session-resources.tsx" },
   { entity: "Tools", icon: Icons.ToolsIcon, source: "session/session-resources.tsx" },
-  { entity: "Sub-agents", icon: Icons.SubAgentIcon, source: "session/session-resources.tsx" },
+  { entity: "Sub-agent profiles", icon: Icons.ProfileIcon, source: "session/session-resources.tsx" },
   { entity: "Parent agent", icon: Icons.ParentAgentIcon, source: "session/session-meta.tsx" },
   { entity: "Main thread", icon: Icons.SessionMainThreadIcon, source: "pages/BotsPage.tsx" },
   { entity: "Thread", icon: Icons.SessionSubThreadIcon, source: "pages/BotsPage.tsx" },

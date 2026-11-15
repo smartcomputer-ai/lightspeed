@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BotControllerSnapshot, BotSessionSnapshot, BotStateView, SessionSummaryView } from "@/api";
-import { conversationTabs } from "./detail";
+import { botConversations } from "./conversations";
 import { environmentSummary, guardrailsSummary, otherBotsSummary } from "./setup-summary";
 
 function controller(partial: Partial<BotControllerSnapshot>): BotControllerSnapshot {
@@ -68,57 +68,37 @@ const subagent = (
   },
 });
 
-describe("conversationTabs", () => {
+describe("botConversations", () => {
   it("is just Main for a bot with one session", () => {
-    const tabs = conversationTabs(state({}), undefined);
-    expect(tabs.inline.map((tab) => tab.label)).toEqual(["Main"]);
-    expect(tabs.overflow).toEqual([]);
+    expect(botConversations(state({})).map((conversation) => [conversation.kind, conversation.title])).toEqual([["main", "Main"]]);
   });
-  it("keeps the most recent threads inline and folds the rest, leaving sub-agents to the header", () => {
+
+  it("lists Main, then each thread with the sub-agents under it, then Main's sub-agents", () => {
     const current = state(
       {
         sessions: [
           { sessionId: "bot:v1:triage", label: "main", kind: "main", busy: false, generation: 1 },
           thread("t-old", "PR-1", 1),
-          thread("t-3", "PR-3", 3),
-          thread("t-2", "PR-2", 2),
-          thread("t-4", "PR-4", 4),
+          thread("t-new", "PR-2", 2),
+        ],
+        recentDeliveries: [
+          { deliveryId: "d-1", sessionId: "bot:v1:triage", seqs: [3], outcome: "handled", summary: "Triaged #3", finishedAtMs: 5 },
         ],
       },
-      [own("t-4", "working"), own("t-3", "waiting"), subagent("sub-1", "reviewer", "t-4", 5)],
+      [own("t-new", "working"), subagent("s-thread", "Reviewer", "t-new", 4), subagent("s-main", "Explorer", "bot:v1:triage", 3)],
     );
-    const tabs = conversationTabs(current, undefined);
-    expect(tabs.inline.map((tab) => tab.label)).toEqual(["Main", "PR-4", "PR-3", "PR-2"]);
-    // Each tab shows what its session is doing, however the run started.
-    expect(tabs.inline.map((tab) => tab.activity)).toEqual(["idle", "working", "waiting", "idle"]);
-    // Sub-agents are listed by the header's sub-agent item, not as tabs.
-    expect(tabs.overflow.map((tab) => tab.label)).toEqual(["PR-1"]);
-    const selected = conversationTabs(current, "sub-1");
-    expect(selected.inline.at(-1)).toMatchObject({ id: "sub-1", label: "reviewer", kind: "subagent", hint: "sub-agent of PR-4" });
+    const conversations = botConversations(current);
+    expect(conversations.map((conversation) => conversation.id)).toEqual(["bot:v1:triage", "t-new", "s-thread", "t-old", "s-main"]);
+    // Main is worded as the bot's own row words its latest work.
+    expect(conversations[0]).toMatchObject({ kind: "main", title: "Main", line: "#3 handled · Triaged #3" });
+    expect(conversations[1]).toMatchObject({ kind: "thread", title: "PR-2", line: "Working", tone: "live" });
+    // A sub-agent says who delegated to it.
+    expect(conversations[2]).toMatchObject({ kind: "subagent", title: "Reviewer", parent: "PR-2" });
+    expect(conversations[4]).toMatchObject({ kind: "subagent", title: "Explorer", parent: "Main" });
   });
-  it("resolves a selected nested sub-agent's parent from descendant display names", () => {
-    const parent = subagent("sub-parent-id", "planner", "bot:v1:triage", 4);
-    const child = subagent("sub-child-id", "reviewer", "sub-parent-id", 5);
-    const tabs = conversationTabs(state({}, [parent, child]), "sub-child-id");
-    expect(tabs.overflow).toEqual([]);
-    expect(tabs.inline.find((tab) => tab.id === "sub-child-id")?.hint)
-      .toBe("sub-agent of planner");
-  });
-  it("always shows the selected conversation inline", () => {
-    const current = state({
-      sessions: [
-        { sessionId: "bot:v1:triage", label: "main", kind: "main", busy: false, generation: 1 },
-        thread("t-1", "PR-1", 1),
-        thread("t-2", "PR-2", 2),
-        thread("t-3", "PR-3", 3),
-        thread("t-4", "PR-4", 4),
-      ],
-    });
-    const tabs = conversationTabs(current, "t-1");
-    expect(tabs.inline.map((tab) => tab.id)).toContain("t-1");
-    expect(tabs.overflow.map((tab) => tab.id)).not.toContain("t-1");
-    const unknown = conversationTabs(current, "closed-subagent-session-id");
-    expect(unknown.inline.at(-1)?.id).toBe("closed-subagent-session-id");
+
+  it("has none before the controller reports", () => {
+    expect(botConversations(undefined)).toEqual([]);
   });
 });
 

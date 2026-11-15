@@ -2,25 +2,22 @@ import { Fragment, useState, type ReactNode } from "react";
 import { useWatchConnected } from "@/lib/universe-watch";
 import type { BotReadResponse } from "@lightspeed-ai/sdk";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { AddIcon, BotAvatarIcon, SessionSubThreadIcon, SubAgentIcon } from "@/icons";
+import { AddIcon, BotAvatarIcon } from "@/icons";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   api,
   botLabel,
-  type BotEventOutcome,
   type BotListItem,
   type BotListResponse,
   type BotStateReadResponse,
   type BotStateView,
   type BotView,
 } from "@/api";
-import { activityLabel, activityTone, sessionDotState } from "@/components/activity-dot";
-import type { SessionActivity } from "@lightspeed-ai/sdk";
-import { sessionName } from "@/components/session/session-meta";
+import { botSubRows, subRowKindMark, type BotSubRow } from "@/components/bot/conversations";
 import { BotDetail, type BotTab } from "@/components/bot/detail";
 import { BotCreateDialog } from "@/pages/BotCreatePage";
 import { BotAvatar } from "@/components/bot/face";
-import { StatusDot, outcomeLabel, relativeTime, type BotTone, type StatusTone } from "@/components/bot/status";
+import { StatusDot, outcomeLabel, relativeTime, type BotTone } from "@/components/bot/status";
 import { Button } from "@/components/ui/button";
 import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
@@ -41,7 +38,6 @@ import {
 } from "@/components/list-pane";
 import { requestRowMenu } from "@/lib/row-menu";
 import { botMetaItems } from "@/components/bot/bot-meta";
-import type { MetaItem } from "@/components/meta-toolbar";
 
 const ROSTER_REFRESH_MS = 5_000;
 
@@ -388,140 +384,6 @@ function pathTo(rows: BotSubRow[], id: string, above: string[] = []): string[] |
     if (found) return found;
   }
   return null;
-}
-
-/// One sub-row under a selected bot: a thread, or a sub-agent under the
-/// conversation that delegated to it.
-export interface BotSubRow {
-  id: string;
-  title: string;
-  /** The title's tooltip: what kind of conversation it is. */
-  hint?: string;
-  /** Its second line: a thread's latest work (as the bot's own row says it), or a sub-agent's profile and state. */
-  line: string;
-  /** The line reports a failure: drawn in the danger color. */
-  failed?: boolean;
-  tone: StatusTone;
-  /** A closed sub-agent: drawn faded. */
-  closed: boolean;
-  /** What it is, as the mark in its meta toolbar: a thread (or one-off) of the bot, or a sub-agent. */
-  kind: { thread: true; label: string } | { thread: false; profile?: string };
-  /** When it last changed. */
-  atMs?: number;
-  children: BotSubRow[];
-}
-
-/// A bot's conversations as sub-rows of its row, which stands for Main:
-/// its threads, most recently active first, and each sub-agent under the
-/// conversation that delegated to it (one of Main's under the bot itself).
-/// Everything comes from the bot's state, already read: nothing more is.
-export function botSubRows(state: BotStateView | undefined): BotSubRow[] {
-  const controller = state?.controller;
-  if (!controller) return [];
-  const sessions = state?.sessions ?? [];
-  const summaryOf = new Map(sessions.map((session) => [session.id, session]));
-  // Each thread's delivery in flight, and its latest finished one.
-  const activeOf = new Map((controller.activeDeliveries ?? []).map((delivery) => [delivery.sessionId, delivery]));
-  const recentOf = new Map<string, NonNullable<typeof controller.recentDeliveries>[number]>();
-  for (const delivery of controller.recentDeliveries ?? []) {
-    const known = recentOf.get(delivery.sessionId);
-    if (!known || delivery.finishedAtMs > known.finishedAtMs) recentOf.set(delivery.sessionId, delivery);
-  }
-  const threads: BotSubRow[] = (controller.sessions ?? [])
-    .filter((session) => session.kind !== "main")
-    .sort((left, right) => (right.lastActiveAtMs ?? 0) - (left.lastActiveAtMs ?? 0))
-    .map((session) => {
-      const summary = summaryOf.get(session.sessionId);
-      const kind = session.kind === "perKey" ? "Thread" : "One-off";
-      const { line, tone, failed } = threadLine({
-        activity: summary?.activity,
-        active: activeOf.get(session.sessionId),
-        recent: recentOf.get(session.sessionId),
-        preview: summary?.lastMessagePreview ?? undefined,
-        kind,
-      });
-      return {
-        id: session.sessionId,
-        title: session.label,
-        hint: `${kind}: ${session.label}`,
-        kind: { thread: true, label: kind },
-        line,
-        ...(failed ? { failed } : {}),
-        tone,
-        closed: false,
-        ...(session.lastActiveAtMs == null ? {} : { atMs: session.lastActiveAtMs }),
-        children: [],
-      };
-    });
-  const byId = new Map<string, BotSubRow>(threads.map((row) => [row.id, row]));
-  const subagents = sessions.filter((session) => session.origin);
-  for (const session of subagents) {
-    const state = sessionDotState(session);
-    const closed = session.lifecycleStatus === "closed";
-    byId.set(session.id, {
-      id: session.id,
-      title: sessionName(session),
-      kind: { thread: false, ...(session.origin?.agent?.profileId ? { profile: session.origin.agent.profileId } : {}) },
-      line: [session.origin?.agent?.profileId, state.label ?? (closed ? "Closed" : "Idle")].filter(Boolean).join(" · "),
-      tone: state.tone,
-      closed,
-      atMs: session.updatedAtMs,
-      children: [],
-    });
-  }
-  // Hang each sub-agent off its parent; Main's (and any whose parent is not
-  // listed) off the bot.
-  const rows = [...threads];
-  for (const session of subagents) {
-    const row = byId.get(session.id)!;
-    const parent = byId.get(session.origin!.parentSessionId);
-    if (parent && parent !== row) parent.children.push(row);
-    else rows.push(row);
-  }
-  return rows;
-}
-
-/// A sub-row's kind as a mark in its meta toolbar: the sub-thread icon on a
-/// thread or one-off, the sub-agent icon on a sub-agent.
-export function subRowKindMark(row: Pick<BotSubRow, "kind">): MetaItem {
-  return row.kind.thread
-    ? { key: "kind", label: row.kind.label, icon: SessionSubThreadIcon, tooltip: `${row.kind.label}: a conversation of the bot beside Main` }
-    : {
-      key: "kind",
-      label: "Sub-agent",
-      icon: SubAgentIcon,
-      tooltip: row.kind.profile ? `Sub-agent, running ${row.kind.profile}` : "Sub-agent",
-    };
-}
-
-/// A thread's second line, as the bot's own row words its latest work: what
-/// waits on it, the event it is working on, how its latest delivery ended
-/// and the bot's summary of it, else its latest message, else its kind.
-export function threadLine({ activity, active, recent, preview, kind }: {
-  activity: SessionActivity | undefined;
-  active: { seqs: number[] } | undefined;
-  recent: { seqs: number[]; outcome: BotEventOutcome; summary?: string | null } | undefined;
-  preview: string | undefined;
-  kind: string;
-}): { line: string; tone: StatusTone; failed: boolean } {
-  const seq = (seqs: number[]) => (seqs.length ? Math.max(...seqs) : undefined);
-  if (activity === "waiting") return { line: activityLabel("waiting")!, tone: "waiting", failed: false };
-  if (active) {
-    const on = seq(active.seqs);
-    return { line: on === undefined ? "Working" : `Working on #${on}`, tone: "live", failed: false };
-  }
-  if (activity === "working") return { line: activityLabel("working")!, tone: "live", failed: false };
-  if (recent) {
-    const failed = recent.outcome === "runFailed" || recent.outcome === "blocked";
-    const on = seq(recent.seqs);
-    const detail = recent.summary?.trim() || preview?.trim() || kind;
-    return {
-      line: `${on === undefined ? "" : `#${on} `}${outcomeLabel(recent.outcome)} · ${detail}`,
-      tone: failed ? "attention" : "idle",
-      failed,
-    };
-  }
-  return { line: preview?.trim() || kind, tone: activityTone(activity), failed: false };
 }
 
 /// A level of an open bot's sub-rows, and below each open one the next

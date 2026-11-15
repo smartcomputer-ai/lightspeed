@@ -1,8 +1,8 @@
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DropdownCaretIcon, GoToIcon, ResetIcon } from "@/icons";
-import { NavLink, useNavigate, useSearchParams } from "react-router-dom";
+import { GoToIcon, ResetIcon } from "@/icons";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DetailHeader } from "@/components/detail-header";
 import { MetaToolbar } from "@/components/meta-toolbar";
 import { botMetaItems } from "./bot-meta";
@@ -19,17 +19,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { activityTone, foldActivity } from "@/components/activity-dot";
-import type { ResourceAccessSummary, SessionActivity } from "@lightspeed-ai/sdk";
-import { cn } from "@/lib/utils";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { foldActivity } from "@/components/activity-dot";
+import type { ResourceAccessSummary } from "@lightspeed-ai/sdk";
 import { useDocumentTitle } from "@/lib/document-title";
 import { useActionPermissions, usePermissionIdentity } from "@/lib/permissions";
 import { BotActivity } from "./activity";
@@ -38,95 +30,18 @@ import { BotChat } from "./chat";
 import { BotEditorDialog } from "./editor-dialog";
 import { botInputOf } from "./identity";
 import { BotSetup } from "./setup";
-import { StatusDot, botStatus, relativeTime } from "./status";
+import { botStatus } from "./status";
+import { botConversations, ConversationSwitcher } from "./conversations";
 
 export type BotTab = "chat" | "activity";
 
-/** Threads shown as tabs before the rest fold into the +N menu. */
-const INLINE_THREADS = 3;
-
-export interface ConversationTab {
-  id: string;
-  label: string;
-  hint: string;
-  activity: SessionActivity;
-  closed: boolean;
-  kind: "main" | "thread" | "subagent";
-  lastActiveMs?: number;
-}
-
-/**
- * A bot's conversations as tabs: Main, then the most recently active
- * threads inline, older threads behind +N. Sub-agents are not tabs: the
- * header's sub-agent item lists them. The selected conversation is always
- * inline, a sub-agent too, so a deep link never lands in the overflow.
- */
-export function conversationTabs(
-  state: BotStateView | undefined,
-  selectedId: string | undefined,
-): { inline: ConversationTab[]; overflow: ConversationTab[] } {
-  const controller = state?.controller;
-  if (!controller) return { inline: [], overflow: [] };
-  // What each session is doing comes from the sessions themselves, so a run
-  // someone started by chatting counts like one the bot started.
-  const activityOf = new Map((state?.sessions ?? []).map((session) => [session.id, session.activity]));
-  const activity = (id: string): SessionActivity => activityOf.get(id) ?? "idle";
-  const sessions = controller.sessions ?? [];
-  const labelOf = new Map(sessions.map((session) => [session.sessionId, session.kind === "main" ? "Main" : session.label]));
-  const descendants = (state?.sessions ?? []).filter((session) => session.origin);
-  for (const child of descendants) {
-    labelOf.set(child.id, child.displayName?.trim() || child.id.slice(0, 14));
-  }
-  const ready = controller.setupStatus === "ready";
-  const main: ConversationTab = {
-    id: controller.mainSessionId,
-    label: "Main",
-    hint: ready ? "the bot's desk" : controller.setupStatus === "degraded" ? "needs attention" : "starting…",
-    activity: activity(controller.mainSessionId),
-    closed: false,
-    kind: "main",
-  };
-  const threads: ConversationTab[] = sessions
-    .filter((session) => session.kind !== "main")
-    .sort((left, right) => (right.lastActiveAtMs ?? 0) - (left.lastActiveAtMs ?? 0))
-    .map((session) => ({
-      id: session.sessionId,
-      label: session.label,
-      hint: session.kind === "perKey" ? "thread" : "one-off",
-      activity: activity(session.sessionId),
-      closed: false,
-      kind: "thread",
-      ...(session.lastActiveAtMs == null ? {} : { lastActiveMs: session.lastActiveAtMs }),
-    }));
-  const subagents: ConversationTab[] = descendants.map((child) => {
-    const parentId = child.origin?.parentSessionId;
-    return {
-      id: child.id,
-      label: child.displayName ?? child.id.slice(0, 14),
-      hint: `sub-agent of ${parentId ? (labelOf.get(parentId) ?? parentId.slice(0, 12)) : "the bot"}`,
-      activity: child.activity,
-      closed: child.lifecycleStatus === "closed",
-      kind: "subagent" as const,
-      lastActiveMs: child.updatedAtMs,
-    };
-  });
-  const inline = [main, ...threads.slice(0, INLINE_THREADS)];
-  const overflow = threads.slice(INLINE_THREADS);
-  if (selectedId !== undefined && !inline.some((tab) => tab.id === selectedId)) {
-    const index = overflow.findIndex((tab) => tab.id === selectedId);
-    const subagent = subagents.find((tab) => tab.id === selectedId);
-    if (index >= 0) inline.push(...overflow.splice(index, 1));
-    else if (subagent) inline.push(subagent);
-    else inline.push({ id: selectedId, label: `${selectedId.slice(0, 14)}…`, hint: "conversation", activity: activity(selectedId), closed: false, kind: "thread" });
-  }
-  return { inline, overflow };
-}
-
 /**
  * One bot: a header that answers "is it working?", with its sub-agents and
- * its activity among the meta items, then one row for its conversations.
- * Activity and Settings open in dialogs over the conversation, each kept in
- * the address (?activity=open, ?settings=open) so a link or reload reopens it.
+ * its activity among the meta items, then the open conversation with a
+ * header of its own: a switcher naming it (and listing the others), its
+ * state and what it can reach, and its ⋯ menu. Activity and Settings open
+ * in dialogs over the conversation, each kept in the address
+ * (?activity=open, ?settings=open) so a link or reload reopens it.
  */
 export function BotDetail({
   universeId,
@@ -158,12 +73,9 @@ export function BotDetail({
   const controller = state?.controller ?? undefined;
   const status = botStatus(bot, controller, stateError, foldActivity((state?.sessions ?? []).map((session) => session.activity)));
   const selected = sessionId ?? controller?.mainSessionId;
-  const { inline, overflow } = conversationTabs(state, selected);
+  const current = botConversations(state).find((conversation) => conversation.id === selected);
   const activityOpen = searchParams.get("activity") === "open";
-  useDocumentTitle([
-    activityOpen ? "Activity" : inline.find((tab) => tab.id === selected)?.label,
-    botLabel(bot),
-  ]);
+  useDocumentTitle([activityOpen ? "Activity" : current?.title, botLabel(bot)]);
   const sessionHref = (id: string) => (id === controller?.mainSessionId ? base : `${base}/chat/${encodeURIComponent(id)}`);
   const enabled = bot.enabled ?? true;
   const togglePause = useMutation({
@@ -260,59 +172,30 @@ export function BotDetail({
       {togglePause.error && (
         <p className="border-b bg-destructive/10 px-4 py-1.5 text-xs text-destructive">{togglePause.error.message}</p>
       )}
-      <nav className="flex h-10 shrink-0 items-stretch gap-0.5 overflow-x-auto overflow-y-hidden overscroll-y-none touch-pan-x touch-pinch-zoom border-b px-2" aria-label="Bot conversations and activity">
-        {controller ? (
-          inline.map((tab) => {
-            const active = selected === tab.id;
-            return (
-              <span
-                key={tab.id}
-                className={cn(
-                  "flex shrink-0 items-stretch border-b-2",
-                  active ? "border-primary" : "border-transparent",
-                )}
-              >
-                <NavLink
-                  to={sessionHref(tab.id)}
-                  end
-                  title={tab.hint}
-                  className={cn(
-                    "flex max-w-48 items-center gap-1.5 px-2.5 py-2 text-sm whitespace-nowrap",
-                    active ? "pr-1 font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <StatusDot tone={activityTone(tab.activity, tab.closed)} />
-                  <span className={cn("truncate", tab.kind === "subagent" && "text-muted-foreground")}>
-                    {tab.kind === "subagent" ? `↳ ${tab.label}` : tab.label}
-                  </span>
-                  {tab.kind === "main" && controller.setupStatus !== "ready" && (
-                    <span className={cn("text-[11px]", controller.setupStatus === "degraded" ? "text-destructive" : "text-muted-foreground")}>
-                      {controller.setupStatus === "degraded" ? "needs attention" : "starting…"}
-                    </span>
-                  )}
-                </NavLink>
-                {active && (
-                  <ConversationMenu
-                    universeId={universeId}
-                    handle={handle}
-                    bot={bot}
-                    controller={controller}
-                    sessionId={tab.id}
-                    tab={tab}
-                    manage={manage}
-                  />
-                )}
-              </span>
-            );
-          })
-        ) : (
-          <span className="self-center px-2 text-xs text-muted-foreground">
-            {stateError ? "Controller unavailable" : "Starting…"}
-          </span>
-        )}
-        {overflow.length > 0 && <OverflowTabs tabs={overflow} sessionHref={sessionHref} />}
-      </nav>
-      <BotChat universeId={universeId} handle={handle} bot={bot} state={state} stateError={stateError} sessionId={sessionId} />
+      <BotChat
+        universeId={universeId}
+        handle={handle}
+        bot={bot}
+        state={state}
+        stateError={stateError}
+        sessionId={sessionId}
+        {...(controller && selected ? {
+          header: {
+            title: <ConversationSwitcher state={state} currentId={selected} href={sessionHref} bot={botLabel(bot)} />,
+            actions: (
+              <ConversationMenu
+                universeId={universeId}
+                handle={handle}
+                bot={bot}
+                controller={controller}
+                sessionId={selected}
+                label={current?.title ?? "this conversation"}
+                manage={manage}
+              />
+            ),
+          },
+        } : {})}
+      />
       <BotEditorDialog
         open={activityOpen}
         onOpenChange={setActivityOpen}
@@ -335,50 +218,8 @@ export function BotDetail({
   );
 }
 
-function OverflowTabs({ tabs, sessionHref }: { tabs: ConversationTab[]; sessionHref: (id: string) => string }) {
-  const navigate = useNavigate();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <button
-            type="button"
-            className="flex shrink-0 items-center gap-1 border-b-2 border-transparent px-2 py-2 text-sm text-muted-foreground hover:text-foreground"
-          />
-        }
-      >
-        +{tabs.length}
-        <DropdownCaretIcon className="size-3.5" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-96 min-w-64 overflow-y-auto">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Threads</DropdownMenuLabel>
-          {tabs.map((tab) => (
-            <OverflowItem key={tab.id} tab={tab} onSelect={() => navigate(sessionHref(tab.id))} />
-          ))}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function OverflowItem({ tab, onSelect }: { tab: ConversationTab; onSelect: () => void }) {
-  return (
-    <DropdownMenuItem onClick={onSelect} className="gap-2">
-      <StatusDot tone={activityTone(tab.activity, tab.closed)} />
-      <span className="min-w-0 flex-1">
-        <span className={cn("block truncate", tab.closed && "text-muted-foreground")}>{tab.label}</span>
-        <span className="block truncate text-[11px] text-muted-foreground">{tab.hint}</span>
-      </span>
-      {tab.lastActiveMs !== undefined && (
-        <span className="shrink-0 text-[11px] text-muted-foreground">{relativeTime(tab.lastActiveMs)}</span>
-      )}
-    </DropdownMenuItem>
-  );
-}
-
 /**
- * The shared session menu, as a chevron on the active conversation's tab —
+ * The shared session menu, as the ⋯ of the open conversation's header —
  * next to the thing it acts on: the id, the full-page view, and (for the
  * bot's own sessions) a reset. Configuration is not
  * here on purpose: a bot's sessions are configured through Setup (profile
@@ -391,7 +232,7 @@ function ConversationMenu({
   bot,
   controller,
   sessionId,
-  tab,
+  label,
   manage,
 }: {
   universeId: string;
@@ -399,7 +240,8 @@ function ConversationMenu({
   bot: BotView;
   controller: BotControllerSnapshot;
   sessionId: string;
-  tab: ConversationTab | undefined;
+  /// What the conversation is called, e.g. "Main".
+  label: string;
   manage: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -426,11 +268,11 @@ function ConversationMenu({
       return queryClient.invalidateQueries({ queryKey: ["bot-state", universeId, bot.botId] });
     },
   });
-  const label = tab?.kind === "main" ? "Main" : (tab?.label ?? "this conversation");
   return (
     <>
       <SessionActionsMenu
-        variant="tab"
+        label="Conversation actions"
+        lifecyclePlacement="first"
         sessionId={sessionId}
         metadata={session.data?.metadata}
         onCompact={canCompact && session.data && session.data.lifecycleStatus !== "closed" ? compaction.compact : undefined}
