@@ -3,11 +3,17 @@
 **Status:** Slices 1–5 implemented and validated, 2026-11-16.
 The optional provider-wide resource release remains deferred (slice 6).
 
-This comes before
-[self-service universes](p207-creators-and-self-service-universes.md)
-(creator keys, ownership, deletion protection and expiry). That work makes creating
-and deleting universes routine, including test runs that create dozens of them,
-so deletion has to be complete first.
+This comes first in a series. The work after it makes creating and deleting
+universes routine, including test runs that create dozens of them, so
+deletion has to be complete before any of it:
+
+- [Universe metadata, protection and expiry](p207-universe-metadata-protection-and-expiry.md)
+  adds a delete guard and universes that expire by themselves.
+- [Runtime access simplification](p208-runtime-access-simplification.md)
+  takes API keys and their permissions out of the runtime.
+- [Platform authentication and authorization](p209-platform-authentication-and-authorization.md)
+  lets people and applications create and own universes without
+  administering the deployment.
 
 ## Goal
 
@@ -28,7 +34,10 @@ its behalf, whatever state the universe is in:
   schedules, objects or machines behind.
 
 Who may delete does not change here: a deployment key with
-`deployment/universes`, and through the Platform a Platform admin.
+`deployment/universes`, and through the Platform a Platform admin. The
+documents above change who may; this one is written against the keys the
+runtime has today, and its statements about keys follow the runtime when
+they are removed.
 
 ## Starting point
 
