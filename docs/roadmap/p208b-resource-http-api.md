@@ -22,6 +22,11 @@ their routes or DTOs again. It consumes a generated operation catalog and
 registers those routes through one dispatcher. Platform-owned operations and
 operations with Platform side effects have explicit handlers.
 
+After authorization, Platform forwards request bodies unchanged by default.
+It decodes a bounded body only when a specific policy reads or rewrites its
+fields, or when a Platform-owned handler needs it. The runtime remains the
+authority for runtime request validation and domain invariants.
+
 The result is:
 
 - One authored declaration of each runtime operation, its HTTP binding and
@@ -36,6 +41,11 @@ The result is:
 HTTP is already the runtime's transport. This change uses HTTP resources,
 methods, statuses and media types in place of the JSON-RPC message envelope;
 it does not change workflow orchestration or the deterministic harness.
+
+Resource paths let standard gateways route and apply coarse operation or
+tenant rules without parsing JSON. They do not replace application policy:
+membership, session visibility, transcription ownership and Contributor input
+restrictions still require Platform's authorization logic.
 
 ## What exists today
 
@@ -78,6 +88,12 @@ Proposed path layout:
 The existing frontend routes occupy `/api/v1`. Move them to `/api/ui` and
 update their web/demo consumers before mounting the shared API there. Do not
 let router registration order decide which contract wins a collision.
+
+This relocation is transitional. The web app should use the shared API
+directly for ordinary resource operations; `/api/ui` should shrink to adapters
+that aggregate operations or provide presentation-specific behavior. The
+shared Platform API accepts browser sessions with CSRF/origin protection as
+well as program tokens; browser callers do not need a personal access token.
 
 The runtime keeps its three listeners. The private listener at default port
 18080 serves `/api/v1`; the public callback/webhook listener stays on 18082;
@@ -215,7 +231,7 @@ extend it with the HTTP binding. An operation declares:
 
 | Field | What it determines |
 | --- | --- |
-| Stable operation ID | SDK identity, policy lookup, logs and coverage; independent of URL spelling |
+| Stable operation ID | Existing method string, such as `profiles/read`; SDK identity, policy lookup, logs and coverage, independent of URL spelling |
 | Resource family and scope | Universe, deployment, connection or machine-only operation |
 | HTTP method and path template | The actual router registration and documentation |
 | Typed path, query and body inputs | Where every field comes from; explicit no-body and binary-body cases |
@@ -227,6 +243,12 @@ extend it with the HTTP binding. An operation declares:
 | Transfer and retry behavior | JSON, bytes or SSE; limits, submission identity and concurrency rules |
 | Documentation | Summary and operational semantics, retained from today's manifest |
 
+Retain today's method strings as canonical operation IDs, including
+`profiles/read` and `session/start`. Moving their transport does not rename
+their identity in role tables, feature switches, Configurator tools or logs.
+Generated Rust, TypeScript and Python symbols may normalize these strings
+with collision checks; symbol spelling is separate from the operation ID.
+
 Resource targets must be explicit. Today's session-target inference from a
 method-name prefix is insufficient for transcription ownership and other
 resource checks. Neither the HTTP verb nor a URL prefix determines permission.
@@ -236,7 +258,7 @@ information. This is design notation, not an API already implemented:
 
 ```rust
 operation! {
-    id: profiles_read,
+    id: "profiles/read",
     family: profiles,
     scope: universe,
     http: GET "/api/v1/universes/{universe}/profiles/{profileId}",
@@ -288,13 +310,15 @@ to untrusted callers just because it appeared in the generated catalog.
 
 ```mermaid
 flowchart TB
-    Rust[Rust DTOs and operation catalog] --> Generated[Generated TS types, validators and HTTP descriptors]
+    Rust[Rust DTOs and operation catalog] --> Generated[Generated TS types and HTTP descriptors]
     Generated --> Routes[Register Hono routes once through a factory]
-    Clients[CLI, SDKs and applications] --> Routes
+    Clients[Web app, CLI, SDKs and applications] --> Routes
     Routes --> Principal[Authenticate principal]
     Principal --> Policy[Shared authorization and typed policy hooks]
     UI[Frontend adapters] --> Policy
-    Policy --> Proxy[Generic runtime forwarder]
+    Policy -->|Default: forward body unchanged| Proxy[Generic runtime forwarder]
+    Policy -->|Exception: bounded body policy| Inspect[Decode and check policy fields]
+    Inspect --> Proxy
     Policy --> Native[Explicit Platform application service]
     Proxy --> Runtime[Private runtime HTTP API]
     Native --> Runtime
@@ -326,19 +350,42 @@ The dispatcher performs these steps:
    authentication adapters; browser requests retain CSRF/origin protection.
 2. Check the operation's Platform disposition, coarse role and token-family
    restrictions. Missing or unsupported classification is refused.
-3. Resolve the authorized universe. Decode bounded input with generated
-   codecs/validators and run the relevant resource policy. Binary requests
-   must pass their authorization before their bodies are forwarded.
-4. Apply typed policy transformations, such as forced soft deletion or a
-   visibility filter. They operate on generated types, not untyped bags of
-   fields.
+3. Resolve the authorized universe, validate path/query values used by policy,
+   and perform required resource lookups. Leave the body unread when policy
+   does not need it. JSON and binary requests must pass authorization before
+   their bodies are forwarded; transport size limits still apply.
+4. Run an explicit bounded body-policy hook only where required, checking
+   policy-relevant fields before applying transformations. Apply path/query
+   policies such as forced soft deletion or visibility filters through the
+   declared codecs. Native handlers validate the inputs they own.
 5. Call the generic forwarder or the explicit Platform application service.
 6. Apply any required response policy before returning bytes, then encode
    the result or stream the authorized upstream response.
 
 Move today's `MemberClient` policy and security-relevant route checks into
-shared application policy functions. The frontend calls these functions too;
-it does not have to make an HTTP request to its own public endpoint.
+shared application policy functions. Remaining server-side frontend adapters
+call these functions directly; they do not make HTTP requests to their own
+public endpoint. Ordinary browser resource calls use the shared API.
+
+### Body inspection is an exception
+
+| Policy needs | Request handling |
+| --- | --- |
+| Principal, operation, path/query targets or a resource lookup | Authorize, then stream the body unchanged |
+| Body fields, such as Contributor session-start restrictions | Decode within an explicit size limit, check the relevant fields and apply the required policy |
+| A native Platform operation | Validate and handle its inputs in the owning Platform service |
+
+There is no second full runtime-schema validator at the gateway. Ordinary
+JSON bodies pass through without parsing or reserialization, just as binary
+bodies do. Runtime extraction and service validation remain authoritative.
+
+Body hooks are reviewed exceptions keyed by operation ID. Existing
+Contributor session configuration and forced retention settings are examples.
+Use generated DTOs with focused runtime guards for the fields policy reads or
+rewrites; a TypeScript type assertion is not validation. A hook must reject
+ambiguous policy inputs and preserve unexamined values when rewriting a body.
+Test these exceptions against runtime decoding without replicating every
+runtime DTO validator in TypeScript.
 
 ### What Platform must still author
 
@@ -346,7 +393,8 @@ Authorization cannot be generated from DTO schemas alone. Platform owns a
 typed admission/policy registry keyed by generated operation IDs. Every
 operation is accounted for as:
 
-- **Proxy:** authorize, optionally transform a typed request, then forward.
+- **Proxy:** authorize and forward unchanged by default; attach an explicit
+  typed policy hook only where inspection or transformation is required.
 - **Platform handler:** call an application service with Platform side effects.
 - **Denied:** machine-only or not yet supported through Platform.
 
@@ -374,6 +422,12 @@ but dispatch to an application service instead of pass-through forwarding.
 The existing frontend services should be extracted and reused. Retry identity
 and recovery after one database succeeds and the other fails are part of
 those services. The proxy must not expose a second path around them.
+
+### Platform-only contract after the transport prototype
+
+The composed contract and SDK below follow the transport prototype and belong
+with the Platform authentication integration. They are not a prerequisite for
+proving the runtime catalog and generic forwarder.
 
 Platform-only resources, such as service accounts and tokens, are declared
 once by Platform under `/api/v1/platform`. Keep their TypeScript/Zod schema
@@ -415,7 +469,8 @@ Platform identity records to the Rust runtime contract.
 - Prefer relative resource links. Rewrite permitted `Location`,
   `Content-Location` and `Link` targets to the public API where necessary;
   never direct a public client to a private runtime origin.
-- Bounded JSON may be decoded and rewritten for policy. Remove stale length,
+- Forward uninspected bodies unchanged. Bounded JSON may be decoded and
+  rewritten only by an explicit policy hook. Remove stale length,
   encoding and validator headers after a transformation.
 - Request identity encoding upstream and define behavior for unexpected
   encoded responses. Node Fetch may decompress a response implicitly, so
@@ -438,11 +493,11 @@ Platform identity records to the Rust runtime contract.
 | HTTP/OpenAPI export | Extend the existing `serde_json` exporter and declaration macros | Keeps route, service binding and policy metadata together |
 | Platform server | Existing Hono `4` and `@hono/node-server` | Generated registrations and shared dispatch in the current process |
 | Platform proxy transport | Node's existing Fetch/Web Streams APIs, with explicit header and cancellation handling | Supports bounded JSON and streaming bodies without a separate proxy service |
-| Shared request validation in Platform | Add Ajv `8` and formats support; generate standalone validators at build time | Validates generated runtime schemas without handwritten Zod copies |
+| Runtime body policies in Platform | Focused runtime guards using existing decoding utilities and generated DTOs | Validate only fields needed by explicit policy exceptions; no blanket Ajv dependency |
 | Platform-owned schemas | Existing Zod `4` and its JSON Schema export | Keeps identity/access resources with their owning subsystem |
 | TypeScript SDK | Existing `json-schema-to-typescript` plus the repository's generator and Fetch transport | Reuses resource types; adds generated HTTP parameter codecs and operation helpers |
 | Python SDK | Existing `datamodel-code-generator` and `httpx` | Same ownership model and streaming support; replace RPC transport generation |
-| OpenAPI validation | Add a locked development dependency on Redocly CLI | Lint and resolve the generated runtime and composed Platform descriptions |
+| OpenAPI validation | Add a locked development dependency on Redocly CLI | Check structure, references and declared responses from the prototype onward; defer style polish and composed-contract checks until their artifacts exist |
 
 Exact added package versions will be selected and locked during implementation;
 existing concise Rust dependency ranges stay concise. No new HTTP server,
@@ -456,9 +511,10 @@ annotations. The initial plan keeps the current Schemars-based foundation.
 Use OpenAPI 3.1 for the first contract. Generate its schema dialect explicitly
 with Schemars' JSON Schema 2020-12 settings and normalize references into
 `components/schemas`. The current draft-07 bundle cannot simply be pasted
-into it. Existing SDK schema generators may continue consuming a draft-07
-export from the same Rust types until their 2020-12 behavior is verified;
-these are generated views, not separately authored contracts.
+into it. Keep existing SDK schema generators consuming a draft-07 export
+from the same Rust types during this migration. OpenAPI's 2020-12 export is a
+separate generated view, not a separately authored contract. A later SDK
+dialect migration requires its own compatibility verification.
 
 The normalized operation manifest is the SDK/proxy generator input. OpenAPI
 is a public artifact produced from that same catalog, not another source of
@@ -466,8 +522,9 @@ hand-maintained mappings. Cross-artifact tests enforce agreement. Describe
 SSE media types and event schemas explicitly; OpenAPI alone does not generate
 reconnection, cancellation or authorization behavior.
 
-Export JSON Schemas and standalone validators in an explicit SDK/server
-subpath so the browser client does not acquire a server validator dependency.
+Export server routing and policy descriptors in an explicit SDK/server
+subpath, separate from browser client helpers. There is no general-purpose
+runtime-body validator dependency in either client or gateway.
 Platform consumes checked-in/generated artifacts at build time; it does not
 download route definitions from whichever runtime happens to answer a request.
 Connection discovery reports a contract revision, and Platform refuses to
@@ -501,22 +558,24 @@ workspace paths, deployment operations and asynchronous commands individually.
 Path identifiers have defined encoding rules. Arbitrary VFS paths and
 structured blob references need typed query fields or a canonical opaque
 identifier; they must not become ambiguous catchall paths. Query codecs define
-repeated arrays, booleans, numbers and omitted values. Reject unknown fields,
-duplicate scalar parameters, conflicting identifiers and ambiguous encodings.
-Rust and TypeScript use the same conformance fixtures.
+repeated arrays, booleans, numbers and omitted values. The runtime rejects
+unknown fields, duplicate scalar parameters, conflicting identifiers and
+ambiguous encodings. Platform uses the same semantics for values it reads for
+routing or policy; other query values reach the runtime for validation. When
+forcing a filter, replace all caller occurrences so duplicates cannot bypass
+policy. Rust and TypeScript share fixtures for the codecs both execute.
 
 Generated schemas validate shape; they do not capture every handwritten
 domain invariant. Existing service validation, including transcription input
 validation, remains authoritative. Platform adds authorization rather than
-reimplementing those domain validators. Its Ajv validators use strict input
-checks, without silent coercion, default insertion or removal of extra fields.
-The prototype must cover the existing integer formats (`int32`, `int64`,
-`uint32`, `uint64`), defaults and unknown-field behavior against Serde. Define
-numeric-format validators or exported constraints explicitly instead of
-ignoring unsupported formats. Values requiring the full 64-bit integer range
-need a lossless wire representation, such as decimal strings; bounded JSON
-numbers must remain exact in JavaScript. No policy decision may rely on a
-silently rounded identifier or counter.
+reimplementing those domain validators. Conformance fixtures focus on the
+path/query codecs and body-policy exceptions it actually executes, including
+malformed inputs, defaults, unknown fields and numeric precision relevant to
+those policies. No policy decision may rely on silently coerced or rounded
+values. Body rewrites must preserve unexamined values, including large
+integers; choose a lossless parsing/rewriting strategy where needed. The
+prototype must prove this behavior for its policy hook. It does not require
+a second all-DTO validator or a simultaneous redesign of every integer type.
 
 ### Responses and errors
 
@@ -559,34 +618,48 @@ Add a binary path through the storage service as well as the HTTP adapter.
 Wrapping base64 internally while claiming to stream externally would retain
 the memory cost. Preserve universe ownership checks, content addressing,
 deduplication and size budgets. Map the existing batch-upload capability
-explicitly rather than silently dropping it. Range requests and conditional
-downloads are separate capabilities to implement and test before advertising.
+explicitly rather than silently dropping it. Range requests and advanced
+conditional downloads are deferred beyond the first transport pass; implement
+and test them separately before advertising support.
 Authenticated JSON and event responses default to no-store; immutable content
 does not imply permission to cache it publicly.
 
 ## Implementation order
 
-1. **Binding inventory and contract prototype.** Record all 146 current
-   operations and their replacements/removals. Prove one read, one command,
-   one error, an SSE stream and a binary transfer through the proposed
-   generator. Validate the OpenAPI dialect and SDK generator compatibility.
-2. **Runtime HTTP adapter.** Generate typed Axum bindings, authentication
+1. **Verify the simplification baseline.** Complete the interrupted broad
+   Rust validation from P208 and record the tested revision, relevant working
+   tree state and results. Resolve failures before implementing transport or
+   prefix changes, so regressions have an attributable baseline.
+2. **Binding inventory and focused contract prototype.** Record all 146
+   current operations and their replacements/removals. Prove one read, one
+   command with a body-policy exception, one error, an SSE stream and a binary
+   transfer through the runtime bindings and generic Platform adapter. Use
+   the existing browser principal. Preserve canonical operation IDs and prove
+   unchanged body forwarding, bounded policy inspection, cancellation and
+   backpressure. Check OpenAPI structure/references and representative SDK
+   generation. Keep draft-07 SDK export; defer full SDK dialect migration,
+   range requests, composed Platform/runtime SDK generation and documentation
+   publishing/style polish. This prototype is the gate before full rollout.
+3. **Runtime HTTP adapter.** Generate typed Axum bindings, authentication
    admission, parameter codecs, request context and response/error conversion.
    Mount on the existing private listener. Apply the agreed `/ingress` and
    `/environments` paths across their existing listeners and all callers;
    preserve the listener separation and protocol behavior.
-3. **Clients and frontend adapter relocation.** Generate the CLI and both
+4. **Clients and frontend adapter relocation.** Generate the CLI and both
    SDK transports, update Configurator tool bindings, move frontend routes
    and consumers to `/api/ui`, and update development configuration/docs.
-4. **Platform adapter foundation.** Generate registrations, validators and
-   the common dispatcher; extract existing member policies and Platform
-   lifecycle services. Prove proxy and native-handler paths with the existing
-   browser principal. No unrestricted public proxy is enabled as a shortcut.
-5. **Platform authentication integration.** P209 supplies personal/service
+   Move ordinary web resource calls to the shared API as its Platform
+   bindings become available; remove redundant frontend wrappers.
+5. **Platform adapter foundation.** Generate registrations and the common
+   dispatcher; extract existing member policies, explicit body-policy hooks
+   and Platform lifecycle services. Prove proxy and native-handler paths
+   with the existing browser principal. No unrestricted public proxy is
+   enabled as a shortcut.
+6. **Platform authentication integration.** P209 supplies personal/service
    tokens, ownership and the remaining principal policies. Compose and publish
    the admitted shared API plus the Platform-owned contract. Those features
    are not implied by finishing the HTTP transport.
-6. **Cutover and removal.** Regenerate all artifacts and documentation;
+7. **Cutover and removal.** Regenerate all artifacts and documentation;
    remove JSON-RPC client transport, `/rpc`, OpenRPC and obsolete adapters.
    Update release packaging and manifest verification, which currently name
    the old contract files explicitly, to include the new contract artifacts.
@@ -600,12 +673,20 @@ should be reported as the other.
 
 ## Validation
 
+- The interrupted P208 baseline validation is complete before transport or
+  prefix implementation starts; failures are resolved and results recorded.
 - Every old operation has a reviewed replacement or removal; every new
   operation is mounted, documented and generated into clients.
+- Retained operations keep their canonical IDs across HTTP bindings, role
+  and feature mappings, Configurator tools, logs and SDK operation metadata.
 - Catalog and schema checks reject conflicting paths, missing bindings,
   unclassified exposure and incompatible request/response variants.
-- Runtime and Platform request codecs agree on paths, queries, malformed
-  encodings, duplicate fields, optional values and strict unknown-field rules.
+- Shared path/query codecs agree on malformed encodings, duplicates and
+  optional values. Targeted body-policy fixtures cover relevant defaults,
+  unknown fields, precision and transformations against runtime decoding.
+- Ordinary JSON and binary bodies pass through byte-for-byte without body
+  decoding, full buffering or a competing schema validator. Policy exceptions
+  enforce their bounds and preserve values they do not change.
 - Authentication refuses requests before consuming large or unending bodies.
 - The grouped ingress URLs generate matching OAuth redirects, client metadata
   and webhook addresses. Daemon registration, data routing and peer relays use
@@ -617,6 +698,8 @@ should be reported as the other.
   runtime route cannot bypass the reviewed admission registry.
 - Browser and program adapters share role/visibility/transcription policy;
   forged actor/target headers do not change the authenticated target.
+- Browser calls to the shared API retain CSRF/origin protection; ordinary
+  resource access does not require duplicate `/api/ui` wrappers.
 - Universe lifecycle tests verify native overrides, retry behavior and partial
   failure recovery instead of an accidental pass-through route.
 - Real HTTP tests cover ordinary responses, structured errors, async retries,
@@ -641,7 +724,6 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
 - [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html).
 - [Hono proxy helper](https://hono.dev/docs/helpers/proxy), for comparison with
   the explicit fixed-upstream forwarder; the helper does not supply policy.
-- [Ajv standalone validation](https://ajv.js.org/standalone.html).
 - [Redocly CLI lint](https://redocly.com/docs/cli/commands/lint).
 - [HTTP semantics, RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html) and
   [problem details, RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).
@@ -658,3 +740,11 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   including caller/configuration cutover and route-isolation checks. Retained
   `/ingress` as the broader name covering callbacks, metadata and webhooks.
   These are design changes; the runtime paths have not yet been migrated.
+
+- 2026-11-16: revised after design review. Platform forwards bodies unchanged
+  except for explicit policy/native-handler needs, canonical operation IDs
+  retain their current method strings, and completed P208 baseline validation
+  is an implementation prerequisite. Narrowed the prototype while retaining
+  structural OpenAPI checks; deferred SDK dialect migration and composed SDK
+  work. Clarified shared API use by the web app and the limits of path-based
+  gateway policy. No API implementation or dependency changes were made.
