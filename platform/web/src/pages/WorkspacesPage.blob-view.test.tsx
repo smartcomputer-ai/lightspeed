@@ -46,6 +46,15 @@ const tree = () => ({
           kind: "directory",
           entries: {
             "other.txt": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false },
+            "notes.md": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false, media_type: "text/markdown" },
+            "other.md": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false, media_type: "text/markdown" },
+            "report.docx": {
+              kind: "file",
+              blob_ref: blobRef,
+              size_bytes: 4,
+              executable: false,
+              media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            },
             "image.png": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false, media_type: "image/png" },
             [name]: {
               kind: "file",
@@ -65,6 +74,8 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   notifyManager.setNotifyFunction((notify) => act(notify));
   mocks.editable = true;
+  // Each file's mode is remembered on this device.
+  localStorage.clear();
   blobRef = `sha256:${digest}`;
   stored = "x";
   mocks.api
@@ -89,13 +100,14 @@ afterEach(async () => {
   container.remove();
   vi.unstubAllGlobals();
 });
-async function render() {
+/// Opens a file of docs/, by default the plain-text one, and waits until it shows.
+async function render(file = name, ready: () => Element | null = () => container.querySelector("textarea")) {
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
         <MemoryRouter
           initialEntries={[
-            `/u/test/workspaces/ws/files/docs/${encodeURIComponent(name)}`,
+            `/u/test/workspaces/ws/files/docs/${encodeURIComponent(file)}`,
           ]}
         >
           <Routes>
@@ -108,8 +120,9 @@ async function render() {
       </QueryClientProvider>,
     ),
   );
-  await waitForUi(() => expect(container.querySelector("textarea")).not.toBeNull());
+  await waitForUi(() => expect(ready()).not.toBeNull());
 }
+const rendered = () => container.querySelector("section h1:not(header h1)");
 /// The blob viewer link, in the content hash item's popover (opened first;
 /// the popover renders outside the page container).
 const link = async () => {
@@ -176,12 +189,12 @@ const button = (label: string) =>
   Array.from(container.querySelectorAll("button")).find((item) =>
     (item.querySelector("[data-save-label]:not([aria-hidden])") ?? item).textContent === label)!;
 
-it.each([true, false])("previews stored Markdown for workspace readers (editable: %s)", async (editable) => {
+it.each([true, false])("opens Markdown in its preview, with its source a toggle away (editable: %s)", async (editable) => {
   mocks.editable = editable;
   stored = "# Notes\n\n**Bold** and ~~removed~~\n\n| Name | Value |\n| --- | --- |\n| A | B |";
-  await render();
-  await act(async () => button("Preview").click());
-  expect(container.querySelector("section h1:not(header h1)")?.textContent).toBe("Notes");
+  await render("notes.md", rendered);
+  expect(rendered()?.textContent).toBe("Notes");
+  expect(button("Preview").getAttribute("aria-pressed")).toBe("true");
   expect(container.querySelector("strong")?.textContent).toBe("Bold");
   expect(container.querySelector("del")?.textContent).toBe("removed");
   expect(container.querySelector("td")?.textContent).toBe("A");
@@ -193,7 +206,9 @@ it.each([true, false])("previews stored Markdown for workspace readers (editable
 });
 
 it("previews unsaved edits, preserves them in source, and saves the draft from preview", async () => {
-  await render();
+  stored = "# Notes";
+  await render("notes.md", rendered);
+  await act(async () => button("Source").click());
   const editor = container.querySelector("textarea")!;
   const draft = "# Unsaved draft\n\n**Keep this**";
   await act(async () => {
@@ -209,44 +224,47 @@ it("previews unsaved edits, preserves them in source, and saves the draft from p
   expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   await act(async () => button("Preview").click());
   await act(async () => button("Save").click());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", `/api/v1/universes/u/workspaces/ws/files/docs/${encodeURIComponent(name)}`, {
-    contentText: draft, expectedRevision: 3, mediaType: "text/plain",
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/universes/u/workspaces/ws/files/docs/notes.md", {
+    contentText: draft, expectedRevision: 3, mediaType: "text/markdown",
   });
 });
 
-it("keeps the selected view when navigating between workspace files", async () => {
+it("remembers each file's mode on its own", async () => {
   stored = "# Notes";
-  await render();
-  const editor = container.querySelector("textarea")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "# Unsaved draft");
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await act(async () => button("Preview").click());
+  await render("notes.md", rendered);
+  await act(async () => button("Source").click());
+  // Another Markdown file opens in its own (default) mode.
   stored = "# Other file";
-  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/other.txt"]')!.click());
-  await waitForUi(() => expect(container.querySelector("section h1:not(header h1)")?.textContent).toBe("Other file"));
+  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/other.md"]')!.click());
+  await waitForUi(() => expect(rendered()?.textContent).toBe("Other file"));
   expect(button("Preview").getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("textarea")).toBeNull();
   // Saved: nothing to save, so it ignores presses.
   expect(button("Saved").getAttribute("aria-disabled")).toBe("true");
-  await act(async () => button("Source").click());
+  // Back on the first, its mode is the one chosen there.
   stored = "# Notes";
-  await act(async () => container.querySelector<HTMLAnchorElement>(`a[href$="/files/docs/${encodeURIComponent(name)}"]`)!.click());
+  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/notes.md"]')!.click());
   await waitForUi(() => expect(container.querySelector("textarea")?.value).toBe("# Notes"));
   expect(button("Source").getAttribute("aria-pressed")).toBe("true");
 });
 
-it("keeps the selected view after visiting a non-text file", async () => {
-  stored = "# Notes";
+it("shows plain text and images in their one mode, without a toggle", async () => {
+  stored = "# Not Markdown";
   await render();
-  await act(async () => button("Preview").click());
+  expect(container.querySelector("textarea")!.value).toBe(stored);
+  expect(container.querySelector('[aria-label$=" view"]')).toBeNull();
+  expect(button("Preview")).toBeUndefined();
   await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/image.png"]')!.click());
   await waitForUi(() => expect(container.querySelector('img[alt="docs/image.png"]')).not.toBeNull());
-  expect(container.querySelector('[aria-label="Markdown view"]')).toBeNull();
-  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/other.txt"]')!.click());
-  await waitForUi(() => expect(container.querySelector("section h1:not(header h1)")?.textContent).toBe("Notes"));
-  expect(button("Preview").getAttribute("aria-pressed")).toBe("true");
-  await act(async () => button("Source").click());
-  await waitForUi(() => expect(container.querySelector("textarea")?.value).toBe(stored));
+  expect(container.querySelector('[aria-label$=" view"]')).toBeNull();
+  expect(button("Save")).toBeUndefined();
+});
+
+it("shows a file without a preview by its details, with a download", async () => {
+  stored = "PK\u0003\u0004\u0000\u0000";
+  const info = () => [...container.querySelectorAll("p")].find((item) => item.textContent === "There is no preview for this kind of file.") ?? null;
+  await render("report.docx", info);
+  expect(container.textContent).toContain("report.docx");
+  expect(button("Download")).toBeDefined();
+  expect(container.querySelector("textarea, img")).toBeNull();
+  expect(button("Save")).toBeUndefined();
 });

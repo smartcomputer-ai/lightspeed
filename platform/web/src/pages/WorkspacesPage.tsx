@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import { AddIcon, DownloadIcon, FileIcon, PreviewIcon, SourceViewIcon, WorkspaceIcon } from "@/icons";
+import { AddIcon, DownloadIcon, FileIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -42,17 +42,20 @@ import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { DetailHeader } from "@/components/detail-header";
 import { MetaToolbar } from "@/components/meta-toolbar";
-import { formatBytes } from "@/lib/composer-attachments";
 import { fileMetaItems } from "@/components/workspace-file-meta";
 import { ListPane, ListPaneHeader, ListPaneToolbar } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
-import { PdfPreview } from "@/components/pdf-preview";
-import { MarkdownContent } from "@/components/session/markdown-content";
+import { FileHost } from "@/components/file-providers/host";
+import { useWorkspaceFileEditing, type FileRelocation } from "@/components/file-providers/editing";
+import { canEdit, fileFacts, providerFor } from "@/components/file-providers/registry";
+import { mediaTypeFor } from "@/components/file-providers/media-types";
+import { textProvider } from "@/components/file-providers/providers/text";
+import { SETTINGS, useSetting } from "@/lib/settings";
 import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea, useWorkspaceDownload } from "@/components/workspace-transfers";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
-/// file tree of the head snapshot; detail = file editor (text), preview
-/// (images), or metadata (binary). Writes run the full VFS dance
+/// file tree of the head snapshot; detail = the open file, shown by its
+/// file provider (components/file-providers). Writes run the full VFS dance
 /// server-side (blob → manifest → snapshot → head advance) guarded by the
 /// workspace revision the tree was loaded at.
 export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
@@ -63,7 +66,6 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
   const [newFile, setNewFile] = useState<{ parent: string; revision: number } | null>(null);
-  const [preview, setPreview] = useState(false);
   const [editor, setEditor] = useState({ workspaceId, path: filePath, identity: 0 });
   const [relocation, setRelocation] = useState<{ identity: number; before: number; after: number } | null>(null);
   const [pendingRename, setPendingRename] = useState<{
@@ -128,8 +130,6 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
             filePath={filePath}
             fileIdentity={editor.identity}
             relocation={relocation}
-            preview={preview}
-            onPreviewChange={setPreview}
           />
         ) : (
           workspaceId ? (
@@ -319,6 +319,9 @@ function findFile(
   return null;
 }
 
+/// One workspace file, shown by its provider (see components/file-providers):
+/// the page loads the tree and the content and keeps the editing session;
+/// the host lays out the header, the mode toggle and the view.
 function FileDetail({
   universeId,
   handle,
@@ -326,23 +329,19 @@ function FileDetail({
   filePath,
   fileIdentity,
   relocation,
-  preview,
-  onPreviewChange,
 }: {
   universeId: string;
   handle: string;
   workspaceId: string;
   filePath: string;
   fileIdentity: number;
-  relocation: { identity: number; before: number; after: number } | null;
-  preview: boolean;
-  onPreviewChange: (preview: boolean) => void;
+  relocation: FileRelocation | null;
 }) {
-  const queryClient = useQueryClient();
   const watchConnected = useWatchConnected(universeId);
   const permissions = useActionPermissions(universeId);
   const canEditFiles = permissions.can("useResource");
   const downloads = useWorkspaceDownload();
+  const [mode, setMode] = useSetting(SETTINGS.workspaceFileMode(universeId, workspaceId, filePath));
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
     refetchInterval: watchConnected ? 60_000 : 10_000,
@@ -378,124 +377,37 @@ function FileDetail({
         : undefined,
   });
 
-  const decoded = useMemo(() => {
-    if (!blob.data) {
-      return null;
-    }
-    const bytes = Uint8Array.from(atob(blob.data.bytesBase64), (c) =>
-      c.charCodeAt(0),
-    );
-    return { bytes, kind: classify(filePath, file?.media_type, bytes) };
-  }, [blob.data, file?.media_type, filePath]);
-
-  const text =
-    decoded?.kind === "text" ? new TextDecoder().decode(decoded.bytes) : null;
-  const [editor, setEditor] = useState<{
-    identity: number;
-    draft: string | null;
-    saved: { text: string; previousBlob: string } | null;
-    base: { text: string; revision: number } | null;
-    error: string | null;
-  }>({ identity: fileIdentity, draft: null, saved: null, base: null, error: null });
-  if (editor.identity !== fileIdentity) {
-    setEditor({
-      identity: fileIdentity,
-      draft: null,
-      saved: null,
-      base: null,
-      error: null,
-    });
-  }
-  // Only a successful local relocation may advance an existing draft's base.
-  // Its compare-and-set proves no intervening workspace write was skipped.
-  useEffect(() => {
-    if (relocation?.identity !== fileIdentity) return;
-    setEditor(current => current.base?.revision === relocation.before
-      ? { ...current, base: { ...current.base, revision: relocation.after } } : current);
-  }, [relocation, fileIdentity]);
-
-  // A successful save becomes the baseline immediately. Keep its draft until
-  // the refreshed blob is ready, and preserve anything typed during the save.
-  useEffect(() => {
-    if (blob.isPlaceholderData || text === null || !file) return;
-    setEditor((current) => {
-      if (
-        current.identity !== fileIdentity ||
-        !current.saved ||
-        (file.blob_ref === current.saved.previousBlob &&
-          text !== current.saved.text)
-      )
-        return current;
-      return {
-        ...current,
-        draft: current.draft === current.saved.text ? null : current.draft,
-        base: current.draft === current.saved.text ? null : current.base,
-        saved: null,
-      };
-    });
-  }, [
+  const bytes = useMemo(
+    () => (blob.data ? Uint8Array.from(atob(blob.data.bytesBase64), (c) => c.charCodeAt(0)) : null),
+    [blob.data],
+  );
+  const facts = fileFacts(filePath, file, bytes ?? EMPTY_BYTES);
+  // Decided once the content is here: its first bytes are part of the match.
+  const matched = bytes ? providerFor(facts) : null;
+  const text = useMemo(
+    () => (bytes && matched?.content === "text" ? new TextDecoder().decode(bytes) : null),
+    [bytes, matched?.content],
+  );
+  const editing = useWorkspaceFileEditing({
+    universeId,
+    workspaceId,
+    filePath,
     fileIdentity,
-    file?.blob_ref,
+    relocation,
+    tree: tree.data,
+    treeError: tree.error,
+    file,
     text,
-    blob.isPlaceholderData,
-    editor.saved,
-  ]);
-
-  const invalidate = () =>
-    Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: ["workspace-tree", universeId, workspaceId],
-      }),
-      queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] }),
-    ]);
-
-  const save = useMutation({
-    mutationFn: (submission: {
-      contentText: string;
-      path: string;
-      revision: number;
-      identity: number;
-      previousBlob: string;
-    }) =>
-      api<{ workspace: WorkspaceRow }>(
-        "PUT",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
-        {
-          contentText: submission.contentText,
-          expectedRevision: submission.revision,
-          ...(mediaTypeFor(submission.path)
-            ? { mediaType: mediaTypeFor(submission.path) }
-            : {}),
-        },
-      ),
-    onSuccess: async (result, submission) => {
-      setEditor((current) =>
-        current.identity === submission.identity
-          ? {
-              ...current,
-              error: null,
-              base: { text: submission.contentText, revision: result.workspace.revision },
-              saved: {
-                text: submission.contentText,
-                previousBlob: submission.previousBlob,
-              },
-            }
-          : current,
-      );
-      await invalidate();
-    },
-    onError: (err, submission) =>
-      setEditor((current) =>
-        current.identity === submission.identity
-          ? { ...current, error: err.message }
-          : current,
-      ),
+    placeholder: blob.isPlaceholderData,
   });
+  // A draft stays in a text editor even if the file can no longer be read
+  // as text (it was replaced, or removed).
+  const provider = editing.hasDraft && !(matched && canEdit(matched)) ? textProvider : matched;
 
   if (tree.isLoading) {
     return <LoadingNote />;
   }
-  if (tree.data && !file && editor.draft === null) {
+  if (tree.data && !file && !editing.hasDraft) {
     return (
       <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
         File not found in this workspace.
@@ -503,55 +415,22 @@ function FileDetail({
     );
   }
 
-  const value = editor.draft ?? editor.saved?.text ?? text ?? "";
-  const dirty = editor.draft !== null && editor.draft !== (editor.saved?.text ?? editor.base?.text ?? text);
-  const changedExternally = dirty && editor.base !== null &&
-    (tree.error !== null || !file || tree.data?.workspace.revision !== editor.base.revision);
-  const textEditor = editor.draft !== null || decoded?.kind === "text";
-  const canSave = dirty && !save.isPending && !changedExternally && !!file && !blob.isPlaceholderData && !tree.error;
-  const reload = () => {
-    setEditor({ identity: fileIdentity, draft: null, saved: null, base: null, error: null });
-    void invalidate();
-  };
   const blobLink = file ? blobHref(handle, file.blob_ref, {
     name: filePath.split("/").at(-1),
     type: file.media_type ?? mediaTypeFor(filePath),
     workspace: workspaceId,
     path: filePath,
   }) : null;
-  const saveCurrent = () =>
-    save.mutate({
-      contentText: value,
-      path: filePath,
-      revision: editor.base?.revision ?? tree.data!.workspace.revision,
-      identity: fileIdentity,
-      previousBlob: file!.blob_ref,
-    });
+  const download = downloads ? () => downloads.download(filePath, false) : undefined;
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-      onKeyDown={(event) => {
-        if (
-          !canEditFiles ||
-          !textEditor ||
-          event.nativeEvent.isComposing ||
-          !(event.metaKey || event.ctrlKey) ||
-          event.altKey ||
-          event.shiftKey ||
-          event.key.toLowerCase() !== "s"
-        )
-          return;
-        event.preventDefault();
-        if (canSave && !event.repeat) saveCurrent();
-      }}
-    >
-      <DetailHeader
-        back={{ to: `/u/${handle}/workspaces/${workspaceId}`, label: "Back to files" }}
-        title={filePath}
-        titleHint={filePath}
-        titleClassName="font-mono font-normal"
-        tags={file && (
+    <FileHost
+      header={{
+        back: { to: `/u/${handle}/workspaces/${workspaceId}`, label: "Back to files" },
+        title: filePath,
+        titleHint: filePath,
+        titleClassName: "font-mono font-normal",
+        tags: file && (
           <MetaToolbar
             items={fileMetaItems({
               name: filePath.split("/").at(-1) ?? filePath,
@@ -559,124 +438,47 @@ function FileDetail({
               text,
               revision: tree.data?.workspace.revision,
               blobViewerHref: blobLink ? appHref(blobLink) : null,
-              unsaved: dirty,
+              unsaved: editing.dirty,
             })}
             place="header"
             full
             label="File details"
             className="grow"
           />
-        )}
-        subtools={[
-          ...(textEditor
-            ? [{
-                kind: "choice" as const,
-                key: "view",
-                label: "Markdown view",
-                appearance: "toggle" as const,
-                value: preview ? "preview" : "source",
-                options: [
-                  { value: "source", label: "Source", icon: <SourceViewIcon data-icon="inline-start" /> },
-                  { value: "preview", label: "Preview", hint: "Preview Markdown", icon: <PreviewIcon data-icon="inline-start" /> },
-                ],
-                onChange: (value: string) => onPreviewChange(value === "preview"),
-              }]
-            : []),
-        ]}
-        tools={[
-          ...(canEditFiles && textEditor
-            ? [{
-                kind: "save" as const,
-                key: "save",
-                label: "Save",
-                dirty,
-                saving: save.isPending,
-                // A failed save, while its changes are still unsaved.
-                error: editor.error !== null && dirty,
-                hint: "Save (⌘S / Ctrl+S)",
-                keyShortcuts: "Meta+S Control+S",
-                disabled: !canSave,
-                onSave: saveCurrent,
-              }]
-            : []),
+        ),
+        tools: [
           ...(downloads
             ? [{
                 key: "download",
                 label: "Download",
                 icon: <DownloadIcon />,
                 disabled: downloads.downloading,
-                onSelect: () => downloads.download(filePath, false),
+                onSelect: download,
               }]
             : []),
           // The file's actions (rename, download, delete, …), as its row's
           // right-click menu in the list has them.
           { kind: "custom" as const, key: "file-actions", node: <WorkspaceActionsMenu path={filePath} kind="file" /> },
-        ]}
-      />
-      {changedExternally && (
-        <div role="status" className="flex items-center gap-3 border-b px-4 py-2 text-sm">
-          <span>{!file || tree.error ? "The file or workspace is no longer available." : "The workspace changed while you were editing."} Your draft is preserved.</span>
-          <Button variant="outline" size="sm" onClick={reload}>Discard draft and reload</Button>
-        </div>
-      )}
-      {tree.error && !dirty && <p className="p-4 text-sm text-destructive">{tree.error.message}</p>}
-      {editor.error && (
-        <p className="border-b px-4 py-2 text-sm text-destructive">
-          {editor.error}
-        </p>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {blob.isLoading && (
-          <div className="p-4">
-            <LoadingNote />
-          </div>
-        )}
-        {blob.error && (
-          <p className="p-4 text-sm text-destructive">{blob.error.message}</p>
-        )}
-        {textEditor && (preview ? (
-          <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
-        ) : (
-          <textarea
-            className="block h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
-            value={value}
-            onChange={(e) =>
-              setEditor((current) => {
-                const base = current.base ?? { text: text ?? "", revision: tree.data!.workspace.revision };
-                const draft = e.target.value;
-                return draft === base.text && !current.saved
-                  ? { ...current, draft: null, base: null, error: null }
-                  : { ...current, draft, base };
-              })
-            }
-            spellCheck={false}
-            readOnly={!canEditFiles || (blob.isPlaceholderData && editor.draft === null)}
-            aria-label={
-              canEditFiles ? "File contents" : "File contents (read only)"
-            }
-          />
-        ))}
-        {!textEditor && decoded?.kind === "image" && (
-          <div className="flex items-start p-4">
-            <img
-              alt={filePath}
-              className="max-w-full rounded-lg border"
-              src={`data:${file?.media_type ?? mediaTypeFor(filePath) ?? "image/png"};base64,${blob.data?.bytesBase64}`}
-            />
-          </div>
-        )}
-        {!textEditor && decoded?.kind === "pdf" && (
-          <PdfPreview bytes={decoded.bytes} name={filePath} />
-        )}
-        {!textEditor && decoded?.kind === "binary" && (
-          <p className="p-4 text-sm text-muted-foreground">
-            Binary file ({formatBytes(file?.size_bytes ?? 0)}) — no preview.
-          </p>
-        )}
-      </div>
-    </div>
+        ],
+      }}
+      facts={facts}
+      provider={provider}
+      bytes={bytes}
+      loading={blob.isLoading}
+      loadError={blob.error}
+      notice={tree.error && !editing.dirty && <p className="p-4 text-sm text-destructive">{tree.error.message}</p>}
+      unavailable={!file || tree.error !== null}
+      editing={editing}
+      writable={canEditFiles}
+      mode={mode}
+      onModeChange={setMode}
+      {...(download ? { download } : {})}
+    />
   );
 }
+
+/// No content yet: a provider decides on the file's metadata alone.
+const EMPTY_BYTES = new Uint8Array();
 
 function NewWorkspaceDialog({
   universeId,
@@ -905,61 +707,4 @@ function NewFileDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-const TEXT_MIMES = /^(text\/|application\/(json|toml|yaml|x-yaml|xml|javascript))/;
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  svg: "image/svg+xml",
-};
-const TEXT_EXTENSIONS: Record<string, string> = {
-  md: "text/markdown",
-  txt: "text/plain",
-  json: "application/json",
-  yaml: "application/yaml",
-  yml: "application/yaml",
-  toml: "application/toml",
-  ts: "text/typescript",
-  js: "text/javascript",
-  py: "text/x-python",
-  sh: "text/x-shellscript",
-  css: "text/css",
-  html: "text/html",
-};
-
-function mediaTypeFor(path: string): string | undefined {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "pdf") return "application/pdf";
-  return TEXT_EXTENSIONS[ext] ?? IMAGE_EXTENSIONS[ext];
-}
-
-function classify(
-  path: string,
-  mediaType: string | undefined,
-  bytes: Uint8Array,
-): "text" | "image" | "pdf" | "binary" {
-  const mime = mediaType?.split(";")[0]?.trim().toLowerCase();
-  if (mime === "application/pdf" || /\.pdf$/i.test(path) ||
-    [0x25, 0x50, 0x44, 0x46, 0x2d].every((byte, index) => bytes[index] === byte)) {
-    return "pdf";
-  }
-  const effective = mediaType ?? mediaTypeFor(path);
-  if (effective?.startsWith("image/")) {
-    return "image";
-  }
-  if (effective && TEXT_MIMES.test(effective)) {
-    return "text";
-  }
-  // Sniff: no NUL byte in the first KiB → treat as editable text.
-  const probe = bytes.subarray(0, 1024);
-  for (const byte of probe) {
-    if (byte === 0) {
-      return "binary";
-    }
-  }
-  return "text";
 }
