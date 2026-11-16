@@ -18,7 +18,10 @@
 use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
-use auth::{AuthGrantExposure, AuthGrantId, AuthProviderId, AuthProviderKind, SecretValue};
+use credentials::{
+    CredentialGrantExposure, CredentialGrantId, CredentialProviderId, CredentialProviderKind,
+    SecretValue,
+};
 pub use environment_protocol::{
     control::target::{PowerState, TargetPhase},
     idle::IdlePolicy,
@@ -579,7 +582,7 @@ pub struct MintedRegistrationSecret {
 /// Mint a registration secret. Only its SHA-256 hash and display prefix are
 /// ever persisted.
 pub fn mint_registration_secret() -> MintedRegistrationSecret {
-    registration_secret(auth::generate_prefixed_secret(
+    registration_secret(credentials::generate_prefixed_secret(
         REGISTRATION_KEY_SECRET_PREFIX,
     ))
 }
@@ -589,7 +592,7 @@ pub fn mint_registration_secret() -> MintedRegistrationSecret {
 pub fn import_registration_secret(
     secret: &str,
 ) -> Result<MintedRegistrationSecret, EnvironmentRegistryError> {
-    if !auth::is_prefixed_secret(REGISTRATION_KEY_SECRET_PREFIX, secret) {
+    if !credentials::is_prefixed_secret(REGISTRATION_KEY_SECRET_PREFIX, secret) {
         return invalid(
             "expected lsrk_ followed by 32 random bytes encoded as base64url without padding",
         );
@@ -599,8 +602,11 @@ pub fn import_registration_secret(
 
 fn registration_secret(secret: String) -> MintedRegistrationSecret {
     MintedRegistrationSecret {
-        secret_hash: auth::secret_sha256_hex(&secret),
-        key_prefix: auth::secret_display_prefix(&secret, REGISTRATION_KEY_DISPLAY_PREFIX_LEN),
+        secret_hash: credentials::secret_sha256_hex(&secret),
+        key_prefix: credentials::secret_display_prefix(
+            &secret,
+            REGISTRATION_KEY_DISPLAY_PREFIX_LEN,
+        ),
         secret: SecretValue::new(secret),
     }
 }
@@ -654,7 +660,7 @@ pub fn registration_key_with_secret(
 
 /// Lowercase hex SHA-256 of a presented registration secret: the lookup key.
 pub fn registration_key_hash(secret: &str) -> String {
-    auth::secret_sha256_hex(secret)
+    credentials::secret_sha256_hex(secret)
 }
 
 /// Create a key with its first live secret.
@@ -2481,9 +2487,11 @@ impl PutEnvironmentCredential {
 pub enum EnvironmentCredentialSource {
     /// A retrievable credential grant; the broker mints or returns its
     /// token for the machine's commands.
-    AuthGrant { grant_id: AuthGrantId },
+    #[serde(rename = "auth_grant")]
+    CredentialGrant { grant_id: CredentialGrantId },
     /// The stored API key of a model API key provider.
-    AuthProviderCredential { provider_id: AuthProviderId },
+    #[serde(rename = "auth_provider_credential")]
+    CredentialProviderCredential { provider_id: CredentialProviderId },
 }
 
 /// Why a credential source may not supply a variable of an environment.
@@ -2497,31 +2505,33 @@ pub enum EnvironmentCredentialSourceRefusal {
     #[error(
         "credential {grant_id} is brokered, so its value never leaves the runtime and it cannot be bound into an environment; create a credential with retrievable exposure and bind that one"
     )]
-    BrokeredGrant { grant_id: AuthGrantId },
+    BrokeredGrant { grant_id: CredentialGrantId },
 
     #[error(
         "provider {provider_id} is a GitHub App, whose private key cannot be bound into an environment; bind a retrievable GitHub App installation grant instead, which supplies a short-lived installation token"
     )]
-    GitHubAppProvider { provider_id: AuthProviderId },
+    GitHubAppProvider { provider_id: CredentialProviderId },
 
     #[error(
         "provider {provider_id} is not a model API key provider; only the stored API key of a model provider can be bound into an environment"
     )]
-    NotModelApiKeyProvider { provider_id: AuthProviderId },
+    NotModelApiKeyProvider { provider_id: CredentialProviderId },
 }
 
 /// A grant may be bound into an environment only when it is retrievable.
 /// Checked when the binding is made and again each time it is resolved, so
 /// a binding that predates the rule is refused too.
 pub fn require_bindable_grant(
-    grant_id: &AuthGrantId,
-    exposure: AuthGrantExposure,
+    grant_id: &CredentialGrantId,
+    exposure: CredentialGrantExposure,
 ) -> Result<(), EnvironmentCredentialSourceRefusal> {
     match exposure {
-        AuthGrantExposure::Retrievable => Ok(()),
-        AuthGrantExposure::Brokered => Err(EnvironmentCredentialSourceRefusal::BrokeredGrant {
-            grant_id: grant_id.clone(),
-        }),
+        CredentialGrantExposure::Retrievable => Ok(()),
+        CredentialGrantExposure::Brokered => {
+            Err(EnvironmentCredentialSourceRefusal::BrokeredGrant {
+                grant_id: grant_id.clone(),
+            })
+        }
     }
 }
 
@@ -2532,19 +2542,21 @@ pub fn require_bindable_grant(
 /// same calls. Any other provider credential is long-lived authority to
 /// mint tokens (a GitHub App private key) and stays in the runtime.
 pub fn require_bindable_provider(
-    provider_id: &AuthProviderId,
-    provider_kind: AuthProviderKind,
+    provider_id: &CredentialProviderId,
+    provider_kind: CredentialProviderKind,
 ) -> Result<(), EnvironmentCredentialSourceRefusal> {
     match provider_kind {
-        AuthProviderKind::ModelApiKey => Ok(()),
-        AuthProviderKind::GitHubApp => Err(EnvironmentCredentialSourceRefusal::GitHubAppProvider {
-            provider_id: provider_id.clone(),
-        }),
-        AuthProviderKind::StaticToken
-        | AuthProviderKind::McpOAuth
-        | AuthProviderKind::CustomOAuth
-        | AuthProviderKind::ModelOAuth
-        | AuthProviderKind::ModelEndpoint => {
+        CredentialProviderKind::ModelApiKey => Ok(()),
+        CredentialProviderKind::GitHubApp => {
+            Err(EnvironmentCredentialSourceRefusal::GitHubAppProvider {
+                provider_id: provider_id.clone(),
+            })
+        }
+        CredentialProviderKind::StaticToken
+        | CredentialProviderKind::McpOAuth
+        | CredentialProviderKind::CustomOAuth
+        | CredentialProviderKind::ModelOAuth
+        | CredentialProviderKind::ModelEndpoint => {
             Err(EnvironmentCredentialSourceRefusal::NotModelApiKeyProvider {
                 provider_id: provider_id.clone(),
             })

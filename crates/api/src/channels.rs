@@ -187,7 +187,7 @@ pub struct ChannelAccountDocument {
     /// provider.
     pub provider_account_id: String,
     pub display_name: String,
-    /// Retrievable auth grant holding the provider token (a Telegram bot
+    /// Retrievable credential grant holding the provider token (a Telegram bot
     /// token); the connector host leases it. Absent for providers whose
     /// credential is a session state directory (WhatsApp).
     #[serde(default, skip_serializing_if = "Option::is_none")]

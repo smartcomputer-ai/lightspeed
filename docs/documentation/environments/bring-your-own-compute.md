@@ -92,7 +92,7 @@ For the local quickstart, run:
 
 ```bash
 "$LIGHTSPEED_ENVD_BIN" \
-  --gateway-url ws://127.0.0.1:18080/environment-gateway/connect \
+  --gateway-url ws://127.0.0.1:18083/environment-gateway/connect \
   --registration-key-file "$HOME/lightspeed-machine/registration-key" \
   --registration-name "My workstation" \
   --registration-receipt "$HOME/lightspeed-machine/receipt.json" \
@@ -169,7 +169,7 @@ directory and omit the deleted registration-key file:
 
 ```bash
 "$LIGHTSPEED_ENVD_BIN" \
-  --gateway-url ws://127.0.0.1:18080/environment-gateway/connect \
+  --gateway-url ws://127.0.0.1:18083/environment-gateway/connect \
   --registration-receipt "$HOME/lightspeed-machine/receipt.json" \
   --cwd "$HOME/lightspeed-machine/workspace" \
   --state-dir "$HOME/lightspeed-machine/state"

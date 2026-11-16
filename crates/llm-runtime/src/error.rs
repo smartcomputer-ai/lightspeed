@@ -52,7 +52,7 @@ pub enum LlmAdapterError {
         message: String,
     },
 
-    #[error("failed to resolve auth secret for tool {tool}: {message}")]
+    #[error("failed to resolve credential secret for tool {tool}: {message}")]
     SecretResolution { tool: String, message: String },
 
     #[error("failed to resolve runtime MCP inventory for {server}: {message}")]

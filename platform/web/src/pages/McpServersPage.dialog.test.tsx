@@ -54,7 +54,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Partial<typeof saved>) => {
     if (method === "GET" && path.endsWith("/mcp-servers")) return servers;
-    if (path.endsWith("/auth-grants")) return [];
+    if (path.endsWith("/credential-grants")) return [];
     if (path.endsWith("/discover-auth")) return { oauth: null };
     if (path.endsWith("/tools/discover")) return { status: "success", tools: [] };
     if (method === "POST" && path.endsWith("/mcp-servers")) return { ...saved, serverId: "github" };
@@ -199,7 +199,7 @@ it("edits request headers as plain values and credentials and shows only credent
   servers = [{ ...saved, status: "active" }];
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path, body) => {
-    if (path.endsWith("/auth-grants")) {
+    if (path.endsWith("/credential-grants")) {
       return [
         { grantId: "authgrant_upstream", providerId: "static", providerKind: "staticToken", displayName: "Tracker token", status: "active", exposure: "brokered" },
         { grantId: "authgrant_oauth", providerId: "crm", providerKind: "mcpOAuth", displayName: "CRM sign-in", status: "active", exposure: "brokered" },

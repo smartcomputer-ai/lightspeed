@@ -3,7 +3,7 @@
 //! refresh.
 //!
 //! Protocol mechanics live here behind the [`OAuthTokenClient`] trait; durable
-//! state crosses the [`OAuthClientStore`]/[`AuthFlowStore`] traits. Token and
+//! state crosses the [`OAuthClientStore`]/[`CredentialFlowStore`] traits. Token and
 //! verifier values only ever move inside [`SecretValue`] wrappers.
 
 use api::Attribution;
@@ -14,10 +14,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AuthFlowId, AuthGrantExposure, AuthGrantId, AuthProviderKind, AuthRegistryError,
-    McpOAuthTokenContext, OAuthClientId, SecretId, SecretValue, validate_audience_url,
-    validate_nonempty_optional, validate_nonnegative_i64, validate_oauth_endpoint_url,
-    validate_scopes, validate_token_component,
+    CredentialFlowId, CredentialGrantExposure, CredentialGrantId, CredentialProviderKind,
+    CredentialRegistryError, McpOAuthTokenContext, OAuthClientId, SecretId, SecretValue,
+    validate_audience_url, validate_nonempty_optional, validate_nonnegative_i64,
+    validate_oauth_endpoint_url, validate_scopes, validate_token_component,
 };
 
 pub const SECRET_KIND_OAUTH_ACCESS_TOKEN: &str = "auth.oauth.access_token";
@@ -37,10 +37,10 @@ pub enum TokenEndpointAuthMethod {
     None,
 }
 
-pub(crate) fn is_oauth_provider_kind(kind: AuthProviderKind) -> bool {
+pub(crate) fn is_oauth_provider_kind(kind: CredentialProviderKind) -> bool {
     matches!(
         kind,
-        AuthProviderKind::McpOAuth | AuthProviderKind::CustomOAuth
+        CredentialProviderKind::McpOAuth | CredentialProviderKind::CustomOAuth
     )
 }
 
@@ -54,7 +54,7 @@ pub struct OAuthClientRecord {
     pub client_id: OAuthClientId,
     /// Logical provider id recorded on grants minted through this client.
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     pub display_name: Option<String>,
     pub authorization_endpoint: String,
     pub token_endpoint: String,
@@ -82,10 +82,10 @@ pub struct OAuthClientRecord {
 }
 
 impl OAuthClientRecord {
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         validate_token_component("provider id", &self.provider_id)?;
         if !is_oauth_provider_kind(self.provider_kind) {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!(
                     "provider kind {:?} is not an OAuth kind",
                     self.provider_kind
@@ -102,37 +102,41 @@ impl OAuthClientRecord {
         }
         if let Some(issuer) = &self.authorization_server_issuer {
             validate_audience_url(issuer).map_err(|error| match error {
-                AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
-                    message: format!("authorization server issuer: {message}"),
-                },
+                CredentialRegistryError::InvalidInput { message } => {
+                    CredentialRegistryError::InvalidInput {
+                        message: format!("authorization server issuer: {message}"),
+                    }
+                }
                 other => other,
             })?;
         }
         if self.authorization_response_iss_parameter_supported
             && self.authorization_server_issuer.is_none()
         {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "authorization server issuer is required when RFC 9207 issuer validation is enabled"
                     .to_owned(),
             });
         }
         validate_scopes(&self.authorization_server_scopes_supported)?;
-        if self.provider_kind == AuthProviderKind::McpOAuth && self.audience.is_none() {
-            return Err(AuthRegistryError::InvalidInput {
+        if self.provider_kind == CredentialProviderKind::McpOAuth && self.audience.is_none() {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "mcp_oauth clients require an audience (the MCP server resource URL)"
                     .to_owned(),
             });
         }
         match (self.token_endpoint_auth_method, &self.client_secret) {
-            (TokenEndpointAuthMethod::None, Some(_)) => Err(AuthRegistryError::InvalidInput {
-                message: "token endpoint auth method 'none' must not carry a client secret"
-                    .to_owned(),
-            }),
+            (TokenEndpointAuthMethod::None, Some(_)) => {
+                Err(CredentialRegistryError::InvalidInput {
+                    message: "token endpoint auth method 'none' must not carry a client secret"
+                        .to_owned(),
+                })
+            }
             (
                 TokenEndpointAuthMethod::ClientSecretBasic
                 | TokenEndpointAuthMethod::ClientSecretPost,
                 None,
-            ) => Err(AuthRegistryError::InvalidInput {
+            ) => Err(CredentialRegistryError::InvalidInput {
                 message: "client_secret_basic/client_secret_post require a client secret"
                     .to_owned(),
             }),
@@ -149,7 +153,7 @@ impl OAuthClientRecord {
 pub struct CreateOAuthClientRecord {
     pub client_id: OAuthClientId,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     pub display_name: Option<String>,
     pub authorization_endpoint: String,
     pub token_endpoint: String,
@@ -193,25 +197,25 @@ pub trait OAuthClientStore: Send + Sync {
     async fn create_oauth_client(
         &self,
         record: CreateOAuthClientRecord,
-    ) -> Result<OAuthClientRecord, AuthRegistryError>;
+    ) -> Result<OAuthClientRecord, CredentialRegistryError>;
 
     async fn read_oauth_client(
         &self,
         client_id: &OAuthClientId,
-    ) -> Result<OAuthClientRecord, AuthRegistryError>;
+    ) -> Result<OAuthClientRecord, CredentialRegistryError>;
 
-    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, AuthRegistryError>;
+    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, CredentialRegistryError>;
 
     async fn delete_oauth_client(
         &self,
         client_id: &OAuthClientId,
-    ) -> Result<OAuthClientRecord, AuthRegistryError>;
+    ) -> Result<OAuthClientRecord, CredentialRegistryError>;
 }
 
 /// Derived lifecycle state of an authorization flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AuthFlowStatus {
+pub enum CredentialFlowStatus {
     Pending,
     Completed,
     Failed,
@@ -223,13 +227,13 @@ pub enum AuthFlowStatus {
 /// secret store. Completing a flow consumes it: a second callback with the
 /// same state fails, and expired flows cannot be completed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuthFlowRecord {
-    pub flow_id: AuthFlowId,
+pub struct CredentialFlowRecord {
+    pub flow_id: CredentialFlowId,
     pub client_id: OAuthClientId,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     #[serde(default)]
-    pub grant_exposure: AuthGrantExposure,
+    pub grant_exposure: CredentialGrantExposure,
     pub created_by: Attribution,
     /// Lowercase hex SHA-256 of the `state` query parameter.
     pub state_hash: String,
@@ -244,7 +248,7 @@ pub struct AuthFlowRecord {
     #[serde(default)]
     pub require_issuer: bool,
     /// Set when the flow completed successfully.
-    pub grant_id: Option<AuthGrantId>,
+    pub grant_id: Option<CredentialGrantId>,
     /// Set when the flow completed with a failure.
     pub error: Option<String>,
     pub expires_at_ms: i64,
@@ -254,25 +258,25 @@ pub struct AuthFlowRecord {
     pub updated_at_ms: i64,
 }
 
-impl AuthFlowRecord {
-    pub fn status(&self, now_ms: i64) -> AuthFlowStatus {
+impl CredentialFlowRecord {
+    pub fn status(&self, now_ms: i64) -> CredentialFlowStatus {
         if self.completed_at_ms.is_some() {
             if self.grant_id.is_some() {
-                AuthFlowStatus::Completed
+                CredentialFlowStatus::Completed
             } else {
-                AuthFlowStatus::Failed
+                CredentialFlowStatus::Failed
             }
         } else if now_ms >= self.expires_at_ms {
-            AuthFlowStatus::Expired
+            CredentialFlowStatus::Expired
         } else {
-            AuthFlowStatus::Pending
+            CredentialFlowStatus::Pending
         }
     }
 
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         validate_token_component("provider id", &self.provider_id)?;
         if !is_oauth_provider_kind(self.provider_kind) {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!(
                     "provider kind {:?} is not an OAuth kind",
                     self.provider_kind
@@ -281,9 +285,11 @@ impl AuthFlowRecord {
         }
         validate_token_component("state hash", &self.state_hash)?;
         validate_audience_url(&self.redirect_uri).map_err(|error| match error {
-            AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
-                message: format!("redirect uri: {message}"),
-            },
+            CredentialRegistryError::InvalidInput { message } => {
+                CredentialRegistryError::InvalidInput {
+                    message: format!("redirect uri: {message}"),
+                }
+            }
             other => other,
         })?;
         validate_scopes(&self.scopes)?;
@@ -292,26 +298,28 @@ impl AuthFlowRecord {
         }
         if let Some(issuer) = &self.expected_issuer {
             validate_audience_url(issuer).map_err(|error| match error {
-                AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
-                    message: format!("expected issuer: {message}"),
-                },
+                CredentialRegistryError::InvalidInput { message } => {
+                    CredentialRegistryError::InvalidInput {
+                        message: format!("expected issuer: {message}"),
+                    }
+                }
                 other => other,
             })?;
         }
         if self.require_issuer && self.expected_issuer.is_none() {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "expected issuer is required when callback issuer validation is enabled"
                     .to_owned(),
             });
         }
         if self.grant_id.is_some() && self.error.is_some() {
-            return Err(AuthRegistryError::InvalidInput {
-                message: "auth flow cannot carry both a grant id and an error".to_owned(),
+            return Err(CredentialRegistryError::InvalidInput {
+                message: "credential flow cannot carry both a grant id and an error".to_owned(),
             });
         }
         if (self.grant_id.is_some() || self.error.is_some()) && self.completed_at_ms.is_none() {
-            return Err(AuthRegistryError::InvalidInput {
-                message: "auth flow outcome requires completed_at_ms".to_owned(),
+            return Err(CredentialRegistryError::InvalidInput {
+                message: "credential flow outcome requires completed_at_ms".to_owned(),
             });
         }
         validate_nonempty_optional("error", self.error.as_deref())?;
@@ -323,12 +331,12 @@ impl AuthFlowRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateAuthFlowRecord {
-    pub flow_id: AuthFlowId,
+pub struct CreateCredentialFlowRecord {
+    pub flow_id: CredentialFlowId,
     pub client_id: OAuthClientId,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
-    pub grant_exposure: AuthGrantExposure,
+    pub provider_kind: CredentialProviderKind,
+    pub grant_exposure: CredentialGrantExposure,
     pub created_by: Attribution,
     pub state_hash: String,
     pub pkce_verifier_secret: SecretId,
@@ -341,9 +349,9 @@ pub struct CreateAuthFlowRecord {
     pub created_at_ms: i64,
 }
 
-impl CreateAuthFlowRecord {
-    pub fn into_record(self) -> AuthFlowRecord {
-        AuthFlowRecord {
+impl CreateCredentialFlowRecord {
+    pub fn into_record(self) -> CredentialFlowRecord {
+        CredentialFlowRecord {
             flow_id: self.flow_id,
             client_id: self.client_id,
             provider_id: self.provider_id,
@@ -370,17 +378,18 @@ impl CreateAuthFlowRecord {
 
 /// Terminal outcome for a consumed flow: exactly one of `grant_id` / `error`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FinishAuthFlow {
-    pub grant_id: Option<AuthGrantId>,
+pub struct FinishCredentialFlow {
+    pub grant_id: Option<CredentialGrantId>,
     pub error: Option<String>,
     pub completed_at_ms: i64,
 }
 
-impl FinishAuthFlow {
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+impl FinishCredentialFlow {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         if self.grant_id.is_some() == self.error.is_some() {
-            return Err(AuthRegistryError::InvalidInput {
-                message: "auth flow outcome must set exactly one of grant id or error".to_owned(),
+            return Err(CredentialRegistryError::InvalidInput {
+                message: "credential flow outcome must set exactly one of grant id or error"
+                    .to_owned(),
             });
         }
         validate_nonempty_optional("error", self.error.as_deref())?;
@@ -390,36 +399,39 @@ impl FinishAuthFlow {
 }
 
 #[async_trait]
-pub trait AuthFlowStore: Send + Sync {
+pub trait CredentialFlowStore: Send + Sync {
     async fn create_flow(
         &self,
-        record: CreateAuthFlowRecord,
-    ) -> Result<AuthFlowRecord, AuthRegistryError>;
+        record: CreateCredentialFlowRecord,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError>;
 
-    async fn read_flow(&self, flow_id: &AuthFlowId) -> Result<AuthFlowRecord, AuthRegistryError>;
+    async fn read_flow(
+        &self,
+        flow_id: &CredentialFlowId,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError>;
 
     async fn read_flow_by_state_hash(
         &self,
         state_hash: &str,
-    ) -> Result<Option<AuthFlowRecord>, AuthRegistryError>;
+    ) -> Result<Option<CredentialFlowRecord>, CredentialRegistryError>;
 
     /// Atomically mark the flow consumed. Fails with
-    /// [`AuthRegistryError::FlowAlreadyConsumed`] when a callback already
-    /// claimed it and [`AuthRegistryError::FlowExpired`] when past its TTL,
+    /// [`CredentialRegistryError::FlowAlreadyConsumed`] when a callback already
+    /// claimed it and [`CredentialRegistryError::FlowExpired`] when past its TTL,
     /// so duplicate or late callbacks cannot race a code exchange.
     async fn consume_flow(
         &self,
-        flow_id: &AuthFlowId,
+        flow_id: &CredentialFlowId,
         now_ms: i64,
-    ) -> Result<AuthFlowRecord, AuthRegistryError>;
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError>;
 
     /// Record the terminal outcome of a consumed flow. Fails with
-    /// [`AuthRegistryError::FlowAlreadyCompleted`] when an outcome exists.
+    /// [`CredentialRegistryError::FlowAlreadyCompleted`] when an outcome exists.
     async fn finish_flow(
         &self,
-        flow_id: &AuthFlowId,
-        outcome: FinishAuthFlow,
-    ) -> Result<AuthFlowRecord, AuthRegistryError>;
+        flow_id: &CredentialFlowId,
+        outcome: FinishCredentialFlow,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError>;
 }
 
 /// Generate the OAuth `state` parameter: 256 bits from the OS RNG,
@@ -812,7 +824,7 @@ mod tests {
         OAuthClientRecord {
             client_id: OAuthClientId::new("github"),
             provider_id: "github".to_owned(),
-            provider_kind: AuthProviderKind::CustomOAuth,
+            provider_kind: CredentialProviderKind::CustomOAuth,
             display_name: None,
             authorization_endpoint: "https://github.com/login/oauth/authorize".to_owned(),
             token_endpoint: "https://github.com/login/oauth/access_token".to_owned(),
@@ -837,11 +849,11 @@ mod tests {
     #[test]
     fn oauth_client_records_reject_non_oauth_kinds() {
         let mut record = client_record();
-        record.provider_kind = AuthProviderKind::StaticToken;
+        record.provider_kind = CredentialProviderKind::StaticToken;
 
         assert!(matches!(
             record.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
@@ -852,7 +864,7 @@ mod tests {
 
         assert!(matches!(
             record.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
@@ -871,14 +883,14 @@ mod tests {
         missing_secret.client_secret = None;
         assert!(matches!(
             missing_secret.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
 
         let mut public_with_secret = client_record();
         public_with_secret.token_endpoint_auth_method = TokenEndpointAuthMethod::None;
         assert!(matches!(
             public_with_secret.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
 
         let mut public_client = client_record();
@@ -890,12 +902,12 @@ mod tests {
     #[test]
     fn mcp_oauth_clients_require_an_audience() {
         let mut record = client_record();
-        record.provider_kind = AuthProviderKind::McpOAuth;
+        record.provider_kind = CredentialProviderKind::McpOAuth;
         record.audience = None;
 
         assert!(matches!(
             record.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
 
         record.audience = Some("https://crm.example.com/mcp".to_owned());
@@ -932,7 +944,7 @@ mod tests {
 
         let url = build_authorization_url(
             &client,
-            "https://lightspeed.example.com/auth/callback",
+            "https://lightspeed.example.com/credentials/callback",
             &["repo".to_owned(), "read:user".to_owned()],
             "state-123",
             "challenge-456",
@@ -943,7 +955,7 @@ mod tests {
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=Iv1.abc123"));
         assert!(
-            url.contains("redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fauth%2Fcallback")
+            url.contains("redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fcredentials%2Fcallback")
         );
         assert!(url.contains("state=state-123"));
         assert!(url.contains("code_challenge=challenge-456"));
@@ -954,16 +966,16 @@ mod tests {
 
     #[test]
     fn flow_status_derives_from_outcome_and_expiry() {
-        let mut flow = CreateAuthFlowRecord {
-            flow_id: AuthFlowId::new("authflow_1"),
+        let mut flow = CreateCredentialFlowRecord {
+            flow_id: CredentialFlowId::new("authflow_1"),
             client_id: OAuthClientId::new("github"),
             provider_id: "github".to_owned(),
-            provider_kind: AuthProviderKind::CustomOAuth,
-            grant_exposure: AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::CustomOAuth,
+            grant_exposure: CredentialGrantExposure::Brokered,
             created_by: Attribution::Local,
             state_hash: state_hash("state-123"),
             pkce_verifier_secret: SecretId::new("authsec_pkce"),
-            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/credentials/callback".to_owned(),
             scopes: Vec::new(),
             audience: None,
             expected_issuer: None,
@@ -973,16 +985,16 @@ mod tests {
         }
         .into_record();
 
-        assert_eq!(flow.status(50), AuthFlowStatus::Pending);
-        assert_eq!(flow.status(100), AuthFlowStatus::Expired);
+        assert_eq!(flow.status(50), CredentialFlowStatus::Pending);
+        assert_eq!(flow.status(100), CredentialFlowStatus::Expired);
 
         flow.completed_at_ms = Some(60);
-        flow.grant_id = Some(AuthGrantId::new("authgrant_1"));
-        assert_eq!(flow.status(200), AuthFlowStatus::Completed);
+        flow.grant_id = Some(CredentialGrantId::new("authgrant_1"));
+        assert_eq!(flow.status(200), CredentialFlowStatus::Completed);
 
         flow.grant_id = None;
         flow.error = Some("access_denied".to_owned());
-        assert_eq!(flow.status(70), AuthFlowStatus::Failed);
+        assert_eq!(flow.status(70), CredentialFlowStatus::Failed);
     }
 
     #[test]
@@ -994,7 +1006,7 @@ mod tests {
             auth_method: TokenEndpointAuthMethod::ClientSecretBasic,
             grant: OAuthTokenGrant::AuthorizationCode {
                 code: SecretValue::new("code-1"),
-                redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
+                redirect_uri: "https://lightspeed.example.com/credentials/callback".to_owned(),
                 code_verifier: SecretValue::new("verifier-1"),
             },
             resource: Some("https://crm.example.com/mcp".to_owned()),

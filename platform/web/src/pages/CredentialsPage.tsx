@@ -121,7 +121,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
   const invalidate = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: ["secrets", universeId] }),
-      queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] }),
+      queryClient.invalidateQueries({ queryKey: ["credential-grants", universeId] }),
       queryClient.invalidateQueries({ queryKey: ["models", universeId] }),
       queryClient.invalidateQueries({ queryKey: ["integrations"] }),
     ]);

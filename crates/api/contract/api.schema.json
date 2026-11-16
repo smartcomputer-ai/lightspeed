@@ -145,329 +145,6 @@
         }
       ]
     },
-    "AgentApiOutcomeOfAuthClientCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthClientCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthClientDeleteResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthClientDeleteResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthClientListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthClientListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthClientReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthClientReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthFlowStartResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthFlowStartResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthFlowStatusResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthFlowStatusResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGitHubInstallationGrantResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGitHubInstallationGrantResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGitHubInstallationListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGitHubInstallationListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantImportResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantImportResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantLeaseResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantLeaseResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthGrantRevokeResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthGrantRevokeResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthProviderCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthProviderCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthProviderDeleteResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthProviderDeleteResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthProviderListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthProviderListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthProviderPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthProviderPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfAuthProviderReadResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/AuthProviderReadResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfBlobHasResponse": {
       "properties": {
         "notifications": {
@@ -1039,6 +716,329 @@
         },
         "result": {
           "$ref": "#/definitions/ContextReplaceResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialClientCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialClientCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialClientDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialClientDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialClientListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialClientListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialClientReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialClientReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialFlowStartResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialFlowStartResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialFlowStatusResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialFlowStatusResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGitHubInstallationGrantResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGitHubInstallationListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGitHubInstallationListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGrantImportResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGrantImportResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGrantLeaseResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGrantLeaseResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGrantListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGrantListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGrantPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGrantPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGrantReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGrantReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialGrantRevokeResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialGrantRevokeResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialProviderCreateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialProviderCreateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialProviderDeleteResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialProviderDeleteResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialProviderListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialProviderListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialProviderPutResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialProviderPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfCredentialProviderReadResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/CredentialProviderReadResponse"
         }
       },
       "required": [
@@ -3260,1202 +3260,6 @@
           "type": "object"
         }
       ]
-    },
-    "AuthClientCreateParams": {
-      "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
-      "properties": {
-        "audience": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "authorizationEndpoint": {
-          "type": "string"
-        },
-        "authorizationResponseIssParameterSupported": {
-          "default": false,
-          "type": "boolean"
-        },
-        "authorizationServerIssuer": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "authorizationServerScopesSupported": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "clientId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "clientSecret": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "providerId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
-        },
-        "remoteClientId": {
-          "type": "string"
-        },
-        "scopesDefault": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "tokenEndpoint": {
-          "type": "string"
-        },
-        "tokenEndpointAuthMethod": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/TokenEndpointAuthMethod"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "providerKind",
-        "authorizationEndpoint",
-        "tokenEndpoint",
-        "remoteClientId"
-      ],
-      "type": "object"
-    },
-    "AuthClientCreateResponse": {
-      "properties": {
-        "client": {
-          "$ref": "#/definitions/OAuthClientView"
-        }
-      },
-      "required": [
-        "client"
-      ],
-      "type": "object"
-    },
-    "AuthClientDeleteParams": {
-      "properties": {
-        "clientId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "clientId"
-      ],
-      "type": "object"
-    },
-    "AuthClientDeleteResponse": {
-      "properties": {
-        "client": {
-          "$ref": "#/definitions/OAuthClientView"
-        }
-      },
-      "required": [
-        "client"
-      ],
-      "type": "object"
-    },
-    "AuthClientListParams": {
-      "type": "object"
-    },
-    "AuthClientListResponse": {
-      "properties": {
-        "clients": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/OAuthClientView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "AuthClientReadParams": {
-      "properties": {
-        "clientId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "clientId"
-      ],
-      "type": "object"
-    },
-    "AuthClientReadResponse": {
-      "properties": {
-        "client": {
-          "$ref": "#/definitions/OAuthClientView"
-        }
-      },
-      "required": [
-        "client"
-      ],
-      "type": "object"
-    },
-    "AuthFlowStartParams": {
-      "properties": {
-        "audience": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "clientId": {
-          "type": "string"
-        },
-        "exposure": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AuthGrantExposure"
-            }
-          ],
-          "default": "brokered"
-        },
-        "scopes": {
-          "items": {
-            "type": "string"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "clientId"
-      ],
-      "type": "object"
-    },
-    "AuthFlowStartResponse": {
-      "properties": {
-        "authorizeUrl": {
-          "description": "Authorization URL the user must open. It embeds the one-time `state`;\ntreat it as sensitive and do not log it server-side.",
-          "type": "string"
-        },
-        "expiresAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "flowId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "flowId",
-        "authorizeUrl",
-        "expiresAtMs"
-      ],
-      "type": "object"
-    },
-    "AuthFlowStatus": {
-      "enum": [
-        "pending",
-        "completed",
-        "failed",
-        "expired"
-      ],
-      "type": "string"
-    },
-    "AuthFlowStatusParams": {
-      "properties": {
-        "flowId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "flowId"
-      ],
-      "type": "object"
-    },
-    "AuthFlowStatusResponse": {
-      "properties": {
-        "flow": {
-          "$ref": "#/definitions/AuthFlowView"
-        }
-      },
-      "required": [
-        "flow"
-      ],
-      "type": "object"
-    },
-    "AuthFlowView": {
-      "properties": {
-        "clientId": {
-          "type": "string"
-        },
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "error": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "expiresAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "flowId": {
-          "type": "string"
-        },
-        "grantId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "providerId": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/definitions/AuthFlowStatus"
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "flowId",
-        "clientId",
-        "providerId",
-        "status",
-        "expiresAtMs",
-        "createdAtMs",
-        "updatedAtMs"
-      ],
-      "type": "object"
-    },
-    "AuthGitHubInstallationGrantParams": {
-      "properties": {
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "exposure": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AuthGrantExposure"
-            }
-          ],
-          "default": "brokered"
-        },
-        "grantId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "installationId": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId",
-        "installationId"
-      ],
-      "type": "object"
-    },
-    "AuthGitHubInstallationGrantResponse": {
-      "properties": {
-        "grant": {
-          "$ref": "#/definitions/AuthGrantView"
-        }
-      },
-      "required": [
-        "grant"
-      ],
-      "type": "object"
-    },
-    "AuthGitHubInstallationListParams": {
-      "properties": {
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "AuthGitHubInstallationListResponse": {
-      "properties": {
-        "installations": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/GitHubInstallationView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "AuthGrantExposure": {
-      "description": "Where a credential's plain value may go, fixed when it is created.",
-      "oneOf": [
-        {
-          "const": "brokered",
-          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
-          "type": "string"
-        },
-        {
-          "const": "retrievable",
-          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
-          "type": "string"
-        }
-      ]
-    },
-    "AuthGrantImportParams": {
-      "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
-      "properties": {
-        "audience": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "expiresAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "exposure": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AuthGrantExposure"
-            }
-          ],
-          "default": "brokered"
-        },
-        "grantId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "metadata": {
-          "description": "Non-secret, caller-defined metadata stored on the grant and returned\nby reads (for example which product a pasted subscription token\nbelongs to). Must be a JSON object; never put secret material here."
-        },
-        "providerId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "scopes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "subjectHint": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "token"
-      ],
-      "type": "object"
-    },
-    "AuthGrantImportResponse": {
-      "properties": {
-        "grant": {
-          "$ref": "#/definitions/AuthGrantView"
-        }
-      },
-      "required": [
-        "grant"
-      ],
-      "type": "object"
-    },
-    "AuthGrantLeaseParams": {
-      "description": "Request a current access-token lease for a retrievable grant. Callers must\ncache only in memory until shortly before `expiresAtMs` (or for at most\nfive minutes when it is absent), re-lease after target 401/403 responses,\nand never persist the token or place it in a workflow payload.",
-      "properties": {
-        "audience": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "grantId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "grantId"
-      ],
-      "type": "object"
-    },
-    "AuthGrantLeaseResponse": {
-      "properties": {
-        "expiresAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "grantId": {
-          "type": "string"
-        },
-        "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "token",
-        "grantId",
-        "providerKind"
-      ],
-      "type": "object"
-    },
-    "AuthGrantListParams": {
-      "properties": {
-        "status": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AuthGrantStatus"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "AuthGrantListResponse": {
-      "properties": {
-        "grants": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/AuthGrantView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "AuthGrantPutParams": {
-      "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
-      "properties": {
-        "audience": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "dryRun": {
-          "description": "Report what the declaration would do without doing it.",
-          "type": "boolean"
-        },
-        "expiresAtMs": {
-          "description": "When the token expires. Absent means it does not expire.",
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "exposure": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AuthGrantExposure"
-            }
-          ],
-          "default": "brokered",
-          "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
-        },
-        "grantId": {
-          "type": "string"
-        },
-        "metadata": {
-          "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
-        },
-        "providerId": {
-          "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "scopes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "subjectHint": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "grantId",
-        "token"
-      ],
-      "type": "object"
-    },
-    "AuthGrantPutResponse": {
-      "properties": {
-        "created": {
-          "description": "False when the credential already existed.",
-          "type": "boolean"
-        },
-        "grant": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AuthGrantView"
-            }
-          ],
-          "description": "The credential as declared: as it is now, or as it would be for a\ndry run."
-        },
-        "tokenReplaced": {
-          "description": "True when an existing credential held a different token.",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "grant",
-        "created",
-        "tokenReplaced"
-      ],
-      "type": "object"
-    },
-    "AuthGrantReadParams": {
-      "properties": {
-        "grantId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "grantId"
-      ],
-      "type": "object"
-    },
-    "AuthGrantReadResponse": {
-      "properties": {
-        "grant": {
-          "$ref": "#/definitions/AuthGrantView"
-        }
-      },
-      "required": [
-        "grant"
-      ],
-      "type": "object"
-    },
-    "AuthGrantRevokeParams": {
-      "properties": {
-        "grantId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "grantId"
-      ],
-      "type": "object"
-    },
-    "AuthGrantRevokeResponse": {
-      "properties": {
-        "grant": {
-          "$ref": "#/definitions/AuthGrantView"
-        }
-      },
-      "required": [
-        "grant"
-      ],
-      "type": "object"
-    },
-    "AuthGrantStatus": {
-      "enum": [
-        "active",
-        "needsReauth",
-        "revoked",
-        "failed"
-      ],
-      "type": "string"
-    },
-    "AuthGrantView": {
-      "properties": {
-        "audience": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "createdBy": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/Attribution"
-            }
-          ],
-          "description": "Who created the grant. Attribution only; it confers no access."
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "expiresAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "exposure": {
-          "$ref": "#/definitions/AuthGrantExposure"
-        },
-        "grantId": {
-          "type": "string"
-        },
-        "hasAccessToken": {
-          "type": "boolean"
-        },
-        "hasRefreshToken": {
-          "type": "boolean"
-        },
-        "lastLeasedAtMs": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "leaseCount": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "metadata": {
-          "description": "Non-secret provider-specific metadata (for GitHub App installation\ngrants: installation id, account, permissions, repository selection)."
-        },
-        "providerId": {
-          "type": "string"
-        },
-        "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
-        },
-        "scopes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "status": {
-          "$ref": "#/definitions/AuthGrantStatus"
-        },
-        "subjectHint": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "grantId",
-        "providerId",
-        "providerKind",
-        "exposure",
-        "createdBy",
-        "hasAccessToken",
-        "hasRefreshToken",
-        "status",
-        "leaseCount",
-        "createdAtMs",
-        "updatedAtMs"
-      ],
-      "type": "object"
-    },
-    "AuthProviderConfigInput": {
-      "oneOf": [
-        {
-          "properties": {
-            "apiBaseUrl": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "appId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "githubApp",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "appId"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
-          "properties": {
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": {
-              "const": "modelApiKey",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
-          "properties": {
-            "audience": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "grantId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "modelOAuth",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "grantId"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Register an endpoint that requires no provider credential.",
-          "properties": {
-            "endpoint": {
-              "$ref": "#/definitions/ModelEndpointConfig"
-            },
-            "type": {
-              "const": "modelEndpoint",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "endpoint"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "AuthProviderConfigView": {
-      "description": "Non-secret, provider-specific configuration. New providers add a\nvariant, not a table.",
-      "oneOf": [
-        {
-          "properties": {
-            "apiBaseUrl": {
-              "type": "string"
-            },
-            "appId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "githubApp",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "appId",
-            "apiBaseUrl"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Stored model provider API key (`model:<provider_id>` rows). The key itself\nis the provider credential and never appears in views.",
-          "properties": {
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": {
-              "const": "modelApiKey",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "OAuth-grant-backed model provider credential: provider calls send the\nbound grant's access token as an OAuth bearer token.",
-          "properties": {
-            "audience": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "grantId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "modelOAuth",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "grantId"
-          ],
-          "type": "object"
-        },
-        {
-          "description": "Credentialless OpenAI-compatible endpoint.",
-          "properties": {
-            "endpoint": {
-              "$ref": "#/definitions/ModelEndpointConfig"
-            },
-            "type": {
-              "const": "modelEndpoint",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "endpoint"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "AuthProviderCreateParams": {
-      "description": "Register an auth provider. `credential` (for GitHub Apps: the private\nkey PEM) is the third deliberate inbound-plaintext path: it is encrypted\non receipt and never returned by any method. `Debug` output redacts it;\nrequest logging must never echo these params.",
-      "properties": {
-        "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
-        },
-        "credential": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "providerId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "config"
-      ],
-      "type": "object"
-    },
-    "AuthProviderCreateResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/AuthProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "AuthProviderDeleteParams": {
-      "properties": {
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "AuthProviderDeleteResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/AuthProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "AuthProviderKind": {
-      "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
-      "enum": [
-        "staticToken",
-        "mcpOAuth",
-        "gitHubApp",
-        "customOAuth",
-        "modelApiKey",
-        "modelOAuth",
-        "modelEndpoint"
-      ],
-      "type": "string"
-    },
-    "AuthProviderListParams": {
-      "type": "object"
-    },
-    "AuthProviderListResponse": {
-      "properties": {
-        "providers": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/AuthProviderView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "AuthProviderPutParams": {
-      "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
-      "properties": {
-        "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
-        },
-        "credential": {
-          "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "dryRun": {
-          "description": "Report what the declaration would do without doing it.",
-          "type": "boolean"
-        },
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId",
-        "config"
-      ],
-      "type": "object"
-    },
-    "AuthProviderPutResponse": {
-      "properties": {
-        "created": {
-          "description": "False when the provider already existed.",
-          "type": "boolean"
-        },
-        "credentialReplaced": {
-          "description": "True when an existing provider held a different credential, or gained\nor lost one.",
-          "type": "boolean"
-        },
-        "provider": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AuthProviderView"
-            }
-          ],
-          "description": "The provider as declared: as it is now, or as it would be for a dry\nrun."
-        }
-      },
-      "required": [
-        "provider",
-        "created",
-        "credentialReplaced"
-      ],
-      "type": "object"
-    },
-    "AuthProviderReadParams": {
-      "properties": {
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "AuthProviderReadResponse": {
-      "properties": {
-        "provider": {
-          "$ref": "#/definitions/AuthProviderView"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "type": "object"
-    },
-    "AuthProviderStatus": {
-      "enum": [
-        "active",
-        "needsConfiguration",
-        "disabled"
-      ],
-      "type": "string"
-    },
-    "AuthProviderView": {
-      "properties": {
-        "config": {
-          "$ref": "#/definitions/AuthProviderConfigView"
-        },
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "hasCredential": {
-          "type": "boolean"
-        },
-        "providerId": {
-          "type": "string"
-        },
-        "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
-        },
-        "status": {
-          "$ref": "#/definitions/AuthProviderStatus"
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "providerId",
-        "providerKind",
-        "config",
-        "hasCredential",
-        "status",
-        "createdAtMs",
-        "updatedAtMs"
-      ],
-      "type": "object"
     },
     "BlobHasItem": {
       "properties": {
@@ -7108,7 +5912,7 @@
           "$ref": "#/definitions/ChannelAccountId"
         },
         "credentialGrantId": {
-          "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+          "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
           "type": [
             "string",
             "null"
@@ -7248,7 +6052,7 @@
           "type": "integer"
         },
         "credentialGrantId": {
-          "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+          "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
           "type": [
             "string",
             "null"
@@ -9020,6 +7824,1202 @@
       ],
       "type": "object"
     },
+    "CredentialClientCreateParams": {
+      "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `credentials/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authorizationEndpoint": {
+          "type": "string"
+        },
+        "authorizationResponseIssParameterSupported": {
+          "default": false,
+          "type": "boolean"
+        },
+        "authorizationServerIssuer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authorizationServerScopesSupported": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clientSecret": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerKind": {
+          "$ref": "#/definitions/CredentialProviderKind"
+        },
+        "remoteClientId": {
+          "type": "string"
+        },
+        "scopesDefault": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tokenEndpoint": {
+          "type": "string"
+        },
+        "tokenEndpointAuthMethod": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TokenEndpointAuthMethod"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "providerKind",
+        "authorizationEndpoint",
+        "tokenEndpoint",
+        "remoteClientId"
+      ],
+      "type": "object"
+    },
+    "CredentialClientCreateResponse": {
+      "properties": {
+        "client": {
+          "$ref": "#/definitions/OAuthClientView"
+        }
+      },
+      "required": [
+        "client"
+      ],
+      "type": "object"
+    },
+    "CredentialClientDeleteParams": {
+      "properties": {
+        "clientId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "CredentialClientDeleteResponse": {
+      "properties": {
+        "client": {
+          "$ref": "#/definitions/OAuthClientView"
+        }
+      },
+      "required": [
+        "client"
+      ],
+      "type": "object"
+    },
+    "CredentialClientListParams": {
+      "type": "object"
+    },
+    "CredentialClientListResponse": {
+      "properties": {
+        "clients": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/OAuthClientView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CredentialClientReadParams": {
+      "properties": {
+        "clientId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "CredentialClientReadResponse": {
+      "properties": {
+        "client": {
+          "$ref": "#/definitions/OAuthClientView"
+        }
+      },
+      "required": [
+        "client"
+      ],
+      "type": "object"
+    },
+    "CredentialFlowStartParams": {
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "exposure": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CredentialGrantExposure"
+            }
+          ],
+          "default": "brokered"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "clientId"
+      ],
+      "type": "object"
+    },
+    "CredentialFlowStartResponse": {
+      "properties": {
+        "authorizeUrl": {
+          "description": "Authorization URL the user must open. It embeds the one-time `state`;\ntreat it as sensitive and do not log it server-side.",
+          "type": "string"
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "flowId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId",
+        "authorizeUrl",
+        "expiresAtMs"
+      ],
+      "type": "object"
+    },
+    "CredentialFlowStatus": {
+      "enum": [
+        "pending",
+        "completed",
+        "failed",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "CredentialFlowStatusParams": {
+      "properties": {
+        "flowId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flowId"
+      ],
+      "type": "object"
+    },
+    "CredentialFlowStatusResponse": {
+      "properties": {
+        "flow": {
+          "$ref": "#/definitions/CredentialFlowView"
+        }
+      },
+      "required": [
+        "flow"
+      ],
+      "type": "object"
+    },
+    "CredentialFlowView": {
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "flowId": {
+          "type": "string"
+        },
+        "grantId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/CredentialFlowStatus"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "flowId",
+        "clientId",
+        "providerId",
+        "status",
+        "expiresAtMs",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "CredentialGitHubInstallationGrantParams": {
+      "properties": {
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exposure": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CredentialGrantExposure"
+            }
+          ],
+          "default": "brokered"
+        },
+        "grantId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installationId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "installationId"
+      ],
+      "type": "object"
+    },
+    "CredentialGitHubInstallationGrantResponse": {
+      "properties": {
+        "grant": {
+          "$ref": "#/definitions/CredentialGrantView"
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "type": "object"
+    },
+    "CredentialGitHubInstallationListParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "CredentialGitHubInstallationListResponse": {
+      "properties": {
+        "installations": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/GitHubInstallationView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CredentialGrantExposure": {
+      "description": "Where a credential's plain value may go, fixed when it is created.",
+      "oneOf": [
+        {
+          "const": "brokered",
+          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+          "type": "string"
+        },
+        {
+          "const": "retrievable",
+          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+          "type": "string"
+        }
+      ]
+    },
+    "CredentialGrantImportParams": {
+      "description": "Import a new token credential as a credential grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exposure": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CredentialGrantExposure"
+            }
+          ],
+          "default": "brokered"
+        },
+        "grantId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "description": "Non-secret, caller-defined metadata stored on the grant and returned\nby reads (for example which product a pasted subscription token\nbelongs to). Must be a JSON object; never put secret material here."
+        },
+        "providerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subjectHint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantImportResponse": {
+      "properties": {
+        "grant": {
+          "$ref": "#/definitions/CredentialGrantView"
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantLeaseParams": {
+      "description": "Request a current access-token lease for a retrievable grant. Callers must\ncache only in memory until shortly before `expiresAtMs` (or for at most\nfive minutes when it is absent), re-lease after target 401/403 responses,\nand never persist the token or place it in a workflow payload.",
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grantId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantLeaseResponse": {
+      "properties": {
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "providerKind": {
+          "$ref": "#/definitions/CredentialProviderKind"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "grantId",
+        "providerKind"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantListParams": {
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CredentialGrantStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "CredentialGrantListResponse": {
+      "properties": {
+        "grants": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/CredentialGrantView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CredentialGrantPutParams": {
+      "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dryRun": {
+          "description": "Report what the declaration would do without doing it.",
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "description": "When the token expires. Absent means it does not expire.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exposure": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CredentialGrantExposure"
+            }
+          ],
+          "default": "brokered",
+          "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "metadata": {
+          "description": "Non-secret, caller-defined metadata. Must be a JSON object; never put\nsecret material here."
+        },
+        "providerId": {
+          "description": "Label recorded on the credential; `static` when absent. It cannot be\nchanged afterwards.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subjectHint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId",
+        "token"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the credential already existed.",
+          "type": "boolean"
+        },
+        "grant": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CredentialGrantView"
+            }
+          ],
+          "description": "The credential as declared: as it is now, or as it would be for a\ndry run."
+        },
+        "tokenReplaced": {
+          "description": "True when an existing credential held a different token.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "grant",
+        "created",
+        "tokenReplaced"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantReadParams": {
+      "properties": {
+        "grantId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantReadResponse": {
+      "properties": {
+        "grant": {
+          "$ref": "#/definitions/CredentialGrantView"
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantRevokeParams": {
+      "properties": {
+        "grantId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grantId"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantRevokeResponse": {
+      "properties": {
+        "grant": {
+          "$ref": "#/definitions/CredentialGrantView"
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "type": "object"
+    },
+    "CredentialGrantStatus": {
+      "enum": [
+        "active",
+        "needsReauth",
+        "revoked",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "CredentialGrantView": {
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "createdBy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Attribution"
+            }
+          ],
+          "description": "Who created the grant. Attribution only; it confers no access."
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "exposure": {
+          "$ref": "#/definitions/CredentialGrantExposure"
+        },
+        "grantId": {
+          "type": "string"
+        },
+        "hasAccessToken": {
+          "type": "boolean"
+        },
+        "hasRefreshToken": {
+          "type": "boolean"
+        },
+        "lastLeasedAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "leaseCount": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Non-secret provider-specific metadata (for GitHub App installation\ngrants: installation id, account, permissions, repository selection)."
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "providerKind": {
+          "$ref": "#/definitions/CredentialProviderKind"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/CredentialGrantStatus"
+        },
+        "subjectHint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "grantId",
+        "providerId",
+        "providerKind",
+        "exposure",
+        "createdBy",
+        "hasAccessToken",
+        "hasRefreshToken",
+        "status",
+        "leaseCount",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderConfigInput": {
+      "oneOf": [
+        {
+          "properties": {
+            "apiBaseUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "appId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "githubApp",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appId"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "modelApiKey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+          "properties": {
+            "audience": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "modelOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Register an endpoint that requires no provider credential.",
+          "properties": {
+            "endpoint": {
+              "$ref": "#/definitions/ModelEndpointConfig"
+            },
+            "type": {
+              "const": "modelEndpoint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "endpoint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CredentialProviderConfigView": {
+      "description": "Non-secret, provider-specific configuration. New providers add a\nvariant, not a table.",
+      "oneOf": [
+        {
+          "properties": {
+            "apiBaseUrl": {
+              "type": "string"
+            },
+            "appId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "githubApp",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appId",
+            "apiBaseUrl"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stored model provider API key (`model:<provider_id>` rows). The key itself\nis the provider credential and never appears in views.",
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "modelApiKey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "OAuth-grant-backed model provider credential: provider calls send the\nbound grant's access token as an OAuth bearer token.",
+          "properties": {
+            "audience": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "modelOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Credentialless OpenAI-compatible endpoint.",
+          "properties": {
+            "endpoint": {
+              "$ref": "#/definitions/ModelEndpointConfig"
+            },
+            "type": {
+              "const": "modelEndpoint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "endpoint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CredentialProviderCreateParams": {
+      "description": "Register a credential provider. `credential` (for GitHub Apps: the private\nkey PEM) is the third deliberate inbound-plaintext path: it is encrypted\non receipt and never returned by any method. `Debug` output redacts it;\nrequest logging must never echo these params.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/CredentialProviderConfigInput"
+        },
+        "credential": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderCreateResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/CredentialProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderDeleteParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderDeleteResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/CredentialProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderKind": {
+      "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
+      "enum": [
+        "staticToken",
+        "mcpOAuth",
+        "gitHubApp",
+        "customOAuth",
+        "modelApiKey",
+        "modelOAuth",
+        "modelEndpoint"
+      ],
+      "type": "string"
+    },
+    "CredentialProviderListParams": {
+      "type": "object"
+    },
+    "CredentialProviderListResponse": {
+      "properties": {
+        "providers": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/CredentialProviderView"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CredentialProviderPutParams": {
+      "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/CredentialProviderConfigInput"
+        },
+        "credential": {
+          "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dryRun": {
+          "description": "Report what the declaration would do without doing it.",
+          "type": "boolean"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "config"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderPutResponse": {
+      "properties": {
+        "created": {
+          "description": "False when the provider already existed.",
+          "type": "boolean"
+        },
+        "credentialReplaced": {
+          "description": "True when an existing provider held a different credential, or gained\nor lost one.",
+          "type": "boolean"
+        },
+        "provider": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CredentialProviderView"
+            }
+          ],
+          "description": "The provider as declared: as it is now, or as it would be for a dry\nrun."
+        }
+      },
+      "required": [
+        "provider",
+        "created",
+        "credentialReplaced"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderReadParams": {
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderReadResponse": {
+      "properties": {
+        "provider": {
+          "$ref": "#/definitions/CredentialProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "CredentialProviderStatus": {
+      "enum": [
+        "active",
+        "needsConfiguration",
+        "disabled"
+      ],
+      "type": "string"
+    },
+    "CredentialProviderView": {
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/CredentialProviderConfigView"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hasCredential": {
+          "type": "boolean"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "providerKind": {
+          "$ref": "#/definitions/CredentialProviderKind"
+        },
+        "status": {
+          "$ref": "#/definitions/CredentialProviderStatus"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "providerId",
+        "providerKind",
+        "config",
+        "hasCredential",
+        "status",
+        "createdAtMs",
+        "updatedAtMs"
+      ],
+      "type": "object"
+    },
     "DeclaredUniverseMember": {
       "additionalProperties": false,
       "properties": {
@@ -9162,7 +9162,7 @@
           "type": "integer"
         },
         "credentialGrantId": {
-          "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+          "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
           "type": [
             "string",
             "null"
@@ -12599,7 +12599,7 @@
       ]
     },
     "McpServerCredential": {
-      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the auth subsystem and is never returned.",
+      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the credentials subsystem and is never returned.",
       "oneOf": [
         {
           "properties": {
@@ -13172,13 +13172,13 @@
           "type": "string"
         },
         {
-          "const": "auth",
-          "description": "`auth/*` except leasing.",
+          "const": "credentials",
+          "description": "`credentials/*` except leasing.",
           "type": "string"
         },
         {
-          "const": "auth/lease",
-          "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
+          "const": "credentials/lease",
+          "description": "`credentials/grants/lease`: resolving a brokered credential for delivery.",
           "type": "string"
         },
         {
@@ -13613,7 +13613,7 @@
           "type": "string"
         },
         "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
+          "$ref": "#/definitions/CredentialProviderKind"
         },
         "remoteClientId": {
           "type": "string"

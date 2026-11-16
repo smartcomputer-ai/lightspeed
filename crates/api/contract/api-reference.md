@@ -1020,7 +1020,7 @@ Deletes the mutable workspace record; immutable snapshots and blobs remain conte
 
 **Create or replace an MCP server record**
 
-Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
+Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
 - Group: `mcp`
@@ -1094,258 +1094,258 @@ Deletes the catalog document. Existing session configs that reference it are not
 - Params: `McpServerDeleteParams`
 - Result: `AgentApiOutcome<McpServerDeleteResponse>`
 
-### `auth/grants/import`
+### `credentials/grants/import`
 
 **Import a token credential**
 
 Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGrantImportParams`
-- Result: `AgentApiOutcome<AuthGrantImportResponse>`
+- Params: `CredentialGrantImportParams`
+- Result: `AgentApiOutcome<CredentialGrantImportResponse>`
 
 
 ## Service methods
 
-### `auth/grants/lease`
+### `credentials/grants/lease`
 
-**Lease a retrievable authentication grant**
+**Lease a retrievable credential grant**
 
 Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
 
 - Access: `{"kind":"service"}`
-- Group: `auth/lease`
+- Group: `credentials/lease`
 - Role: `none`
 - Target: `none`
-- Params: `AuthGrantLeaseParams`
-- Result: `AgentApiOutcome<AuthGrantLeaseResponse>`
+- Params: `CredentialGrantLeaseParams`
+- Result: `AgentApiOutcome<CredentialGrantLeaseResponse>`
 
 
 ## Universe methods
 
-### `auth/grants/read`
+### `credentials/grants/read`
 
-**Read authentication grant metadata**
+**Read credential grant metadata**
 
 Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
 
 - Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `viewer`
 - Target: `none`
-- Params: `AuthGrantReadParams`
-- Result: `AgentApiOutcome<AuthGrantReadResponse>`
+- Params: `CredentialGrantReadParams`
+- Result: `AgentApiOutcome<CredentialGrantReadResponse>`
 
-### `auth/grants/list`
+### `credentials/grants/list`
 
-**List authentication grants**
+**List credential grants**
 
 Lists non-secret grant metadata for the universe, optionally filtered by status.
 
 - Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `viewer`
 - Target: `none`
-- Params: `AuthGrantListParams`
-- Result: `AgentApiOutcome<AuthGrantListResponse>`
+- Params: `CredentialGrantListParams`
+- Result: `AgentApiOutcome<CredentialGrantListResponse>`
 
-### `auth/grants/put`
+### `credentials/grants/put`
 
 **Declare a token credential**
 
 Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGrantPutParams`
-- Result: `AgentApiOutcome<AuthGrantPutResponse>`
+- Params: `CredentialGrantPutParams`
+- Result: `AgentApiOutcome<CredentialGrantPutResponse>`
 
-### `auth/grants/revoke`
+### `credentials/grants/revoke`
 
-**Revoke an authentication grant**
+**Revoke a credential grant**
 
 Marks the grant unusable by token consumers while retaining non-secret audit metadata.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGrantRevokeParams`
-- Result: `AgentApiOutcome<AuthGrantRevokeResponse>`
+- Params: `CredentialGrantRevokeParams`
+- Result: `AgentApiOutcome<CredentialGrantRevokeResponse>`
 
-### `auth/clients/create`
+### `credentials/clients/create`
 
 **Register an OAuth client**
 
 Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthClientCreateParams`
-- Result: `AgentApiOutcome<AuthClientCreateResponse>`
+- Params: `CredentialClientCreateParams`
+- Result: `AgentApiOutcome<CredentialClientCreateResponse>`
 
-### `auth/clients/read`
+### `credentials/clients/read`
 
 **Read OAuth client metadata**
 
 Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
 
 - Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `viewer`
 - Target: `none`
-- Params: `AuthClientReadParams`
-- Result: `AgentApiOutcome<AuthClientReadResponse>`
+- Params: `CredentialClientReadParams`
+- Result: `AgentApiOutcome<CredentialClientReadResponse>`
 
-### `auth/clients/list`
+### `credentials/clients/list`
 
 **List OAuth clients**
 
 Lists non-secret OAuth client registrations in the universe.
 
 - Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `viewer`
 - Target: `none`
-- Params: `AuthClientListParams`
-- Result: `AgentApiOutcome<AuthClientListResponse>`
+- Params: `CredentialClientListParams`
+- Result: `AgentApiOutcome<CredentialClientListResponse>`
 
-### `auth/clients/delete`
+### `credentials/clients/delete`
 
 **Delete an OAuth client**
 
 Deletes the client registration and its stored client secret; grants already created from it remain separate records.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthClientDeleteParams`
-- Result: `AgentApiOutcome<AuthClientDeleteResponse>`
+- Params: `CredentialClientDeleteParams`
+- Result: `AgentApiOutcome<CredentialClientDeleteResponse>`
 
-### `auth/flows/start`
+### `credentials/flows/start`
 
 **Start an OAuth authorization flow**
 
-Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
+Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthFlowStartParams`
-- Result: `AgentApiOutcome<AuthFlowStartResponse>`
+- Params: `CredentialFlowStartParams`
+- Result: `AgentApiOutcome<CredentialFlowStartResponse>`
 
-### `auth/flows/read`
+### `credentials/flows/read`
 
 **Read OAuth flow status**
 
 Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthFlowStatusParams`
-- Result: `AgentApiOutcome<AuthFlowStatusResponse>`
+- Params: `CredentialFlowStatusParams`
+- Result: `AgentApiOutcome<CredentialFlowStatusResponse>`
 
-### `auth/providers/create`
+### `credentials/providers/create`
 
-**Register an authentication provider**
+**Register a credential provider**
 
 Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthProviderCreateParams`
-- Result: `AgentApiOutcome<AuthProviderCreateResponse>`
+- Params: `CredentialProviderCreateParams`
+- Result: `AgentApiOutcome<CredentialProviderCreateResponse>`
 
-### `auth/providers/put`
+### `credentials/providers/put`
 
-**Declare an authentication provider**
+**Declare a credential provider**
 
 Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthProviderPutParams`
-- Result: `AgentApiOutcome<AuthProviderPutResponse>`
+- Params: `CredentialProviderPutParams`
+- Result: `AgentApiOutcome<CredentialProviderPutResponse>`
 
-### `auth/providers/read`
+### `credentials/providers/read`
 
-**Read authentication provider metadata**
+**Read credential provider metadata**
 
 Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
 
 - Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `viewer`
 - Target: `none`
-- Params: `AuthProviderReadParams`
-- Result: `AgentApiOutcome<AuthProviderReadResponse>`
+- Params: `CredentialProviderReadParams`
+- Result: `AgentApiOutcome<CredentialProviderReadResponse>`
 
-### `auth/providers/list`
+### `credentials/providers/list`
 
-**List authentication providers**
+**List credential providers**
 
 Lists non-secret model/GitHub provider registrations for the universe.
 
 - Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `viewer`
 - Target: `none`
-- Params: `AuthProviderListParams`
-- Result: `AgentApiOutcome<AuthProviderListResponse>`
+- Params: `CredentialProviderListParams`
+- Result: `AgentApiOutcome<CredentialProviderListResponse>`
 
-### `auth/providers/delete`
+### `credentials/providers/delete`
 
-**Delete an authentication provider**
+**Delete a credential provider**
 
 Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthProviderDeleteParams`
-- Result: `AgentApiOutcome<AuthProviderDeleteResponse>`
+- Params: `CredentialProviderDeleteParams`
+- Result: `AgentApiOutcome<CredentialProviderDeleteResponse>`
 
-### `auth/github/installations/list`
+### `credentials/github/installations/list`
 
 **List GitHub App installations**
 
 Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGitHubInstallationListParams`
-- Result: `AgentApiOutcome<AuthGitHubInstallationListResponse>`
+- Params: `CredentialGitHubInstallationListParams`
+- Result: `AgentApiOutcome<CredentialGitHubInstallationListResponse>`
 
-### `auth/github/installations/grant`
+### `credentials/github/installations/grant`
 
 **Grant access to a GitHub App installation**
 
-Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
+Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
 
 - Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- Group: `credentials`
 - Role: `operator`
 - Target: `none`
-- Params: `AuthGitHubInstallationGrantParams`
-- Result: `AgentApiOutcome<AuthGitHubInstallationGrantResponse>`
+- Params: `CredentialGitHubInstallationGrantParams`
+- Result: `AgentApiOutcome<CredentialGitHubInstallationGrantResponse>`
 
 ### `bots/create`
 

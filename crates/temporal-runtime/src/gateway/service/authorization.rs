@@ -90,8 +90,8 @@ impl GatewayAgentApi {
     /// configuration names, under the bot's own controller authority.
     pub(crate) async fn lease_bot_poll_grant(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
+        params: CredentialGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantLeaseResponse>, AgentApiError> {
         use ::bots::BotTriggerStore as _;
         let authority = CONTROLLER.try_with(Clone::clone).map_err(|_| denied())?;
         let ResourceRef::Bot(ref id) = authority.actor else {

@@ -21,7 +21,7 @@ describe("Streamable HTTP configurator", () => {
   it("initializes, lists all tools, and forwards a universe call in api-key mode", async () => {
     const upstream: UpstreamRequest[] = [];
     const server = await start("authenticated", fakeUpstream(upstream));
-    const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_alpha" });
+    const { client, transport } = mcpClient(server, { authorization: "Bearer lsr_alpha" });
 
     await client.connect(transport as Parameters<typeof client.connect>[0]);
     expect(client.getProtocolEra()).toBe("modern");
@@ -47,7 +47,7 @@ describe("Streamable HTTP configurator", () => {
       notifications: [],
     });
     expect(upstream.filter((request) => request.method === "models/list")).toHaveLength(1);
-    expect(upstream.every((request) => request.headers.get("authorization") === "Bearer lsk_alpha"))
+    expect(upstream.every((request) => request.headers.get("authorization") === "Bearer lsr_alpha"))
       .toBe(true);
     expect(upstream.find((request) => request.method === "models/list")?.params).toEqual({
       selectableOnly: true,
@@ -69,12 +69,12 @@ describe("Streamable HTTP configurator", () => {
     const server = await start("authenticated", fakeUpstream(upstream, 5));
     const a = mcpClient(server, {
       "x-lightspeed-universe": universeA,
-      authorization: "Bearer lsk_service",
+      authorization: "Bearer lsr_service",
       "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000003",
     });
     const b = mcpClient(server, {
       "x-lightspeed-universe": universeB,
-      authorization: "Bearer lsk_service",
+      authorization: "Bearer lsr_service",
       "x-lightspeed-actor": "platform:user:00000000-0000-4000-8000-000000000004",
     });
 
@@ -119,7 +119,7 @@ describe("Streamable HTTP configurator", () => {
     });
     const response = await fetch(`${server.url}/mcp`, {
       method: "POST",
-      headers: mcpHeaders({ authorization: "Bearer lsk_revoked" }),
+      headers: mcpHeaders({ authorization: "Bearer lsr_revoked" }),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -132,7 +132,7 @@ describe("Streamable HTTP configurator", () => {
       }),
     });
     expect(response.status).toBe(401);
-    expect(await response.text()).not.toContain("lsk_revoked");
+    expect(await response.text()).not.toContain("lsr_revoked");
   });
 
   it("rejects disallowed origins before contacting Lightspeed", async () => {

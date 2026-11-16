@@ -1,7 +1,7 @@
-//! Generic auth registry contracts: grants, secrets, and the token broker.
+//! Generic credential registry contracts: grants, secrets, and the token broker.
 //!
 //! This crate owns provider-independent control-plane models and store traits
-//! for the auth substrate. Concrete persistence adapters, such as
+//! for the credential substrate. Concrete persistence adapters, such as
 //! `store-pg`, implement these traits outside this crate; OAuth and provider
 //! drivers arrive in later milestones. Secret values only ever cross these
 //! boundaries wrapped in [`SecretValue`], whose `Debug` output is redacted.
@@ -12,7 +12,7 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
-macro_rules! auth_string_id {
+macro_rules! credential_string_id {
     ($name:ident) => {
         #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(String);
@@ -90,11 +90,11 @@ macro_rules! auth_string_id {
     };
 }
 
-auth_string_id!(AuthGrantId);
-auth_string_id!(SecretId);
-auth_string_id!(OAuthClientId);
-auth_string_id!(AuthFlowId);
-auth_string_id!(AuthProviderId);
+credential_string_id!(CredentialGrantId);
+credential_string_id!(SecretId);
+credential_string_id!(OAuthClientId);
+credential_string_id!(CredentialFlowId);
+credential_string_id!(CredentialProviderId);
 
 mod broker;
 mod flow;
@@ -110,11 +110,12 @@ mod safe_http;
 mod secrets;
 
 pub use broker::{
-    AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,
-    OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,
+    CredentialBrokerError, CredentialTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS,
+    GrantTokenSource, OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,
 };
 pub use flow::{
-    AuthCallback, DEFAULT_AUTH_FLOW_TTL_MS, OAuthFlowService, StartAuthFlow, StartedAuthFlow,
+    CredentialCallback, DEFAULT_CREDENTIAL_FLOW_TTL_MS, OAuthFlowService, StartCredentialFlow,
+    StartedCredentialFlow,
 };
 pub use github::{
     DEFAULT_GITHUB_API_BASE_URL, GitHubApiClient, GitHubAppError, GitHubAppRuntime,
@@ -123,8 +124,9 @@ pub use github::{
     validate_github_app_private_key,
 };
 pub use grants::{
-    AuthGrantExposure, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
-    AuthProviderKind, CreateAuthGrantRecord, ListAuthGrants, TokenCredentialUpdate,
+    CreateCredentialGrantRecord, CredentialGrantExposure, CredentialGrantRecord,
+    CredentialGrantStatus, CredentialGrantStore, CredentialGrantTokenRefresh,
+    CredentialProviderKind, ListCredentialGrants, TokenCredentialUpdate,
 };
 pub use headers::{
     CredentialHeaderError, HeaderCredentialError, REQUEST_HEADER_NAME_MAX_LEN,
@@ -138,22 +140,23 @@ pub use mcp_oauth::{
     mcp_oauth_client_id, parse_mcp_oauth_challenge,
 };
 pub use memory::{
-    InMemoryAuthFlowStore, InMemoryAuthGrantStore, InMemoryAuthProviderStore,
+    InMemoryCredentialFlowStore, InMemoryCredentialGrantStore, InMemoryCredentialProviderStore,
     InMemoryOAuthClientStore, InMemorySecretStore,
 };
 pub use oauth::{
-    AuthFlowRecord, AuthFlowStatus, AuthFlowStore, CreateAuthFlowRecord, CreateOAuthClientRecord,
-    FinishAuthFlow, HttpOAuthTokenClient, OAuthClientRecord, OAuthClientStore, OAuthTokenClient,
-    OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, OAuthTokenResponse,
-    SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_CLIENT_SECRET,
-    SECRET_KIND_OAUTH_PKCE_VERIFIER, SECRET_KIND_OAUTH_REFRESH_TOKEN, TokenEndpointAuthMethod,
-    build_authorization_url, generate_pkce_verifier, generate_state, pkce_challenge_s256,
-    state_hash,
+    CreateCredentialFlowRecord, CreateOAuthClientRecord, CredentialFlowRecord,
+    CredentialFlowStatus, CredentialFlowStore, FinishCredentialFlow, HttpOAuthTokenClient,
+    OAuthClientRecord, OAuthClientStore, OAuthTokenClient, OAuthTokenError, OAuthTokenGrant,
+    OAuthTokenRequest, OAuthTokenResponse, SECRET_KIND_OAUTH_ACCESS_TOKEN,
+    SECRET_KIND_OAUTH_CLIENT_SECRET, SECRET_KIND_OAUTH_PKCE_VERIFIER,
+    SECRET_KIND_OAUTH_REFRESH_TOKEN, TokenEndpointAuthMethod, build_authorization_url,
+    generate_pkce_verifier, generate_state, pkce_challenge_s256, state_hash,
 };
 pub use providers::{
-    AuthProviderConfig, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    CreateAuthProviderRecord, GitHubAppConfig, MODEL_ENDPOINT_HEADER_POLICY, ModelApiKeyConfig,
-    ModelEndpointConfig, ModelEndpointOnlyConfig, ModelOAuthConfig, model_auth_provider_id,
+    CreateCredentialProviderRecord, CredentialProviderConfig, CredentialProviderRecord,
+    CredentialProviderStatus, CredentialProviderStore, GitHubAppConfig,
+    MODEL_ENDPOINT_HEADER_POLICY, ModelApiKeyConfig, ModelEndpointConfig, ModelEndpointOnlyConfig,
+    ModelOAuthConfig, model_auth_provider_id,
 };
 pub use safe_http::{
     DEFAULT_OAUTH_HTTP_MAX_BODY_BYTES, DEFAULT_OAUTH_HTTP_MAX_HEADER_BYTES,
@@ -166,12 +169,12 @@ pub use secrets::{
     secret_sha256_hex,
 };
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum AuthRegistryError {
-    #[error("auth grant already exists: {grant_id}")]
-    GrantAlreadyExists { grant_id: AuthGrantId },
+pub enum CredentialRegistryError {
+    #[error("credential grant already exists: {grant_id}")]
+    GrantAlreadyExists { grant_id: CredentialGrantId },
 
-    #[error("auth grant not found: {grant_id}")]
-    GrantNotFound { grant_id: AuthGrantId },
+    #[error("credential grant not found: {grant_id}")]
+    GrantNotFound { grant_id: CredentialGrantId },
 
     #[error("secret already exists: {secret_id}")]
     SecretAlreadyExists { secret_id: SecretId },
@@ -185,40 +188,40 @@ pub enum AuthRegistryError {
     #[error("oauth client not found: {client_id}")]
     ClientNotFound { client_id: OAuthClientId },
 
-    #[error("auth provider already exists: {provider_id}")]
-    ProviderAlreadyExists { provider_id: AuthProviderId },
+    #[error("credential provider already exists: {provider_id}")]
+    ProviderAlreadyExists { provider_id: CredentialProviderId },
 
-    #[error("auth provider not found: {provider_id}")]
-    ProviderNotFound { provider_id: AuthProviderId },
+    #[error("credential provider not found: {provider_id}")]
+    ProviderNotFound { provider_id: CredentialProviderId },
 
-    #[error("auth flow already exists: {flow_id}")]
-    FlowAlreadyExists { flow_id: AuthFlowId },
+    #[error("credential flow already exists: {flow_id}")]
+    FlowAlreadyExists { flow_id: CredentialFlowId },
 
-    #[error("auth flow not found: {flow_id}")]
-    FlowNotFound { flow_id: AuthFlowId },
+    #[error("credential flow not found: {flow_id}")]
+    FlowNotFound { flow_id: CredentialFlowId },
 
-    #[error("auth flow was already consumed: {flow_id}")]
-    FlowAlreadyConsumed { flow_id: AuthFlowId },
+    #[error("credential flow was already consumed: {flow_id}")]
+    FlowAlreadyConsumed { flow_id: CredentialFlowId },
 
-    #[error("auth flow was already completed: {flow_id}")]
-    FlowAlreadyCompleted { flow_id: AuthFlowId },
+    #[error("credential flow was already completed: {flow_id}")]
+    FlowAlreadyCompleted { flow_id: CredentialFlowId },
 
-    #[error("auth flow is expired: {flow_id}")]
-    FlowExpired { flow_id: AuthFlowId },
+    #[error("credential flow is expired: {flow_id}")]
+    FlowExpired { flow_id: CredentialFlowId },
 
     #[error("authorization callback state is unknown or no longer valid")]
     UnknownCallbackState,
 
-    #[error("invalid auth registry request: {message}")]
+    #[error("invalid credential registry request: {message}")]
     InvalidInput { message: String },
 
-    #[error("auth registry store failure: {message}")]
+    #[error("credential registry store failure: {message}")]
     Store { message: String },
 }
 
 /// Generate a random id with the given prefix: `prefix` + 32 lowercase hex
 /// characters from the OS RNG (128 bits).
-pub fn random_auth_id(prefix: &str) -> String {
+pub fn random_credential_id(prefix: &str) -> String {
     use rand::TryRng;
 
     let mut bytes = [0u8; 16];
@@ -228,15 +231,15 @@ pub fn random_auth_id(prefix: &str) -> String {
     format!("{prefix}{}", hex::encode(bytes))
 }
 
-const AUTH_URL_MAX_LEN: usize = 2048;
-const AUTH_COMPONENT_MAX_LEN: usize = 128;
+const CREDENTIAL_URL_MAX_LEN: usize = 2048;
+const CREDENTIAL_COMPONENT_MAX_LEN: usize = 128;
 
 pub(crate) fn validate_nonempty_string(
     name: &'static str,
     value: &str,
-) -> Result<(), AuthRegistryError> {
+) -> Result<(), CredentialRegistryError> {
     if value.is_empty() {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!("{name} must not be empty"),
         });
     }
@@ -246,7 +249,7 @@ pub(crate) fn validate_nonempty_string(
 pub(crate) fn validate_nonempty_optional(
     name: &'static str,
     value: Option<&str>,
-) -> Result<(), AuthRegistryError> {
+) -> Result<(), CredentialRegistryError> {
     if let Some(value) = value {
         validate_nonempty_string(name, value)?;
     }
@@ -256,9 +259,9 @@ pub(crate) fn validate_nonempty_optional(
 pub(crate) fn validate_nonnegative_i64(
     value: i64,
     name: &'static str,
-) -> Result<(), AuthRegistryError> {
+) -> Result<(), CredentialRegistryError> {
     if value < 0 {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!("{name} must be nonnegative: {value}"),
         });
     }
@@ -268,19 +271,19 @@ pub(crate) fn validate_nonnegative_i64(
 pub(crate) fn validate_token_component(
     name: &'static str,
     value: &str,
-) -> Result<(), AuthRegistryError> {
+) -> Result<(), CredentialRegistryError> {
     validate_nonempty_string(name, value)?;
-    if value.len() > AUTH_COMPONENT_MAX_LEN {
-        return Err(AuthRegistryError::InvalidInput {
+    if value.len() > CREDENTIAL_COMPONENT_MAX_LEN {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!(
                 "{name} is too long: {} bytes, max {}",
                 value.len(),
-                AUTH_COMPONENT_MAX_LEN
+                CREDENTIAL_COMPONENT_MAX_LEN
             ),
         });
     }
     if value.chars().any(char::is_whitespace) || value.chars().any(|ch| ch.is_control()) {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!("{name} must not contain whitespace or control characters"),
         });
     }
@@ -289,51 +292,51 @@ pub(crate) fn validate_token_component(
 
 /// Validate an audience/resource identifier: an absolute http(s) URL without
 /// credentials, fragments, whitespace, or control characters.
-pub(crate) fn validate_audience_url(value: &str) -> Result<(), AuthRegistryError> {
+pub(crate) fn validate_audience_url(value: &str) -> Result<(), CredentialRegistryError> {
     if value.is_empty() {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "audience URL must not be empty".to_owned(),
         });
     }
-    if value.len() > AUTH_URL_MAX_LEN {
-        return Err(AuthRegistryError::InvalidInput {
+    if value.len() > CREDENTIAL_URL_MAX_LEN {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!(
                 "audience URL is too long: {} bytes, max {}",
                 value.len(),
-                AUTH_URL_MAX_LEN
+                CREDENTIAL_URL_MAX_LEN
             ),
         });
     }
     if value.chars().any(char::is_whitespace) || value.chars().any(|ch| ch.is_control()) {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "audience URL must not contain whitespace or control characters".to_owned(),
         });
     }
     if value.contains('#') {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "audience URL must not contain a fragment".to_owned(),
         });
     }
     let Some((scheme, rest)) = value.split_once("://") else {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "audience URL must include http:// or https:// scheme".to_owned(),
         });
     };
     let scheme = scheme.to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!("audience URL scheme {scheme:?} is not supported"),
         });
     }
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     if authority.is_empty() {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "audience URL host must not be empty".to_owned(),
         });
     }
     if authority.contains('@') {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "audience URL must not include credentials".to_owned(),
         });
     }
@@ -346,15 +349,17 @@ pub(crate) fn validate_audience_url(value: &str) -> Result<(), AuthRegistryError
 pub(crate) fn validate_oauth_endpoint_url(
     name: &'static str,
     value: &str,
-) -> Result<(), AuthRegistryError> {
+) -> Result<(), CredentialRegistryError> {
     validate_audience_url(value).map_err(|error| match error {
-        AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
-            message: format!("{name}: {message}"),
-        },
+        CredentialRegistryError::InvalidInput { message } => {
+            CredentialRegistryError::InvalidInput {
+                message: format!("{name}: {message}"),
+            }
+        }
         other => other,
     })?;
     let Some((scheme, rest)) = value.split_once("://") else {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: format!("{name} must include a scheme"),
         });
     };
@@ -377,17 +382,17 @@ pub(crate) fn validate_oauth_endpoint_url(
     if loopback {
         return Ok(());
     }
-    Err(AuthRegistryError::InvalidInput {
+    Err(CredentialRegistryError::InvalidInput {
         message: format!("{name} must use https (http is allowed only for loopback hosts)"),
     })
 }
 
-pub(crate) fn validate_scopes(values: &[String]) -> Result<(), AuthRegistryError> {
+pub(crate) fn validate_scopes(values: &[String]) -> Result<(), CredentialRegistryError> {
     let mut seen = std::collections::BTreeSet::new();
     for value in values {
         validate_token_component("scope", value)?;
         if !seen.insert(value.as_str()) {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!("duplicate scope {value}"),
             });
         }

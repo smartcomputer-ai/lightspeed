@@ -1104,16 +1104,16 @@ async fn run_model_key_replacement_live_client(
     task_queue: String,
     _session_id: SessionId,
 ) -> anyhow::Result<()> {
-    use auth::{AuthProviderStore as _, SecretStore as _};
+    use credentials::{CredentialProviderStore as _, SecretStore as _};
 
     let store = pg_store_from_env().await?;
     let api = GatewayAgentApi::builder(client, store.clone())
         .with_task_queue(task_queue)
         .build();
     let provider_id = format!("model:replace_{}", uuid::Uuid::new_v4().simple());
-    let row_id = auth::AuthProviderId::new(provider_id.clone());
-    let stored_key = |store: Arc<store_pg::PgStore>, row_id: auth::AuthProviderId| async move {
-        let record = store.read_auth_provider(&row_id).await?;
+    let row_id = credentials::CredentialProviderId::new(provider_id.clone());
+    let stored_key = |store: Arc<store_pg::PgStore>, row_id: credentials::CredentialProviderId| async move {
+        let record = store.read_credential_provider(&row_id).await?;
         let secret = record
             .credential_secret
             .clone()
@@ -1122,10 +1122,10 @@ async fn run_model_key_replacement_live_client(
         anyhow::Ok((secret, value.expose().to_owned()))
     };
 
-    api.create_auth_provider(api::AuthProviderCreateParams {
+    api.create_credential_provider(api::CredentialProviderCreateParams {
         provider_id: Some(provider_id.clone()),
         display_name: Some("Replaceable key".to_owned()),
-        config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+        config: api::CredentialProviderConfigInput::ModelApiKey { endpoint: None },
         credential: Some("key-one".to_owned()),
     })
     .await?;
@@ -1136,10 +1136,10 @@ async fn run_model_key_replacement_live_client(
                    endpoint: Option<api::ModelEndpointConfig>,
                    credential: &str,
                    dry_run: bool| {
-        api.put_auth_provider(api::AuthProviderPutParams {
+        api.put_credential_provider(api::CredentialProviderPutParams {
             provider_id: provider_id.clone(),
             display_name: display_name.map(str::to_owned),
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint },
+            config: api::CredentialProviderConfigInput::ModelApiKey { endpoint },
             credential: Some(credential.to_owned()),
             dry_run,
         })
@@ -1252,10 +1252,10 @@ async fn run_model_key_replacement_live_client(
         plain.is_err_and(|error| error.kind == api::AgentApiErrorKind::InvalidRequest),
         "a header that carries a secret takes a credential, not a plain value"
     );
-    api.import_auth_grant(api::AuthGrantImportParams {
+    api.import_credential_grant(api::CredentialGrantImportParams {
         grant_id: Some(header_grant.clone()),
         provider_id: None,
-        exposure: api::AuthGrantExposure::Brokered,
+        exposure: api::CredentialGrantExposure::Brokered,
         token: header_token.clone(),
         display_name: Some("Model gateway".to_owned()),
         subject_hint: None,
@@ -1267,7 +1267,7 @@ async fn run_model_key_replacement_live_client(
     .await?;
     let declared = declare_header(credential_header(), false).await?.result;
     anyhow::ensure!(!declared.created && !declared.credential_replaced);
-    let api::AuthProviderConfigView::ModelApiKey {
+    let api::CredentialProviderConfigView::ModelApiKey {
         endpoint: Some(endpoint),
     } = &declared.provider.config
     else {
@@ -1284,7 +1284,7 @@ async fn run_model_key_replacement_live_client(
     );
     let headers_in_document: bool = sqlx::query_scalar(
         "SELECT config_json #> '{endpoint,headers}' IS NOT NULL
-         FROM auth_providers WHERE universe_id = $1 AND provider_id = $2",
+         FROM credentials_providers WHERE universe_id = $1 AND provider_id = $2",
     )
     .bind(store.config().universe_id)
     .bind(provider_id.as_str())
@@ -1295,7 +1295,7 @@ async fn run_model_key_replacement_live_client(
         "headers are rows beside the provider, not part of its document"
     );
     // A credential that was revoked can no longer be declared for a header.
-    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+    api.revoke_credential_grant(api::CredentialGrantRevokeParams {
         grant_id: header_grant.clone(),
     })
     .await?;
@@ -1308,10 +1308,10 @@ async fn run_model_key_replacement_live_client(
     // A provider that does not exist is created by its declaration.
     let fresh_id = format!("model:declared_{}", uuid::Uuid::new_v4().simple());
     let preview = api
-        .put_auth_provider(api::AuthProviderPutParams {
+        .put_credential_provider(api::CredentialProviderPutParams {
             provider_id: fresh_id.clone(),
             display_name: None,
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            config: api::CredentialProviderConfigInput::ModelApiKey { endpoint: None },
             credential: Some("key-fresh".to_owned()),
             dry_run: true,
         })
@@ -1320,28 +1320,28 @@ async fn run_model_key_replacement_live_client(
     anyhow::ensure!(preview.created);
     anyhow::ensure!(
         store
-            .read_auth_provider(&auth::AuthProviderId::new(fresh_id.clone()))
+            .read_credential_provider(&credentials::CredentialProviderId::new(fresh_id.clone()))
             .await
             .is_err(),
         "a dry run creates nothing"
     );
     let created = api
-        .put_auth_provider(api::AuthProviderPutParams {
+        .put_credential_provider(api::CredentialProviderPutParams {
             provider_id: fresh_id.clone(),
             display_name: None,
-            config: api::AuthProviderConfigInput::ModelApiKey { endpoint: None },
+            config: api::CredentialProviderConfigInput::ModelApiKey { endpoint: None },
             credential: Some("key-fresh".to_owned()),
             dry_run: false,
         })
         .await?
         .result;
     anyhow::ensure!(created.created && created.provider.has_credential);
-    api.delete_auth_provider(api::AuthProviderDeleteParams {
+    api.delete_credential_provider(api::CredentialProviderDeleteParams {
         provider_id: fresh_id,
     })
     .await?;
 
-    api.delete_auth_provider(api::AuthProviderDeleteParams { provider_id })
+    api.delete_credential_provider(api::CredentialProviderDeleteParams { provider_id })
         .await?;
     Ok(())
 }
@@ -1402,10 +1402,10 @@ async fn run_custom_headers_live_client(
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let grant_id = format!("authgrant_upstream_{suffix}");
     let token = format!("upstream-live-token-{suffix}");
-    api.import_auth_grant(api::AuthGrantImportParams {
+    api.import_credential_grant(api::CredentialGrantImportParams {
         grant_id: Some(grant_id.clone()),
         provider_id: None,
-        exposure: api::AuthGrantExposure::Brokered,
+        exposure: api::CredentialGrantExposure::Brokered,
         token: token.clone(),
         display_name: Some("Upstream tracker".to_owned()),
         subject_hint: None,
@@ -1492,10 +1492,10 @@ async fn run_custom_headers_live_client(
     // without editing the server.
     let rotated = format!("upstream-live-token-rotated-{suffix}");
     let declare = |token: &str, display_name: &str, dry_run: bool| {
-        api.put_auth_grant(api::AuthGrantPutParams {
+        api.put_credential_grant(api::CredentialGrantPutParams {
             grant_id: grant_id.clone(),
             provider_id: None,
-            exposure: api::AuthGrantExposure::Brokered,
+            exposure: api::CredentialGrantExposure::Brokered,
             token: token.to_owned(),
             display_name: Some(display_name.to_owned()),
             subject_hint: None,
@@ -1519,10 +1519,10 @@ async fn run_custom_headers_live_client(
     anyhow::ensure!(renamed.grant.display_name.as_deref() == Some("Tracker"));
     // What a credential is never changes.
     let exposed = api
-        .put_auth_grant(api::AuthGrantPutParams {
+        .put_credential_grant(api::CredentialGrantPutParams {
             grant_id: grant_id.clone(),
             provider_id: None,
-            exposure: api::AuthGrantExposure::Retrievable,
+            exposure: api::CredentialGrantExposure::Retrievable,
             token: token.clone(),
             display_name: None,
             subject_hint: None,
@@ -1558,7 +1558,7 @@ async fn run_custom_headers_live_client(
     );
 
     // A revoked credential is never sent: discovery fails before any request.
-    api.revoke_auth_grant(api::AuthGrantRevokeParams {
+    api.revoke_credential_grant(api::CredentialGrantRevokeParams {
         grant_id: grant_id.clone(),
     })
     .await?;

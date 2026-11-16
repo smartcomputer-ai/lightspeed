@@ -20,10 +20,11 @@ use rmcp::transport::auth::{
 use thiserror::Error;
 
 use crate::{
-    AuthProviderKind, AuthRegistryError, CreateOAuthClientRecord, OAuthClientId, OAuthClientRecord,
-    OAuthClientStore, OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, OAuthTokenResponse,
-    PinnedHttpPolicy, PrivateNetworkList, PutSecretRecord, SECRET_KIND_OAUTH_CLIENT_SECRET,
-    SecretId, SecretStore, SecretValue, TokenEndpointAuthMethod, random_auth_id,
+    CreateOAuthClientRecord, CredentialProviderKind, CredentialRegistryError, OAuthClientId,
+    OAuthClientRecord, OAuthClientStore, OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest,
+    OAuthTokenResponse, PinnedHttpPolicy, PrivateNetworkList, PutSecretRecord,
+    SECRET_KIND_OAUTH_CLIENT_SECRET, SecretId, SecretStore, SecretValue, TokenEndpointAuthMethod,
+    random_credential_id,
 };
 
 pub use rmcp::transport::auth::OAuthHttpClient as OAuthMetadataClient;
@@ -54,7 +55,7 @@ pub enum McpOAuthError {
     Protocol { message: String },
 
     #[error(transparent)]
-    Registry(AuthRegistryError),
+    Registry(CredentialRegistryError),
 }
 
 /// Public protected-resource facts used by the management discovery API.
@@ -118,9 +119,9 @@ pub fn parse_mcp_oauth_challenge(
     })
 }
 
-pub fn mcp_oauth_client_id(server_id: &str) -> Result<OAuthClientId, AuthRegistryError> {
+pub fn mcp_oauth_client_id(server_id: &str) -> Result<OAuthClientId, CredentialRegistryError> {
     OAuthClientId::try_new(format!("mcp:{server_id}")).map_err(|error| {
-        AuthRegistryError::InvalidInput {
+        CredentialRegistryError::InvalidInput {
             message: format!("invalid mcp oauth client id: {error}"),
         }
     })
@@ -192,7 +193,7 @@ impl McpOAuthDriver {
         let client_id = mcp_oauth_client_id(&target.server_id).map_err(McpOAuthError::Registry)?;
         match self.clients.read_oauth_client(&client_id).await {
             Ok(existing) => return Ok(existing),
-            Err(AuthRegistryError::ClientNotFound { .. }) => {}
+            Err(CredentialRegistryError::ClientNotFound { .. }) => {}
             Err(error) => return Err(McpOAuthError::Registry(error)),
         }
 
@@ -248,7 +249,7 @@ impl McpOAuthDriver {
         let create = CreateOAuthClientRecord {
             client_id: client_id.clone(),
             provider_id: client_id.as_str().to_owned(),
-            provider_kind: AuthProviderKind::McpOAuth,
+            provider_kind: CredentialProviderKind::McpOAuth,
             display_name: None,
             authorization_endpoint: metadata.authorization_endpoint,
             token_endpoint: metadata.token_endpoint,
@@ -264,7 +265,7 @@ impl McpOAuthDriver {
         };
         match self.clients.create_oauth_client(create).await {
             Ok(record) => Ok(record),
-            Err(AuthRegistryError::ClientAlreadyExists { .. }) => {
+            Err(CredentialRegistryError::ClientAlreadyExists { .. }) => {
                 if let Some(secret_id) = &client_secret_id {
                     let _ = self.secrets.delete_secret(secret_id).await;
                 }
@@ -492,8 +493,8 @@ fn sanitize_rmcp_error(error: RmcpAuthError) -> String {
 }
 
 fn random_secret_id() -> Result<SecretId, McpOAuthError> {
-    SecretId::try_new(random_auth_id("authsec_")).map_err(|error| {
-        McpOAuthError::Registry(AuthRegistryError::Store {
+    SecretId::try_new(random_credential_id("authsec_")).map_err(|error| {
+        McpOAuthError::Registry(CredentialRegistryError::Store {
             message: format!("generate secret id: {error}"),
         })
     })
@@ -903,7 +904,7 @@ mod tests {
                         serde_json::json!({
                             "client_id": "registered-client",
                             "client_secret": "registered-secret",
-                            "redirect_uris": ["https://lightspeed.example/auth/callback"]
+                            "redirect_uris": ["https://lightspeed.example/credentials/callback"]
                         }),
                     ),
                     ("POST", "https://login.example/token") => Self::response(
@@ -955,7 +956,7 @@ mod tests {
         let client = OAuthClientRecord {
             client_id: OAuthClientId::new("mcp:test"),
             provider_id: "mcp:test".to_owned(),
-            provider_kind: AuthProviderKind::McpOAuth,
+            provider_kind: CredentialProviderKind::McpOAuth,
             display_name: None,
             authorization_endpoint: "https://login.example/authorize".to_owned(),
             token_endpoint: "https://login.example/token".to_owned(),
@@ -973,7 +974,7 @@ mod tests {
         let started = begin_rmcp_authorization(
             &client,
             None,
-            "https://lightspeed.example/auth/callback",
+            "https://lightspeed.example/credentials/callback",
             &client.scopes_default,
             client.audience.as_deref().unwrap(),
         )
@@ -1000,7 +1001,11 @@ mod tests {
             .with_now_fn(Arc::new(|| 100));
 
         let client = driver
-            .ensure_client(&target(), "https://lightspeed.example/auth/callback", None)
+            .ensure_client(
+                &target(),
+                "https://lightspeed.example/credentials/callback",
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(client.remote_client_id, "registered-client");
@@ -1046,9 +1051,9 @@ mod tests {
         let client = driver
             .ensure_client(
                 &target(),
-                "https://lightspeed.example/auth/callback",
+                "https://lightspeed.example/credentials/callback",
                 Some(&CimdConfig {
-                    client_id_url: "https://lightspeed.example/auth/client-metadata.json"
+                    client_id_url: "https://lightspeed.example/credentials/client-metadata.json"
                         .to_owned(),
                 }),
             )
@@ -1056,7 +1061,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             client.remote_client_id,
-            "https://lightspeed.example/auth/client-metadata.json"
+            "https://lightspeed.example/credentials/client-metadata.json"
         );
         assert!(client.client_secret.is_none());
         assert!(
@@ -1176,7 +1181,7 @@ mod tests {
             auth_method: TokenEndpointAuthMethod::ClientSecretPost,
             grant: OAuthTokenGrant::AuthorizationCode {
                 code: SecretValue::new("authorization-code"),
-                redirect_uri: "https://lightspeed.example/auth/callback".to_owned(),
+                redirect_uri: "https://lightspeed.example/credentials/callback".to_owned(),
                 code_verifier: SecretValue::new("pkce-verifier"),
             },
             resource: Some("https://mcp.example/mcp".to_owned()),

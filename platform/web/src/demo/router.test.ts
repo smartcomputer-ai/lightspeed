@@ -50,7 +50,7 @@ const universeReads = [
   "environment-registration-keys",
   "mcp-servers",
   "secrets",
-  "auth-grants",
+  "credential-grants",
   "models",
   "models/defaults",
   "setups",

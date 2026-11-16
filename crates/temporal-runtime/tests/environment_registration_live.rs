@@ -170,6 +170,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
                 api_only_state,
                 DEFAULT_MAX_REQUEST_BODY_BYTES,
                 GatewayRoutes {
+                    public: false,
                     api: true,
                     environment: false,
                 },

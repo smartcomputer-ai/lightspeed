@@ -7,50 +7,50 @@ use crate::api_client::HttpAgentApi;
 use crate::request_headers::request_headers_from_args;
 
 #[derive(Args, Debug, Clone)]
-pub(crate) struct AuthArgs {
+pub(crate) struct CredentialArgs {
     #[command(subcommand)]
-    command: AuthCommand,
+    command: CredentialCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthCommand {
+enum CredentialCommand {
     #[command(flatten)]
-    Grant(AuthGrantCommand),
+    Grant(CredentialGrantCommand),
     /// Manage OAuth client configurations.
     #[command(name = "oauth-client", visible_alias = "oauth-clients")]
-    Client(AuthClientArgs),
+    Client(CredentialClientArgs),
     /// Run an OAuth authorization flow and store the resulting grant.
-    Login(AuthLoginArgs),
+    Login(CredentialLoginArgs),
     /// Manage GitHub App providers and installation grants.
-    Github(AuthGithubArgs),
+    Github(CredentialGithubArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-pub(crate) struct AuthModelArgs {
+pub(crate) struct CredentialModelArgs {
     #[command(subcommand)]
-    command: AuthModelCommand,
+    command: CredentialModelCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthModelCommand {
+enum CredentialModelCommand {
     /// Read one stored model-provider connection without revealing its credential.
-    Read(AuthModelRemoveArgs),
+    Read(CredentialModelRemoveArgs),
     /// Declare a model provider: afterwards the provider of this id exists
     /// with this endpoint and this credential. The credential is an API key
     /// (stored encrypted), a credential obtained through sign-in (`--grant`,
     /// sent as a refreshed OAuth bearer token), or none (`--no-auth`).
     /// Repeating the command changes nothing.
-    Put(Box<AuthModelPutArgs>),
+    Put(Box<CredentialModelPutArgs>),
     /// List stored model provider credentials.
-    List(AuthModelListArgs),
+    List(CredentialModelListArgs),
     /// Remove a stored model provider credential.
     #[command(name = "delete")]
-    Remove(AuthModelRemoveArgs),
+    Remove(CredentialModelRemoveArgs),
 }
 
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
-struct AuthModelPutArgs {
+struct CredentialModelPutArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -58,7 +58,7 @@ struct AuthModelPutArgs {
     #[arg(long)]
     json: bool,
     /// model provider id from the session model selection (e.g. "openai",
-    /// "anthropic"). Stored as the `model:<provider_id>` auth provider row.
+    /// "anthropic"). Stored as the `model:<provider_id>` credential provider row.
     provider_id: String,
     /// Read the API key from this file.
     #[arg(long = "api-key-file", group = "api_key_source")]
@@ -109,9 +109,9 @@ struct AuthModelPutArgs {
     dry_run: bool,
 }
 
-impl std::fmt::Debug for AuthModelPutArgs {
+impl std::fmt::Debug for CredentialModelPutArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthModelPutArgs")
+        f.debug_struct("CredentialModelPutArgs")
             .field("api_url", &self.api_url)
             .field("provider_id", &self.provider_id)
             .field("api_key_file", &self.api_key_file)
@@ -122,7 +122,7 @@ impl std::fmt::Debug for AuthModelPutArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthModelListArgs {
+struct CredentialModelListArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -132,7 +132,7 @@ struct AuthModelListArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthModelRemoveArgs {
+struct CredentialModelRemoveArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -144,43 +144,43 @@ struct AuthModelRemoveArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubArgs {
+struct CredentialGithubArgs {
     #[command(subcommand)]
-    command: AuthGithubCommand,
+    command: CredentialGithubCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthGithubCommand {
+enum CredentialGithubCommand {
     /// Manage GitHub App provider configurations.
-    App(AuthGithubAppArgs),
+    App(CredentialGithubAppArgs),
     /// Manage GitHub App installations and their grants.
-    Installation(AuthGithubInstallationArgs),
+    Installation(CredentialGithubInstallationArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubAppArgs {
+struct CredentialGithubAppArgs {
     #[command(subcommand)]
-    command: AuthGithubAppCommand,
+    command: CredentialGithubAppCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthGithubAppCommand {
+enum CredentialGithubAppCommand {
     /// Register a GitHub App: stores the private key encrypted and the app
-    /// config as an auth provider.
+    /// config as a credential provider.
     #[command(name = "create")]
-    Add(AuthGithubAppAddArgs),
+    Add(CredentialGithubAppAddArgs),
     /// List registered GitHub Apps.
-    List(AuthGithubAppListArgs),
+    List(CredentialGithubAppListArgs),
     /// Read a registered GitHub App.
-    Read(AuthGithubAppReadArgs),
+    Read(CredentialGithubAppReadArgs),
     /// Delete a registered GitHub App and its stored credential.
     #[command(name = "delete")]
-    Remove(AuthGithubAppRemoveArgs),
+    Remove(CredentialGithubAppRemoveArgs),
 }
 
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("private_key_source").required(true)))]
-struct AuthGithubAppAddArgs {
+struct CredentialGithubAppAddArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -210,9 +210,9 @@ struct AuthGithubAppAddArgs {
     display_name: Option<String>,
 }
 
-impl std::fmt::Debug for AuthGithubAppAddArgs {
+impl std::fmt::Debug for CredentialGithubAppAddArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGithubAppAddArgs")
+        f.debug_struct("CredentialGithubAppAddArgs")
             .field("api_url", &self.api_url)
             .field("provider_id", &self.provider_id)
             .field("app_id", &self.app_id)
@@ -225,7 +225,7 @@ impl std::fmt::Debug for AuthGithubAppAddArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubAppListArgs {
+struct CredentialGithubAppListArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -235,7 +235,7 @@ struct AuthGithubAppListArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubAppReadArgs {
+struct CredentialGithubAppReadArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -247,7 +247,7 @@ struct AuthGithubAppReadArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubAppRemoveArgs {
+struct CredentialGithubAppRemoveArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -259,21 +259,21 @@ struct AuthGithubAppRemoveArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubInstallationArgs {
+struct CredentialGithubInstallationArgs {
     #[command(subcommand)]
-    command: AuthGithubInstallationCommand,
+    command: CredentialGithubInstallationCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthGithubInstallationCommand {
+enum CredentialGithubInstallationCommand {
     /// List the app's installations, live from GitHub.
-    List(AuthGithubInstallationListArgs),
+    List(CredentialGithubInstallationListArgs),
     /// Record an installation as a grant; tokens are minted on demand.
-    Grant(AuthGithubInstallationGrantArgs),
+    Grant(CredentialGithubInstallationGrantArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubInstallationListArgs {
+struct CredentialGithubInstallationListArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -286,7 +286,7 @@ struct AuthGithubInstallationListArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGithubInstallationGrantArgs {
+struct CredentialGithubInstallationGrantArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -312,31 +312,31 @@ struct AuthGithubInstallationGrantArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGrantArgs {
+struct CredentialGrantArgs {
     #[command(subcommand)]
-    command: AuthGrantCommand,
+    command: CredentialGrantCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthGrantCommand {
+enum CredentialGrantCommand {
     /// Declare a token credential: afterwards the credential of this id
     /// exists with these settings and holds exactly this token. Repeating
     /// the command changes nothing; unset flags clear their setting.
-    Put(AuthGrantPutArgs),
+    Put(CredentialGrantPutArgs),
     /// Replace the value of a token credential, keeping its settings, its id
     /// and every server, header or environment variable that references it.
-    Replace(AuthGrantReplaceArgs),
+    Replace(CredentialGrantReplaceArgs),
     /// List stored external credentials.
-    List(AuthGrantListArgs),
+    List(CredentialGrantListArgs),
     /// Inspect external credential metadata without returning secret values.
-    Read(AuthGrantReadArgs),
+    Read(CredentialGrantReadArgs),
     /// Revoke an external credential.
-    Revoke(AuthGrantRevokeArgs),
+    Revoke(CredentialGrantRevokeArgs),
 }
 
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
-struct AuthGrantPutArgs {
+struct CredentialGrantPutArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -382,9 +382,9 @@ struct AuthGrantPutArgs {
     dry_run: bool,
 }
 
-impl std::fmt::Debug for AuthGrantPutArgs {
+impl std::fmt::Debug for CredentialGrantPutArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGrantPutArgs")
+        f.debug_struct("CredentialGrantPutArgs")
             .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
             .field("token_file", &self.token_file)
@@ -397,7 +397,7 @@ impl std::fmt::Debug for AuthGrantPutArgs {
 
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
-struct AuthGrantReplaceArgs {
+struct CredentialGrantReplaceArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -421,9 +421,9 @@ struct AuthGrantReplaceArgs {
     expires_at_ms: Option<i64>,
 }
 
-impl std::fmt::Debug for AuthGrantReplaceArgs {
+impl std::fmt::Debug for CredentialGrantReplaceArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGrantReplaceArgs")
+        f.debug_struct("CredentialGrantReplaceArgs")
             .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
             .field("token_file", &self.token_file)
@@ -434,7 +434,7 @@ impl std::fmt::Debug for AuthGrantReplaceArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGrantListArgs {
+struct CredentialGrantListArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -443,11 +443,11 @@ struct AuthGrantListArgs {
     json: bool,
     /// Optional status filter.
     #[arg(long)]
-    status: Option<AuthGrantStatusArg>,
+    status: Option<CredentialGrantStatusArg>,
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGrantReadArgs {
+struct CredentialGrantReadArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -459,7 +459,7 @@ struct AuthGrantReadArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthGrantRevokeArgs {
+struct CredentialGrantRevokeArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -471,47 +471,47 @@ struct AuthGrantRevokeArgs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-enum AuthGrantStatusArg {
+enum CredentialGrantStatusArg {
     Active,
     NeedsReauth,
     Revoked,
     Failed,
 }
 
-impl From<AuthGrantStatusArg> for api::AuthGrantStatus {
-    fn from(value: AuthGrantStatusArg) -> Self {
+impl From<CredentialGrantStatusArg> for api::CredentialGrantStatus {
+    fn from(value: CredentialGrantStatusArg) -> Self {
         match value {
-            AuthGrantStatusArg::Active => Self::Active,
-            AuthGrantStatusArg::NeedsReauth => Self::NeedsReauth,
-            AuthGrantStatusArg::Revoked => Self::Revoked,
-            AuthGrantStatusArg::Failed => Self::Failed,
+            CredentialGrantStatusArg::Active => Self::Active,
+            CredentialGrantStatusArg::NeedsReauth => Self::NeedsReauth,
+            CredentialGrantStatusArg::Revoked => Self::Revoked,
+            CredentialGrantStatusArg::Failed => Self::Failed,
         }
     }
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthClientArgs {
+struct CredentialClientArgs {
     #[command(subcommand)]
-    command: AuthClientCommand,
+    command: CredentialClientCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum AuthClientCommand {
+enum CredentialClientCommand {
     /// Register a manually configured OAuth client.
     #[command(name = "create")]
-    Add(Box<AuthClientAddArgs>),
+    Add(Box<CredentialClientAddArgs>),
     /// List OAuth clients.
-    List(AuthClientListArgs),
+    List(CredentialClientListArgs),
     /// Read an OAuth client.
-    Read(AuthClientReadArgs),
+    Read(CredentialClientReadArgs),
     /// Remove an OAuth client.
     #[command(name = "delete")]
-    Remove(AuthClientRemoveArgs),
+    Remove(CredentialClientRemoveArgs),
 }
 
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("client_secret_source")))]
-struct AuthClientAddArgs {
+struct CredentialClientAddArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -526,7 +526,7 @@ struct AuthClientAddArgs {
     provider_id: Option<String>,
     /// Provider kind for grants minted through this client.
     #[arg(long = "kind", default_value = "custom-oauth")]
-    kind: AuthProviderKindArg,
+    kind: CredentialProviderKindArg,
     /// Optional display name.
     #[arg(long = "display-name")]
     display_name: Option<String>,
@@ -570,9 +570,9 @@ struct AuthClientAddArgs {
     authorization_server_scopes_supported: Vec<String>,
 }
 
-impl std::fmt::Debug for AuthClientAddArgs {
+impl std::fmt::Debug for CredentialClientAddArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthClientAddArgs")
+        f.debug_struct("CredentialClientAddArgs")
             .field("api_url", &self.api_url)
             .field("client_id", &self.client_id)
             .field("kind", &self.kind)
@@ -601,7 +601,7 @@ impl std::fmt::Debug for AuthClientAddArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthClientListArgs {
+struct CredentialClientListArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -611,7 +611,7 @@ struct AuthClientListArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthClientReadArgs {
+struct CredentialClientReadArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -623,7 +623,7 @@ struct AuthClientReadArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthClientRemoveArgs {
+struct CredentialClientRemoveArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -635,7 +635,7 @@ struct AuthClientRemoveArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthLoginArgs {
+struct CredentialLoginArgs {
     /// JSON-RPC agent API URL.
     #[arg(skip)]
     api_url: String,
@@ -653,7 +653,7 @@ struct AuthLoginArgs {
     #[arg(long)]
     audience: Option<String>,
     /// Print the authorization URL and flow id, then exit without waiting
-    /// for the callback. Check progress with auth flow status polling.
+    /// for the callback. Check progress with credential flow status polling.
     #[arg(long = "no-wait")]
     no_wait: bool,
     /// Let the resulting credential's token be bound into environments and
@@ -663,16 +663,16 @@ struct AuthLoginArgs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-enum AuthProviderKindArg {
+enum CredentialProviderKindArg {
     McpOauth,
     CustomOauth,
 }
 
-impl From<AuthProviderKindArg> for api::AuthProviderKind {
-    fn from(value: AuthProviderKindArg) -> Self {
+impl From<CredentialProviderKindArg> for api::CredentialProviderKind {
+    fn from(value: CredentialProviderKindArg) -> Self {
         match value {
-            AuthProviderKindArg::McpOauth => Self::McpOAuth,
-            AuthProviderKindArg::CustomOauth => Self::CustomOAuth,
+            CredentialProviderKindArg::McpOauth => Self::McpOAuth,
+            CredentialProviderKindArg::CustomOauth => Self::CustomOAuth,
         }
     }
 }
@@ -694,55 +694,57 @@ impl From<TokenAuthMethodArg> for api::TokenEndpointAuthMethod {
     }
 }
 
-pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
+pub(crate) async fn handle(args: CredentialArgs) -> Result<()> {
     match args.command {
-        AuthCommand::Grant(command) => grant(AuthGrantArgs { command }).await,
-        AuthCommand::Client(args) => client(args).await,
-        AuthCommand::Login(args) => login(args).await,
-        AuthCommand::Github(args) => github(args).await,
+        CredentialCommand::Grant(command) => grant(CredentialGrantArgs { command }).await,
+        CredentialCommand::Client(args) => client(args).await,
+        CredentialCommand::Login(args) => login(args).await,
+        CredentialCommand::Github(args) => github(args).await,
     }
 }
 
-pub(crate) async fn model(args: AuthModelArgs) -> Result<()> {
+pub(crate) async fn model(args: CredentialModelArgs) -> Result<()> {
     match args.command {
-        AuthModelCommand::Read(args) => model_read(args).await,
-        AuthModelCommand::Put(args) => model_put(*args).await,
-        AuthModelCommand::List(args) => model_list(args).await,
-        AuthModelCommand::Remove(args) => model_remove(args).await,
+        CredentialModelCommand::Read(args) => model_read(args).await,
+        CredentialModelCommand::Put(args) => model_put(*args).await,
+        CredentialModelCommand::List(args) => model_list(args).await,
+        CredentialModelCommand::Remove(args) => model_remove(args).await,
     }
 }
 
-async fn github(args: AuthGithubArgs) -> Result<()> {
+async fn github(args: CredentialGithubArgs) -> Result<()> {
     match args.command {
-        AuthGithubCommand::App(args) => match args.command {
-            AuthGithubAppCommand::Add(args) => github_app_add(args).await,
-            AuthGithubAppCommand::List(args) => github_app_list(args).await,
-            AuthGithubAppCommand::Read(args) => github_app_read(args).await,
-            AuthGithubAppCommand::Remove(args) => github_app_remove(args).await,
+        CredentialGithubCommand::App(args) => match args.command {
+            CredentialGithubAppCommand::Add(args) => github_app_add(args).await,
+            CredentialGithubAppCommand::List(args) => github_app_list(args).await,
+            CredentialGithubAppCommand::Read(args) => github_app_read(args).await,
+            CredentialGithubAppCommand::Remove(args) => github_app_remove(args).await,
         },
-        AuthGithubCommand::Installation(args) => match args.command {
-            AuthGithubInstallationCommand::List(args) => github_installation_list(args).await,
-            AuthGithubInstallationCommand::Grant(args) => github_installation_grant(args).await,
+        CredentialGithubCommand::Installation(args) => match args.command {
+            CredentialGithubInstallationCommand::List(args) => github_installation_list(args).await,
+            CredentialGithubInstallationCommand::Grant(args) => {
+                github_installation_grant(args).await
+            }
         },
     }
 }
 
-async fn client(args: AuthClientArgs) -> Result<()> {
+async fn client(args: CredentialClientArgs) -> Result<()> {
     match args.command {
-        AuthClientCommand::Add(args) => client_add(*args).await,
-        AuthClientCommand::List(args) => client_list(args).await,
-        AuthClientCommand::Read(args) => client_read(args).await,
-        AuthClientCommand::Remove(args) => client_remove(args).await,
+        CredentialClientCommand::Add(args) => client_add(*args).await,
+        CredentialClientCommand::List(args) => client_list(args).await,
+        CredentialClientCommand::Read(args) => client_read(args).await,
+        CredentialClientCommand::Remove(args) => client_remove(args).await,
     }
 }
 
-async fn grant(args: AuthGrantArgs) -> Result<()> {
+async fn grant(args: CredentialGrantArgs) -> Result<()> {
     match args.command {
-        AuthGrantCommand::Put(args) => grant_put(args).await,
-        AuthGrantCommand::Replace(args) => grant_replace(args).await,
-        AuthGrantCommand::List(args) => grant_list(args).await,
-        AuthGrantCommand::Read(args) => grant_read(args).await,
-        AuthGrantCommand::Revoke(args) => grant_revoke(args).await,
+        CredentialGrantCommand::Put(args) => grant_put(args).await,
+        CredentialGrantCommand::Replace(args) => grant_replace(args).await,
+        CredentialGrantCommand::List(args) => grant_list(args).await,
+        CredentialGrantCommand::Read(args) => grant_read(args).await,
+        CredentialGrantCommand::Revoke(args) => grant_revoke(args).await,
     }
 }
 
@@ -786,22 +788,22 @@ fn resolve_token(
 }
 
 /// Brokered unless the command asked for a retrievable credential.
-fn exposure(retrievable: bool) -> api::AuthGrantExposure {
+fn exposure(retrievable: bool) -> api::CredentialGrantExposure {
     if retrievable {
-        api::AuthGrantExposure::Retrievable
+        api::CredentialGrantExposure::Retrievable
     } else {
-        api::AuthGrantExposure::Brokered
+        api::CredentialGrantExposure::Brokered
     }
 }
 
-async fn grant_put(args: AuthGrantPutArgs) -> Result<()> {
+async fn grant_put(args: CredentialGrantPutArgs) -> Result<()> {
     let token = resolve_token(
         args.token_file.as_deref(),
         args.token_env.as_ref(),
         args.token_stdin,
     )?;
     let response = HttpAgentApi::new(args.api_url.clone())
-        .put_auth_grant(api::AuthGrantPutParams {
+        .put_credential_grant(api::CredentialGrantPutParams {
             grant_id: args.grant_id.clone(),
             provider_id: args.provider_id.clone(),
             exposure: exposure(args.retrievable),
@@ -822,7 +824,7 @@ async fn grant_put(args: AuthGrantPutArgs) -> Result<()> {
 
 /// Replace only the value: the credential is declared again with the
 /// settings it has and the new token.
-async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
+async fn grant_replace(args: CredentialGrantReplaceArgs) -> Result<()> {
     let token = resolve_token(
         args.token_file.as_deref(),
         args.token_env.as_ref(),
@@ -830,7 +832,7 @@ async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
     )?;
     let api = HttpAgentApi::new(args.api_url.clone());
     let current = api
-        .read_auth_grant(api::AuthGrantReadParams {
+        .read_credential_grant(api::CredentialGrantReadParams {
             grant_id: args.grant_id.clone(),
         })
         .await
@@ -838,7 +840,7 @@ async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
         .result
         .grant;
     let response = api
-        .put_auth_grant(api::AuthGrantPutParams {
+        .put_credential_grant(api::CredentialGrantPutParams {
             grant_id: current.grant_id,
             provider_id: Some(current.provider_id),
             exposure: current.exposure,
@@ -863,7 +865,7 @@ async fn grant_replace(args: AuthGrantReplaceArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_put(response: &api::AuthGrantPutResponse, dry_run: bool, json: bool) -> Result<()> {
+fn print_put(response: &api::CredentialGrantPutResponse, dry_run: bool, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(response)?);
         return Ok(());
@@ -883,10 +885,10 @@ fn print_put(response: &api::AuthGrantPutResponse, dry_run: bool, json: bool) ->
     Ok(())
 }
 
-async fn grant_list(args: AuthGrantListArgs) -> Result<()> {
+async fn grant_list(args: CredentialGrantListArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .list_auth_grants(api::AuthGrantListParams {
+        .list_credential_grants(api::CredentialGrantListParams {
             status: args.status.map(Into::into),
         })
         .await
@@ -909,10 +911,10 @@ async fn grant_list(args: AuthGrantListArgs) -> Result<()> {
     )
 }
 
-async fn grant_read(args: AuthGrantReadArgs) -> Result<()> {
+async fn grant_read(args: CredentialGrantReadArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .read_auth_grant(api::AuthGrantReadParams {
+        .read_credential_grant(api::CredentialGrantReadParams {
             grant_id: args.grant_id,
         })
         .await
@@ -926,10 +928,10 @@ async fn grant_read(args: AuthGrantReadArgs) -> Result<()> {
     Ok(())
 }
 
-async fn grant_revoke(args: AuthGrantRevokeArgs) -> Result<()> {
+async fn grant_revoke(args: CredentialGrantRevokeArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .revoke_auth_grant(api::AuthGrantRevokeParams {
+        .revoke_credential_grant(api::CredentialGrantRevokeParams {
             grant_id: args.grant_id,
         })
         .await
@@ -943,7 +945,7 @@ async fn grant_revoke(args: AuthGrantRevokeArgs) -> Result<()> {
     Ok(())
 }
 
-fn resolve_client_secret(args: &AuthClientAddArgs) -> Result<Option<String>> {
+fn resolve_client_secret(args: &CredentialClientAddArgs) -> Result<Option<String>> {
     if let Some(secret) = &args.client_secret {
         return Ok(Some(secret.clone()));
     }
@@ -969,11 +971,11 @@ fn resolve_client_secret(args: &AuthClientAddArgs) -> Result<Option<String>> {
     Ok(None)
 }
 
-async fn client_add(args: AuthClientAddArgs) -> Result<()> {
+async fn client_add(args: CredentialClientAddArgs) -> Result<()> {
     let client_secret = resolve_client_secret(&args)?;
     let api = HttpAgentApi::new(args.api_url.clone());
     let response = api
-        .create_auth_client(api::AuthClientCreateParams {
+        .create_credential_client(api::CredentialClientCreateParams {
             client_id: args.client_id.clone(),
             provider_id: args.provider_id.clone(),
             provider_kind: args.kind.into(),
@@ -1003,10 +1005,10 @@ async fn client_add(args: AuthClientAddArgs) -> Result<()> {
     Ok(())
 }
 
-async fn client_list(args: AuthClientListArgs) -> Result<()> {
+async fn client_list(args: CredentialClientListArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .list_auth_clients(api::AuthClientListParams {})
+        .list_credential_clients(api::CredentialClientListParams {})
         .await
         .map_err(crate::api_client::api_error)?
         .result;
@@ -1026,10 +1028,10 @@ async fn client_list(args: AuthClientListArgs) -> Result<()> {
     )
 }
 
-async fn client_read(args: AuthClientReadArgs) -> Result<()> {
+async fn client_read(args: CredentialClientReadArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .read_auth_client(api::AuthClientReadParams {
+        .read_credential_client(api::CredentialClientReadParams {
             client_id: args.client_id,
         })
         .await
@@ -1043,10 +1045,10 @@ async fn client_read(args: AuthClientReadArgs) -> Result<()> {
     Ok(())
 }
 
-async fn client_remove(args: AuthClientRemoveArgs) -> Result<()> {
+async fn client_remove(args: CredentialClientRemoveArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .delete_auth_client(api::AuthClientDeleteParams {
+        .delete_credential_client(api::CredentialClientDeleteParams {
             client_id: args.client_id,
         })
         .await
@@ -1062,10 +1064,10 @@ async fn client_remove(args: AuthClientRemoveArgs) -> Result<()> {
 
 const LOGIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-async fn login(args: AuthLoginArgs) -> Result<()> {
+async fn login(args: CredentialLoginArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url.clone());
     let started = api
-        .start_auth_flow(api::AuthFlowStartParams {
+        .start_credential_flow(api::CredentialFlowStartParams {
             exposure: exposure(args.retrievable),
             client_id: args.client_id.clone(),
             scopes: if args.scopes.is_empty() {
@@ -1090,15 +1092,15 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
     loop {
         tokio::time::sleep(LOGIN_POLL_INTERVAL).await;
         let response = api
-            .read_auth_flow_status(api::AuthFlowStatusParams {
+            .read_credential_flow_status(api::CredentialFlowStatusParams {
                 flow_id: started.flow_id.clone(),
             })
             .await
             .map_err(crate::api_client::api_error)?
             .result;
         match response.flow.status {
-            api::AuthFlowStatus::Pending => continue,
-            api::AuthFlowStatus::Completed => {
+            api::CredentialFlowStatus::Pending => continue,
+            api::CredentialFlowStatus::Completed => {
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&response)?);
                     return Ok(());
@@ -1107,7 +1109,7 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
                 println!("External authorization complete. Credential: {grant_id}");
                 return Ok(());
             }
-            api::AuthFlowStatus::Failed => {
+            api::CredentialFlowStatus::Failed => {
                 if args.json {
                     println!("{}", serde_json::to_string_pretty(&response)?);
                 }
@@ -1116,14 +1118,14 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
                     response.flow.error.as_deref().unwrap_or("unknown error")
                 );
             }
-            api::AuthFlowStatus::Expired => {
+            api::CredentialFlowStatus::Expired => {
                 anyhow::bail!("authorization flow expired before the callback completed");
             }
         }
     }
 }
 
-fn resolve_private_key(args: &AuthGithubAppAddArgs) -> Result<String> {
+fn resolve_private_key(args: &CredentialGithubAppAddArgs) -> Result<String> {
     if let Some(path) = &args.private_key_file {
         let key = std::fs::read_to_string(path)
             .with_context(|| format!("read private key from {}", path.display()))?;
@@ -1160,7 +1162,7 @@ fn model_provider_row_id(provider_id: &str) -> String {
     }
 }
 
-fn resolve_model_api_key(args: &AuthModelPutArgs) -> Result<String> {
+fn resolve_model_api_key(args: &CredentialModelPutArgs) -> Result<String> {
     if let Some(path) = &args.api_key_file {
         let key = std::fs::read_to_string(path)
             .with_context(|| format!("read API key from {}", path.display()))?;
@@ -1189,7 +1191,7 @@ fn resolve_model_api_key(args: &AuthModelPutArgs) -> Result<String> {
     Ok(key)
 }
 
-async fn model_put(args: AuthModelPutArgs) -> Result<()> {
+async fn model_put(args: CredentialModelPutArgs) -> Result<()> {
     let credential = if args.no_auth || args.grant_id.is_some() {
         None
     } else {
@@ -1211,22 +1213,22 @@ async fn model_put(args: AuthModelPutArgs) -> Result<()> {
         })
         .transpose()?;
     let config = if let Some(grant_id) = &args.grant_id {
-        api::AuthProviderConfigInput::ModelOAuth {
+        api::CredentialProviderConfigInput::ModelOAuth {
             grant_id: grant_id.clone(),
             audience: args.audience.clone(),
             endpoint,
         }
     } else if args.no_auth {
-        api::AuthProviderConfigInput::ModelEndpoint {
+        api::CredentialProviderConfigInput::ModelEndpoint {
             endpoint: endpoint.context("--no-auth requires --base-url")?,
         }
     } else {
-        api::AuthProviderConfigInput::ModelApiKey { endpoint }
+        api::CredentialProviderConfigInput::ModelApiKey { endpoint }
     };
-    let response: api::AuthProviderPutResponse = HttpAgentApi::new(args.api_url.clone())
+    let response: api::CredentialProviderPutResponse = HttpAgentApi::new(args.api_url.clone())
         .request(
-            api::METHOD_AUTH_PROVIDERS_PUT,
-            api::AuthProviderPutParams {
+            api::METHOD_CREDENTIALS_PROVIDERS_PUT,
+            api::CredentialProviderPutParams {
                 provider_id: model_provider_row_id(&args.provider_id),
                 display_name: args.display_name.clone(),
                 config,
@@ -1257,10 +1259,10 @@ async fn model_put(args: AuthModelPutArgs) -> Result<()> {
     Ok(())
 }
 
-async fn model_list(args: AuthModelListArgs) -> Result<()> {
+async fn model_list(args: CredentialModelListArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .list_auth_providers(api::AuthProviderListParams {})
+        .list_credential_providers(api::CredentialProviderListParams {})
         .await
         .map_err(crate::api_client::api_error)?
         .result;
@@ -1270,9 +1272,9 @@ async fn model_list(args: AuthModelListArgs) -> Result<()> {
         .filter(|provider| {
             matches!(
                 provider.provider_kind,
-                api::AuthProviderKind::ModelApiKey
-                    | api::AuthProviderKind::ModelOAuth
-                    | api::AuthProviderKind::ModelEndpoint
+                api::CredentialProviderKind::ModelApiKey
+                    | api::CredentialProviderKind::ModelOAuth
+                    | api::CredentialProviderKind::ModelEndpoint
             )
         })
         .collect();
@@ -1292,13 +1294,16 @@ async fn model_list(args: AuthModelListArgs) -> Result<()> {
     )
 }
 
-async fn model_read(args: AuthModelRemoveArgs) -> Result<()> {
+async fn model_read(args: CredentialModelRemoveArgs) -> Result<()> {
     let provider = read_model_provider(&HttpAgentApi::new(args.api_url), &args.provider_id).await?;
     crate::output::show(args.json, &provider)
 }
-async fn read_model_provider(client: &HttpAgentApi, id: &str) -> Result<api::AuthProviderView> {
+async fn read_model_provider(
+    client: &HttpAgentApi,
+    id: &str,
+) -> Result<api::CredentialProviderView> {
     let provider = client
-        .read_auth_provider(api::AuthProviderReadParams {
+        .read_credential_provider(api::CredentialProviderReadParams {
             provider_id: model_provider_row_id(id),
         })
         .await?
@@ -1307,20 +1312,20 @@ async fn read_model_provider(client: &HttpAgentApi, id: &str) -> Result<api::Aut
     anyhow::ensure!(
         matches!(
             provider.config,
-            api::AuthProviderConfigView::ModelApiKey { .. }
-                | api::AuthProviderConfigView::ModelOAuth { .. }
-                | api::AuthProviderConfigView::ModelEndpoint { .. }
+            api::CredentialProviderConfigView::ModelApiKey { .. }
+                | api::CredentialProviderConfigView::ModelOAuth { .. }
+                | api::CredentialProviderConfigView::ModelEndpoint { .. }
         ),
         "{id} is not a model-provider connection"
     );
     Ok(provider)
 }
 
-async fn model_remove(args: AuthModelRemoveArgs) -> Result<()> {
+async fn model_remove(args: CredentialModelRemoveArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     read_model_provider(&api, &args.provider_id).await?;
     let response = api
-        .delete_auth_provider(api::AuthProviderDeleteParams {
+        .delete_credential_provider(api::CredentialProviderDeleteParams {
             provider_id: model_provider_row_id(&args.provider_id),
         })
         .await
@@ -1334,14 +1339,14 @@ async fn model_remove(args: AuthModelRemoveArgs) -> Result<()> {
     Ok(())
 }
 
-async fn github_app_add(args: AuthGithubAppAddArgs) -> Result<()> {
+async fn github_app_add(args: CredentialGithubAppAddArgs) -> Result<()> {
     let private_key = resolve_private_key(&args)?;
     let api = HttpAgentApi::new(args.api_url.clone());
     let response = api
-        .create_auth_provider(api::AuthProviderCreateParams {
+        .create_credential_provider(api::CredentialProviderCreateParams {
             provider_id: args.provider_id.clone(),
             display_name: args.display_name.clone(),
-            config: api::AuthProviderConfigInput::GitHubApp {
+            config: api::CredentialProviderConfigInput::GitHubApp {
                 app_id: args.app_id.clone(),
                 api_base_url: args.api_base_url.clone(),
             },
@@ -1358,9 +1363,9 @@ async fn github_app_add(args: AuthGithubAppAddArgs) -> Result<()> {
     Ok(())
 }
 
-async fn github_app_list(args: AuthGithubAppListArgs) -> Result<()> {
+async fn github_app_list(args: CredentialGithubAppListArgs) -> Result<()> {
     let providers = HttpAgentApi::new(args.api_url)
-        .list_auth_providers(api::AuthProviderListParams {})
+        .list_credential_providers(api::CredentialProviderListParams {})
         .await?
         .result
         .providers;
@@ -1369,7 +1374,7 @@ async fn github_app_list(args: AuthGithubAppListArgs) -> Result<()> {
         .filter(|provider| {
             matches!(
                 provider.config,
-                api::AuthProviderConfigView::GitHubApp { .. }
+                api::CredentialProviderConfigView::GitHubApp { .. }
             )
         })
         .collect();
@@ -1388,10 +1393,10 @@ async fn github_app_list(args: AuthGithubAppListArgs) -> Result<()> {
     }
 }
 
-async fn github_app_read(args: AuthGithubAppReadArgs) -> Result<()> {
+async fn github_app_read(args: CredentialGithubAppReadArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let current = api
-        .read_auth_provider(api::AuthProviderReadParams {
+        .read_credential_provider(api::CredentialProviderReadParams {
             provider_id: args.provider_id.clone(),
         })
         .await?
@@ -1400,13 +1405,13 @@ async fn github_app_read(args: AuthGithubAppReadArgs) -> Result<()> {
     anyhow::ensure!(
         matches!(
             current.config,
-            api::AuthProviderConfigView::GitHubApp { .. }
+            api::CredentialProviderConfigView::GitHubApp { .. }
         ),
         "{} is not a GitHub App provider",
         args.provider_id
     );
     let response = api
-        .read_auth_provider(api::AuthProviderReadParams {
+        .read_credential_provider(api::CredentialProviderReadParams {
             provider_id: args.provider_id,
         })
         .await
@@ -1420,10 +1425,10 @@ async fn github_app_read(args: AuthGithubAppReadArgs) -> Result<()> {
     Ok(())
 }
 
-async fn github_app_remove(args: AuthGithubAppRemoveArgs) -> Result<()> {
+async fn github_app_remove(args: CredentialGithubAppRemoveArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let current = api
-        .read_auth_provider(api::AuthProviderReadParams {
+        .read_credential_provider(api::CredentialProviderReadParams {
             provider_id: args.provider_id.clone(),
         })
         .await?
@@ -1432,13 +1437,13 @@ async fn github_app_remove(args: AuthGithubAppRemoveArgs) -> Result<()> {
     anyhow::ensure!(
         matches!(
             current.config,
-            api::AuthProviderConfigView::GitHubApp { .. }
+            api::CredentialProviderConfigView::GitHubApp { .. }
         ),
         "{} is not a GitHub App provider",
         args.provider_id
     );
     let response = api
-        .delete_auth_provider(api::AuthProviderDeleteParams {
+        .delete_credential_provider(api::CredentialProviderDeleteParams {
             provider_id: args.provider_id,
         })
         .await
@@ -1452,10 +1457,10 @@ async fn github_app_remove(args: AuthGithubAppRemoveArgs) -> Result<()> {
     Ok(())
 }
 
-async fn github_installation_list(args: AuthGithubInstallationListArgs) -> Result<()> {
+async fn github_installation_list(args: CredentialGithubInstallationListArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .list_github_installations(api::AuthGitHubInstallationListParams {
+        .list_github_installations(api::CredentialGitHubInstallationListParams {
             provider_id: args.provider_id,
         })
         .await
@@ -1476,10 +1481,10 @@ async fn github_installation_list(args: AuthGithubInstallationListArgs) -> Resul
     )
 }
 
-async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Result<()> {
+async fn github_installation_grant(args: CredentialGithubInstallationGrantArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
     let response = api
-        .grant_github_installation(api::AuthGitHubInstallationGrantParams {
+        .grant_github_installation(api::CredentialGitHubInstallationGrantParams {
             exposure: exposure(args.retrievable),
             provider_id: args.provider_id,
             installation_id: args.installation_id,
@@ -1497,7 +1502,7 @@ async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Res
     Ok(())
 }
 
-fn print_provider(provider: &api::AuthProviderView) {
+fn print_provider(provider: &api::CredentialProviderView) {
     crate::output::show(false, provider).expect("serializable credential metadata");
 }
 
@@ -1505,7 +1510,7 @@ fn print_client(client: &api::OAuthClientView) {
     crate::output::show(false, client).expect("serializable credential metadata");
 }
 
-fn print_grant(grant: &api::AuthGrantView) {
+fn print_grant(grant: &api::CredentialGrantView) {
     crate::output::show(false, grant).expect("serializable credential metadata");
 }
 
@@ -1518,13 +1523,13 @@ mod tests {
     #[derive(Parser)]
     struct GrantCommand {
         #[command(subcommand)]
-        command: AuthGrantCommand,
+        command: CredentialGrantCommand,
     }
 
     #[derive(Parser)]
     struct ModelCommand {
         #[command(subcommand)]
-        command: AuthModelCommand,
+        command: CredentialModelCommand,
     }
 
     #[test]
@@ -1544,7 +1549,7 @@ mod tests {
             "X-Api-Key=authgrant_router",
         ])
         .expect("parse");
-        let AuthModelCommand::Put(put) = parsed.command else {
+        let CredentialModelCommand::Put(put) = parsed.command else {
             panic!("expected put");
         };
         let headers =
@@ -1586,7 +1591,7 @@ mod tests {
             "/run/secrets/upstream",
         ])
         .expect("parse");
-        let AuthGrantCommand::Replace(args) = parsed.command else {
+        let CredentialGrantCommand::Replace(args) = parsed.command else {
             panic!("expected replace");
         };
         assert_eq!(args.grant_id, "authgrant_upstream");
@@ -1626,14 +1631,17 @@ mod tests {
         let put = |extra: &[&str]| {
             let mut argv = vec!["grants", "put", "repo-token", "--token-env", "REPO_TOKEN"];
             argv.extend_from_slice(extra);
-            let AuthGrantCommand::Put(args) =
+            let CredentialGrantCommand::Put(args) =
                 GrantCommand::try_parse_from(argv).expect("parse").command
             else {
                 panic!("expected put");
             };
             exposure(args.retrievable)
         };
-        assert_eq!(put(&[]), api::AuthGrantExposure::Brokered);
-        assert_eq!(put(&["--retrievable"]), api::AuthGrantExposure::Retrievable);
+        assert_eq!(put(&[]), api::CredentialGrantExposure::Brokered);
+        assert_eq!(
+            put(&["--retrievable"]),
+            api::CredentialGrantExposure::Retrievable
+        );
     }
 }

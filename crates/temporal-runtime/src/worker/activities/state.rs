@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use auth::{
-    AuthGrantStore, AuthProviderKind, AuthProviderStore, AuthTokenBroker, GitHubAppRuntime,
-    GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore,
-    OAuthRefreshRuntime, RegistryTokenBroker, SecretStore,
+use credentials::{
+    CredentialGrantStore, CredentialProviderKind, CredentialProviderStore, CredentialTokenBroker,
+    GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient,
+    OAuthClientStore, OAuthRefreshRuntime, RegistryTokenBroker, SecretStore,
 };
 use environments::EnvironmentStore;
 use harness::{
@@ -501,26 +501,26 @@ impl ActivityState {
 
 fn stored_provider_key_resolver(
     store: Arc<PgStore>,
-    broker: Arc<dyn AuthTokenBroker>,
+    broker: Arc<dyn CredentialTokenBroker>,
 ) -> Arc<dyn ModelProviderResolver> {
-    let providers: Arc<dyn AuthProviderStore> = store.clone();
+    let providers: Arc<dyn CredentialProviderStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store;
     Arc::new(StoredProviderKeyResolver::new(providers, secrets, broker))
 }
 
-fn registry_token_broker(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn AuthTokenBroker>> {
+fn registry_token_broker(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn CredentialTokenBroker>> {
     // MCP OAuth refreshes reach exactly what MCP discovery and tool calls may
     // reach: public HTTPS plus the deployment's listed private destinations.
-    let oauth_http: Arc<dyn auth::OAuthMetadataClient> = Arc::new(
+    let oauth_http: Arc<dyn credentials::OAuthMetadataClient> = Arc::new(
         McpPrivateNetworkPolicy::from_env()
             .map_err(anyhow::Error::msg)?
             .oauth_http_client(),
     );
-    let token_client: Arc<dyn auth::OAuthTokenClient> = Arc::new(
+    let token_client: Arc<dyn credentials::OAuthTokenClient> = Arc::new(
         HttpOAuthTokenClient::new_with_mcp_http(oauth_http)
             .map_err(|error| anyhow::anyhow!("construct oauth token client: {error}"))?,
     );
-    let github_api: Arc<dyn auth::GitHubApiClient> = Arc::new(
+    let github_api: Arc<dyn credentials::GitHubApiClient> = Arc::new(
         HttpGitHubApiClient::new()
             .map_err(|error| anyhow::anyhow!("construct github api client: {error}"))?,
     );
@@ -533,18 +533,18 @@ fn registry_token_broker(store: Arc<PgStore>) -> anyhow::Result<Arc<dyn AuthToke
 
 fn registry_token_broker_with_clients(
     store: Arc<PgStore>,
-    token_client: Arc<dyn auth::OAuthTokenClient>,
-    github_api: Arc<dyn auth::GitHubApiClient>,
-) -> Arc<dyn AuthTokenBroker> {
-    let grants: Arc<dyn AuthGrantStore> = store.clone();
+    token_client: Arc<dyn credentials::OAuthTokenClient>,
+    github_api: Arc<dyn credentials::GitHubApiClient>,
+) -> Arc<dyn CredentialTokenBroker> {
+    let grants: Arc<dyn CredentialGrantStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store.clone();
     let clients: Arc<dyn OAuthClientStore> = store.clone();
-    let providers: Arc<dyn AuthProviderStore> = store.clone();
+    let providers: Arc<dyn CredentialProviderStore> = store.clone();
     let locks: Arc<dyn GrantRefreshLock> = store;
     let broker = RegistryTokenBroker::new(grants.clone(), secrets.clone(), locks)
         .with_oauth_refresh(OAuthRefreshRuntime::new(clients, token_client))
         .with_token_source(
-            AuthProviderKind::GitHubApp,
+            CredentialProviderKind::GitHubApp,
             Arc::new(GitHubAppRuntime::new(
                 providers, github_api, grants, secrets,
             )),

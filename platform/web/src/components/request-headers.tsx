@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AddIcon, DeleteIcon } from "@/icons";
-import { api, type AuthGrantOption } from "@/api";
+import { api, type CredentialGrantOption } from "@/api";
 import { Button } from "@/components/ui/button";
 import { FieldDescription } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -19,14 +19,14 @@ import {
   type RequestHeaderRow,
 } from "@/lib/request-headers";
 
-export function headerCredentialLabel(grant: AuthGrantOption): string {
+export function headerCredentialLabel(grant: CredentialGrantOption): string {
   const name = grant.displayName || grant.subjectHint || grant.grantId;
   return `${name} (${grant.providerId})`;
 }
 
 /// The credentials a header may name: active token credentials. The engine
 /// refuses any other kind in a header.
-export function headerCredentialOptions(grants: AuthGrantOption[]): AuthGrantOption[] {
+export function headerCredentialOptions(grants: CredentialGrantOption[]): CredentialGrantOption[] {
   return grants
     .filter((grant) => grant.providerKind === "staticToken" && grant.status === "active")
     .slice()
@@ -35,12 +35,12 @@ export function headerCredentialOptions(grants: AuthGrantOption[]): AuthGrantOpt
 
 /// The universe's header credentials, for a form that has not already read
 /// its credentials.
-export function useHeaderCredentials(universeId: string): { grants: AuthGrantOption[]; loading: boolean } {
-  const authGrants = useQuery({
-    queryKey: ["auth-grants", universeId],
-    queryFn: () => api<AuthGrantOption[]>("GET", `/api/v1/universes/${universeId}/auth-grants`),
+export function useHeaderCredentials(universeId: string): { grants: CredentialGrantOption[]; loading: boolean } {
+  const credentialGrants = useQuery({
+    queryKey: ["credential-grants", universeId],
+    queryFn: () => api<CredentialGrantOption[]>("GET", `/api/v1/universes/${universeId}/credential-grants`),
   });
-  return { grants: headerCredentialOptions(authGrants.data ?? []), loading: authGrants.isLoading };
+  return { grants: headerCredentialOptions(credentialGrants.data ?? []), loading: credentialGrants.isLoading };
 }
 
 /// Extra request headers of an MCP server or a model endpoint: each is a
@@ -58,7 +58,7 @@ export function RequestHeaderEditor({
 }: {
   owner: RequestHeaderOwner;
   rows: RequestHeaderRow[];
-  grants: AuthGrantOption[];
+  grants: CredentialGrantOption[];
   loading: boolean;
   onChange: (rows: RequestHeaderRow[]) => void;
   /// What the headers are sent with.

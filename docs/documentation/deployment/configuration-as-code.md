@@ -99,8 +99,8 @@ the fields.
 
 | Section | Method an entry follows | Identified by |
 | --- | --- | --- |
-| `credentials` | `auth/grants/put` | `grantId` |
-| `providers` | `auth/providers/put` | `providerId` |
+| `credentials` | `credentials/grants/put` | `grantId` |
+| `providers` | `credentials/providers/put` | `providerId` |
 | `modelDefaults` | `models/defaults/put`; a map of slot (`agentRun`, `speechToText`) to model, where `null` clears a slot | slot |
 | `mcpServers` | `mcp/servers/put` (the `server` object) | `serverId` |
 | `environmentProviders` | `deployment/environment-providers/bindings/put`: `providerId` and `enabled` | `providerId` |

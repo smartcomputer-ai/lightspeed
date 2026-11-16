@@ -133,6 +133,7 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
         Arc::new(GatewayState::for_api(Arc::new(api))),
         1024 * 1024,
         GatewayRoutes {
+            public: false,
             api: true,
             environment: false,
         },

@@ -18,7 +18,7 @@ function fixture(cached: string[], actual: string[]) {
     }, notifications: [] } });
   }));
   const transaction = vi.fn(async (work: (value: typeof tx) => unknown) => work(tx));
-  const ctx = { db: { select: () => chain, transaction }, env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsk_fixture" } } as unknown as AppContext;
+  const ctx = { db: { select: () => chain, transaction }, env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as unknown as AppContext;
   return { ctx, updates, transaction };
 }
 it("refreshes renamed runtime handles atomically, including swapped cache values", async () => {

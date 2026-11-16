@@ -22,7 +22,9 @@ schemas and migration histories are independent.
 
 `LIGHTSPEED_API_URL` is a client setting used by the Platform, CLI, and
 connector host. It does not configure where the runtime listens. That address
-comes from `LIGHTSPEED_GATEWAY_BIND`.
+comes from `LIGHTSPEED_GATEWAY_BIND` for private RPC. Public callbacks and
+environment traffic bind separately through `LIGHTSPEED_PUBLIC_BIND` and
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`.
 
 In deployed containers, supply environment variables or protected
 environment files. Docker `--env-file` uses `KEY=value`, without `export` or
@@ -117,11 +119,14 @@ callers:
 
 | Setting | Example | Caller and purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_GATEWAY_BIND` | `0.0.0.0:18080` | Address inside the runtime's network namespace where HTTP listens. |
+| `LIGHTSPEED_GATEWAY_BIND` | `0.0.0.0:18080` | Private JSON-RPC listener (`--bind`; default `127.0.0.1:18080`). |
+| `LIGHTSPEED_PUBLIC_BIND` | `0.0.0.0:18082` | OAuth callback, client metadata, and bot webhook listener (`--public-bind`; default `127.0.0.1:18082`). |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND` | `0.0.0.0:18083` | Daemon connections and private worker routes (`--environment-bind`; default `127.0.0.1:18083`). |
 | `LIGHTSPEED_API_URL` on Platform | `http://lightspeed-runtime:18080/rpc` | Private Platform-to-runtime JSON-RPC route. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `https://lightspeed.example.com` | Public browser origin used for Platform authentication. |
-| `LIGHTSPEED_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | Public runtime origin used for OAuth callbacks, bot hooks, and environment addresses. Registered daemons must dial this origin, or one listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, because they sign it when they register. |
-| `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | `http://lightspeed-runtime:18080` | Private base URL workers use for environment routes; omit `/rpc`. |
+| `LIGHTSPEED_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | OAuth callback and bot webhook origin; defaults to the public listener address. |
+| `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | Daemon connection origin; defaults to the environment listener address. Daemons must dial this origin, or one listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, because they sign it when they register. |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | `http://lightspeed-runtime:18083` | Private base URL workers use for environment routes; omit `/rpc`. |
 
 An address containing `localhost` is relative to the process using it. Inside
 a container it refers to that container. Conversely, binding to `0.0.0.0`
@@ -132,7 +137,9 @@ Preserve paths, query strings, host, and scheme as described in
 [Configure the public edge](self-hosting.md#configure-the-public-edge).
 Daemon control and data routes require WebSocket upgrades and long-lived
 connections. Workers also need the private environment route even when the
-public WebSockets are reachable.
+public WebSockets are reachable. All three listeners serve `/health` and
+`/ready`; keep the RPC listener private even when callbacks and daemon
+connections are publicly reachable.
 
 The internal environment token is separate from an RPC token or a daemon
 registration key. Set the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on the

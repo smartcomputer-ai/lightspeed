@@ -323,7 +323,7 @@ enum ModelsCommand {
     Defaults(crate::model_defaults_cli::ModelDefaultsArgs),
     /// Configure provider endpoints and their API-key or OAuth credentials.
     #[command(visible_alias = "providers")]
-    Provider(crate::auth_cli::AuthModelArgs),
+    Provider(crate::credentials_cli::CredentialModelArgs),
     /// List the models the universe's providers offer.
     List {
         #[arg(long)]
@@ -335,7 +335,7 @@ enum ModelsCommand {
 pub async fn models(args: ModelsArgs) -> Result<()> {
     let (json, all) = match args.command {
         ModelsCommand::Defaults(args) => return crate::model_defaults_cli::run(args).await,
-        ModelsCommand::Provider(args) => return crate::auth_cli::model(args).await,
+        ModelsCommand::Provider(args) => return crate::credentials_cli::model(args).await,
         ModelsCommand::List { json, all } => (json, all),
     };
     let response = HttpAgentApi::new("")

@@ -1,7 +1,7 @@
 // The methods `LightspeedClient` names as helpers. Everything in the API stays
 // reachable through `client.call`; a helper is for what most applications need to
 // use Lightspeed: sessions, runs, and the resources sessions attach. Administration
-// (auth, deployment, channels, registration keys) stays on `call`.
+// (credentials, deployment, channels, registration keys) stays on `call`.
 //
 // Each entry is [method, helper name, ...IDs naming the target]. Those IDs become
 // positional arguments and the method's other params become the options object.

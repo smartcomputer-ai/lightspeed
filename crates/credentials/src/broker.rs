@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::{
-    AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
-    AuthProviderKind, AuthRegistryError, GrantRefreshLock, McpOAuthTokenContext, OAuthClientStore,
-    OAuthTokenClient, OAuthTokenError, OAuthTokenGrant, OAuthTokenRequest, PutSecretRecord,
-    SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore,
-    SecretValue, random_auth_id,
+    CredentialGrantId, CredentialGrantRecord, CredentialGrantStatus, CredentialGrantStore,
+    CredentialGrantTokenRefresh, CredentialProviderKind, CredentialRegistryError, GrantRefreshLock,
+    McpOAuthTokenContext, OAuthClientStore, OAuthTokenClient, OAuthTokenError, OAuthTokenGrant,
+    OAuthTokenRequest, PutSecretRecord, SECRET_KIND_OAUTH_ACCESS_TOKEN,
+    SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore, SecretValue, random_credential_id,
 };
 
 /// The resource a resolved token is about to be sent to. Audience enforcement
@@ -44,44 +44,44 @@ impl TokenAudience {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum AuthBrokerError {
-    #[error("auth grant not found: {grant_id}")]
-    GrantNotFound { grant_id: AuthGrantId },
+pub enum CredentialBrokerError {
+    #[error("credential grant not found: {grant_id}")]
+    GrantNotFound { grant_id: CredentialGrantId },
 
-    #[error("auth grant {grant_id} is not active: {status:?}")]
+    #[error("credential grant {grant_id} is not active: {status:?}")]
     GrantNotActive {
-        grant_id: AuthGrantId,
-        status: AuthGrantStatus,
+        grant_id: CredentialGrantId,
+        status: CredentialGrantStatus,
     },
 
-    #[error("auth grant {grant_id} is expired")]
-    GrantExpired { grant_id: AuthGrantId },
+    #[error("credential grant {grant_id} is expired")]
+    GrantExpired { grant_id: CredentialGrantId },
 
-    #[error("auth grant {grant_id} does not cover audience {requested}")]
+    #[error("credential grant {grant_id} does not cover audience {requested}")]
     AudienceMismatch {
-        grant_id: AuthGrantId,
+        grant_id: CredentialGrantId,
         requested: String,
     },
 
-    #[error("auth grant {grant_id} has no resolvable token secret")]
-    SecretMissing { grant_id: AuthGrantId },
+    #[error("credential grant {grant_id} has no resolvable token secret")]
+    SecretMissing { grant_id: CredentialGrantId },
 
-    #[error("auth grant {grant_id} token refresh failed: {message}")]
+    #[error("credential grant {grant_id} token refresh failed: {message}")]
     RefreshFailed {
-        grant_id: AuthGrantId,
+        grant_id: CredentialGrantId,
         message: String,
     },
 
-    #[error("auth grant {grant_id} token mint failed: {message}")]
+    #[error("credential grant {grant_id} token mint failed: {message}")]
     MintFailed {
-        grant_id: AuthGrantId,
+        grant_id: CredentialGrantId,
         message: String,
     },
 
     #[error("no token source is configured for provider kind {provider_kind:?} (grant {grant_id})")]
     SourceNotConfigured {
-        grant_id: AuthGrantId,
-        provider_kind: AuthProviderKind,
+        grant_id: CredentialGrantId,
+        provider_kind: CredentialProviderKind,
     },
 
     #[error("auth broker store failure: {message}")]
@@ -89,16 +89,16 @@ pub enum AuthBrokerError {
 }
 
 #[async_trait]
-pub trait AuthTokenBroker: Send + Sync {
+pub trait CredentialTokenBroker: Send + Sync {
     /// Resolve a current bearer token for `grant_id`, enforcing grant status,
     /// expiry, and audience, renewing (refreshing/minting) when needed. Fails
     /// with a typed error; never returns a silent absence. Whether a credential
     /// may be absent is decided from the server record before the broker is asked.
     async fn bearer_token(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         audience: &TokenAudience,
-    ) -> Result<SecretValue, AuthBrokerError>;
+    ) -> Result<SecretValue, CredentialBrokerError>;
 }
 
 /// Provider-kind-specific token resolution behind the generic broker. The
@@ -112,18 +112,18 @@ pub trait GrantTokenSource: Send + Sync {
     /// needed, or a typed error when the grant cannot resolve at all.
     async fn current_token(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<Option<SecretValue>, AuthBrokerError>;
+    ) -> Result<Option<SecretValue>, CredentialBrokerError>;
 
     /// Slow path, called with the per-grant lock held after the grant was
     /// re-read and `current_token` re-checked. Implementations own their
     /// provider-specific grant-status transitions (`NeedsReauth`, `Failed`).
     async fn renew_token(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<SecretValue, AuthBrokerError>;
+    ) -> Result<SecretValue, CredentialBrokerError>;
 }
 
 /// Returns true when `audience` covers `resource`: exact match, or a
@@ -173,10 +173,10 @@ impl OAuthRefreshRuntime {
 
 /// Provider kinds whose grants carry a stored access token (optionally
 /// refreshable through OAuth). Served by [`StoredTokenSource`].
-const STORED_TOKEN_KINDS: [AuthProviderKind; 3] = [
-    AuthProviderKind::StaticToken,
-    AuthProviderKind::McpOAuth,
-    AuthProviderKind::CustomOAuth,
+const STORED_TOKEN_KINDS: [CredentialProviderKind; 3] = [
+    CredentialProviderKind::StaticToken,
+    CredentialProviderKind::McpOAuth,
+    CredentialProviderKind::CustomOAuth,
 ];
 
 /// Token source for grants with stored access tokens: static bearer imports
@@ -184,7 +184,7 @@ const STORED_TOKEN_KINDS: [AuthProviderKind; 3] = [
 /// OAuth tokens refresh (with rotation persisted atomically); without one,
 /// stored tokens are served until they expire.
 struct StoredTokenSource {
-    grants: Arc<dyn AuthGrantStore>,
+    grants: Arc<dyn CredentialGrantStore>,
     secrets: Arc<dyn SecretStore>,
     refresh: Option<OAuthRefreshRuntime>,
 }
@@ -192,10 +192,10 @@ struct StoredTokenSource {
 impl StoredTokenSource {
     async fn read_access_token(
         &self,
-        grant: &AuthGrantRecord,
-    ) -> Result<SecretValue, AuthBrokerError> {
+        grant: &CredentialGrantRecord,
+    ) -> Result<SecretValue, CredentialBrokerError> {
         let Some(secret_id) = &grant.access_token_secret else {
-            return Err(AuthBrokerError::SecretMissing {
+            return Err(CredentialBrokerError::SecretMissing {
                 grant_id: grant.grant_id.clone(),
             });
         };
@@ -204,10 +204,12 @@ impl StoredTokenSource {
                 .read_secret(secret_id)
                 .await
                 .map_err(|error| match error {
-                    AuthRegistryError::SecretNotFound { .. } => AuthBrokerError::SecretMissing {
-                        grant_id: grant.grant_id.clone(),
-                    },
-                    other => AuthBrokerError::Store {
+                    CredentialRegistryError::SecretNotFound { .. } => {
+                        CredentialBrokerError::SecretMissing {
+                            grant_id: grant.grant_id.clone(),
+                        }
+                    }
+                    other => CredentialBrokerError::Store {
                         message: other.to_string(),
                     },
                 })?;
@@ -216,21 +218,21 @@ impl StoredTokenSource {
 
     /// The stored access token can be served as-is: it exists and is not
     /// inside the refresh margin.
-    fn token_is_fresh(grant: &AuthGrantRecord, now_ms: i64, margin_ms: i64) -> bool {
+    fn token_is_fresh(grant: &CredentialGrantRecord, now_ms: i64, margin_ms: i64) -> bool {
         grant.access_token_secret.is_some()
             && grant
                 .expires_at_ms
                 .is_none_or(|expires_at_ms| now_ms < expires_at_ms.saturating_sub(margin_ms))
     }
 
-    fn token_is_usable(grant: &AuthGrantRecord, now_ms: i64) -> bool {
+    fn token_is_usable(grant: &CredentialGrantRecord, now_ms: i64) -> bool {
         grant.access_token_secret.is_some()
             && grant
                 .expires_at_ms
                 .is_none_or(|expires_at_ms| now_ms < expires_at_ms)
     }
 
-    fn refresh_available(&self, grant: &AuthGrantRecord) -> bool {
+    fn refresh_available(&self, grant: &CredentialGrantRecord) -> bool {
         self.refresh.is_some()
             && grant.refresh_token_secret.is_some()
             && grant.oauth_client.is_some()
@@ -240,13 +242,13 @@ impl StoredTokenSource {
     /// re-checked freshness. Returns the new access token.
     async fn refresh_grant(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         oauth: &OAuthRefreshRuntime,
         now_ms: i64,
-    ) -> Result<SecretValue, AuthBrokerError> {
+    ) -> Result<SecretValue, CredentialBrokerError> {
         let grant_id = grant.grant_id.clone();
-        let store_error = |message: String| AuthBrokerError::Store { message };
-        let refresh_error = |message: String| AuthBrokerError::RefreshFailed {
+        let store_error = |message: String| CredentialBrokerError::Store { message };
+        let refresh_error = |message: String| CredentialBrokerError::RefreshFailed {
             grant_id: grant_id.clone(),
             message,
         };
@@ -287,7 +289,7 @@ impl StoredTokenSource {
             auth_method: client.token_endpoint_auth_method,
             grant: OAuthTokenGrant::RefreshToken { refresh_token },
             resource: grant.audience.clone(),
-            mcp: (grant.provider_kind == AuthProviderKind::McpOAuth).then(|| {
+            mcp: (grant.provider_kind == CredentialProviderKind::McpOAuth).then(|| {
                 McpOAuthTokenContext {
                     authorization_endpoint: client.authorization_endpoint.clone(),
                     issuer: client.authorization_server_issuer.clone(),
@@ -306,11 +308,11 @@ impl StoredTokenSource {
                 // until the user reauthorizes.
                 let _ = self
                     .grants
-                    .update_grant_status(&grant_id, AuthGrantStatus::NeedsReauth, now_ms)
+                    .update_grant_status(&grant_id, CredentialGrantStatus::NeedsReauth, now_ms)
                     .await;
-                return Err(AuthBrokerError::GrantNotActive {
+                return Err(CredentialBrokerError::GrantNotActive {
                     grant_id: grant_id.clone(),
-                    status: AuthGrantStatus::NeedsReauth,
+                    status: CredentialGrantStatus::NeedsReauth,
                 });
             }
             Err(error) => return Err(refresh_error(error.to_string())),
@@ -358,7 +360,7 @@ impl StoredTokenSource {
         self.grants
             .record_grant_refresh(
                 &grant_id,
-                AuthGrantTokenRefresh {
+                CredentialGrantTokenRefresh {
                     access_token_secret: new_access_secret_id,
                     refresh_token_secret: new_refresh_secret_id.clone(),
                     expires_at_ms: response
@@ -388,9 +390,9 @@ impl StoredTokenSource {
 impl GrantTokenSource for StoredTokenSource {
     async fn current_token(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<Option<SecretValue>, AuthBrokerError> {
+    ) -> Result<Option<SecretValue>, CredentialBrokerError> {
         let margin_ms = self
             .refresh
             .as_ref()
@@ -403,7 +405,7 @@ impl GrantTokenSource for StoredTokenSource {
                 .expires_at_ms
                 .is_some_and(|expires_at_ms| now_ms >= expires_at_ms)
             {
-                return Err(AuthBrokerError::GrantExpired {
+                return Err(CredentialBrokerError::GrantExpired {
                     grant_id: grant.grant_id.clone(),
                 });
             }
@@ -415,19 +417,19 @@ impl GrantTokenSource for StoredTokenSource {
 
     async fn renew_token(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<SecretValue, AuthBrokerError> {
+    ) -> Result<SecretValue, CredentialBrokerError> {
         let Some(oauth) = &self.refresh else {
             // current_token only defers to renewal when refresh is available.
-            return Err(AuthBrokerError::RefreshFailed {
+            return Err(CredentialBrokerError::RefreshFailed {
                 grant_id: grant.grant_id.clone(),
                 message: "oauth refresh is not configured".to_owned(),
             });
         };
         match self.refresh_grant(grant, oauth, now_ms).await {
             Ok(token) => Ok(token),
-            Err(error @ AuthBrokerError::GrantNotActive { .. }) => Err(error),
+            Err(error @ CredentialBrokerError::GrantNotActive { .. }) => Err(error),
             Err(error) => {
                 // Inside the margin but not yet expired the stored token
                 // is still valid; serve it instead of failing the call on
@@ -449,16 +451,16 @@ impl GrantTokenSource for StoredTokenSource {
 /// [`RegistryTokenBroker::with_token_source`]).
 #[derive(Clone)]
 pub struct RegistryTokenBroker {
-    grants: Arc<dyn AuthGrantStore>,
+    grants: Arc<dyn CredentialGrantStore>,
     secrets: Arc<dyn SecretStore>,
     locks: Arc<dyn GrantRefreshLock>,
-    sources: BTreeMap<AuthProviderKind, Arc<dyn GrantTokenSource>>,
+    sources: BTreeMap<CredentialProviderKind, Arc<dyn GrantTokenSource>>,
     now_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 impl RegistryTokenBroker {
     pub fn new(
-        grants: Arc<dyn AuthGrantStore>,
+        grants: Arc<dyn CredentialGrantStore>,
         secrets: Arc<dyn SecretStore>,
         locks: Arc<dyn GrantRefreshLock>,
     ) -> Self {
@@ -482,7 +484,7 @@ impl RegistryTokenBroker {
     /// registration for that kind.
     pub fn with_token_source(
         mut self,
-        provider_kind: AuthProviderKind,
+        provider_kind: CredentialProviderKind,
         source: Arc<dyn GrantTokenSource>,
     ) -> Self {
         self.sources.insert(provider_kind, source);
@@ -507,23 +509,23 @@ impl RegistryTokenBroker {
 
     async fn read_checked_grant(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         audience: &TokenAudience,
-    ) -> Result<AuthGrantRecord, AuthBrokerError> {
+    ) -> Result<CredentialGrantRecord, CredentialBrokerError> {
         let grant = self
             .grants
             .read_grant(grant_id)
             .await
             .map_err(|error| match error {
-                AuthRegistryError::GrantNotFound { grant_id } => {
-                    AuthBrokerError::GrantNotFound { grant_id }
+                CredentialRegistryError::GrantNotFound { grant_id } => {
+                    CredentialBrokerError::GrantNotFound { grant_id }
                 }
-                other => AuthBrokerError::Store {
+                other => CredentialBrokerError::Store {
                     message: other.to_string(),
                 },
             })?;
-        if grant.status != AuthGrantStatus::Active {
-            return Err(AuthBrokerError::GrantNotActive {
+        if grant.status != CredentialGrantStatus::Active {
+            return Err(CredentialBrokerError::GrantNotActive {
                 grant_id: grant.grant_id,
                 status: grant.status,
             });
@@ -531,7 +533,7 @@ impl RegistryTokenBroker {
         if let Some(grant_audience) = &grant.audience
             && !audience_covers(grant_audience, audience.resource())
         {
-            return Err(AuthBrokerError::AudienceMismatch {
+            return Err(CredentialBrokerError::AudienceMismatch {
                 grant_id: grant.grant_id,
                 requested: audience.resource().to_owned(),
             });
@@ -540,9 +542,11 @@ impl RegistryTokenBroker {
     }
 }
 
-fn random_secret_id() -> Result<SecretId, AuthBrokerError> {
-    SecretId::try_new(random_auth_id("authsec_")).map_err(|error| AuthBrokerError::Store {
-        message: format!("generate secret id: {error}"),
+fn random_secret_id() -> Result<SecretId, CredentialBrokerError> {
+    SecretId::try_new(random_credential_id("authsec_")).map_err(|error| {
+        CredentialBrokerError::Store {
+            message: format!("generate secret id: {error}"),
+        }
     })
 }
 
@@ -554,15 +558,15 @@ pub(crate) fn system_now_ms() -> i64 {
 }
 
 #[async_trait]
-impl AuthTokenBroker for RegistryTokenBroker {
+impl CredentialTokenBroker for RegistryTokenBroker {
     async fn bearer_token(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         audience: &TokenAudience,
-    ) -> Result<SecretValue, AuthBrokerError> {
+    ) -> Result<SecretValue, CredentialBrokerError> {
         let grant = self.read_checked_grant(grant_id, audience).await?;
         let Some(source) = self.sources.get(&grant.provider_kind).cloned() else {
-            return Err(AuthBrokerError::SourceNotConfigured {
+            return Err(CredentialBrokerError::SourceNotConfigured {
                 grant_id: grant.grant_id,
                 provider_kind: grant.provider_kind,
             });
@@ -572,13 +576,11 @@ impl AuthTokenBroker for RegistryTokenBroker {
             return Ok(token);
         }
 
-        let _guard =
-            self.locks
-                .lock_grant(grant_id)
-                .await
-                .map_err(|error| AuthBrokerError::Store {
-                    message: format!("acquire grant renewal lock: {error}"),
-                })?;
+        let _guard = self.locks.lock_grant(grant_id).await.map_err(|error| {
+            CredentialBrokerError::Store {
+                message: format!("acquire grant renewal lock: {error}"),
+            }
+        })?;
         // Re-read and re-check under the lock: a concurrent resolver may
         // have renewed while this call waited.
         let grant = self.read_checked_grant(grant_id, audience).await?;
@@ -596,17 +598,17 @@ mod tests {
 
     use super::*;
     use crate::{
-        CreateAuthGrantRecord, CreateOAuthClientRecord, InMemoryAuthGrantStore, InMemoryGrantLocks,
-        InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId, OAuthTokenResponse,
-        SECRET_KIND_STATIC_TOKEN, TokenEndpointAuthMethod,
+        CreateCredentialGrantRecord, CreateOAuthClientRecord, InMemoryCredentialGrantStore,
+        InMemoryGrantLocks, InMemoryOAuthClientStore, InMemorySecretStore, OAuthClientId,
+        OAuthTokenResponse, SECRET_KIND_STATIC_TOKEN, TokenEndpointAuthMethod,
     };
 
-    fn grant_request(grant_id: &str, audience: Option<&str>) -> CreateAuthGrantRecord {
-        CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new(grant_id),
+    fn grant_request(grant_id: &str, audience: Option<&str>) -> CreateCredentialGrantRecord {
+        CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: crate::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: crate::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -616,14 +618,17 @@ mod tests {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         }
     }
 
-    async fn broker_with(grant: CreateAuthGrantRecord, token: Option<&str>) -> RegistryTokenBroker {
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+    async fn broker_with(
+        grant: CreateCredentialGrantRecord,
+        token: Option<&str>,
+    ) -> RegistryTokenBroker {
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         grants.create_grant(grant).await.expect("create grant");
         if let Some(token) = token {
@@ -678,7 +683,7 @@ mod tests {
 
         let token = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_1"),
+                &CredentialGrantId::new("authgrant_1"),
                 &mcp_audience("https://crm.example.com/mcp"),
             )
             .await
@@ -693,13 +698,13 @@ mod tests {
 
         let error = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_missing"),
+                &CredentialGrantId::new("authgrant_missing"),
                 &mcp_audience("https://crm.example.com/mcp"),
             )
             .await
             .expect_err("unknown grant must fail");
 
-        assert!(matches!(error, AuthBrokerError::GrantNotFound { .. }));
+        assert!(matches!(error, CredentialBrokerError::GrantNotFound { .. }));
     }
 
     #[tokio::test]
@@ -708,8 +713,8 @@ mod tests {
         broker
             .grants
             .update_grant_status(
-                &AuthGrantId::new("authgrant_1"),
-                AuthGrantStatus::Revoked,
+                &CredentialGrantId::new("authgrant_1"),
+                CredentialGrantStatus::Revoked,
                 20,
             )
             .await
@@ -717,7 +722,7 @@ mod tests {
 
         let error = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_1"),
+                &CredentialGrantId::new("authgrant_1"),
                 &mcp_audience("https://crm.example.com/mcp"),
             )
             .await
@@ -725,8 +730,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AuthBrokerError::GrantNotActive {
-                status: AuthGrantStatus::Revoked,
+            CredentialBrokerError::GrantNotActive {
+                status: CredentialGrantStatus::Revoked,
                 ..
             }
         ));
@@ -742,13 +747,16 @@ mod tests {
 
         let error = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_1"),
+                &CredentialGrantId::new("authgrant_1"),
                 &mcp_audience("https://other.example.com/mcp"),
             )
             .await
             .expect_err("audience mismatch must fail");
 
-        assert!(matches!(error, AuthBrokerError::AudienceMismatch { .. }));
+        assert!(matches!(
+            error,
+            CredentialBrokerError::AudienceMismatch { .. }
+        ));
     }
 
     #[tokio::test]
@@ -761,13 +769,13 @@ mod tests {
 
         let error = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_1"),
+                &CredentialGrantId::new("authgrant_1"),
                 &mcp_audience("https://crm.example.com/mcp"),
             )
             .await
             .expect_err("expired grant must fail");
 
-        assert!(matches!(error, AuthBrokerError::GrantExpired { .. }));
+        assert!(matches!(error, CredentialBrokerError::GrantExpired { .. }));
     }
 
     #[tokio::test]
@@ -776,13 +784,13 @@ mod tests {
 
         let error = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_1"),
+                &CredentialGrantId::new("authgrant_1"),
                 &mcp_audience("https://crm.example.com/mcp"),
             )
             .await
             .expect_err("missing secret must fail");
 
-        assert!(matches!(error, AuthBrokerError::SecretMissing { .. }));
+        assert!(matches!(error, CredentialBrokerError::SecretMissing { .. }));
     }
 
     struct CountingTokenClient {
@@ -819,7 +827,7 @@ mod tests {
 
     struct OAuthHarness {
         broker: RegistryTokenBroker,
-        grants: Arc<InMemoryAuthGrantStore>,
+        grants: Arc<InMemoryCredentialGrantStore>,
         secrets: Arc<InMemorySecretStore>,
         token_client: Arc<CountingTokenClient>,
         now: Arc<AtomicI64>,
@@ -831,14 +839,14 @@ mod tests {
         responses: Vec<Result<OAuthTokenResponse, OAuthTokenError>>,
         now: i64,
     ) -> OAuthHarness {
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         let clients = Arc::new(InMemoryOAuthClientStore::new());
         clients
             .create_oauth_client(CreateOAuthClientRecord {
                 client_id: OAuthClientId::new("crm"),
                 provider_id: "crm".to_owned(),
-                provider_kind: AuthProviderKind::McpOAuth,
+                provider_kind: CredentialProviderKind::McpOAuth,
                 display_name: None,
                 authorization_endpoint: "https://as.example.com/authorize".to_owned(),
                 token_endpoint: "https://as.example.com/token".to_owned(),
@@ -855,11 +863,11 @@ mod tests {
             .await
             .expect("create client");
         grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_oauth"),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new("authgrant_oauth"),
                 provider_id: "crm".to_owned(),
-                provider_kind: AuthProviderKind::McpOAuth,
-                exposure: crate::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::McpOAuth,
+                exposure: crate::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -869,7 +877,7 @@ mod tests {
                 refresh_token_secret: Some(SecretId::new("authsec_refresh")),
                 oauth_client: Some(OAuthClientId::new("crm")),
                 expires_at_ms: Some(1_000),
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 10,
             })
@@ -920,8 +928,8 @@ mod tests {
         }
     }
 
-    fn oauth_grant_id() -> AuthGrantId {
-        AuthGrantId::new("authgrant_oauth")
+    fn oauth_grant_id() -> CredentialGrantId {
+        CredentialGrantId::new("authgrant_oauth")
     }
 
     #[tokio::test]
@@ -989,14 +997,14 @@ mod tests {
                 .secrets
                 .read_secret(&SecretId::new("authsec_access"))
                 .await,
-            Err(AuthRegistryError::SecretNotFound { .. })
+            Err(CredentialRegistryError::SecretNotFound { .. })
         ));
         assert!(matches!(
             harness
                 .secrets
                 .read_secret(&SecretId::new("authsec_refresh"))
                 .await,
-            Err(AuthRegistryError::SecretNotFound { .. })
+            Err(CredentialRegistryError::SecretNotFound { .. })
         ));
     }
 
@@ -1069,8 +1077,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AuthBrokerError::GrantNotActive {
-                status: AuthGrantStatus::NeedsReauth,
+            CredentialBrokerError::GrantNotActive {
+                status: CredentialGrantStatus::NeedsReauth,
                 ..
             }
         ));
@@ -1079,7 +1087,7 @@ mod tests {
             .read_grant(&oauth_grant_id())
             .await
             .expect("grant");
-        assert_eq!(grant.status, AuthGrantStatus::NeedsReauth);
+        assert_eq!(grant.status, CredentialGrantStatus::NeedsReauth);
     }
 
     #[tokio::test]
@@ -1127,7 +1135,7 @@ mod tests {
             .await
             .expect_err("expired token with failing refresh must error");
 
-        assert!(matches!(error, AuthBrokerError::RefreshFailed { .. }));
+        assert!(matches!(error, CredentialBrokerError::RefreshFailed { .. }));
     }
 
     #[tokio::test]
@@ -1170,10 +1178,10 @@ mod tests {
 
     #[tokio::test]
     async fn grants_without_a_registered_source_fail_with_a_typed_error() {
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         let mut request = grant_request("authgrant_1", None);
-        request.provider_kind = AuthProviderKind::GitHubApp;
+        request.provider_kind = CredentialProviderKind::GitHubApp;
         request.access_token_secret = None;
         grants.create_grant(request).await.expect("create grant");
         // No source is registered for GitHubApp on a bare broker.
@@ -1181,7 +1189,7 @@ mod tests {
 
         let error = broker
             .bearer_token(
-                &AuthGrantId::new("authgrant_1"),
+                &CredentialGrantId::new("authgrant_1"),
                 &mcp_audience("https://crm.example.com/mcp"),
             )
             .await
@@ -1189,8 +1197,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AuthBrokerError::SourceNotConfigured {
-                provider_kind: AuthProviderKind::GitHubApp,
+            CredentialBrokerError::SourceNotConfigured {
+                provider_kind: CredentialProviderKind::GitHubApp,
                 ..
             }
         ));

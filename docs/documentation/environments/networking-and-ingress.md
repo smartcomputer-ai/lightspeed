@@ -43,7 +43,7 @@ port. Use the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on all replicas.
 The peer URL identifies this process and must not point to the shared load
 balancer. A deployment with a single gateway can omit it.
 
-For an IPv4 Kubernetes Deployment listening on port 18080, the container's
+For an IPv4 Kubernetes Deployment listening on port 18083, the container's
 environment can derive its address automatically:
 
 ```yaml
@@ -53,7 +53,7 @@ env:
       fieldRef:
         fieldPath: status.podIP
   - name: LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL
-    value: "http://$(POD_IP):18080"
+    value: "http://$(POD_IP):18083"
 ```
 
 Every new pod registers its own address; scaling needs no list of peers.
@@ -70,7 +70,8 @@ that token within the deployment. It is not a daemon registration key.
 
 A registered daemon opens its connection outward, which lets it run behind
 NAT without exposing an inbound daemon listener. Publish these runtime paths
-through an HTTPS/WebSocket-capable proxy:
+through an HTTPS/WebSocket-capable proxy targeting the environment listener
+(`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`, default `127.0.0.1:18083`):
 
 | Path | Purpose |
 | --- | --- |
@@ -85,7 +86,7 @@ trusted private network. For a private certificate authority, configure
 The daemon derives the data path from its configured connect URL, on the same
 origin and under the same path prefix, so both paths must be published on one
 host. The daemon signs the origin it dialed when it proves its identity, and
-the gateway accepts the origin of its `LIGHTSPEED_PUBLIC_BASE_URL` plus those
+the gateway accepts the origin of its `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` plus those
 listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, such as a
 cluster-internal service address. A daemon that dials the gateway under any
 other hostname is refused. [Run registered daemons](registered-daemons.md)

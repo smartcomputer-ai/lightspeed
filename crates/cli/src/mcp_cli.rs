@@ -430,7 +430,8 @@ async fn put_server_credential(
     json: bool,
 ) -> Result<()> {
     let mut server = server_input_from_view(&current);
-    server.credential = grant_id.map(|grant_id| api::McpServerCredential::AuthGrant { grant_id });
+    server.credential =
+        grant_id.map(|grant_id| api::McpServerCredential::CredentialGrant { grant_id });
     let required = matches!(
         server.auth_policy,
         api::McpServerAuthPolicy::RequiredBearer | api::McpServerAuthPolicy::RequiredOAuth { .. }
@@ -494,8 +495,8 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
         anyhow::bail!("MCP server {} does not use OAuth", current.server_id);
     }
     let started = api
-        .start_auth_flow(api::AuthFlowStartParams {
-            exposure: api::AuthGrantExposure::Brokered,
+        .start_credential_flow(api::CredentialFlowStartParams {
+            exposure: api::CredentialGrantExposure::Brokered,
             client_id: format!("mcp:{}", args.server_id),
             scopes: (!args.scopes.is_empty()).then_some(args.scopes),
             audience: args.audience,
@@ -510,26 +511,26 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let response = api
-            .read_auth_flow_status(api::AuthFlowStatusParams {
+            .read_credential_flow_status(api::CredentialFlowStatusParams {
                 flow_id: started.flow_id.clone(),
             })
             .await
             .map_err(crate::api_client::api_error)?
             .result;
         match response.flow.status {
-            api::AuthFlowStatus::Pending => continue,
-            api::AuthFlowStatus::Completed => {
+            api::CredentialFlowStatus::Pending => continue,
+            api::CredentialFlowStatus::Completed => {
                 let grant_id = response
                     .flow
                     .grant_id
                     .ok_or_else(|| anyhow::anyhow!("completed MCP login returned no grant id"))?;
                 return put_server_credential(&api, current, Some(grant_id), args.json).await;
             }
-            api::AuthFlowStatus::Failed => anyhow::bail!(
+            api::CredentialFlowStatus::Failed => anyhow::bail!(
                 "authorization failed: {}",
                 response.flow.error.as_deref().unwrap_or("unknown error")
             ),
-            api::AuthFlowStatus::Expired => {
+            api::CredentialFlowStatus::Expired => {
                 anyhow::bail!("authorization flow expired before the callback completed")
             }
         }
@@ -565,7 +566,7 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
                 auth_policy,
                 credential: args
                     .auth_grant_id
-                    .map(|grant_id| api::McpServerCredential::AuthGrant { grant_id }),
+                    .map(|grant_id| api::McpServerCredential::CredentialGrant { grant_id }),
                 headers,
                 status,
             },

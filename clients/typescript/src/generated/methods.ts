@@ -88,25 +88,25 @@ export const METHODS = [
   "mcp/servers/read",
   "mcp/servers/list",
   "mcp/servers/delete",
-  "auth/grants/import",
-  "auth/grants/lease",
-  "auth/grants/read",
-  "auth/grants/list",
-  "auth/grants/put",
-  "auth/grants/revoke",
-  "auth/clients/create",
-  "auth/clients/read",
-  "auth/clients/list",
-  "auth/clients/delete",
-  "auth/flows/start",
-  "auth/flows/read",
-  "auth/providers/create",
-  "auth/providers/put",
-  "auth/providers/read",
-  "auth/providers/list",
-  "auth/providers/delete",
-  "auth/github/installations/list",
-  "auth/github/installations/grant",
+  "credentials/grants/import",
+  "credentials/grants/lease",
+  "credentials/grants/read",
+  "credentials/grants/list",
+  "credentials/grants/put",
+  "credentials/grants/revoke",
+  "credentials/clients/create",
+  "credentials/clients/read",
+  "credentials/clients/list",
+  "credentials/clients/delete",
+  "credentials/flows/start",
+  "credentials/flows/read",
+  "credentials/providers/create",
+  "credentials/providers/put",
+  "credentials/providers/read",
+  "credentials/providers/list",
+  "credentials/providers/delete",
+  "credentials/github/installations/list",
+  "credentials/github/installations/grant",
   "bots/create",
   "bots/put",
   "bots/read",
@@ -776,7 +776,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
     summary: "Create or replace an MCP server record",
-    description: "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
+    description: "Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
   },
   "mcp/servers/auth/discover": {
     scope: "universe",
@@ -818,7 +818,7 @@ export const METHOD_INFO = {
     summary: "Delete an MCP server record",
     description: "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.",
   },
-  "auth/grants/import": {
+  "credentials/grants/import": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -826,31 +826,31 @@ export const METHOD_INFO = {
     summary: "Import a token credential",
     description: "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
   },
-  "auth/grants/lease": {
+  "credentials/grants/lease": {
     scope: "service",
     streaming: false,
     notifications: [],
     access: {"kind":"service"},
-    summary: "Lease a retrievable authentication grant",
+    summary: "Lease a retrievable credential grant",
     description: "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
   },
-  "auth/grants/read": {
+  "credentials/grants/read": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
-    summary: "Read authentication grant metadata",
+    summary: "Read credential grant metadata",
     description: "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
   },
-  "auth/grants/list": {
+  "credentials/grants/list": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
-    summary: "List authentication grants",
+    summary: "List credential grants",
     description: "Lists non-secret grant metadata for the universe, optionally filtered by status.",
   },
-  "auth/grants/put": {
+  "credentials/grants/put": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -858,15 +858,15 @@ export const METHOD_INFO = {
     summary: "Declare a token credential",
     description: "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
   },
-  "auth/grants/revoke": {
+  "credentials/grants/revoke": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Revoke an authentication grant",
+    summary: "Revoke a credential grant",
     description: "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
   },
-  "auth/clients/create": {
+  "credentials/clients/create": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -874,7 +874,7 @@ export const METHOD_INFO = {
     summary: "Register an OAuth client",
     description: "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
   },
-  "auth/clients/read": {
+  "credentials/clients/read": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -882,7 +882,7 @@ export const METHOD_INFO = {
     summary: "Read OAuth client metadata",
     description: "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
   },
-  "auth/clients/list": {
+  "credentials/clients/list": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -890,7 +890,7 @@ export const METHOD_INFO = {
     summary: "List OAuth clients",
     description: "Lists non-secret OAuth client registrations in the universe.",
   },
-  "auth/clients/delete": {
+  "credentials/clients/delete": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -898,15 +898,15 @@ export const METHOD_INFO = {
     summary: "Delete an OAuth client",
     description: "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
   },
-  "auth/flows/start": {
+  "credentials/flows/start": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
     summary: "Start an OAuth authorization flow",
-    description: "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
+    description: "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.",
   },
-  "auth/flows/read": {
+  "credentials/flows/read": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -914,47 +914,47 @@ export const METHOD_INFO = {
     summary: "Read OAuth flow status",
     description: "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
   },
-  "auth/providers/create": {
+  "credentials/providers/create": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Register an authentication provider",
+    summary: "Register a credential provider",
     description: "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
   },
-  "auth/providers/put": {
+  "credentials/providers/put": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Declare an authentication provider",
+    summary: "Declare a credential provider",
     description: "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
   },
-  "auth/providers/read": {
+  "credentials/providers/read": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
-    summary: "Read authentication provider metadata",
+    summary: "Read credential provider metadata",
     description: "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
   },
-  "auth/providers/list": {
+  "credentials/providers/list": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
-    summary: "List authentication providers",
+    summary: "List credential providers",
     description: "Lists non-secret model/GitHub provider registrations for the universe.",
   },
-  "auth/providers/delete": {
+  "credentials/providers/delete": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
-    summary: "Delete an authentication provider",
+    summary: "Delete a credential provider",
     description: "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
   },
-  "auth/github/installations/list": {
+  "credentials/github/installations/list": {
     scope: "universe",
     streaming: false,
     notifications: [],
@@ -962,13 +962,13 @@ export const METHOD_INFO = {
     summary: "List GitHub App installations",
     description: "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
   },
-  "auth/github/installations/grant": {
+  "credentials/github/installations/grant": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"configureResource","kind":"universe"},
     summary: "Grant access to a GitHub App installation",
-    description: "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
+    description: "Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
   },
   "bots/create": {
     scope: "universe",
@@ -2041,7 +2041,7 @@ export interface MethodMap {
   /**
    * Create or replace an MCP server record
    *
-   * Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
+   * Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
    */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
@@ -2097,171 +2097,171 @@ export interface MethodMap {
    *
    * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
    */
-  "auth/grants/import": {
-    params: Api.AuthGrantImportParams;
-    result: Api.AgentApiOutcomeOfAuthGrantImportResponse;
+  "credentials/grants/import": {
+    params: Api.CredentialGrantImportParams;
+    result: Api.AgentApiOutcomeOfCredentialGrantImportResponse;
   };
   /**
-   * Lease a retrievable authentication grant
+   * Lease a retrievable credential grant
    *
    * Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
    */
-  "auth/grants/lease": {
-    params: Api.AuthGrantLeaseParams;
-    result: Api.AgentApiOutcomeOfAuthGrantLeaseResponse;
+  "credentials/grants/lease": {
+    params: Api.CredentialGrantLeaseParams;
+    result: Api.AgentApiOutcomeOfCredentialGrantLeaseResponse;
   };
   /**
-   * Read authentication grant metadata
+   * Read credential grant metadata
    *
    * Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
    */
-  "auth/grants/read": {
-    params: Api.AuthGrantReadParams;
-    result: Api.AgentApiOutcomeOfAuthGrantReadResponse;
+  "credentials/grants/read": {
+    params: Api.CredentialGrantReadParams;
+    result: Api.AgentApiOutcomeOfCredentialGrantReadResponse;
   };
   /**
-   * List authentication grants
+   * List credential grants
    *
    * Lists non-secret grant metadata for the universe, optionally filtered by status.
    */
-  "auth/grants/list": {
-    params: Api.AuthGrantListParams;
-    result: Api.AgentApiOutcomeOfAuthGrantListResponse;
+  "credentials/grants/list": {
+    params: Api.CredentialGrantListParams;
+    result: Api.AgentApiOutcomeOfCredentialGrantListResponse;
   };
   /**
    * Declare a token credential
    *
    * Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
    */
-  "auth/grants/put": {
-    params: Api.AuthGrantPutParams;
-    result: Api.AgentApiOutcomeOfAuthGrantPutResponse;
+  "credentials/grants/put": {
+    params: Api.CredentialGrantPutParams;
+    result: Api.AgentApiOutcomeOfCredentialGrantPutResponse;
   };
   /**
-   * Revoke an authentication grant
+   * Revoke a credential grant
    *
    * Marks the grant unusable by token consumers while retaining non-secret audit metadata.
    */
-  "auth/grants/revoke": {
-    params: Api.AuthGrantRevokeParams;
-    result: Api.AgentApiOutcomeOfAuthGrantRevokeResponse;
+  "credentials/grants/revoke": {
+    params: Api.CredentialGrantRevokeParams;
+    result: Api.AgentApiOutcomeOfCredentialGrantRevokeResponse;
   };
   /**
    * Register an OAuth client
    *
    * Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
    */
-  "auth/clients/create": {
-    params: Api.AuthClientCreateParams;
-    result: Api.AgentApiOutcomeOfAuthClientCreateResponse;
+  "credentials/clients/create": {
+    params: Api.CredentialClientCreateParams;
+    result: Api.AgentApiOutcomeOfCredentialClientCreateResponse;
   };
   /**
    * Read OAuth client metadata
    *
    * Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
    */
-  "auth/clients/read": {
-    params: Api.AuthClientReadParams;
-    result: Api.AgentApiOutcomeOfAuthClientReadResponse;
+  "credentials/clients/read": {
+    params: Api.CredentialClientReadParams;
+    result: Api.AgentApiOutcomeOfCredentialClientReadResponse;
   };
   /**
    * List OAuth clients
    *
    * Lists non-secret OAuth client registrations in the universe.
    */
-  "auth/clients/list": {
-    params: Api.AuthClientListParams;
-    result: Api.AgentApiOutcomeOfAuthClientListResponse;
+  "credentials/clients/list": {
+    params: Api.CredentialClientListParams;
+    result: Api.AgentApiOutcomeOfCredentialClientListResponse;
   };
   /**
    * Delete an OAuth client
    *
    * Deletes the client registration and its stored client secret; grants already created from it remain separate records.
    */
-  "auth/clients/delete": {
-    params: Api.AuthClientDeleteParams;
-    result: Api.AgentApiOutcomeOfAuthClientDeleteResponse;
+  "credentials/clients/delete": {
+    params: Api.CredentialClientDeleteParams;
+    result: Api.AgentApiOutcomeOfCredentialClientDeleteResponse;
   };
   /**
    * Start an OAuth authorization flow
    *
-   * Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
+   * Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.
    */
-  "auth/flows/start": {
-    params: Api.AuthFlowStartParams;
-    result: Api.AgentApiOutcomeOfAuthFlowStartResponse;
+  "credentials/flows/start": {
+    params: Api.CredentialFlowStartParams;
+    result: Api.AgentApiOutcomeOfCredentialFlowStartResponse;
   };
   /**
    * Read OAuth flow status
    *
    * Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
    */
-  "auth/flows/read": {
-    params: Api.AuthFlowStatusParams;
-    result: Api.AgentApiOutcomeOfAuthFlowStatusResponse;
+  "credentials/flows/read": {
+    params: Api.CredentialFlowStatusParams;
+    result: Api.AgentApiOutcomeOfCredentialFlowStatusResponse;
   };
   /**
-   * Register an authentication provider
+   * Register a credential provider
    *
    * Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
    */
-  "auth/providers/create": {
-    params: Api.AuthProviderCreateParams;
-    result: Api.AgentApiOutcomeOfAuthProviderCreateResponse;
+  "credentials/providers/create": {
+    params: Api.CredentialProviderCreateParams;
+    result: Api.AgentApiOutcomeOfCredentialProviderCreateResponse;
   };
   /**
-   * Declare an authentication provider
+   * Declare a credential provider
    *
    * Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
    */
-  "auth/providers/put": {
-    params: Api.AuthProviderPutParams;
-    result: Api.AgentApiOutcomeOfAuthProviderPutResponse;
+  "credentials/providers/put": {
+    params: Api.CredentialProviderPutParams;
+    result: Api.AgentApiOutcomeOfCredentialProviderPutResponse;
   };
   /**
-   * Read authentication provider metadata
+   * Read credential provider metadata
    *
    * Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
    */
-  "auth/providers/read": {
-    params: Api.AuthProviderReadParams;
-    result: Api.AgentApiOutcomeOfAuthProviderReadResponse;
+  "credentials/providers/read": {
+    params: Api.CredentialProviderReadParams;
+    result: Api.AgentApiOutcomeOfCredentialProviderReadResponse;
   };
   /**
-   * List authentication providers
+   * List credential providers
    *
    * Lists non-secret model/GitHub provider registrations for the universe.
    */
-  "auth/providers/list": {
-    params: Api.AuthProviderListParams;
-    result: Api.AgentApiOutcomeOfAuthProviderListResponse;
+  "credentials/providers/list": {
+    params: Api.CredentialProviderListParams;
+    result: Api.AgentApiOutcomeOfCredentialProviderListResponse;
   };
   /**
-   * Delete an authentication provider
+   * Delete a credential provider
    *
    * Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
    */
-  "auth/providers/delete": {
-    params: Api.AuthProviderDeleteParams;
-    result: Api.AgentApiOutcomeOfAuthProviderDeleteResponse;
+  "credentials/providers/delete": {
+    params: Api.CredentialProviderDeleteParams;
+    result: Api.AgentApiOutcomeOfCredentialProviderDeleteResponse;
   };
   /**
    * List GitHub App installations
    *
    * Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
    */
-  "auth/github/installations/list": {
-    params: Api.AuthGitHubInstallationListParams;
-    result: Api.AgentApiOutcomeOfAuthGitHubInstallationListResponse;
+  "credentials/github/installations/list": {
+    params: Api.CredentialGitHubInstallationListParams;
+    result: Api.AgentApiOutcomeOfCredentialGitHubInstallationListResponse;
   };
   /**
    * Grant access to a GitHub App installation
    *
-   * Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
+   * Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
    */
-  "auth/github/installations/grant": {
-    params: Api.AuthGitHubInstallationGrantParams;
-    result: Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse;
+  "credentials/github/installations/grant": {
+    params: Api.CredentialGitHubInstallationGrantParams;
+    result: Api.AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse;
   };
   /**
    * Create a bot

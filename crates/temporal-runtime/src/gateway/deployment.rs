@@ -19,7 +19,7 @@ use api::{
     DeploymentUniverseView,
 };
 use async_trait::async_trait;
-use auth::SecretValue;
+use credentials::SecretValue;
 use environment_protocol::routes::DataRouteBase;
 use environments::{
     EnvironmentEndpoint, EnvironmentProviderBindingStore, EnvironmentProviderId,

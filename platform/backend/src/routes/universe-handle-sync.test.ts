@@ -29,7 +29,7 @@ function fixture(platformAdmin = true) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("session", { user: { id: "user", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
   app.route("/", universeRoutes({ db: { ...db, transaction: async (work: (tx: typeof db) => unknown) => work(db) },
-    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsk_fixture" },
+    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_fixture" },
   } as unknown as AppContext));
   const row = () => ({ universe, handle, role: "admin" });
   const request = (path: string, method = "GET", body?: object) => app.request(path, { method,

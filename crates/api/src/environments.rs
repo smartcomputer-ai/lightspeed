@@ -815,11 +815,13 @@ pub enum EnvironmentCredentialSourceView {
     /// A credential grant. It must be retrievable: a bound value is handed
     /// to the commands of the machine in plain form, which is exactly what
     /// a brokered grant promises never to do.
-    AuthGrant { grant_id: String },
+    #[serde(rename = "authGrant")]
+    CredentialGrant { grant_id: String },
     /// The stored API key of a model API key provider. No other provider
     /// kind can be bound; this is the one source whose plain value reaches
     /// a machine without a retrievable grant.
-    AuthProviderCredential { provider_id: String },
+    #[serde(rename = "authProviderCredential")]
+    CredentialProviderCredential { provider_id: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

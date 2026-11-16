@@ -17,10 +17,10 @@ use serde_json::Value;
 use thiserror::Error;
 
 mod access;
-mod auth;
 mod bots;
 mod channels;
 mod constants;
+mod credentials;
 mod deployment;
 mod environments;
 mod handshake;
@@ -45,10 +45,10 @@ mod views;
 mod watch;
 
 pub use access::*;
-pub use auth::*;
 pub use bots::*;
 pub use channels::*;
 pub use constants::*;
+pub use credentials::*;
 pub use deployment::*;
 pub use environments::*;
 pub use handshake::*;

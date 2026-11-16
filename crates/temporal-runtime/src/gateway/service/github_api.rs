@@ -1,47 +1,50 @@
 //! GitHub App provider and installation API helpers.
 //!
-//! The private key in `auth/providers/create` params is the third deliberate
+//! The private key in `credentials/providers/create` params is the third deliberate
 //! inbound-plaintext path: it is validated (must parse as an RSA PEM) and
 //! drafted into an encrypted secret record here, and never appears in views
 //! or logs.
 
 use super::*;
 
-pub(super) fn parse_auth_provider_id(
+pub(super) fn parse_credential_provider_id(
     provider_id: String,
-) -> Result<auth::AuthProviderId, AgentApiError> {
-    auth::AuthProviderId::try_new(provider_id).map_err(|error| {
-        AgentApiError::invalid_request(format!("invalid auth provider id: {error}"))
+) -> Result<credentials::CredentialProviderId, AgentApiError> {
+    credentials::CredentialProviderId::try_new(provider_id).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid credential provider id: {error}"))
     })
 }
 
-pub(super) struct AuthProviderCreateDraft {
-    pub(super) secret: Option<auth::PutSecretRecord>,
-    pub(super) provider: auth::CreateAuthProviderRecord,
+pub(super) struct CredentialProviderCreateDraft {
+    pub(super) secret: Option<credentials::PutSecretRecord>,
+    pub(super) provider: credentials::CreateCredentialProviderRecord,
 }
 
-impl std::fmt::Debug for AuthProviderCreateDraft {
+impl std::fmt::Debug for CredentialProviderCreateDraft {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthProviderCreateDraft")
+        f.debug_struct("CredentialProviderCreateDraft")
             .field("secret", &self.secret)
             .field("provider", &self.provider.provider_id)
             .finish()
     }
 }
 
-pub(super) fn auth_provider_create_draft(
-    params: AuthProviderCreateParams,
+pub(super) fn credential_provider_create_draft(
+    params: CredentialProviderCreateParams,
     now_ms: i64,
-) -> Result<AuthProviderCreateDraft, AgentApiError> {
+) -> Result<CredentialProviderCreateDraft, AgentApiError> {
     let provider_id = match params.provider_id {
-        Some(provider_id) => parse_auth_provider_id(provider_id)?,
-        None => auth::AuthProviderId::try_new(auth::random_auth_id("authprovider_")).map_err(
-            |error| AgentApiError::internal(format!("generate auth provider id: {error}")),
-        )?,
+        Some(provider_id) => parse_credential_provider_id(provider_id)?,
+        None => credentials::CredentialProviderId::try_new(credentials::random_credential_id(
+            "authprovider_",
+        ))
+        .map_err(|error| {
+            AgentApiError::internal(format!("generate credential provider id: {error}"))
+        })?,
     };
 
     let (config, secret) = match params.config {
-        api::AuthProviderConfigInput::GitHubApp {
+        api::CredentialProviderConfigInput::GitHubApp {
             app_id,
             api_base_url,
         } => {
@@ -50,139 +53,157 @@ pub(super) fn auth_provider_create_draft(
                     "github_app providers require the private key PEM as credential",
                 ));
             };
-            let private_key = auth::SecretValue::new(credential);
+            let private_key = credentials::SecretValue::new(credential);
             // Fail at registration, not at mint time.
-            auth::validate_github_app_private_key(&private_key)
+            credentials::validate_github_app_private_key(&private_key)
                 .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-            let secret_id = auth::SecretId::try_new(auth::random_auth_id("authsec_"))
-                .map_err(|error| AgentApiError::internal(format!("generate secret id: {error}")))?;
-            let secret = auth::PutSecretRecord {
+            let secret_id =
+                credentials::SecretId::try_new(credentials::random_credential_id("authsec_"))
+                    .map_err(|error| {
+                        AgentApiError::internal(format!("generate secret id: {error}"))
+                    })?;
+            let secret = credentials::PutSecretRecord {
                 secret_id: secret_id.clone(),
-                secret_kind: auth::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
+                secret_kind: credentials::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
                 value: private_key,
                 created_at_ms: now_ms,
             };
-            let config = auth::AuthProviderConfig::GitHubApp(auth::GitHubAppConfig {
-                app_id,
-                api_base_url: api_base_url
-                    .unwrap_or_else(|| auth::DEFAULT_GITHUB_API_BASE_URL.to_owned()),
-            });
+            let config =
+                credentials::CredentialProviderConfig::GitHubApp(credentials::GitHubAppConfig {
+                    app_id,
+                    api_base_url: api_base_url
+                        .unwrap_or_else(|| credentials::DEFAULT_GITHUB_API_BASE_URL.to_owned()),
+                });
             (config, Some((secret_id, secret)))
         }
-        api::AuthProviderConfigInput::ModelApiKey { endpoint } => {
+        api::CredentialProviderConfigInput::ModelApiKey { endpoint } => {
             let Some(credential) = params.credential else {
                 return Err(AgentApiError::invalid_request(
                     "model_api_key providers require the API key as credential",
                 ));
             };
-            let api_key = auth::SecretValue::new(credential);
+            let api_key = credentials::SecretValue::new(credential);
             if api_key.expose().trim().is_empty() {
                 return Err(AgentApiError::invalid_request(
                     "model_api_key credential must not be empty",
                 ));
             }
-            let secret_id = auth::SecretId::try_new(auth::random_auth_id("authsec_"))
-                .map_err(|error| AgentApiError::internal(format!("generate secret id: {error}")))?;
-            let secret = auth::PutSecretRecord {
+            let secret_id =
+                credentials::SecretId::try_new(credentials::random_credential_id("authsec_"))
+                    .map_err(|error| {
+                        AgentApiError::internal(format!("generate secret id: {error}"))
+                    })?;
+            let secret = credentials::PutSecretRecord {
                 secret_id: secret_id.clone(),
-                secret_kind: auth::SECRET_KIND_MODEL_API_KEY.to_owned(),
+                secret_kind: credentials::SECRET_KIND_MODEL_API_KEY.to_owned(),
                 value: api_key,
                 created_at_ms: now_ms,
             };
-            let config = auth::AuthProviderConfig::ModelApiKey(auth::ModelApiKeyConfig {
-                endpoint: endpoint.map(model_endpoint_config).transpose()?,
-            });
+            let config = credentials::CredentialProviderConfig::ModelApiKey(
+                credentials::ModelApiKeyConfig {
+                    endpoint: endpoint.map(model_endpoint_config).transpose()?,
+                },
+            );
             (config, Some((secret_id, secret)))
         }
-        api::AuthProviderConfigInput::ModelOAuth {
+        api::CredentialProviderConfigInput::ModelOAuth {
             grant_id,
             audience,
             endpoint,
         } => {
             if params.credential.is_some() {
                 return Err(AgentApiError::invalid_request(
-                    "model_oauth providers bind a grant and accept no credential",
+                    "model_ocredential providers bind a grant and accept no credential",
                 ));
             }
-            let grant_id = auth::AuthGrantId::try_new(grant_id).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid auth grant id: {error}"))
+            let grant_id = credentials::CredentialGrantId::try_new(grant_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid credential grant id: {error}"))
             })?;
-            let config = auth::AuthProviderConfig::ModelOAuth(auth::ModelOAuthConfig {
-                grant_id,
-                audience,
-                endpoint: endpoint.map(model_endpoint_config).transpose()?,
-            });
+            let config =
+                credentials::CredentialProviderConfig::ModelOAuth(credentials::ModelOAuthConfig {
+                    grant_id,
+                    audience,
+                    endpoint: endpoint.map(model_endpoint_config).transpose()?,
+                });
             (config, None)
         }
-        api::AuthProviderConfigInput::ModelEndpoint { endpoint } => {
+        api::CredentialProviderConfigInput::ModelEndpoint { endpoint } => {
             if params.credential.is_some() {
                 return Err(AgentApiError::invalid_request(
                     "model_endpoint providers accept no credential",
                 ));
             }
             (
-                auth::AuthProviderConfig::ModelEndpoint(auth::ModelEndpointOnlyConfig {
-                    endpoint: model_endpoint_config(endpoint)?,
-                }),
+                credentials::CredentialProviderConfig::ModelEndpoint(
+                    credentials::ModelEndpointOnlyConfig {
+                        endpoint: model_endpoint_config(endpoint)?,
+                    },
+                ),
                 None,
             )
         }
     };
 
-    let provider = auth::CreateAuthProviderRecord {
+    let provider = credentials::CreateCredentialProviderRecord {
         provider_id,
         display_name: params.display_name,
         config,
         credential_secret: secret.as_ref().map(|(secret_id, _)| secret_id.clone()),
-        status: auth::AuthProviderStatus::Active,
+        status: credentials::CredentialProviderStatus::Active,
         created_at_ms: now_ms,
     };
     provider
         .clone()
         .into_record()
         .validate()
-        .map_err(map_auth_error)?;
-    Ok(AuthProviderCreateDraft {
+        .map_err(map_credential_error)?;
+    Ok(CredentialProviderCreateDraft {
         secret: secret.map(|(_, secret)| secret),
         provider,
     })
 }
 
-pub(super) fn auth_provider_view(record: auth::AuthProviderRecord) -> api::AuthProviderView {
-    api::AuthProviderView {
+pub(super) fn credential_provider_view(
+    record: credentials::CredentialProviderRecord,
+) -> api::CredentialProviderView {
+    api::CredentialProviderView {
         provider_id: record.provider_id.as_str().to_owned(),
-        provider_kind: api_auth_provider_kind(record.provider_kind),
+        provider_kind: api_credential_provider_kind(record.provider_kind),
         display_name: record.display_name,
         config: match record.config {
-            auth::AuthProviderConfig::GitHubApp(config) => api::AuthProviderConfigView::GitHubApp {
-                app_id: config.app_id,
-                api_base_url: config.api_base_url,
-            },
-            auth::AuthProviderConfig::ModelApiKey(config) => {
-                api::AuthProviderConfigView::ModelApiKey {
+            credentials::CredentialProviderConfig::GitHubApp(config) => {
+                api::CredentialProviderConfigView::GitHubApp {
+                    app_id: config.app_id,
+                    api_base_url: config.api_base_url,
+                }
+            }
+            credentials::CredentialProviderConfig::ModelApiKey(config) => {
+                api::CredentialProviderConfigView::ModelApiKey {
                     endpoint: config.endpoint.map(model_endpoint_view),
                 }
             }
-            auth::AuthProviderConfig::ModelOAuth(config) => {
-                api::AuthProviderConfigView::ModelOAuth {
+            credentials::CredentialProviderConfig::ModelOAuth(config) => {
+                api::CredentialProviderConfigView::ModelOAuth {
                     grant_id: config.grant_id.as_str().to_owned(),
                     audience: config.audience,
                     endpoint: config.endpoint.map(model_endpoint_view),
                 }
             }
-            auth::AuthProviderConfig::ModelEndpoint(config) => {
-                api::AuthProviderConfigView::ModelEndpoint {
+            credentials::CredentialProviderConfig::ModelEndpoint(config) => {
+                api::CredentialProviderConfigView::ModelEndpoint {
                     endpoint: model_endpoint_view(config.endpoint),
                 }
             }
         },
         has_credential: record.credential_secret.is_some(),
         status: match record.status {
-            auth::AuthProviderStatus::Active => api::AuthProviderStatus::Active,
-            auth::AuthProviderStatus::NeedsConfiguration => {
-                api::AuthProviderStatus::NeedsConfiguration
+            credentials::CredentialProviderStatus::Active => api::CredentialProviderStatus::Active,
+            credentials::CredentialProviderStatus::NeedsConfiguration => {
+                api::CredentialProviderStatus::NeedsConfiguration
             }
-            auth::AuthProviderStatus::Disabled => api::AuthProviderStatus::Disabled,
+            credentials::CredentialProviderStatus::Disabled => {
+                api::CredentialProviderStatus::Disabled
+            }
         },
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
@@ -191,15 +212,18 @@ pub(super) fn auth_provider_view(record: auth::AuthProviderRecord) -> api::AuthP
 
 fn model_endpoint_config(
     endpoint: api::ModelEndpointConfig,
-) -> Result<auth::ModelEndpointConfig, AgentApiError> {
-    Ok(auth::ModelEndpointConfig {
+) -> Result<credentials::ModelEndpointConfig, AgentApiError> {
+    Ok(credentials::ModelEndpointConfig {
         base_url: endpoint.base_url,
-        headers: request_headers_from_api(&auth::MODEL_ENDPOINT_HEADER_POLICY, endpoint.headers)?,
+        headers: request_headers_from_api(
+            &credentials::MODEL_ENDPOINT_HEADER_POLICY,
+            endpoint.headers,
+        )?,
         api_kinds: endpoint.api_kinds,
     })
 }
 
-fn model_endpoint_view(endpoint: auth::ModelEndpointConfig) -> api::ModelEndpointConfig {
+fn model_endpoint_view(endpoint: credentials::ModelEndpointConfig) -> api::ModelEndpointConfig {
     api::ModelEndpointConfig {
         base_url: endpoint.base_url,
         headers: request_headers_view(endpoint.headers),
@@ -208,7 +232,7 @@ fn model_endpoint_view(endpoint: auth::ModelEndpointConfig) -> api::ModelEndpoin
 }
 
 pub(super) fn github_installation_view(
-    installation: &auth::GitHubInstallation,
+    installation: &credentials::GitHubInstallation,
 ) -> api::GitHubInstallationView {
     api::GitHubInstallationView {
         installation_id: installation.installation_id,
@@ -222,31 +246,35 @@ pub(super) fn github_installation_view(
 /// represents the installation: no stored tokens, audience bound to the
 /// API base URL, metadata carrying the installation facts.
 pub(super) fn github_installation_grant_draft(
-    provider: &auth::AuthProviderRecord,
-    installation: &auth::GitHubInstallation,
+    provider: &credentials::CredentialProviderRecord,
+    installation: &credentials::GitHubInstallation,
     grant_id: Option<String>,
     display_name: Option<String>,
-    exposure: auth::AuthGrantExposure,
+    exposure: credentials::CredentialGrantExposure,
     now_ms: i64,
-) -> Result<auth::CreateAuthGrantRecord, AgentApiError> {
+) -> Result<credentials::CreateCredentialGrantRecord, AgentApiError> {
     let grant_id = match grant_id {
-        Some(grant_id) => parse_auth_grant_id(grant_id)?,
-        None => auth::AuthGrantId::try_new(auth::random_auth_id("authgrant_"))
-            .map_err(|error| AgentApiError::internal(format!("generate auth grant id: {error}")))?,
+        Some(grant_id) => parse_credential_grant_id(grant_id)?,
+        None => {
+            credentials::CredentialGrantId::try_new(credentials::random_credential_id("authgrant_"))
+                .map_err(|error| {
+                    AgentApiError::internal(format!("generate credential grant id: {error}"))
+                })?
+        }
     };
-    let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+    let credentials::CredentialProviderConfig::GitHubApp(config) = &provider.config else {
         return Err(AgentApiError::rejected(format!(
-            "auth provider {} is not a github_app provider",
+            "credential provider {} is not a github_app provider",
             provider.provider_id
         )));
     };
-    let metadata = auth::GitHubInstallationGrantMetadata::from_installation(installation)
+    let metadata = credentials::GitHubInstallationGrantMetadata::from_installation(installation)
         .to_json()
-        .map_err(map_auth_error)?;
-    let create = auth::CreateAuthGrantRecord {
+        .map_err(map_credential_error)?;
+    let create = credentials::CreateCredentialGrantRecord {
         grant_id,
         provider_id: provider.provider_id.as_str().to_owned(),
-        provider_kind: auth::AuthProviderKind::GitHubApp,
+        provider_kind: credentials::CredentialProviderKind::GitHubApp,
         exposure,
         created_by: crate::gateway::request_context::request_attribution()?,
         display_name,
@@ -257,7 +285,7 @@ pub(super) fn github_installation_grant_draft(
         refresh_token_secret: None,
         oauth_client: None,
         expires_at_ms: None,
-        status: auth::AuthGrantStatus::Active,
+        status: credentials::CredentialGrantStatus::Active,
         metadata,
         created_at_ms: now_ms,
     };
@@ -265,14 +293,14 @@ pub(super) fn github_installation_grant_draft(
         .clone()
         .into_record()
         .validate()
-        .map_err(map_auth_error)?;
+        .map_err(map_credential_error)?;
     Ok(create)
 }
 
-pub(super) fn map_github_app_error(error: auth::GitHubAppError) -> AgentApiError {
+pub(super) fn map_github_app_error(error: credentials::GitHubAppError) -> AgentApiError {
     match error {
-        auth::GitHubAppError::Registry(error) => map_auth_error(error),
-        auth::GitHubAppError::InvalidPrivateKey { .. } => {
+        credentials::GitHubAppError::Registry(error) => map_credential_error(error),
+        credentials::GitHubAppError::InvalidPrivateKey { .. } => {
             AgentApiError::invalid_request(error.to_string())
         }
         other => AgentApiError::rejected(other.to_string()),

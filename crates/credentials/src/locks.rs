@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::{AuthGrantId, AuthRegistryError};
+use crate::{CredentialGrantId, CredentialRegistryError};
 
 /// Held for the duration of a refresh; dropping it releases the lock.
 pub struct GrantLockGuard {
@@ -31,15 +31,17 @@ impl GrantLockGuard {
 pub trait GrantRefreshLock: Send + Sync {
     /// Acquire the exclusive refresh lock for `grant_id`, waiting until any
     /// concurrent holder releases it.
-    async fn lock_grant(&self, grant_id: &AuthGrantId)
-    -> Result<GrantLockGuard, AuthRegistryError>;
+    async fn lock_grant(
+        &self,
+        grant_id: &CredentialGrantId,
+    ) -> Result<GrantLockGuard, CredentialRegistryError>;
 }
 
 /// Process-local lock manager for tests and the in-memory stores. Production
 /// deployments with multiple workers need a store-backed lock instead.
 #[derive(Default)]
 pub struct InMemoryGrantLocks {
-    locks: Mutex<BTreeMap<AuthGrantId, Arc<tokio::sync::Mutex<()>>>>,
+    locks: Mutex<BTreeMap<CredentialGrantId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl InMemoryGrantLocks {
@@ -52,12 +54,15 @@ impl InMemoryGrantLocks {
 impl GrantRefreshLock for InMemoryGrantLocks {
     async fn lock_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<GrantLockGuard, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+    ) -> Result<GrantLockGuard, CredentialRegistryError> {
         let lock = {
-            let mut locks = self.locks.lock().map_err(|_| AuthRegistryError::Store {
-                message: "grant lock table poisoned".to_owned(),
-            })?;
+            let mut locks = self
+                .locks
+                .lock()
+                .map_err(|_| CredentialRegistryError::Store {
+                    message: "grant lock table poisoned".to_owned(),
+                })?;
             locks.entry(grant_id.clone()).or_default().clone()
         };
         let guard = lock.lock_owned().await;
@@ -72,7 +77,7 @@ mod tests {
     #[tokio::test]
     async fn in_memory_locks_serialize_same_grant() {
         let locks = Arc::new(InMemoryGrantLocks::new());
-        let grant_id = AuthGrantId::new("authgrant_1");
+        let grant_id = CredentialGrantId::new("authgrant_1");
 
         let guard = locks.lock_grant(&grant_id).await.expect("first lock");
 
@@ -96,11 +101,11 @@ mod tests {
         let locks = InMemoryGrantLocks::new();
 
         let _first = locks
-            .lock_grant(&AuthGrantId::new("authgrant_1"))
+            .lock_grant(&CredentialGrantId::new("authgrant_1"))
             .await
             .expect("first grant lock");
         let _second = locks
-            .lock_grant(&AuthGrantId::new("authgrant_2"))
+            .lock_grant(&CredentialGrantId::new("authgrant_2"))
             .await
             .expect("second grant lock");
     }

@@ -2,7 +2,7 @@
 //! refresh lock.
 //!
 //! Tables never hold secret values: client secrets and PKCE verifiers live in
-//! `auth_secrets`, flows store only the SHA-256 hash of the `state`
+//! `credentials_secrets`, flows store only the SHA-256 hash of the `state`
 //! parameter. The refresh lock is a Postgres transaction-scoped advisory
 //! lock keyed by universe and grant, so refresh single-flight holds across
 //! worker processes.
@@ -10,17 +10,17 @@
 // Formatted SQL uses internal schema fragments; request values use bind parameters.
 use api::Attribution;
 use async_trait::async_trait;
-use auth::{
-    AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthRegistryError,
-    CreateAuthFlowRecord, CreateOAuthClientRecord, FinishAuthFlow, GrantLockGuard,
-    GrantRefreshLock, OAuthClientId, OAuthClientRecord, OAuthClientStore, SecretId,
+use credentials::{
+    CreateCredentialFlowRecord, CreateOAuthClientRecord, CredentialFlowId, CredentialFlowRecord,
+    CredentialFlowStore, CredentialGrantId, CredentialRegistryError, FinishCredentialFlow,
+    GrantLockGuard, GrantRefreshLock, OAuthClientId, OAuthClientRecord, OAuthClientStore, SecretId,
     TokenEndpointAuthMethod,
 };
 use sqlx::Row;
 
 use crate::PgStore;
-use crate::auth::{
-    auth_sql_error, auth_store_error, grant_exposure_from_str, grant_exposure_to_str,
+use crate::credentials::{
+    credential_sql_error, credential_store_error, grant_exposure_from_str, grant_exposure_to_str,
     provider_kind_from_str, provider_kind_to_str,
 };
 
@@ -43,7 +43,7 @@ const OAUTH_CLIENT_COLUMNS: &str = r#"
     updated_at_ms
 "#;
 
-const AUTH_FLOW_COLUMNS: &str = r#"
+const CREDENTIAL_FLOW_COLUMNS: &str = r#"
     flow_id,
     client_id,
     provider_id,
@@ -71,15 +71,15 @@ impl OAuthClientStore for PgStore {
     async fn create_oauth_client(
         &self,
         record: CreateOAuthClientRecord,
-    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+    ) -> Result<OAuthClientRecord, CredentialRegistryError> {
         self.require_active_universe()
             .await
-            .map_err(|error| auth_store_error("ensure universe", error))?;
+            .map_err(|error| credential_store_error("ensure universe", error))?;
         let record = record.into_record();
         record.validate()?;
         let query = format!(
             r#"
-            INSERT INTO auth_clients (
+            INSERT INTO credentials_clients (
                 universe_id,
                 client_id,
                 provider_id,
@@ -124,10 +124,10 @@ impl OAuthClientStore for PgStore {
             .bind(record.created_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("create oauth client", error))?;
+            .map_err(|error| credential_sql_error("create oauth client", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::ClientAlreadyExists {
+            return Err(CredentialRegistryError::ClientAlreadyExists {
                 client_id: record.client_id,
             });
         };
@@ -137,11 +137,11 @@ impl OAuthClientStore for PgStore {
     async fn read_oauth_client(
         &self,
         client_id: &OAuthClientId,
-    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+    ) -> Result<OAuthClientRecord, CredentialRegistryError> {
         let query = format!(
             r#"
             SELECT {OAUTH_CLIENT_COLUMNS}
-            FROM auth_clients
+            FROM credentials_clients
             WHERE universe_id = $1 AND client_id = $2
             "#
         );
@@ -150,21 +150,21 @@ impl OAuthClientStore for PgStore {
             .bind(client_id.as_str())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("read oauth client", error))?;
+            .map_err(|error| credential_sql_error("read oauth client", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::ClientNotFound {
+            return Err(CredentialRegistryError::ClientNotFound {
                 client_id: client_id.clone(),
             });
         };
         oauth_client_from_row(&row)
     }
 
-    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, AuthRegistryError> {
+    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, CredentialRegistryError> {
         let query = format!(
             r#"
             SELECT {OAUTH_CLIENT_COLUMNS}
-            FROM auth_clients
+            FROM credentials_clients
             WHERE universe_id = $1
             ORDER BY client_id
             "#
@@ -173,17 +173,17 @@ impl OAuthClientStore for PgStore {
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("list oauth clients", error))?;
+            .map_err(|error| credential_sql_error("list oauth clients", error))?;
         rows.iter().map(oauth_client_from_row).collect()
     }
 
     async fn delete_oauth_client(
         &self,
         client_id: &OAuthClientId,
-    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+    ) -> Result<OAuthClientRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            DELETE FROM auth_clients
+            DELETE FROM credentials_clients
             WHERE universe_id = $1 AND client_id = $2
             RETURNING {OAUTH_CLIENT_COLUMNS}
             "#
@@ -193,10 +193,10 @@ impl OAuthClientStore for PgStore {
             .bind(client_id.as_str())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("delete oauth client", error))?;
+            .map_err(|error| credential_sql_error("delete oauth client", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::ClientNotFound {
+            return Err(CredentialRegistryError::ClientNotFound {
                 client_id: client_id.clone(),
             });
         };
@@ -205,19 +205,19 @@ impl OAuthClientStore for PgStore {
 }
 
 #[async_trait]
-impl AuthFlowStore for PgStore {
+impl CredentialFlowStore for PgStore {
     async fn create_flow(
         &self,
-        record: CreateAuthFlowRecord,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        record: CreateCredentialFlowRecord,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         self.require_active_universe()
             .await
-            .map_err(|error| auth_store_error("ensure universe", error))?;
+            .map_err(|error| credential_store_error("ensure universe", error))?;
         let record = record.into_record();
         record.validate()?;
         let query = format!(
             r#"
-            INSERT INTO auth_flows (
+            INSERT INTO credentials_flows (
                 universe_id,
                 flow_id,
                 client_id,
@@ -238,7 +238,7 @@ impl AuthFlowStore for PgStore {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
             ON CONFLICT (universe_id, flow_id) DO NOTHING
-            RETURNING {AUTH_FLOW_COLUMNS}
+            RETURNING {CREDENTIAL_FLOW_COLUMNS}
             "#
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -260,21 +260,24 @@ impl AuthFlowStore for PgStore {
             .bind(record.created_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("create auth flow", error))?;
+            .map_err(|error| credential_sql_error("create credential flow", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::FlowAlreadyExists {
+            return Err(CredentialRegistryError::FlowAlreadyExists {
                 flow_id: record.flow_id,
             });
         };
-        auth_flow_from_row(&row)
+        credential_flow_from_row(&row)
     }
 
-    async fn read_flow(&self, flow_id: &AuthFlowId) -> Result<AuthFlowRecord, AuthRegistryError> {
+    async fn read_flow(
+        &self,
+        flow_id: &CredentialFlowId,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            SELECT {AUTH_FLOW_COLUMNS}
-            FROM auth_flows
+            SELECT {CREDENTIAL_FLOW_COLUMNS}
+            FROM credentials_flows
             WHERE universe_id = $1 AND flow_id = $2
             "#
         );
@@ -283,24 +286,24 @@ impl AuthFlowStore for PgStore {
             .bind(flow_id.as_str())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("read auth flow", error))?;
+            .map_err(|error| credential_sql_error("read credential flow", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::FlowNotFound {
+            return Err(CredentialRegistryError::FlowNotFound {
                 flow_id: flow_id.clone(),
             });
         };
-        auth_flow_from_row(&row)
+        credential_flow_from_row(&row)
     }
 
     async fn read_flow_by_state_hash(
         &self,
         state_hash: &str,
-    ) -> Result<Option<AuthFlowRecord>, AuthRegistryError> {
+    ) -> Result<Option<CredentialFlowRecord>, CredentialRegistryError> {
         let query = format!(
             r#"
-            SELECT {AUTH_FLOW_COLUMNS}
-            FROM auth_flows
+            SELECT {CREDENTIAL_FLOW_COLUMNS}
+            FROM credentials_flows
             WHERE universe_id = $1 AND state_hash = $2
             "#
         );
@@ -309,24 +312,24 @@ impl AuthFlowStore for PgStore {
             .bind(state_hash)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("read auth flow by state", error))?;
-        row.as_ref().map(auth_flow_from_row).transpose()
+            .map_err(|error| credential_sql_error("read credential flow by state", error))?;
+        row.as_ref().map(credential_flow_from_row).transpose()
     }
 
     async fn consume_flow(
         &self,
-        flow_id: &AuthFlowId,
+        flow_id: &CredentialFlowId,
         now_ms: i64,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            UPDATE auth_flows
+            UPDATE credentials_flows
             SET consumed_at_ms = $3, updated_at_ms = $3
             WHERE universe_id = $1
               AND flow_id = $2
               AND consumed_at_ms IS NULL
               AND expires_at_ms > $3
-            RETURNING {AUTH_FLOW_COLUMNS}
+            RETURNING {CREDENTIAL_FLOW_COLUMNS}
             "#
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -335,32 +338,32 @@ impl AuthFlowStore for PgStore {
             .bind(now_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("consume auth flow", error))?;
+            .map_err(|error| credential_sql_error("consume credential flow", error))?;
         if let Some(row) = row {
-            return auth_flow_from_row(&row);
+            return credential_flow_from_row(&row);
         }
 
         // The conditional update missed; classify why.
         let current = self.read_flow(flow_id).await?;
         if current.consumed_at_ms.is_some() {
-            return Err(AuthRegistryError::FlowAlreadyConsumed {
+            return Err(CredentialRegistryError::FlowAlreadyConsumed {
                 flow_id: flow_id.clone(),
             });
         }
-        Err(AuthRegistryError::FlowExpired {
+        Err(CredentialRegistryError::FlowExpired {
             flow_id: flow_id.clone(),
         })
     }
 
     async fn finish_flow(
         &self,
-        flow_id: &AuthFlowId,
-        outcome: FinishAuthFlow,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        flow_id: &CredentialFlowId,
+        outcome: FinishCredentialFlow,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         outcome.validate()?;
         let query = format!(
             r#"
-            UPDATE auth_flows
+            UPDATE credentials_flows
             SET grant_id = $3,
                 error = $4,
                 completed_at_ms = $5,
@@ -368,25 +371,25 @@ impl AuthFlowStore for PgStore {
             WHERE universe_id = $1
               AND flow_id = $2
               AND completed_at_ms IS NULL
-            RETURNING {AUTH_FLOW_COLUMNS}
+            RETURNING {CREDENTIAL_FLOW_COLUMNS}
             "#
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(flow_id.as_str())
-            .bind(outcome.grant_id.as_ref().map(AuthGrantId::as_str))
+            .bind(outcome.grant_id.as_ref().map(CredentialGrantId::as_str))
             .bind(outcome.error.as_deref())
             .bind(outcome.completed_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("finish auth flow", error))?;
+            .map_err(|error| credential_sql_error("finish credential flow", error))?;
         if let Some(row) = row {
-            return auth_flow_from_row(&row);
+            return credential_flow_from_row(&row);
         }
 
         // Missing row vs already-completed row.
         self.read_flow(flow_id).await?;
-        Err(AuthRegistryError::FlowAlreadyCompleted {
+        Err(CredentialRegistryError::FlowAlreadyCompleted {
             flow_id: flow_id.clone(),
         })
     }
@@ -396,13 +399,13 @@ impl AuthFlowStore for PgStore {
 impl GrantRefreshLock for PgStore {
     async fn lock_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<GrantLockGuard, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+    ) -> Result<GrantLockGuard, CredentialRegistryError> {
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(|error| auth_sql_error("begin grant lock transaction", error))?;
+            .map_err(|error| credential_sql_error("begin grant lock transaction", error))?;
         // Transaction-scoped advisory lock: released when the guarded
         // transaction ends (rollback on guard drop).
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))")
@@ -410,7 +413,7 @@ impl GrantRefreshLock for PgStore {
             .bind(grant_id.as_str())
             .execute(&mut *tx)
             .await
-            .map_err(|error| auth_sql_error("acquire grant advisory lock", error))?;
+            .map_err(|error| credential_sql_error("acquire grant advisory lock", error))?;
         Ok(GrantLockGuard::new(tx))
     }
 }
@@ -425,12 +428,12 @@ fn token_endpoint_auth_method_to_str(value: TokenEndpointAuthMethod) -> &'static
 
 fn token_endpoint_auth_method_from_str(
     value: &str,
-) -> Result<TokenEndpointAuthMethod, AuthRegistryError> {
+) -> Result<TokenEndpointAuthMethod, CredentialRegistryError> {
     match value {
         "client_secret_basic" => Ok(TokenEndpointAuthMethod::ClientSecretBasic),
         "client_secret_post" => Ok(TokenEndpointAuthMethod::ClientSecretPost),
         "none" => Ok(TokenEndpointAuthMethod::None),
-        other => Err(AuthRegistryError::Store {
+        other => Err(CredentialRegistryError::Store {
             message: format!("unsupported token endpoint auth method '{other}'"),
         }),
     }
@@ -438,44 +441,46 @@ fn token_endpoint_auth_method_from_str(
 
 fn oauth_client_from_row(
     row: &sqlx::postgres::PgRow,
-) -> Result<OAuthClientRecord, AuthRegistryError> {
+) -> Result<OAuthClientRecord, CredentialRegistryError> {
     let client_id: String = row
         .try_get("client_id")
-        .map_err(|error| auth_sql_error("decode oauth client id", error))?;
+        .map_err(|error| credential_sql_error("decode oauth client id", error))?;
     let provider_kind: String = row
         .try_get("provider_kind")
-        .map_err(|error| auth_sql_error("decode oauth client provider kind", error))?;
+        .map_err(|error| credential_sql_error("decode oauth client provider kind", error))?;
     let client_secret_secret_id: Option<String> = row
         .try_get("client_secret_secret_id")
-        .map_err(|error| auth_sql_error("decode oauth client secret id", error))?;
+        .map_err(|error| credential_sql_error("decode oauth client secret id", error))?;
     let token_endpoint_auth_method: String = row
         .try_get("token_endpoint_auth_method")
-        .map_err(|error| auth_sql_error("decode oauth client auth method", error))?;
+        .map_err(|error| credential_sql_error("decode oauth client auth method", error))?;
 
     let record = OAuthClientRecord {
-        client_id: OAuthClientId::try_new(client_id).map_err(|error| AuthRegistryError::Store {
-            message: format!("decode oauth client id: {error}"),
+        client_id: OAuthClientId::try_new(client_id).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("decode oauth client id: {error}"),
+            }
         })?,
         provider_id: row
             .try_get("provider_id")
-            .map_err(|error| auth_sql_error("decode oauth client provider id", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client provider id", error))?,
         provider_kind: provider_kind_from_str(&provider_kind)?,
         display_name: row
             .try_get("display_name")
-            .map_err(|error| auth_sql_error("decode oauth client display name", error))?,
-        authorization_endpoint: row
-            .try_get("authorization_endpoint")
-            .map_err(|error| auth_sql_error("decode oauth client authorization endpoint", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client display name", error))?,
+        authorization_endpoint: row.try_get("authorization_endpoint").map_err(|error| {
+            credential_sql_error("decode oauth client authorization endpoint", error)
+        })?,
         token_endpoint: row
             .try_get("token_endpoint")
-            .map_err(|error| auth_sql_error("decode oauth client token endpoint", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client token endpoint", error))?,
         remote_client_id: row
             .try_get("remote_client_id")
-            .map_err(|error| auth_sql_error("decode oauth client remote id", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client remote id", error))?,
         client_secret: client_secret_secret_id
             .map(SecretId::try_new)
             .transpose()
-            .map_err(|error| AuthRegistryError::Store {
+            .map_err(|error| CredentialRegistryError::Store {
                 message: format!("decode oauth client secret id: {error}"),
             })?,
         token_endpoint_auth_method: token_endpoint_auth_method_from_str(
@@ -483,113 +488,120 @@ fn oauth_client_from_row(
         )?,
         scopes_default: row
             .try_get("scopes_default")
-            .map_err(|error| auth_sql_error("decode oauth client scopes", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client scopes", error))?,
         audience: row
             .try_get("audience")
-            .map_err(|error| auth_sql_error("decode oauth client audience", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client audience", error))?,
         authorization_server_issuer: row
             .try_get("authorization_server_issuer")
-            .map_err(|error| auth_sql_error("decode oauth client issuer", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client issuer", error))?,
         authorization_response_iss_parameter_supported: row
             .try_get("authorization_response_iss_parameter_supported")
-            .map_err(|error| auth_sql_error("decode oauth client issuer support", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client issuer support", error))?,
         authorization_server_scopes_supported: row
             .try_get("authorization_server_scopes_supported")
-            .map_err(|error| auth_sql_error("decode oauth client supported scopes", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client supported scopes", error))?,
         created_at_ms: row
             .try_get("created_at_ms")
-            .map_err(|error| auth_sql_error("decode oauth client created_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client created_at_ms", error))?,
         updated_at_ms: row
             .try_get("updated_at_ms")
-            .map_err(|error| auth_sql_error("decode oauth client updated_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode oauth client updated_at_ms", error))?,
     };
     record.validate()?;
     Ok(record)
 }
 
-fn auth_flow_from_row(row: &sqlx::postgres::PgRow) -> Result<AuthFlowRecord, AuthRegistryError> {
+fn credential_flow_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<CredentialFlowRecord, CredentialRegistryError> {
     let flow_id: String = row
         .try_get("flow_id")
-        .map_err(|error| auth_sql_error("decode auth flow id", error))?;
+        .map_err(|error| credential_sql_error("decode credential flow id", error))?;
     let client_id: String = row
         .try_get("client_id")
-        .map_err(|error| auth_sql_error("decode auth flow client id", error))?;
+        .map_err(|error| credential_sql_error("decode credential flow client id", error))?;
     let provider_kind: String = row
         .try_get("provider_kind")
-        .map_err(|error| auth_sql_error("decode auth flow provider kind", error))?;
+        .map_err(|error| credential_sql_error("decode credential flow provider kind", error))?;
     let grant_exposure: String = row
         .try_get("grant_exposure")
-        .map_err(|error| auth_sql_error("decode auth flow grant exposure", error))?;
-    let pkce_verifier_secret_id: String = row
-        .try_get("pkce_verifier_secret_id")
-        .map_err(|error| auth_sql_error("decode auth flow verifier secret id", error))?;
+        .map_err(|error| credential_sql_error("decode credential flow grant exposure", error))?;
+    let pkce_verifier_secret_id: String =
+        row.try_get("pkce_verifier_secret_id").map_err(|error| {
+            credential_sql_error("decode credential flow verifier secret id", error)
+        })?;
     let grant_id: Option<String> = row
         .try_get("grant_id")
-        .map_err(|error| auth_sql_error("decode auth flow grant id", error))?;
+        .map_err(|error| credential_sql_error("decode credential flow grant id", error))?;
 
-    let record = AuthFlowRecord {
-        flow_id: AuthFlowId::try_new(flow_id).map_err(|error| AuthRegistryError::Store {
-            message: format!("decode auth flow id: {error}"),
+    let record = CredentialFlowRecord {
+        flow_id: CredentialFlowId::try_new(flow_id).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("decode credential flow id: {error}"),
+            }
         })?,
-        client_id: OAuthClientId::try_new(client_id).map_err(|error| AuthRegistryError::Store {
-            message: format!("decode auth flow client id: {error}"),
+        client_id: OAuthClientId::try_new(client_id).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("decode credential flow client id: {error}"),
+            }
         })?,
         provider_id: row
             .try_get("provider_id")
-            .map_err(|error| auth_sql_error("decode auth flow provider id", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow provider id", error))?,
         provider_kind: provider_kind_from_str(&provider_kind)?,
         grant_exposure: grant_exposure_from_str(&grant_exposure)?,
         created_by: row
             .try_get::<sqlx::types::Json<Attribution>, _>("created_by")
-            .map_err(|error| auth_sql_error("decode auth flow creator", error))?
+            .map_err(|error| credential_sql_error("decode credential flow creator", error))?
             .0,
         state_hash: row
             .try_get("state_hash")
-            .map_err(|error| auth_sql_error("decode auth flow state hash", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow state hash", error))?,
         pkce_verifier_secret: SecretId::try_new(pkce_verifier_secret_id).map_err(|error| {
-            AuthRegistryError::Store {
-                message: format!("decode auth flow verifier secret id: {error}"),
+            CredentialRegistryError::Store {
+                message: format!("decode credential flow verifier secret id: {error}"),
             }
         })?,
         redirect_uri: row
             .try_get("redirect_uri")
-            .map_err(|error| auth_sql_error("decode auth flow redirect uri", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow redirect uri", error))?,
         scopes: row
             .try_get("scopes")
-            .map_err(|error| auth_sql_error("decode auth flow scopes", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow scopes", error))?,
         audience: row
             .try_get("audience")
-            .map_err(|error| auth_sql_error("decode auth flow audience", error))?,
-        expected_issuer: row
-            .try_get("expected_issuer")
-            .map_err(|error| auth_sql_error("decode auth flow expected issuer", error))?,
-        require_issuer: row
-            .try_get("require_issuer")
-            .map_err(|error| auth_sql_error("decode auth flow issuer requirement", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow audience", error))?,
+        expected_issuer: row.try_get("expected_issuer").map_err(|error| {
+            credential_sql_error("decode credential flow expected issuer", error)
+        })?,
+        require_issuer: row.try_get("require_issuer").map_err(|error| {
+            credential_sql_error("decode credential flow issuer requirement", error)
+        })?,
         grant_id: grant_id
-            .map(AuthGrantId::try_new)
+            .map(CredentialGrantId::try_new)
             .transpose()
-            .map_err(|error| AuthRegistryError::Store {
-                message: format!("decode auth flow grant id: {error}"),
+            .map_err(|error| CredentialRegistryError::Store {
+                message: format!("decode credential flow grant id: {error}"),
             })?,
         error: row
             .try_get("error")
-            .map_err(|error| auth_sql_error("decode auth flow error", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow error", error))?,
         expires_at_ms: row
             .try_get("expires_at_ms")
-            .map_err(|error| auth_sql_error("decode auth flow expires_at_ms", error))?,
-        consumed_at_ms: row
-            .try_get("consumed_at_ms")
-            .map_err(|error| auth_sql_error("decode auth flow consumed_at_ms", error))?,
-        completed_at_ms: row
-            .try_get("completed_at_ms")
-            .map_err(|error| auth_sql_error("decode auth flow completed_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow expires_at_ms", error))?,
+        consumed_at_ms: row.try_get("consumed_at_ms").map_err(|error| {
+            credential_sql_error("decode credential flow consumed_at_ms", error)
+        })?,
+        completed_at_ms: row.try_get("completed_at_ms").map_err(|error| {
+            credential_sql_error("decode credential flow completed_at_ms", error)
+        })?,
         created_at_ms: row
             .try_get("created_at_ms")
-            .map_err(|error| auth_sql_error("decode auth flow created_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow created_at_ms", error))?,
         updated_at_ms: row
             .try_get("updated_at_ms")
-            .map_err(|error| auth_sql_error("decode auth flow updated_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode credential flow updated_at_ms", error))?,
     };
     record.validate()?;
     Ok(record)

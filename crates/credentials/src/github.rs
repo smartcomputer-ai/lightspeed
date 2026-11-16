@@ -16,9 +16,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    AuthBrokerError, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore,
-    AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore, AuthRegistryError,
-    DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource, SecretStore, SecretValue,
+    CredentialBrokerError, CredentialGrantId, CredentialGrantRecord, CredentialGrantStatus,
+    CredentialGrantStore, CredentialProviderConfig, CredentialProviderId, CredentialProviderStatus,
+    CredentialProviderStore, CredentialRegistryError, DEFAULT_REFRESH_EXPIRY_MARGIN_MS,
+    GrantTokenSource, SecretStore, SecretValue,
 };
 
 pub const SECRET_KIND_GITHUB_APP_PRIVATE_KEY: &str = "auth.github_app.private_key";
@@ -51,7 +52,7 @@ pub enum GitHubAppError {
     InvalidResponse { message: String },
 
     #[error(transparent)]
-    Registry(AuthRegistryError),
+    Registry(CredentialRegistryError),
 }
 
 /// A minted installation access token. `expires_at_ms` comes from GitHub
@@ -136,7 +137,7 @@ pub fn sign_github_app_jwt(
 }
 
 /// Non-secret metadata stored on a GitHub App installation grant
-/// (`AuthGrantRecord.metadata`).
+/// (`CredentialGrantRecord.metadata`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GitHubInstallationGrantMetadata {
@@ -159,8 +160,8 @@ impl GitHubInstallationGrantMetadata {
         }
     }
 
-    pub fn to_json(&self) -> Result<serde_json::Value, AuthRegistryError> {
-        serde_json::to_value(self).map_err(|error| AuthRegistryError::Store {
+    pub fn to_json(&self) -> Result<serde_json::Value, CredentialRegistryError> {
+        serde_json::to_value(self).map_err(|error| CredentialRegistryError::Store {
             message: format!("encode github installation metadata: {error}"),
         })
     }
@@ -168,9 +169,9 @@ impl GitHubInstallationGrantMetadata {
     /// Parse the typed metadata off a grant. The installation id is
     /// load-bearing (the broker mints against it), so this is validated at
     /// grant creation and re-validated here.
-    pub fn from_grant(grant: &AuthGrantRecord) -> Result<Self, AuthRegistryError> {
+    pub fn from_grant(grant: &CredentialGrantRecord) -> Result<Self, CredentialRegistryError> {
         let metadata: Self = serde_json::from_value(grant.metadata.clone()).map_err(|error| {
-            AuthRegistryError::InvalidInput {
+            CredentialRegistryError::InvalidInput {
                 message: format!(
                     "grant {} has invalid github installation metadata: {error}",
                     grant.grant_id
@@ -178,7 +179,7 @@ impl GitHubInstallationGrantMetadata {
             }
         })?;
         if metadata.installation_id <= 0 {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!(
                     "grant {} has invalid github installation id {}",
                     grant.grant_id, metadata.installation_id
@@ -192,24 +193,24 @@ impl GitHubInstallationGrantMetadata {
 /// GitHub App token source for the broker. Installation tokens are never
 /// stored durably: each is minted on demand (app JWT -> installation token)
 /// and cached only in process memory until its expiry margin. Register under
-/// [`crate::AuthProviderKind::GitHubApp`] via
+/// [`crate::CredentialProviderKind::GitHubApp`] via
 /// `RegistryTokenBroker::with_token_source`; the broker holds the per-grant
 /// lock around minting.
 #[derive(Clone)]
 pub struct GitHubAppRuntime {
-    providers: Arc<dyn AuthProviderStore>,
+    providers: Arc<dyn CredentialProviderStore>,
     api: Arc<dyn GitHubApiClient>,
-    grants: Arc<dyn AuthGrantStore>,
+    grants: Arc<dyn CredentialGrantStore>,
     secrets: Arc<dyn SecretStore>,
     expiry_margin_ms: i64,
-    cache: Arc<Mutex<BTreeMap<AuthGrantId, GitHubInstallationToken>>>,
+    cache: Arc<Mutex<BTreeMap<CredentialGrantId, GitHubInstallationToken>>>,
 }
 
 impl GitHubAppRuntime {
     pub fn new(
-        providers: Arc<dyn AuthProviderStore>,
+        providers: Arc<dyn CredentialProviderStore>,
         api: Arc<dyn GitHubApiClient>,
-        grants: Arc<dyn AuthGrantStore>,
+        grants: Arc<dyn CredentialGrantStore>,
         secrets: Arc<dyn SecretStore>,
     ) -> Self {
         Self {
@@ -227,7 +228,7 @@ impl GitHubAppRuntime {
         self
     }
 
-    fn cached_token(&self, grant_id: &AuthGrantId, now_ms: i64) -> Option<SecretValue> {
+    fn cached_token(&self, grant_id: &CredentialGrantId, now_ms: i64) -> Option<SecretValue> {
         let cache = self.cache.lock().ok()?;
         cache.get(grant_id).and_then(|token| {
             (now_ms < token.expires_at_ms.saturating_sub(self.expiry_margin_ms))
@@ -235,7 +236,7 @@ impl GitHubAppRuntime {
         })
     }
 
-    fn store_token(&self, grant_id: &AuthGrantId, token: GitHubInstallationToken) {
+    fn store_token(&self, grant_id: &CredentialGrantId, token: GitHubInstallationToken) {
         if let Ok(mut cache) = self.cache.lock() {
             cache.insert(grant_id.clone(), token);
         }
@@ -245,49 +246,49 @@ impl GitHubAppRuntime {
     /// per-grant lock and has re-checked the cache.
     async fn mint(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<SecretValue, AuthBrokerError> {
+    ) -> Result<SecretValue, CredentialBrokerError> {
         let grant_id = grant.grant_id.clone();
-        let mint_error = |message: String| AuthBrokerError::MintFailed {
+        let mint_error = |message: String| CredentialBrokerError::MintFailed {
             grant_id: grant_id.clone(),
             message,
         };
 
         let metadata = GitHubInstallationGrantMetadata::from_grant(grant)
             .map_err(|error| mint_error(error.to_string()))?;
-        let provider_id = AuthProviderId::try_new(grant.provider_id.clone())
+        let provider_id = CredentialProviderId::try_new(grant.provider_id.clone())
             .map_err(|error| mint_error(format!("invalid provider id: {error}")))?;
         let provider = self
             .providers
-            .read_auth_provider(&provider_id)
+            .read_credential_provider(&provider_id)
             .await
-            .map_err(|error| mint_error(format!("load auth provider: {error}")))?;
-        if provider.status != AuthProviderStatus::Active {
+            .map_err(|error| mint_error(format!("load credential provider: {error}")))?;
+        if provider.status != CredentialProviderStatus::Active {
             return Err(mint_error(format!(
-                "auth provider {provider_id} is not active: {:?}",
+                "credential provider {provider_id} is not active: {:?}",
                 provider.status
             )));
         }
         let config = match &provider.config {
-            AuthProviderConfig::GitHubApp(config) => config,
+            CredentialProviderConfig::GitHubApp(config) => config,
             #[allow(unreachable_patterns)]
             _ => {
                 return Err(mint_error(format!(
-                    "auth provider {provider_id} is not a github app"
+                    "credential provider {provider_id} is not a github app"
                 )));
             }
         };
         let Some(key_secret) = &provider.credential_secret else {
             return Err(mint_error(format!(
-                "auth provider {provider_id} has no private key credential"
+                "credential provider {provider_id} has no private key credential"
             )));
         };
         let (_, private_key) = self
             .secrets
             .read_secret(key_secret)
             .await
-            .map_err(|error| AuthBrokerError::Store {
+            .map_err(|error| CredentialBrokerError::Store {
                 message: format!("read github app private key: {error}"),
             })?;
         let app_jwt = sign_github_app_jwt(&config.app_id, &private_key, now_ms)
@@ -303,7 +304,7 @@ impl GitHubAppRuntime {
                 self.grants
                     .record_grant_mint_expiry(&grant_id, token.expires_at_ms, now_ms)
                     .await
-                    .map_err(|error| AuthBrokerError::Store {
+                    .map_err(|error| CredentialBrokerError::Store {
                         message: format!("record github app token expiry: {error}"),
                     })?;
                 self.store_token(&grant_id, token);
@@ -314,22 +315,22 @@ impl GitHubAppRuntime {
                 // until the provider credential is fixed.
                 let _ = self
                     .grants
-                    .update_grant_status(&grant_id, AuthGrantStatus::Failed, now_ms)
+                    .update_grant_status(&grant_id, CredentialGrantStatus::Failed, now_ms)
                     .await;
-                Err(AuthBrokerError::GrantNotActive {
+                Err(CredentialBrokerError::GrantNotActive {
                     grant_id,
-                    status: AuthGrantStatus::Failed,
+                    status: CredentialGrantStatus::Failed,
                 })
             }
             Err(GitHubAppError::InstallationNotFound { .. }) => {
                 // The app was uninstalled; reinstalling produces a new grant.
                 let _ = self
                     .grants
-                    .update_grant_status(&grant_id, AuthGrantStatus::NeedsReauth, now_ms)
+                    .update_grant_status(&grant_id, CredentialGrantStatus::NeedsReauth, now_ms)
                     .await;
-                Err(AuthBrokerError::GrantNotActive {
+                Err(CredentialBrokerError::GrantNotActive {
                     grant_id,
-                    status: AuthGrantStatus::NeedsReauth,
+                    status: CredentialGrantStatus::NeedsReauth,
                 })
             }
             Err(other) => Err(mint_error(other.to_string())),
@@ -341,17 +342,17 @@ impl GitHubAppRuntime {
 impl GrantTokenSource for GitHubAppRuntime {
     async fn current_token(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<Option<SecretValue>, AuthBrokerError> {
+    ) -> Result<Option<SecretValue>, CredentialBrokerError> {
         Ok(self.cached_token(&grant.grant_id, now_ms))
     }
 
     async fn renew_token(
         &self,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
         now_ms: i64,
-    ) -> Result<SecretValue, AuthBrokerError> {
+    ) -> Result<SecretValue, CredentialBrokerError> {
         self.mint(grant, now_ms).await
     }
 }
@@ -639,9 +640,10 @@ mod tests {
     use std::sync::atomic::{AtomicI64, Ordering};
 
     use crate::{
-        AuthProviderKind, AuthTokenBroker, CreateAuthGrantRecord, CreateAuthProviderRecord,
-        GitHubAppConfig, InMemoryAuthGrantStore, InMemoryAuthProviderStore, InMemoryGrantLocks,
-        InMemorySecretStore, PutSecretRecord, RegistryTokenBroker, SecretId, TokenAudience,
+        CreateCredentialGrantRecord, CreateCredentialProviderRecord, CredentialProviderKind,
+        CredentialTokenBroker, GitHubAppConfig, InMemoryCredentialGrantStore,
+        InMemoryCredentialProviderStore, InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord,
+        RegistryTokenBroker, SecretId, TokenAudience,
     };
 
     struct CountingGitHubApi {
@@ -674,7 +676,7 @@ mod tests {
 
     struct GitHubHarness {
         broker: RegistryTokenBroker,
-        grants: Arc<InMemoryAuthGrantStore>,
+        grants: Arc<InMemoryCredentialGrantStore>,
         api: Arc<CountingGitHubApi>,
         now: Arc<AtomicI64>,
     }
@@ -682,9 +684,9 @@ mod tests {
     async fn github_harness(
         responses: Vec<Result<GitHubInstallationToken, GitHubAppError>>,
     ) -> GitHubHarness {
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
-        let providers = Arc::new(InMemoryAuthProviderStore::new());
+        let providers = Arc::new(InMemoryCredentialProviderStore::new());
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_appkey"),
@@ -695,25 +697,25 @@ mod tests {
             .await
             .expect("put app key");
         providers
-            .create_auth_provider(CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new("lightspeed-github"),
+            .create_credential_provider(CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new("lightspeed-github"),
                 display_name: None,
-                config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+                config: CredentialProviderConfig::GitHubApp(GitHubAppConfig {
                     app_id: "12345".to_owned(),
                     api_base_url: "https://api.github.com".to_owned(),
                 }),
                 credential_secret: Some(SecretId::new("authsec_appkey")),
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 10,
             })
             .await
             .expect("create provider");
         grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_install"),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new("authgrant_install"),
                 provider_id: "lightspeed-github".to_owned(),
-                provider_kind: AuthProviderKind::GitHubApp,
-                exposure: crate::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::GitHubApp,
+                exposure: crate::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: Some("acme".to_owned()),
@@ -723,7 +725,7 @@ mod tests {
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::json!({
                     "installation_id": 678,
                     "account_login": "acme",
@@ -744,7 +746,7 @@ mod tests {
             Arc::new(InMemoryGrantLocks::new()),
         )
         .with_token_source(
-            AuthProviderKind::GitHubApp,
+            CredentialProviderKind::GitHubApp,
             Arc::new(
                 GitHubAppRuntime::new(providers, api.clone(), grants.clone(), secrets)
                     .with_expiry_margin_ms(100),
@@ -766,8 +768,8 @@ mod tests {
         }
     }
 
-    fn install_grant_id() -> AuthGrantId {
-        AuthGrantId::new("authgrant_install")
+    fn install_grant_id() -> CredentialGrantId {
+        CredentialGrantId::new("authgrant_install")
     }
 
     fn github_audience() -> TokenAudience {
@@ -821,7 +823,10 @@ mod tests {
             .await
             .expect_err("audience mismatch must fail");
 
-        assert!(matches!(error, AuthBrokerError::AudienceMismatch { .. }));
+        assert!(matches!(
+            error,
+            CredentialBrokerError::AudienceMismatch { .. }
+        ));
     }
 
     #[tokio::test]
@@ -839,8 +844,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AuthBrokerError::GrantNotActive {
-                status: AuthGrantStatus::Failed,
+            CredentialBrokerError::GrantNotActive {
+                status: CredentialGrantStatus::Failed,
                 ..
             }
         ));
@@ -849,7 +854,7 @@ mod tests {
             .read_grant(&install_grant_id())
             .await
             .expect("grant");
-        assert_eq!(grant.status, AuthGrantStatus::Failed);
+        assert_eq!(grant.status, CredentialGrantStatus::Failed);
     }
 
     #[tokio::test]
@@ -867,8 +872,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            AuthBrokerError::GrantNotActive {
-                status: AuthGrantStatus::NeedsReauth,
+            CredentialBrokerError::GrantNotActive {
+                status: CredentialGrantStatus::NeedsReauth,
                 ..
             }
         ));
@@ -888,12 +893,12 @@ mod tests {
             .await
             .expect_err("transient failure surfaces");
 
-        assert!(matches!(error, AuthBrokerError::MintFailed { .. }));
+        assert!(matches!(error, CredentialBrokerError::MintFailed { .. }));
         let grant = harness
             .grants
             .read_grant(&install_grant_id())
             .await
             .expect("grant");
-        assert_eq!(grant.status, AuthGrantStatus::Active);
+        assert_eq!(grant.status, CredentialGrantStatus::Active);
     }
 }

@@ -4345,7 +4345,7 @@ mod tests {
                 controller_endpoint: EnvironmentEndpoint::parse("ws://controller.test/control")
                     .unwrap(),
                 data_route_base: None,
-                credential: ProviderCredentialChange::Set(auth::SecretValue::new(
+                credential: ProviderCredentialChange::Set(credentials::SecretValue::new(
                     "provider-credential",
                 )),
                 updated_at_ms: 10,

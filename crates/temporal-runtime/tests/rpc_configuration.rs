@@ -42,3 +42,37 @@ fn malformed_tokens_refuse_startup() {
         "at least 32 characters",
     );
 }
+
+#[test]
+fn overlapping_listeners_refuse_before_connecting() {
+    refuses(
+        &[
+            ("LIGHTSPEED_AUTH_MODE", "authenticated"),
+            (
+                "LIGHTSPEED_RPC_TOKEN",
+                "test-token-with-at-least-32-characters",
+            ),
+            ("LIGHTSPEED_PUBLIC_BIND", "127.0.0.1:18080"),
+        ],
+        "gateway listeners must use distinct bind addresses",
+    );
+}
+
+#[test]
+fn non_loopback_environment_listener_requires_its_own_origin() {
+    refuses(
+        &[
+            ("LIGHTSPEED_AUTH_MODE", "authenticated"),
+            (
+                "LIGHTSPEED_RPC_TOKEN",
+                "test-token-with-at-least-32-characters",
+            ),
+            ("LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND", "0.0.0.0:18083"),
+            (
+                "LIGHTSPEED_PUBLIC_BASE_URL",
+                "https://callbacks.example.test",
+            ),
+        ],
+        "LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL or LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS is required",
+    );
+}

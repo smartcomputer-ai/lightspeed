@@ -63,6 +63,8 @@ use super::{
 };
 
 pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
+pub const DEFAULT_PUBLIC_BIND: &str = "127.0.0.1:18082";
+pub const DEFAULT_ENVIRONMENT_GATEWAY_BIND: &str = "127.0.0.1:18083";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 pub use super::authentication::{ACTOR_HEADER, UNIVERSE_HEADER};
@@ -92,7 +94,7 @@ pub struct GatewayState {
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
     /// The origins a daemon's registration signature may name: the
-    /// canonical origin of the public base URL and any configured
+    /// canonical origin of the environment public base URL and any configured
     /// registration URLs. Empty when none of them has a WebSocket origin;
     /// the connect route then refuses every daemon.
     registration_origins: Vec<CanonicalOrigin>,
@@ -102,21 +104,38 @@ pub struct GatewayState {
     peer_http: reqwest::Client,
 }
 
-/// Which route families one HTTP listener serves, derived from the
-/// process's roles: the `gateway` role owns the API surface, the
-/// `environment-gateway` role owns the environment data plane.
+/// Route families mounted on an HTTP listener. Runtime startup binds each
+/// family separately so public callbacks and machine traffic cannot expose RPC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GatewayRoutes {
-    /// JSON-RPC, OAuth callbacks, and bot webhook ingest.
+    /// Private JSON-RPC for trusted components and operators.
     pub api: bool,
-    /// Worker environment routes plus the public daemon connect and data
-    /// routes.
+    /// Public OAuth callbacks, client metadata, and bot webhook ingest.
+    pub public: bool,
+    /// Worker environment routes, daemon connections, and replica peers.
     pub environment: bool,
 }
 
 impl GatewayRoutes {
+    pub const RPC: Self = Self {
+        api: true,
+        public: false,
+        environment: false,
+    };
+    pub const PUBLIC: Self = Self {
+        api: false,
+        public: true,
+        environment: false,
+    };
+    pub const ENVIRONMENT: Self = Self {
+        api: false,
+        public: false,
+        environment: true,
+    };
+    /// Combined routes for embedded runtimes and integration fixtures.
     pub const ALL: Self = Self {
         api: true,
+        public: true,
         environment: true,
     };
 }
@@ -403,7 +422,7 @@ impl GatewayState {
     async fn environment_provider_credential(
         &self,
         provider_id: &environments::EnvironmentProviderId,
-    ) -> Result<Option<auth::SecretValue>, environments::EnvironmentRegistryError> {
+    ) -> Result<Option<credentials::SecretValue>, environments::EnvironmentRegistryError> {
         environments::EnvironmentProviderStore::read_provider_credential(
             self.deployment_store().as_ref(),
             provider_id,
@@ -438,15 +457,17 @@ fn registration_origin_of(public_base_url: &str) -> Option<CanonicalOrigin> {
 /// process refuses to start rather than reject every remote daemon. A URL
 /// without a WebSocket origin is a startup error.
 pub fn registration_origins(
-    public_base_url: Option<&str>,
+    environment_public_base_url: Option<&str>,
     registration_urls: &[String],
     bind: SocketAddr,
 ) -> anyhow::Result<Vec<CanonicalOrigin>> {
     let mut origins = Vec::new();
-    match public_base_url {
+    match environment_public_base_url {
         Some(public_base_url) => {
             origins.push(canonical_origin(public_base_url).map_err(|error| {
-                anyhow::anyhow!("LIGHTSPEED_PUBLIC_BASE_URL has no WebSocket origin: {error}")
+                anyhow::anyhow!(
+                    "LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL has no WebSocket origin: {error}"
+                )
             })?)
         }
         None if bind.ip().is_loopback() => {
@@ -470,7 +491,7 @@ pub fn registration_origins(
     }
     if origins.is_empty() {
         anyhow::bail!(
-            "LIGHTSPEED_PUBLIC_BASE_URL or LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS is required to serve \
+            "LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL or LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS is required to serve \
              environment registration on {bind}: daemons sign the gateway origin they dial, and only \
              those URLs name it"
         );
@@ -514,10 +535,12 @@ pub fn gateway_router(
         .route("/health", get(|| async { "ok" }))
         .route("/ready", get(readiness));
     if routes.api {
+        router = router.route("/rpc", post(rpc));
+    }
+    if routes.public {
         router = router
-            .route("/rpc", post(rpc))
-            .route("/auth/callback", get(oauth_callback))
-            .route("/auth/client-metadata.json", get(cimd_document))
+            .route("/credentials/callback", get(oauth_callback))
+            .route("/credentials/client-metadata.json", get(cimd_document))
             .route(
                 "/hooks/bots/{universe}/{bot}/{trigger}/{token}",
                 post(bot_webhook_ingest),
@@ -840,7 +863,7 @@ async fn provider_route(
     api: &GatewayAgentApi,
     key: &RouteKey,
     source: &environments::ProvisionedSource,
-) -> Result<(String, Option<auth::SecretValue>), Box<Response>> {
+) -> Result<(String, Option<credentials::SecretValue>), Box<Response>> {
     let provider_id = &source.provider_id;
     let unavailable = |error: environments::EnvironmentRegistryError| match error {
         environments::EnvironmentRegistryError::Store { .. } => {
@@ -1436,9 +1459,9 @@ async fn oauth_callback(
     State(state): State<Arc<GatewayState>>,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> (StatusCode, Html<String>) {
-    let callback = auth::AuthCallback {
+    let callback = credentials::CredentialCallback {
         state: query.state.unwrap_or_default(),
-        code: query.code.map(auth::SecretValue::new),
+        code: query.code.map(credentials::SecretValue::new),
         issuer: query.iss,
         error: query.error,
         error_description: query.error_description,
@@ -1449,8 +1472,10 @@ async fn oauth_callback(
     let api = match &state.resolution {
         UniverseResolution::FixedApi { api } => api.clone(),
         UniverseResolution::Multi { runtime, .. } => {
-            let state_hash = auth::state_hash(&callback.state);
-            match store_pg::find_auth_flow_universe(runtime.stores().pool(), &state_hash).await {
+            let state_hash = credentials::state_hash(&callback.state);
+            match store_pg::find_credential_flow_universe(runtime.stores().pool(), &state_hash)
+                .await
+            {
                 Ok(Some(universe_id)) => match runtime.state_for(universe_id).await {
                     Ok(universe) => universe.api.clone(),
                     Err(error) => {

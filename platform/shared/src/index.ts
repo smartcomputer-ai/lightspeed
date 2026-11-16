@@ -99,7 +99,7 @@ export function universeHandleFromName(name: string): string {
   return UUID_SHAPED.test(handle) ? `u-${handle}`.slice(0, UNIVERSE_HANDLE_MAX_LENGTH) : handle;
 }
 
-/// The id of an API key or registration key when its creator chooses it
+/// The id of a registration key when its creator chooses it
 /// instead of having one allocated. The runtime owns which characters it may
 /// hold and refuses the rest as an invalid request.
 export const KEY_ID_MAX_LENGTH = 128;

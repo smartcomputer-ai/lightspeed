@@ -451,7 +451,7 @@ async fn a_provider_header_names_a_credential_the_same_document_adds() {
     // What is stored names the credential under the lowercased header and
     // holds no token, in a read and in an export.
     let providers = live
-        .call_as(&handle, "auth/providers/list", json!({}))
+        .call_as(&handle, "credentials/providers/list", json!({}))
         .await;
     assert_eq!(
         providers["providers"][0]["config"]["endpoint"]["headers"],

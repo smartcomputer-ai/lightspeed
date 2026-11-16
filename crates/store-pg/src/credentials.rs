@@ -1,16 +1,16 @@
-//! Encrypted secret storage and auth grant records.
+//! Encrypted secret storage and credential grant records.
 //!
 //! Secret values are sealed with AES-256-GCM before insertion. The AAD binds
 //! each ciphertext to its universe, secret id, and secret kind, so rows cannot
 //! be swapped or relabeled without failing decryption. Plaintext exists only
-//! inside [`auth::SecretValue`] wrappers in adapter memory.
+//! inside [`credentials::SecretValue`] wrappers in adapter memory.
 
 // Formatted SQL uses internal schema fragments; request values use bind parameters.
-use ::auth::{
-    AuthGrantExposure, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore,
-    AuthGrantTokenRefresh, AuthProviderKind, AuthRegistryError, CreateAuthGrantRecord,
-    ListAuthGrants, OAuthClientId, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore,
-    SecretValue, TokenCredentialUpdate,
+use ::credentials::{
+    CreateCredentialGrantRecord, CredentialGrantExposure, CredentialGrantId, CredentialGrantRecord,
+    CredentialGrantStatus, CredentialGrantStore, CredentialGrantTokenRefresh,
+    CredentialProviderKind, CredentialRegistryError, ListCredentialGrants, OAuthClientId,
+    PutSecretRecord, SecretId, SecretRecordMeta, SecretStore, SecretValue, TokenCredentialUpdate,
 };
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -25,9 +25,11 @@ pub(crate) const LOCAL_KEY_ID: &str = "local-v1";
 const NONCE_LEN: usize = 12;
 
 impl PgStore {
-    pub(crate) fn secrets_cipher(&self) -> Result<(Aes256Gcm, &'static str), AuthRegistryError> {
+    pub(crate) fn secrets_cipher(
+        &self,
+    ) -> Result<(Aes256Gcm, &'static str), CredentialRegistryError> {
         let Some(key) = &self.config.secrets_master_key else {
-            return Err(AuthRegistryError::Store {
+            return Err(CredentialRegistryError::Store {
                 message: "secrets master key is not configured; set LIGHTSPEED_SECRETS_MASTER_KEY"
                     .to_owned(),
             });
@@ -53,7 +55,7 @@ pub(crate) fn seal_secret(
     cipher: &Aes256Gcm,
     aad: &[u8],
     value: &SecretValue,
-) -> Result<(Vec<u8>, Vec<u8>), AuthRegistryError> {
+) -> Result<(Vec<u8>, Vec<u8>), CredentialRegistryError> {
     let mut nonce = [0u8; NONCE_LEN];
     rand::rngs::SysRng
         .try_fill_bytes(&mut nonce)
@@ -66,7 +68,7 @@ pub(crate) fn seal_secret(
                 aad,
             },
         )
-        .map_err(|_| AuthRegistryError::Store {
+        .map_err(|_| CredentialRegistryError::Store {
             message: "secret encryption failed".to_owned(),
         })?;
     Ok((nonce.to_vec(), ciphertext))
@@ -77,9 +79,9 @@ pub(crate) fn open_secret(
     aad: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
-) -> Result<SecretValue, AuthRegistryError> {
+) -> Result<SecretValue, CredentialRegistryError> {
     if nonce.len() != NONCE_LEN {
-        return Err(AuthRegistryError::Store {
+        return Err(CredentialRegistryError::Store {
             message: format!("stored secret nonce has invalid length {}", nonce.len()),
         });
     }
@@ -91,10 +93,10 @@ pub(crate) fn open_secret(
                 aad,
             },
         )
-        .map_err(|_| AuthRegistryError::Store {
+        .map_err(|_| CredentialRegistryError::Store {
             message: "secret decryption failed; wrong master key or tampered record".to_owned(),
         })?;
-    let value = String::from_utf8(plaintext).map_err(|_| AuthRegistryError::Store {
+    let value = String::from_utf8(plaintext).map_err(|_| CredentialRegistryError::Store {
         message: "decrypted secret is not valid UTF-8".to_owned(),
     })?;
     Ok(SecretValue::new(value))
@@ -105,18 +107,18 @@ impl SecretStore for PgStore {
     async fn put_secret(
         &self,
         record: PutSecretRecord,
-    ) -> Result<SecretRecordMeta, AuthRegistryError> {
+    ) -> Result<SecretRecordMeta, CredentialRegistryError> {
         record.validate()?;
         self.require_active_universe()
             .await
-            .map_err(|error| auth_store_error("ensure universe", error))?;
+            .map_err(|error| credential_store_error("ensure universe", error))?;
         let (cipher, key_id) = self.secrets_cipher()?;
         let aad = self.secret_aad(&record.secret_id, &record.secret_kind);
         let (nonce, ciphertext) = seal_secret(&cipher, &aad, &record.value)?;
 
         let row = sqlx::query(
             r#"
-            INSERT INTO auth_secrets (
+            INSERT INTO credentials_secrets (
                 universe_id,
                 secret_id,
                 secret_kind,
@@ -140,10 +142,10 @@ impl SecretStore for PgStore {
         .bind(record.created_at_ms)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| auth_sql_error("put secret", error))?;
+        .map_err(|error| credential_sql_error("put secret", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::SecretAlreadyExists {
+            return Err(CredentialRegistryError::SecretAlreadyExists {
                 secret_id: record.secret_id,
             });
         };
@@ -153,12 +155,12 @@ impl SecretStore for PgStore {
     async fn read_secret(
         &self,
         secret_id: &SecretId,
-    ) -> Result<(SecretRecordMeta, SecretValue), AuthRegistryError> {
+    ) -> Result<(SecretRecordMeta, SecretValue), CredentialRegistryError> {
         let (cipher, _) = self.secrets_cipher()?;
         let row = sqlx::query(
             r#"
             SELECT secret_id, secret_kind, key_id, nonce, ciphertext, created_at_ms, updated_at_ms
-            FROM auth_secrets
+            FROM credentials_secrets
             WHERE universe_id = $1 AND secret_id = $2
             "#,
         )
@@ -166,37 +168,37 @@ impl SecretStore for PgStore {
         .bind(secret_id.as_str())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| auth_sql_error("read secret", error))?;
+        .map_err(|error| credential_sql_error("read secret", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::SecretNotFound {
+            return Err(CredentialRegistryError::SecretNotFound {
                 secret_id: secret_id.clone(),
             });
         };
         let key_id: String = row
             .try_get("key_id")
-            .map_err(|error| auth_sql_error("decode secret key id", error))?;
+            .map_err(|error| credential_sql_error("decode secret key id", error))?;
         if key_id != LOCAL_KEY_ID {
-            return Err(AuthRegistryError::Store {
+            return Err(CredentialRegistryError::Store {
                 message: format!("unsupported secret key id '{key_id}'"),
             });
         }
         let meta = secret_meta_from_row(&row)?;
         let nonce: Vec<u8> = row
             .try_get("nonce")
-            .map_err(|error| auth_sql_error("decode secret nonce", error))?;
+            .map_err(|error| credential_sql_error("decode secret nonce", error))?;
         let ciphertext: Vec<u8> = row
             .try_get("ciphertext")
-            .map_err(|error| auth_sql_error("decode secret ciphertext", error))?;
+            .map_err(|error| credential_sql_error("decode secret ciphertext", error))?;
         let aad = self.secret_aad(&meta.secret_id, &meta.secret_kind);
         let value = open_secret(&cipher, &aad, &nonce, &ciphertext)?;
         Ok((meta, value))
     }
 
-    async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), AuthRegistryError> {
+    async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), CredentialRegistryError> {
         let result = sqlx::query(
             r#"
-            DELETE FROM auth_secrets
+            DELETE FROM credentials_secrets
             WHERE universe_id = $1 AND secret_id = $2
             "#,
         )
@@ -204,9 +206,9 @@ impl SecretStore for PgStore {
         .bind(secret_id.as_str())
         .execute(&self.pool)
         .await
-        .map_err(|error| auth_sql_error("delete secret", error))?;
+        .map_err(|error| credential_sql_error("delete secret", error))?;
         if result.rows_affected() == 0 {
-            return Err(AuthRegistryError::SecretNotFound {
+            return Err(CredentialRegistryError::SecretNotFound {
                 secret_id: secret_id.clone(),
             });
         }
@@ -237,19 +239,19 @@ const GRANT_COLUMNS: &str = r#"
 "#;
 
 #[async_trait]
-impl AuthGrantStore for PgStore {
+impl CredentialGrantStore for PgStore {
     async fn create_grant(
         &self,
-        record: CreateAuthGrantRecord,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        record: CreateCredentialGrantRecord,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         self.require_active_universe()
             .await
-            .map_err(|error| auth_store_error("ensure universe", error))?;
+            .map_err(|error| credential_store_error("ensure universe", error))?;
         let record = record.into_record();
         record.validate()?;
         let query = format!(
             r#"
-            INSERT INTO auth_grants (
+            INSERT INTO credentials_grants (
                 universe_id,
                 grant_id,
                 provider_id,
@@ -294,18 +296,18 @@ impl AuthGrantStore for PgStore {
             .bind(grant_status_to_str(record.status))
             .bind(&record.metadata)
             .bind(record.last_leased_at_ms)
-            .bind(
-                i64::try_from(record.lease_count).map_err(|_| AuthRegistryError::Store {
-                    message: "auth grant lease count exceeds PostgreSQL bigint".to_owned(),
-                })?,
-            )
+            .bind(i64::try_from(record.lease_count).map_err(|_| {
+                CredentialRegistryError::Store {
+                    message: "credential grant lease count exceeds PostgreSQL bigint".to_owned(),
+                }
+            })?)
             .bind(record.created_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("create auth grant", error))?;
+            .map_err(|error| credential_sql_error("create credential grant", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantAlreadyExists {
+            return Err(CredentialRegistryError::GrantAlreadyExists {
                 grant_id: record.grant_id,
             });
         };
@@ -314,12 +316,12 @@ impl AuthGrantStore for PgStore {
 
     async fn read_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let query = format!(
             r#"
             SELECT {GRANT_COLUMNS}
-            FROM auth_grants
+            FROM credentials_grants
             WHERE universe_id = $1 AND grant_id = $2
             "#
         );
@@ -328,10 +330,10 @@ impl AuthGrantStore for PgStore {
             .bind(grant_id.as_str())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("read auth grant", error))?;
+            .map_err(|error| credential_sql_error("read credential grant", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantNotFound {
+            return Err(CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             });
         };
@@ -340,14 +342,14 @@ impl AuthGrantStore for PgStore {
 
     async fn list_grants(
         &self,
-        request: ListAuthGrants,
-    ) -> Result<Vec<AuthGrantRecord>, AuthRegistryError> {
+        request: ListCredentialGrants,
+    ) -> Result<Vec<CredentialGrantRecord>, CredentialRegistryError> {
         let rows = match request.status {
             Some(status) => {
                 let query = format!(
                     r#"
                     SELECT {GRANT_COLUMNS}
-                    FROM auth_grants
+                    FROM credentials_grants
                     WHERE universe_id = $1 AND status = $2
                     ORDER BY grant_id
                     "#
@@ -362,7 +364,7 @@ impl AuthGrantStore for PgStore {
                 let query = format!(
                     r#"
                     SELECT {GRANT_COLUMNS}
-                    FROM auth_grants
+                    FROM credentials_grants
                     WHERE universe_id = $1
                     ORDER BY grant_id
                     "#
@@ -373,20 +375,20 @@ impl AuthGrantStore for PgStore {
                     .await
             }
         }
-        .map_err(|error| auth_sql_error("list auth grants", error))?;
+        .map_err(|error| credential_sql_error("list credential grants", error))?;
 
         rows.iter().map(grant_record_from_row).collect()
     }
 
     async fn update_grant_status(
         &self,
-        grant_id: &AuthGrantId,
-        status: AuthGrantStatus,
+        grant_id: &CredentialGrantId,
+        status: CredentialGrantStatus,
         updated_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            UPDATE auth_grants
+            UPDATE credentials_grants
             SET status = $3, updated_at_ms = $4
             WHERE universe_id = $1 AND grant_id = $2
             RETURNING {GRANT_COLUMNS}
@@ -399,10 +401,10 @@ impl AuthGrantStore for PgStore {
             .bind(updated_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("update auth grant status", error))?;
+            .map_err(|error| credential_sql_error("update credential grant status", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantNotFound {
+            return Err(CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             });
         };
@@ -411,12 +413,12 @@ impl AuthGrantStore for PgStore {
 
     async fn record_grant_refresh(
         &self,
-        grant_id: &AuthGrantId,
-        refresh: AuthGrantTokenRefresh,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+        refresh: CredentialGrantTokenRefresh,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            UPDATE auth_grants
+            UPDATE credentials_grants
             SET access_token_secret_id = $3,
                 refresh_token_secret_id = COALESCE($4, refresh_token_secret_id),
                 expires_at_ms = $5,
@@ -434,10 +436,10 @@ impl AuthGrantStore for PgStore {
             .bind(refresh.updated_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("record auth grant refresh", error))?;
+            .map_err(|error| credential_sql_error("record credential grant refresh", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantNotFound {
+            return Err(CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             });
         };
@@ -446,13 +448,13 @@ impl AuthGrantStore for PgStore {
 
     async fn update_token_credential(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         expected: &SecretId,
         update: TokenCredentialUpdate,
-    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
+    ) -> Result<Option<CredentialGrantRecord>, CredentialRegistryError> {
         let query = format!(
             r#"
-            UPDATE auth_grants
+            UPDATE credentials_grants
             SET access_token_secret_id = $4,
                 display_name = $5,
                 subject_hint = $6,
@@ -479,7 +481,7 @@ impl AuthGrantStore for PgStore {
             .bind(update.updated_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("update token credential", error))?;
+            .map_err(|error| credential_sql_error("update token credential", error))?;
         match row {
             Some(row) => grant_record_from_row(&row).map(Some),
             None => {
@@ -492,12 +494,12 @@ impl AuthGrantStore for PgStore {
 
     async fn record_grant_lease(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         leased_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            UPDATE auth_grants
+            UPDATE credentials_grants
             SET last_leased_at_ms = $3,
                 lease_count = lease_count + 1
             WHERE universe_id = $1 AND grant_id = $2
@@ -510,10 +512,10 @@ impl AuthGrantStore for PgStore {
             .bind(leased_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("record auth grant lease", error))?;
+            .map_err(|error| credential_sql_error("record credential grant lease", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantNotFound {
+            return Err(CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             });
         };
@@ -522,13 +524,13 @@ impl AuthGrantStore for PgStore {
 
     async fn record_grant_mint_expiry(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         expires_at_ms: i64,
         updated_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            UPDATE auth_grants
+            UPDATE credentials_grants
             SET expires_at_ms = $3,
                 updated_at_ms = $4
             WHERE universe_id = $1 AND grant_id = $2
@@ -542,10 +544,10 @@ impl AuthGrantStore for PgStore {
             .bind(updated_at_ms)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("record auth grant mint expiry", error))?;
+            .map_err(|error| credential_sql_error("record credential grant mint expiry", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantNotFound {
+            return Err(CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             });
         };
@@ -554,11 +556,11 @@ impl AuthGrantStore for PgStore {
 
     async fn delete_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let query = format!(
             r#"
-            DELETE FROM auth_grants
+            DELETE FROM credentials_grants
             WHERE universe_id = $1 AND grant_id = $2
             RETURNING {GRANT_COLUMNS}
             "#
@@ -568,10 +570,10 @@ impl AuthGrantStore for PgStore {
             .bind(grant_id.as_str())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("delete auth grant", error))?;
+            .map_err(|error| credential_sql_error("delete credential grant", error))?;
 
         let Some(row) = row else {
-            return Err(AuthRegistryError::GrantNotFound {
+            return Err(CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             });
         };
@@ -581,195 +583,206 @@ impl AuthGrantStore for PgStore {
 
 fn secret_meta_from_row(
     row: &sqlx::postgres::PgRow,
-) -> Result<SecretRecordMeta, AuthRegistryError> {
+) -> Result<SecretRecordMeta, CredentialRegistryError> {
     let secret_id: String = row
         .try_get("secret_id")
-        .map_err(|error| auth_sql_error("decode secret id", error))?;
+        .map_err(|error| credential_sql_error("decode secret id", error))?;
     Ok(SecretRecordMeta {
-        secret_id: SecretId::try_new(secret_id).map_err(|error| AuthRegistryError::Store {
-            message: format!("decode secret id: {error}"),
+        secret_id: SecretId::try_new(secret_id).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("decode secret id: {error}"),
+            }
         })?,
         secret_kind: row
             .try_get("secret_kind")
-            .map_err(|error| auth_sql_error("decode secret kind", error))?,
+            .map_err(|error| credential_sql_error("decode secret kind", error))?,
         created_at_ms: row
             .try_get("created_at_ms")
-            .map_err(|error| auth_sql_error("decode secret created_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode secret created_at_ms", error))?,
         updated_at_ms: row
             .try_get("updated_at_ms")
-            .map_err(|error| auth_sql_error("decode secret updated_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode secret updated_at_ms", error))?,
     })
 }
 
 fn grant_record_from_row(
     row: &sqlx::postgres::PgRow,
-) -> Result<AuthGrantRecord, AuthRegistryError> {
+) -> Result<CredentialGrantRecord, CredentialRegistryError> {
     let grant_id: String = row
         .try_get("grant_id")
-        .map_err(|error| auth_sql_error("decode grant id", error))?;
+        .map_err(|error| credential_sql_error("decode grant id", error))?;
     let provider_kind: String = row
         .try_get("provider_kind")
-        .map_err(|error| auth_sql_error("decode grant provider kind", error))?;
+        .map_err(|error| credential_sql_error("decode grant provider kind", error))?;
     let exposure: String = row
         .try_get("exposure")
-        .map_err(|error| auth_sql_error("decode grant exposure", error))?;
+        .map_err(|error| credential_sql_error("decode grant exposure", error))?;
     let status: String = row
         .try_get("status")
-        .map_err(|error| auth_sql_error("decode grant status", error))?;
+        .map_err(|error| credential_sql_error("decode grant status", error))?;
     let access_token_secret_id: Option<String> = row
         .try_get("access_token_secret_id")
-        .map_err(|error| auth_sql_error("decode grant access token secret id", error))?;
+        .map_err(|error| credential_sql_error("decode grant access token secret id", error))?;
     let refresh_token_secret_id: Option<String> = row
         .try_get("refresh_token_secret_id")
-        .map_err(|error| auth_sql_error("decode grant refresh token secret id", error))?;
+        .map_err(|error| credential_sql_error("decode grant refresh token secret id", error))?;
     let oauth_client_id: Option<String> = row
         .try_get("oauth_client_id")
-        .map_err(|error| auth_sql_error("decode grant oauth client id", error))?;
+        .map_err(|error| credential_sql_error("decode grant oauth client id", error))?;
 
-    let record = AuthGrantRecord {
-        grant_id: AuthGrantId::try_new(grant_id).map_err(|error| AuthRegistryError::Store {
-            message: format!("decode grant id: {error}"),
+    let record = CredentialGrantRecord {
+        grant_id: CredentialGrantId::try_new(grant_id).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("decode grant id: {error}"),
+            }
         })?,
         provider_id: row
             .try_get("provider_id")
-            .map_err(|error| auth_sql_error("decode grant provider id", error))?,
+            .map_err(|error| credential_sql_error("decode grant provider id", error))?,
         provider_kind: provider_kind_from_str(&provider_kind)?,
         exposure: grant_exposure_from_str(&exposure)?,
         created_by: row
             .try_get::<sqlx::types::Json<Attribution>, _>("created_by")
-            .map_err(|error| auth_sql_error("decode grant creator", error))?
+            .map_err(|error| credential_sql_error("decode grant creator", error))?
             .0,
         display_name: row
             .try_get("display_name")
-            .map_err(|error| auth_sql_error("decode grant display name", error))?,
+            .map_err(|error| credential_sql_error("decode grant display name", error))?,
         subject_hint: row
             .try_get("subject_hint")
-            .map_err(|error| auth_sql_error("decode grant subject hint", error))?,
+            .map_err(|error| credential_sql_error("decode grant subject hint", error))?,
         scopes: row
             .try_get("scopes")
-            .map_err(|error| auth_sql_error("decode grant scopes", error))?,
+            .map_err(|error| credential_sql_error("decode grant scopes", error))?,
         audience: row
             .try_get("audience")
-            .map_err(|error| auth_sql_error("decode grant audience", error))?,
+            .map_err(|error| credential_sql_error("decode grant audience", error))?,
         access_token_secret: access_token_secret_id
             .map(SecretId::try_new)
             .transpose()
-            .map_err(|error| AuthRegistryError::Store {
+            .map_err(|error| CredentialRegistryError::Store {
                 message: format!("decode grant access token secret id: {error}"),
             })?,
         refresh_token_secret: refresh_token_secret_id
             .map(SecretId::try_new)
             .transpose()
-            .map_err(|error| AuthRegistryError::Store {
+            .map_err(|error| CredentialRegistryError::Store {
                 message: format!("decode grant refresh token secret id: {error}"),
             })?,
         oauth_client: oauth_client_id
             .map(OAuthClientId::try_new)
             .transpose()
-            .map_err(|error| AuthRegistryError::Store {
+            .map_err(|error| CredentialRegistryError::Store {
                 message: format!("decode grant oauth client id: {error}"),
             })?,
         expires_at_ms: row
             .try_get("expires_at_ms")
-            .map_err(|error| auth_sql_error("decode grant expires_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode grant expires_at_ms", error))?,
         status: grant_status_from_str(&status)?,
         metadata: row
             .try_get("metadata_json")
-            .map_err(|error| auth_sql_error("decode grant metadata", error))?,
+            .map_err(|error| credential_sql_error("decode grant metadata", error))?,
         last_leased_at_ms: row
             .try_get("last_leased_at_ms")
-            .map_err(|error| auth_sql_error("decode grant last_leased_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode grant last_leased_at_ms", error))?,
         lease_count: u64::try_from(
             row.try_get::<i64, _>("lease_count")
-                .map_err(|error| auth_sql_error("decode grant lease_count", error))?,
+                .map_err(|error| credential_sql_error("decode grant lease_count", error))?,
         )
-        .map_err(|_| AuthRegistryError::Store {
-            message: "stored auth grant lease_count is negative".to_owned(),
+        .map_err(|_| CredentialRegistryError::Store {
+            message: "stored credential grant lease_count is negative".to_owned(),
         })?,
         created_at_ms: row
             .try_get("created_at_ms")
-            .map_err(|error| auth_sql_error("decode grant created_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode grant created_at_ms", error))?,
         updated_at_ms: row
             .try_get("updated_at_ms")
-            .map_err(|error| auth_sql_error("decode grant updated_at_ms", error))?,
+            .map_err(|error| credential_sql_error("decode grant updated_at_ms", error))?,
     };
     record.validate()?;
     Ok(record)
 }
 
-pub(crate) fn provider_kind_to_str(value: AuthProviderKind) -> &'static str {
+pub(crate) fn provider_kind_to_str(value: CredentialProviderKind) -> &'static str {
     match value {
-        AuthProviderKind::StaticToken => "static_token",
-        AuthProviderKind::McpOAuth => "mcp_oauth",
-        AuthProviderKind::GitHubApp => "github_app",
-        AuthProviderKind::CustomOAuth => "custom_oauth",
-        AuthProviderKind::ModelApiKey => "model_api_key",
-        AuthProviderKind::ModelOAuth => "model_oauth",
-        AuthProviderKind::ModelEndpoint => "model_endpoint",
+        CredentialProviderKind::StaticToken => "static_token",
+        CredentialProviderKind::McpOAuth => "mcp_oauth",
+        CredentialProviderKind::GitHubApp => "github_app",
+        CredentialProviderKind::CustomOAuth => "custom_oauth",
+        CredentialProviderKind::ModelApiKey => "model_api_key",
+        CredentialProviderKind::ModelOAuth => "model_oauth",
+        CredentialProviderKind::ModelEndpoint => "model_endpoint",
     }
 }
 
-pub(crate) fn grant_exposure_to_str(value: AuthGrantExposure) -> &'static str {
+pub(crate) fn grant_exposure_to_str(value: CredentialGrantExposure) -> &'static str {
     match value {
-        AuthGrantExposure::Brokered => "brokered",
-        AuthGrantExposure::Retrievable => "retrievable",
+        CredentialGrantExposure::Brokered => "brokered",
+        CredentialGrantExposure::Retrievable => "retrievable",
     }
 }
 
-pub(crate) fn grant_exposure_from_str(value: &str) -> Result<AuthGrantExposure, AuthRegistryError> {
+pub(crate) fn grant_exposure_from_str(
+    value: &str,
+) -> Result<CredentialGrantExposure, CredentialRegistryError> {
     match value {
-        "brokered" => Ok(AuthGrantExposure::Brokered),
-        "retrievable" => Ok(AuthGrantExposure::Retrievable),
-        other => Err(AuthRegistryError::Store {
-            message: format!("unsupported auth grant exposure '{other}'"),
+        "brokered" => Ok(CredentialGrantExposure::Brokered),
+        "retrievable" => Ok(CredentialGrantExposure::Retrievable),
+        other => Err(CredentialRegistryError::Store {
+            message: format!("unsupported credential grant exposure '{other}'"),
         }),
     }
 }
 
-pub(crate) fn provider_kind_from_str(value: &str) -> Result<AuthProviderKind, AuthRegistryError> {
+pub(crate) fn provider_kind_from_str(
+    value: &str,
+) -> Result<CredentialProviderKind, CredentialRegistryError> {
     match value {
-        "static_token" => Ok(AuthProviderKind::StaticToken),
-        "mcp_oauth" => Ok(AuthProviderKind::McpOAuth),
-        "github_app" => Ok(AuthProviderKind::GitHubApp),
-        "custom_oauth" => Ok(AuthProviderKind::CustomOAuth),
-        "model_api_key" => Ok(AuthProviderKind::ModelApiKey),
-        "model_oauth" => Ok(AuthProviderKind::ModelOAuth),
-        "model_endpoint" => Ok(AuthProviderKind::ModelEndpoint),
-        other => Err(AuthRegistryError::Store {
-            message: format!("unsupported auth provider kind '{other}'"),
+        "static_token" => Ok(CredentialProviderKind::StaticToken),
+        "mcp_oauth" => Ok(CredentialProviderKind::McpOAuth),
+        "github_app" => Ok(CredentialProviderKind::GitHubApp),
+        "custom_oauth" => Ok(CredentialProviderKind::CustomOAuth),
+        "model_api_key" => Ok(CredentialProviderKind::ModelApiKey),
+        "model_oauth" => Ok(CredentialProviderKind::ModelOAuth),
+        "model_endpoint" => Ok(CredentialProviderKind::ModelEndpoint),
+        other => Err(CredentialRegistryError::Store {
+            message: format!("unsupported credential provider kind '{other}'"),
         }),
     }
 }
 
-fn grant_status_to_str(value: AuthGrantStatus) -> &'static str {
+fn grant_status_to_str(value: CredentialGrantStatus) -> &'static str {
     match value {
-        AuthGrantStatus::Active => "active",
-        AuthGrantStatus::NeedsReauth => "needs_reauth",
-        AuthGrantStatus::Revoked => "revoked",
-        AuthGrantStatus::Failed => "failed",
+        CredentialGrantStatus::Active => "active",
+        CredentialGrantStatus::NeedsReauth => "needs_reauth",
+        CredentialGrantStatus::Revoked => "revoked",
+        CredentialGrantStatus::Failed => "failed",
     }
 }
 
-fn grant_status_from_str(value: &str) -> Result<AuthGrantStatus, AuthRegistryError> {
+fn grant_status_from_str(value: &str) -> Result<CredentialGrantStatus, CredentialRegistryError> {
     match value {
-        "active" => Ok(AuthGrantStatus::Active),
-        "needs_reauth" => Ok(AuthGrantStatus::NeedsReauth),
-        "revoked" => Ok(AuthGrantStatus::Revoked),
-        "failed" => Ok(AuthGrantStatus::Failed),
-        other => Err(AuthRegistryError::Store {
-            message: format!("unsupported auth grant status '{other}'"),
+        "active" => Ok(CredentialGrantStatus::Active),
+        "needs_reauth" => Ok(CredentialGrantStatus::NeedsReauth),
+        "revoked" => Ok(CredentialGrantStatus::Revoked),
+        "failed" => Ok(CredentialGrantStatus::Failed),
+        other => Err(CredentialRegistryError::Store {
+            message: format!("unsupported credential grant status '{other}'"),
         }),
     }
 }
 
-pub(crate) fn auth_store_error(action: &str, error: crate::PgStoreError) -> AuthRegistryError {
-    AuthRegistryError::Store {
+pub(crate) fn credential_store_error(
+    action: &str,
+    error: crate::PgStoreError,
+) -> CredentialRegistryError {
+    CredentialRegistryError::Store {
         message: format!("{action}: {error}"),
     }
 }
 
-pub(crate) fn auth_sql_error(action: &str, error: sqlx::Error) -> AuthRegistryError {
-    AuthRegistryError::Store {
+pub(crate) fn credential_sql_error(action: &str, error: sqlx::Error) -> CredentialRegistryError {
+    CredentialRegistryError::Store {
         message: format!("{action}: {error}"),
     }
 }
@@ -786,13 +799,13 @@ mod tests {
     #[test]
     fn stored_provider_kinds_round_trip_and_pass_the_latest_check() {
         for kind in [
-            AuthProviderKind::StaticToken,
-            AuthProviderKind::McpOAuth,
-            AuthProviderKind::GitHubApp,
-            AuthProviderKind::CustomOAuth,
-            AuthProviderKind::ModelApiKey,
-            AuthProviderKind::ModelOAuth,
-            AuthProviderKind::ModelEndpoint,
+            CredentialProviderKind::StaticToken,
+            CredentialProviderKind::McpOAuth,
+            CredentialProviderKind::GitHubApp,
+            CredentialProviderKind::CustomOAuth,
+            CredentialProviderKind::ModelApiKey,
+            CredentialProviderKind::ModelOAuth,
+            CredentialProviderKind::ModelEndpoint,
         ] {
             let stored = provider_kind_to_str(kind);
             assert_eq!(provider_kind_from_str(stored).unwrap(), kind);
@@ -824,13 +837,13 @@ mod tests {
                 &nonce,
                 &ciphertext
             ),
-            Err(AuthRegistryError::Store { .. })
+            Err(CredentialRegistryError::Store { .. })
         ));
         let mut tampered = ciphertext;
         tampered[0] ^= 1;
         assert!(matches!(
             open_secret(&cipher, aad, &nonce, &tampered),
-            Err(AuthRegistryError::Store { .. })
+            Err(CredentialRegistryError::Store { .. })
         ));
     }
 

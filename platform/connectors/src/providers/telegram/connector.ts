@@ -18,7 +18,7 @@ type TelegramMessage = NonNullable<Context["message"]>;
 export interface TelegramConnectorConfig {
   universeId: string;
   accountId: string;
-  /** The leased bot token (`auth/grants/lease`); re-leased when Telegram rejects it. */
+  /** The leased bot token (`credentials/grants/lease`); re-leased when Telegram rejects it. */
   token: TokenSource;
   gate: InboundGate;
   health: IngressHealth;

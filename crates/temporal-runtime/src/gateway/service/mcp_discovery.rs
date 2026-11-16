@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use auth::{PinnedHttpPolicy, PrivateNetworkAccess, SecretValue};
+use credentials::{PinnedHttpPolicy, PrivateNetworkAccess, SecretValue};
 use futures_util::{StreamExt, stream::BoxStream};
 use http::{HeaderName, HeaderValue};
 use llm_runtime::secrets::{
@@ -158,9 +158,9 @@ pub(crate) async fn resolve_mcp_request_headers(
         let header_name = HeaderName::from_bytes(name.as_bytes())
             .map_err(|_| invalid(format!("MCP header name {name:?} is invalid")))?;
         let header_value = match value {
-            auth::RequestHeaderValue::Literal { value } => HeaderValue::from_str(value)
+            credentials::RequestHeaderValue::Literal { value } => HeaderValue::from_str(value)
                 .map_err(|_| invalid(format!("MCP header {name:?} value is invalid")))?,
-            auth::RequestHeaderValue::Credential { .. } => {
+            credentials::RequestHeaderValue::Credential { .. } => {
                 // The secret resolver reads the server's live record, so a
                 // tool call started before a change sends what is configured
                 // now. It hands the token back as text; this is the same
@@ -168,7 +168,7 @@ pub(crate) async fn resolve_mcp_request_headers(
                 let resolved = secrets
                     .resolve(&secret_ref, Some(&record.server_url))
                     .await?;
-                auth::credential_header_value(resolved.expose())
+                credentials::credential_header_value(resolved.expose())
                     .map_err(|error| invalid(format!("MCP header {name:?}: {error}")))?
             }
         };
@@ -448,7 +448,9 @@ impl BoundedReqwestClient {
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default()
             .to_owned();
-        if let Ok(parsed) = auth::parse_mcp_oauth_challenge(&challenge, response.url().as_str()) {
+        if let Ok(parsed) =
+            credentials::parse_mcp_oauth_challenge(&challenge, response.url().as_str())
+        {
             if parsed.insufficient_scope && !parsed.required_scopes.is_empty() {
                 self.diagnostics.record(
                     failure(
@@ -1453,16 +1455,26 @@ mod tests {
 
     #[test]
     fn public_ip_filter_rejects_private_and_special_ranges() {
-        assert!(!auth::is_public_network_ip("127.0.0.1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("10.0.0.1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("169.254.1.1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("::1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip("fe80::1".parse().unwrap()));
-        assert!(!auth::is_public_network_ip(
+        assert!(!credentials::is_public_network_ip(
+            "127.0.0.1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip(
+            "10.0.0.1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip(
+            "169.254.1.1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip("::1".parse().unwrap()));
+        assert!(!credentials::is_public_network_ip(
+            "fe80::1".parse().unwrap()
+        ));
+        assert!(!credentials::is_public_network_ip(
             "::ffff:127.0.0.1".parse().unwrap()
         ));
-        assert!(auth::is_public_network_ip("1.1.1.1".parse().unwrap()));
-        assert!(auth::is_public_network_ip(
+        assert!(credentials::is_public_network_ip(
+            "1.1.1.1".parse().unwrap()
+        ));
+        assert!(credentials::is_public_network_ip(
             "2606:4700:4700::1111".parse().unwrap()
         ));
     }
@@ -1765,17 +1777,17 @@ mod tests {
     }
 
     fn header_record() -> mcp::McpServerRecord {
-        let mut headers = auth::RequestHeaders::new();
+        let mut headers = credentials::RequestHeaders::new();
         headers.insert(
             "x-upstream-url".to_owned(),
-            auth::RequestHeaderValue::Literal {
+            credentials::RequestHeaderValue::Literal {
                 value: "https://tracker.example.com".to_owned(),
             },
         );
         headers.insert(
             "x-upstream-token".to_owned(),
-            auth::RequestHeaderValue::Credential {
-                grant_id: auth::AuthGrantId::new("authgrant_upstream"),
+            credentials::RequestHeaderValue::Credential {
+                grant_id: credentials::CredentialGrantId::new("authgrant_upstream"),
             },
         );
         mcp::McpServerRecord {
@@ -2180,7 +2192,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains(&auth::PinnedHttpError::NonPublicAddress.to_string()),
+                .contains(&credentials::PinnedHttpError::NonPublicAddress.to_string()),
             "{error}"
         );
         server.abort();

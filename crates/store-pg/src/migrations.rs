@@ -18,12 +18,6 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
     "agent_profiles",
-    "auth_clients",
-    "auth_flows",
-    "auth_grants",
-    "auth_provider_headers",
-    "auth_providers",
-    "auth_secrets",
     "bot_events",
     "bot_triggers",
     "bots",
@@ -34,6 +28,12 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "cas_sweep_cursors",
     "channel_accounts",
     "channel_pairings",
+    "credentials_clients",
+    "credentials_flows",
+    "credentials_grants",
+    "credentials_provider_headers",
+    "credentials_providers",
+    "credentials_secrets",
     "environment_credentials",
     "environment_provider_bindings",
     "environment_providers",
@@ -192,9 +192,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "runtime_tokens",
         sql: include_str!("../migrations/026_runtime_tokens.sql"),
     },
+    EmbeddedMigration {
+        version: 27,
+        name: "credentials_namespace",
+        sql: include_str!("../migrations/027_credentials_namespace.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 26;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 27;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {
@@ -476,6 +481,13 @@ mod tests {
                 .or_else(|| line.strip_prefix("DROP TABLE "))
             {
                 migrated_tables.remove(name.trim_end_matches(';'));
+            } else if let Some((old_name, new_name)) = line
+                .strip_prefix("ALTER TABLE ")
+                .and_then(|line| line.strip_suffix(';'))
+                .and_then(|line| line.split_once(" RENAME TO "))
+            {
+                migrated_tables.remove(old_name);
+                migrated_tables.insert(new_name.to_owned());
             } else if let Some(name) = line
                 .strip_prefix("CREATE TABLE IF NOT EXISTS ")
                 .or_else(|| line.strip_prefix("CREATE TABLE "))

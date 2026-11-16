@@ -619,10 +619,12 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
         CredentialCommand::Bind(args) => {
             let source = match (args.grant_id, args.provider_id) {
                 (Some(grant_id), None) => {
-                    api::EnvironmentCredentialSourceView::AuthGrant { grant_id }
+                    api::EnvironmentCredentialSourceView::CredentialGrant { grant_id }
                 }
                 (None, Some(provider_id)) => {
-                    api::EnvironmentCredentialSourceView::AuthProviderCredential { provider_id }
+                    api::EnvironmentCredentialSourceView::CredentialProviderCredential {
+                        provider_id,
+                    }
                 }
                 _ => anyhow::bail!("specify exactly one of --grant and --provider-id"),
             };

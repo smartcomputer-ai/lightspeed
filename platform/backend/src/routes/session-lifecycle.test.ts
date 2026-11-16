@@ -29,7 +29,7 @@ function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMu
     return Response.json({ id: rpc.id, result: { result, notifications: [] } });
   }));
   const db = { insert: () => ({ values: audits }), select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "universe", lightspeedUniverseId: "runtime-universe" }] }) }) }) };
-  const ctx = { db, env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_fixture" } } as unknown as AppContext;
+  const ctx = { db, env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as unknown as AppContext;
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "member", role: auth.platformAdmin ? "admin" : "user" } } as ApiVariables["session"]);

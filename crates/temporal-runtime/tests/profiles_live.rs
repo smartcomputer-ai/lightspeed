@@ -355,7 +355,7 @@ async fn register_fake_provider(
             data_route_base: None,
             credential: match controller.credential() {
                 Some(credential) => {
-                    ProviderCredentialChange::Set(auth::SecretValue::new(credential))
+                    ProviderCredentialChange::Set(credentials::SecretValue::new(credential))
                 }
                 None => ProviderCredentialChange::Keep,
             },

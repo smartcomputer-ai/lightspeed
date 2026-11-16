@@ -37,8 +37,8 @@ const SETTINGS_NAV: UniverseNavItem[] = [
   { path: "settings/templates", label: "Templates", icon: TemplateIcon, action: "configureResource" },
 ];
 
-/// The work itself (with the workspaces that hold it), the setup agents are made from, access (credentials,
-/// keys and members), and the universe's settings. A group renders only when
+/// The work itself (with the workspaces that hold it), the setup agents are made from, access (credentials
+/// and members), and the universe's settings. A group renders only when
 /// one of its items is visible.
 export const UNIVERSE_NAV: UniverseNavGroup[] = [
   {

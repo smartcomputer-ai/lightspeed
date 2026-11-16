@@ -127,25 +127,27 @@ pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE: &str =
 
 // ── Universe: auth ──────────────────────────────────────────────────────────
 
-pub const METHOD_AUTH_GRANTS_IMPORT: &str = "auth/grants/import";
-pub const METHOD_AUTH_GRANTS_LEASE: &str = "auth/grants/lease";
-pub const METHOD_AUTH_GRANTS_READ: &str = "auth/grants/read";
-pub const METHOD_AUTH_GRANTS_LIST: &str = "auth/grants/list";
-pub const METHOD_AUTH_GRANTS_PUT: &str = "auth/grants/put";
-pub const METHOD_AUTH_GRANTS_REVOKE: &str = "auth/grants/revoke";
-pub const METHOD_AUTH_CLIENTS_CREATE: &str = "auth/clients/create";
-pub const METHOD_AUTH_CLIENTS_READ: &str = "auth/clients/read";
-pub const METHOD_AUTH_CLIENTS_LIST: &str = "auth/clients/list";
-pub const METHOD_AUTH_CLIENTS_DELETE: &str = "auth/clients/delete";
-pub const METHOD_AUTH_FLOWS_START: &str = "auth/flows/start";
-pub const METHOD_AUTH_FLOWS_READ: &str = "auth/flows/read";
-pub const METHOD_AUTH_PROVIDERS_CREATE: &str = "auth/providers/create";
-pub const METHOD_AUTH_PROVIDERS_PUT: &str = "auth/providers/put";
-pub const METHOD_AUTH_PROVIDERS_READ: &str = "auth/providers/read";
-pub const METHOD_AUTH_PROVIDERS_LIST: &str = "auth/providers/list";
-pub const METHOD_AUTH_PROVIDERS_DELETE: &str = "auth/providers/delete";
-pub const METHOD_AUTH_GITHUB_INSTALLATIONS_LIST: &str = "auth/github/installations/list";
-pub const METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT: &str = "auth/github/installations/grant";
+pub const METHOD_CREDENTIALS_GRANTS_IMPORT: &str = "credentials/grants/import";
+pub const METHOD_CREDENTIALS_GRANTS_LEASE: &str = "credentials/grants/lease";
+pub const METHOD_CREDENTIALS_GRANTS_READ: &str = "credentials/grants/read";
+pub const METHOD_CREDENTIALS_GRANTS_LIST: &str = "credentials/grants/list";
+pub const METHOD_CREDENTIALS_GRANTS_PUT: &str = "credentials/grants/put";
+pub const METHOD_CREDENTIALS_GRANTS_REVOKE: &str = "credentials/grants/revoke";
+pub const METHOD_CREDENTIALS_CLIENTS_CREATE: &str = "credentials/clients/create";
+pub const METHOD_CREDENTIALS_CLIENTS_READ: &str = "credentials/clients/read";
+pub const METHOD_CREDENTIALS_CLIENTS_LIST: &str = "credentials/clients/list";
+pub const METHOD_CREDENTIALS_CLIENTS_DELETE: &str = "credentials/clients/delete";
+pub const METHOD_CREDENTIALS_FLOWS_START: &str = "credentials/flows/start";
+pub const METHOD_CREDENTIALS_FLOWS_READ: &str = "credentials/flows/read";
+pub const METHOD_CREDENTIALS_PROVIDERS_CREATE: &str = "credentials/providers/create";
+pub const METHOD_CREDENTIALS_PROVIDERS_PUT: &str = "credentials/providers/put";
+pub const METHOD_CREDENTIALS_PROVIDERS_READ: &str = "credentials/providers/read";
+pub const METHOD_CREDENTIALS_PROVIDERS_LIST: &str = "credentials/providers/list";
+pub const METHOD_CREDENTIALS_PROVIDERS_DELETE: &str = "credentials/providers/delete";
+pub const METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST: &str =
+    "credentials/github/installations/list";
+pub const METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT: &str =
+    "credentials/github/installations/grant";
 
 // ── Universe: bots ──────────────────────────────────────────────────────────
 

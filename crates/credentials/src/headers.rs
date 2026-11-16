@@ -22,25 +22,25 @@ use thiserror::Error;
 use api::is_credential_only_header;
 
 use crate::{
-    AuthBrokerError, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthProviderKind,
-    AuthTokenBroker, TokenAudience, audience_covers,
+    CredentialBrokerError, CredentialGrantId, CredentialGrantRecord, CredentialGrantStatus,
+    CredentialProviderKind, CredentialTokenBroker, TokenAudience, audience_covers,
 };
 
 /// Configured request headers of one owner, keyed by lowercased header name.
 pub type RequestHeaders = BTreeMap<String, RequestHeaderValue>;
 
 /// Value of one configured request header. A literal is configuration and is
-/// returned by reads; a credential names a universe auth grant whose token is
+/// returned by reads; a credential names a universe credential grant whose token is
 /// resolved at each request and sent raw.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RequestHeaderValue {
     Literal { value: String },
-    Credential { grant_id: AuthGrantId },
+    Credential { grant_id: CredentialGrantId },
 }
 
 impl RequestHeaderValue {
-    pub fn grant_id(&self) -> Option<&AuthGrantId> {
+    pub fn grant_id(&self) -> Option<&CredentialGrantId> {
         match self {
             Self::Literal { .. } => None,
             Self::Credential { grant_id } => Some(grant_id),
@@ -116,8 +116,8 @@ pub enum HeaderCredentialError {
     NotActive {
         owner: &'static str,
         header: String,
-        grant_id: AuthGrantId,
-        status: AuthGrantStatus,
+        grant_id: CredentialGrantId,
+        status: CredentialGrantStatus,
     },
 
     #[error(
@@ -127,8 +127,8 @@ pub enum HeaderCredentialError {
     NotStaticToken {
         owner: &'static str,
         header: String,
-        grant_id: AuthGrantId,
-        provider_kind: AuthProviderKind,
+        grant_id: CredentialGrantId,
+        provider_kind: CredentialProviderKind,
     },
 
     #[error("credential {grant_id} for {owner} header {header:?} does not cover {target}")]
@@ -136,7 +136,7 @@ pub enum HeaderCredentialError {
         owner: &'static str,
         target: &'static str,
         header: String,
-        grant_id: AuthGrantId,
+        grant_id: CredentialGrantId,
     },
 }
 
@@ -262,10 +262,10 @@ impl RequestHeaderPolicy {
         &self,
         header: &str,
         target_url: &str,
-        grant: &AuthGrantRecord,
+        grant: &CredentialGrantRecord,
     ) -> Result<(), HeaderCredentialError> {
         let owner = self.owner;
-        if grant.status != AuthGrantStatus::Active {
+        if grant.status != CredentialGrantStatus::Active {
             return Err(HeaderCredentialError::NotActive {
                 owner,
                 header: header.to_owned(),
@@ -273,7 +273,7 @@ impl RequestHeaderPolicy {
                 status: grant.status,
             });
         }
-        if grant.provider_kind != AuthProviderKind::StaticToken {
+        if grant.provider_kind != CredentialProviderKind::StaticToken {
             return Err(HeaderCredentialError::NotStaticToken {
                 owner,
                 header: header.to_owned(),
@@ -329,14 +329,14 @@ fn is_sendable_value(value: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CredentialHeaderError {
     #[error("credential {grant_id} no longer exists")]
-    NotFound { grant_id: AuthGrantId },
+    NotFound { grant_id: CredentialGrantId },
 
     #[error("credential {grant_id} does not cover the URL the header is sent to")]
-    AudienceMismatch { grant_id: AuthGrantId },
+    AudienceMismatch { grant_id: CredentialGrantId },
 
     #[error("credential {grant_id} cannot be used: {message}")]
     NotUsable {
-        grant_id: AuthGrantId,
+        grant_id: CredentialGrantId,
         message: String,
     },
 
@@ -352,21 +352,21 @@ pub enum CredentialHeaderError {
 /// now, so a revoked or rebound credential fails the request instead of
 /// sending a stale value. The value is marked sensitive.
 pub async fn resolve_credential_header(
-    broker: &dyn AuthTokenBroker,
-    grant_id: &AuthGrantId,
+    broker: &dyn CredentialTokenBroker,
+    grant_id: &CredentialGrantId,
     audience: &TokenAudience,
 ) -> Result<HeaderValue, CredentialHeaderError> {
     let token = broker
         .bearer_token(grant_id, audience)
         .await
         .map_err(|error| match error {
-            AuthBrokerError::GrantNotFound { grant_id } => {
+            CredentialBrokerError::GrantNotFound { grant_id } => {
                 CredentialHeaderError::NotFound { grant_id }
             }
-            AuthBrokerError::AudienceMismatch { grant_id, .. } => {
+            CredentialBrokerError::AudienceMismatch { grant_id, .. } => {
                 CredentialHeaderError::AudienceMismatch { grant_id }
             }
-            AuthBrokerError::Store { message } => CredentialHeaderError::Store { message },
+            CredentialBrokerError::Store { message } => CredentialHeaderError::Store { message },
             other => CredentialHeaderError::NotUsable {
                 grant_id: grant_id.clone(),
                 message: other.to_string(),
@@ -397,9 +397,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        AuthGrantExposure, AuthGrantStore, CreateAuthGrantRecord, InMemoryAuthGrantStore,
-        InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord, RegistryTokenBroker,
-        SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
+        CreateCredentialGrantRecord, CredentialGrantExposure, CredentialGrantStore,
+        InMemoryCredentialGrantStore, InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord,
+        RegistryTokenBroker, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
     };
 
     const POLICY: RequestHeaderPolicy = RequestHeaderPolicy {
@@ -417,7 +417,7 @@ mod tests {
 
     fn credential(grant_id: &str) -> RequestHeaderValue {
         RequestHeaderValue::Credential {
-            grant_id: AuthGrantId::new(grant_id),
+            grant_id: CredentialGrantId::new(grant_id),
         }
     }
 
@@ -586,20 +586,23 @@ mod tests {
             serde_json::from_value::<RequestHeaderValue>(json).unwrap(),
             reference
         );
-        assert_eq!(reference.grant_id(), Some(&AuthGrantId::new("authgrant_1")));
+        assert_eq!(
+            reference.grant_id(),
+            Some(&CredentialGrantId::new("authgrant_1"))
+        );
         assert_eq!(literal("acme").grant_id(), None);
     }
 
     fn grant_draft(
-        kind: AuthProviderKind,
-        status: AuthGrantStatus,
+        kind: CredentialProviderKind,
+        status: CredentialGrantStatus,
         audience: Option<&str>,
-    ) -> CreateAuthGrantRecord {
-        CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new("authgrant_header"),
+    ) -> CreateCredentialGrantRecord {
+        CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new("authgrant_header"),
             provider_id: "static".to_owned(),
             provider_kind: kind,
-            exposure: AuthGrantExposure::default(),
+            exposure: CredentialGrantExposure::default(),
             created_by: Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -616,22 +619,23 @@ mod tests {
     }
 
     fn grant(
-        kind: AuthProviderKind,
-        status: AuthGrantStatus,
+        kind: CredentialProviderKind,
+        status: CredentialGrantStatus,
         audience: Option<&str>,
-    ) -> AuthGrantRecord {
+    ) -> CredentialGrantRecord {
         grant_draft(kind, status, audience).into_record()
     }
 
     #[test]
     fn a_header_names_only_an_active_static_token_that_covers_the_target() {
         let target = "https://router.example/v1";
-        let check = |grant: &AuthGrantRecord| POLICY.check_credential("x-api-key", target, grant);
+        let check =
+            |grant: &CredentialGrantRecord| POLICY.check_credential("x-api-key", target, grant);
 
         for audience in [None, Some("https://router.example"), Some(target)] {
             let grant = grant(
-                AuthProviderKind::StaticToken,
-                AuthGrantStatus::Active,
+                CredentialProviderKind::StaticToken,
+                CredentialGrantStatus::Active,
                 audience,
             );
             assert_eq!(check(&grant), Ok(()), "{audience:?}");
@@ -639,29 +643,29 @@ mod tests {
 
         assert!(matches!(
             check(&grant(
-                AuthProviderKind::StaticToken,
-                AuthGrantStatus::Revoked,
+                CredentialProviderKind::StaticToken,
+                CredentialGrantStatus::Revoked,
                 None
             )),
             Err(HeaderCredentialError::NotActive {
-                status: AuthGrantStatus::Revoked,
+                status: CredentialGrantStatus::Revoked,
                 ..
             })
         ));
         assert!(matches!(
             check(&grant(
-                AuthProviderKind::McpOAuth,
-                AuthGrantStatus::Active,
+                CredentialProviderKind::McpOAuth,
+                CredentialGrantStatus::Active,
                 None
             )),
             Err(HeaderCredentialError::NotStaticToken {
-                provider_kind: AuthProviderKind::McpOAuth,
+                provider_kind: CredentialProviderKind::McpOAuth,
                 ..
             })
         ));
         let elsewhere = check(&grant(
-            AuthProviderKind::StaticToken,
-            AuthGrantStatus::Active,
+            CredentialProviderKind::StaticToken,
+            CredentialGrantStatus::Active,
             Some("https://other.example"),
         ))
         .expect_err("another audience");
@@ -697,9 +701,9 @@ mod tests {
     async fn broker_with_token(
         token: &str,
         audience: Option<&str>,
-    ) -> (RegistryTokenBroker, Arc<InMemoryAuthGrantStore>) {
+    ) -> (RegistryTokenBroker, Arc<InMemoryCredentialGrantStore>) {
         let secrets = Arc::new(InMemorySecretStore::new());
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_header"),
@@ -711,8 +715,8 @@ mod tests {
             .expect("store token");
         grants
             .create_grant(grant_draft(
-                AuthProviderKind::StaticToken,
-                AuthGrantStatus::Active,
+                CredentialProviderKind::StaticToken,
+                CredentialGrantStatus::Active,
                 audience,
             ))
             .await
@@ -724,7 +728,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_credential_header_resolves_to_its_current_token() {
-        let grant_id = AuthGrantId::new("authgrant_header");
+        let grant_id = CredentialGrantId::new("authgrant_header");
         let target = TokenAudience::ModelProvider("https://router.example/v1".to_owned());
 
         for audience in [None, Some("https://router.example")] {
@@ -739,18 +743,19 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn an_unusable_credential_fails_with_a_typed_error() {
-        let grant_id = AuthGrantId::new("authgrant_header");
+        let grant_id = CredentialGrantId::new("authgrant_header");
         let target = TokenAudience::McpResource("https://crm.example/mcp".to_owned());
 
         let (broker, grants) = broker_with_token("router-token", None).await;
         assert_eq!(
-            resolve_credential_header(&broker, &AuthGrantId::new("authgrant_gone"), &target).await,
+            resolve_credential_header(&broker, &CredentialGrantId::new("authgrant_gone"), &target)
+                .await,
             Err(CredentialHeaderError::NotFound {
-                grant_id: AuthGrantId::new("authgrant_gone"),
+                grant_id: CredentialGrantId::new("authgrant_gone"),
             })
         );
         grants
-            .update_grant_status(&grant_id, AuthGrantStatus::Revoked, 2)
+            .update_grant_status(&grant_id, CredentialGrantStatus::Revoked, 2)
             .await
             .expect("revoke");
         assert!(matches!(

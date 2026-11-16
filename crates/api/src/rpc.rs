@@ -539,7 +539,7 @@ api_methods! {
     METHOD_VFS_WORKSPACES_DELETE => delete_vfs_workspace(VfsWorkspaceDeleteParams) -> VfsWorkspaceDeleteResponse =>
         ["Delete a VFS workspace", "Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MCP_SERVERS_PUT => put_mcp_server(McpServerPutParams) -> McpServerPutResponse =>
-        ["Create or replace an MCP server record", "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+        ["Create or replace an MCP server record", "Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MCP_SERVERS_AUTH_DISCOVER => discover_mcp_server_auth(McpServerAuthDiscoverParams) -> McpServerAuthDiscoverResponse =>
         ["Discover MCP server authentication", "Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MCP_SERVERS_TOOLS_DISCOVER => discover_mcp_server_tools(McpServerToolsDiscoverParams) -> McpServerToolsDiscoverResponse =>
@@ -550,44 +550,44 @@ api_methods! {
         ["List MCP server records", "Lists the universe catalog entries, optionally filtered by lifecycle/configuration status."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_MCP_SERVERS_DELETE => delete_mcp_server(McpServerDeleteParams) -> McpServerDeleteResponse =>
         ["Delete an MCP server record", "Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_GRANTS_IMPORT => import_auth_grant(AuthGrantImportParams) -> AuthGrantImportResponse =>
+    METHOD_CREDENTIALS_GRANTS_IMPORT => import_credential_grant(CredentialGrantImportParams) -> CredentialGrantImportResponse =>
         ["Import a token credential", "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_GRANTS_LEASE => lease_auth_grant(AuthGrantLeaseParams) -> AuthGrantLeaseResponse =>
-        ["Lease a retrievable authentication grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service,
-    METHOD_AUTH_GRANTS_READ => read_auth_grant(AuthGrantReadParams) -> AuthGrantReadResponse =>
-        ["Read authentication grant metadata", "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_GRANTS_LIST => list_auth_grants(AuthGrantListParams) -> AuthGrantListResponse =>
-        ["List authentication grants", "Lists non-secret grant metadata for the universe, optionally filtered by status."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_GRANTS_PUT => put_auth_grant(AuthGrantPutParams) -> AuthGrantPutResponse =>
+    METHOD_CREDENTIALS_GRANTS_LEASE => lease_credential_grant(CredentialGrantLeaseParams) -> CredentialGrantLeaseResponse =>
+        ["Lease a retrievable credential grant", "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads."], access: MethodAccess::Service,
+    METHOD_CREDENTIALS_GRANTS_READ => read_credential_grant(CredentialGrantReadParams) -> CredentialGrantReadResponse =>
+        ["Read credential grant metadata", "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_CREDENTIALS_GRANTS_LIST => list_credential_grants(CredentialGrantListParams) -> CredentialGrantListResponse =>
+        ["List credential grants", "Lists non-secret grant metadata for the universe, optionally filtered by status."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_CREDENTIALS_GRANTS_PUT => put_credential_grant(CredentialGrantPutParams) -> CredentialGrantPutResponse =>
         ["Declare a token credential", "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_GRANTS_REVOKE => revoke_auth_grant(AuthGrantRevokeParams) -> AuthGrantRevokeResponse =>
-        ["Revoke an authentication grant", "Marks the grant unusable by token consumers while retaining non-secret audit metadata."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_CLIENTS_CREATE => create_auth_client(AuthClientCreateParams) -> AuthClientCreateResponse =>
+    METHOD_CREDENTIALS_GRANTS_REVOKE => revoke_credential_grant(CredentialGrantRevokeParams) -> CredentialGrantRevokeResponse =>
+        ["Revoke a credential grant", "Marks the grant unusable by token consumers while retaining non-secret audit metadata."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_CREDENTIALS_CLIENTS_CREATE => create_credential_client(CredentialClientCreateParams) -> CredentialClientCreateResponse =>
         ["Register an OAuth client", "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_CLIENTS_READ => read_auth_client(AuthClientReadParams) -> AuthClientReadResponse =>
+    METHOD_CREDENTIALS_CLIENTS_READ => read_credential_client(CredentialClientReadParams) -> CredentialClientReadResponse =>
         ["Read OAuth client metadata", "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_CLIENTS_LIST => list_auth_clients(AuthClientListParams) -> AuthClientListResponse =>
+    METHOD_CREDENTIALS_CLIENTS_LIST => list_credential_clients(CredentialClientListParams) -> CredentialClientListResponse =>
         ["List OAuth clients", "Lists non-secret OAuth client registrations in the universe."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_CLIENTS_DELETE => delete_auth_client(AuthClientDeleteParams) -> AuthClientDeleteResponse =>
+    METHOD_CREDENTIALS_CLIENTS_DELETE => delete_credential_client(CredentialClientDeleteParams) -> CredentialClientDeleteResponse =>
         ["Delete an OAuth client", "Deletes the client registration and its stored client secret; grants already created from it remain separate records."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_FLOWS_START => start_auth_flow(AuthFlowStartParams) -> AuthFlowStartResponse =>
-        ["Start an OAuth authorization flow", "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_FLOWS_READ => read_auth_flow_status(AuthFlowStatusParams) -> AuthFlowStatusResponse =>
+    METHOD_CREDENTIALS_FLOWS_START => start_credential_flow(CredentialFlowStartParams) -> CredentialFlowStartResponse =>
+        ["Start an OAuth authorization flow", "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_CREDENTIALS_FLOWS_READ => read_credential_flow_status(CredentialFlowStatusParams) -> CredentialFlowStatusResponse =>
         ["Read OAuth flow status", "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_PROVIDERS_CREATE => create_auth_provider(AuthProviderCreateParams) -> AuthProviderCreateResponse =>
-        ["Register an authentication provider", "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_PROVIDERS_PUT => put_auth_provider(AuthProviderPutParams) -> AuthProviderPutResponse =>
-        ["Declare an authentication provider", "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_PROVIDERS_READ => read_auth_provider(AuthProviderReadParams) -> AuthProviderReadResponse =>
-        ["Read authentication provider metadata", "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_PROVIDERS_LIST => list_auth_providers(AuthProviderListParams) -> AuthProviderListResponse =>
-        ["List authentication providers", "Lists non-secret model/GitHub provider registrations for the universe."], access: MethodAccess::Universe(UniverseAction::Read),
-    METHOD_AUTH_PROVIDERS_DELETE => delete_auth_provider(AuthProviderDeleteParams) -> AuthProviderDeleteResponse =>
-        ["Delete an authentication provider", "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_GITHUB_INSTALLATIONS_LIST => list_github_installations(AuthGitHubInstallationListParams) -> AuthGitHubInstallationListResponse =>
+    METHOD_CREDENTIALS_PROVIDERS_CREATE => create_credential_provider(CredentialProviderCreateParams) -> CredentialProviderCreateResponse =>
+        ["Register a credential provider", "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_CREDENTIALS_PROVIDERS_PUT => put_credential_provider(CredentialProviderPutParams) -> CredentialProviderPutResponse =>
+        ["Declare a credential provider", "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_CREDENTIALS_PROVIDERS_READ => read_credential_provider(CredentialProviderReadParams) -> CredentialProviderReadResponse =>
+        ["Read credential provider metadata", "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_CREDENTIALS_PROVIDERS_LIST => list_credential_providers(CredentialProviderListParams) -> CredentialProviderListResponse =>
+        ["List credential providers", "Lists non-secret model/GitHub provider registrations for the universe."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_CREDENTIALS_PROVIDERS_DELETE => delete_credential_provider(CredentialProviderDeleteParams) -> CredentialProviderDeleteResponse =>
+        ["Delete a credential provider", "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST => list_github_installations(CredentialGitHubInstallationListParams) -> CredentialGitHubInstallationListResponse =>
         ["List GitHub App installations", "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
-    METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT => grant_github_installation(AuthGitHubInstallationGrantParams) -> AuthGitHubInstallationGrantResponse =>
-        ["Grant access to a GitHub App installation", "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT => grant_github_installation(CredentialGitHubInstallationGrantParams) -> CredentialGitHubInstallationGrantResponse =>
+        ["Grant access to a GitHub App installation", "Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_BOTS_CREATE => create_bot(BotCreateParams) -> BotCreateResponse =>
         ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id."], access: MethodAccess::Universe(UniverseAction::CreateBot),
     METHOD_BOTS_PUT => put_bot(BotPutParams) -> BotPutResponse =>

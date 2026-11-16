@@ -8258,7 +8258,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "mcp/servers/put",
     "group": "mcp",
     "summary": "Create or replace an MCP server record",
-    "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
+    "description": "Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
     "paramsType": "McpServerPutParams",
     "resultType": "AgentApiOutcome<McpServerPutResponse>",
     "inputSchema": {
@@ -8393,7 +8393,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "McpServerCredential": {
-          "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the auth subsystem and is never returned.",
+          "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the credentials subsystem and is never returned.",
           "oneOf": [
             {
               "properties": {
@@ -8727,16 +8727,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_import",
-    "method": "auth/grants/import",
-    "group": "auth",
+    "name": "lightspeed_credentials_grants_import",
+    "method": "credentials/grants/import",
+    "group": "credentials",
     "summary": "Import a token credential",
     "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
-    "paramsType": "AuthGrantImportParams",
-    "resultType": "AgentApiOutcome<AuthGrantImportResponse>",
+    "paramsType": "CredentialGrantImportParams",
+    "resultType": "AgentApiOutcome<CredentialGrantImportResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Import a new token credential as an auth grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
+      "description": "Import a new token credential as a credential grant, under the given id or an\nallocated one; an id already in use is a conflict. Together with\n[`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:\n`token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request\nlogging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -8760,7 +8760,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered"
@@ -8801,7 +8801,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -8820,13 +8820,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_read",
-    "method": "auth/grants/read",
-    "group": "auth",
-    "summary": "Read authentication grant metadata",
+    "name": "lightspeed_credentials_grants_read",
+    "method": "credentials/grants/read",
+    "group": "credentials",
+    "summary": "Read credential grant metadata",
     "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
-    "paramsType": "AuthGrantReadParams",
-    "resultType": "AgentApiOutcome<AuthGrantReadResponse>",
+    "paramsType": "CredentialGrantReadParams",
+    "resultType": "AgentApiOutcome<CredentialGrantReadResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8841,20 +8841,20 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_list",
-    "method": "auth/grants/list",
-    "group": "auth",
-    "summary": "List authentication grants",
+    "name": "lightspeed_credentials_grants_list",
+    "method": "credentials/grants/list",
+    "group": "credentials",
+    "summary": "List credential grants",
     "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
-    "paramsType": "AuthGrantListParams",
-    "resultType": "AgentApiOutcome<AuthGrantListResponse>",
+    "paramsType": "CredentialGrantListParams",
+    "resultType": "AgentApiOutcome<CredentialGrantListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "status": {
           "anyOf": [
             {
-              "$ref": "#/definitions/AuthGrantStatus"
+              "$ref": "#/definitions/CredentialGrantStatus"
             },
             {
               "type": "null"
@@ -8864,7 +8864,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "type": "object",
       "definitions": {
-        "AuthGrantStatus": {
+        "CredentialGrantStatus": {
           "enum": [
             "active",
             "needsReauth",
@@ -8877,13 +8877,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_put",
-    "method": "auth/grants/put",
-    "group": "auth",
+    "name": "lightspeed_credentials_grants_put",
+    "method": "credentials/grants/put",
+    "group": "credentials",
     "summary": "Declare a token credential",
     "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
-    "paramsType": "AuthGrantPutParams",
-    "resultType": "AgentApiOutcome<AuthGrantPutResponse>",
+    "paramsType": "CredentialGrantPutParams",
+    "resultType": "AgentApiOutcome<CredentialGrantPutResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
@@ -8915,7 +8915,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered",
@@ -8956,7 +8956,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -8975,13 +8975,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_grants_revoke",
-    "method": "auth/grants/revoke",
-    "group": "auth",
-    "summary": "Revoke an authentication grant",
+    "name": "lightspeed_credentials_grants_revoke",
+    "method": "credentials/grants/revoke",
+    "group": "credentials",
+    "summary": "Revoke a credential grant",
     "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
-    "paramsType": "AuthGrantRevokeParams",
-    "resultType": "AgentApiOutcome<AuthGrantRevokeResponse>",
+    "paramsType": "CredentialGrantRevokeParams",
+    "resultType": "AgentApiOutcome<CredentialGrantRevokeResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -8996,16 +8996,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_clients_create",
-    "method": "auth/clients/create",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_create",
+    "method": "credentials/clients/create",
+    "group": "credentials",
     "summary": "Register an OAuth client",
     "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
-    "paramsType": "AuthClientCreateParams",
-    "resultType": "AgentApiOutcome<AuthClientCreateResponse>",
+    "paramsType": "CredentialClientCreateParams",
+    "resultType": "AgentApiOutcome<CredentialClientCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `auth/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
+      "description": "Register an OAuth client configuration. `client_secret` is the second\ndeliberate inbound-plaintext path after `credentials/grants/import`: it is\nencrypted on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
       "properties": {
         "audience": {
           "type": [
@@ -9057,7 +9057,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "providerKind": {
-          "$ref": "#/definitions/AuthProviderKind"
+          "$ref": "#/definitions/CredentialProviderKind"
         },
         "remoteClientId": {
           "type": "string"
@@ -9090,7 +9090,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthProviderKind": {
+        "CredentialProviderKind": {
           "description": "On a grant, how its token is obtained; on a provider, what it configures.\n`staticToken` is a pasted secret, sent under whatever header its consumer\nuses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured\nendpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted\non demand. The `model*` kinds configure model providers; `modelEndpoint`\nis a provider without a credential and never appears on a grant.",
           "enum": [
             "staticToken",
@@ -9115,13 +9115,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_clients_read",
-    "method": "auth/clients/read",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_read",
+    "method": "credentials/clients/read",
+    "group": "credentials",
     "summary": "Read OAuth client metadata",
     "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
-    "paramsType": "AuthClientReadParams",
-    "resultType": "AgentApiOutcome<AuthClientReadResponse>",
+    "paramsType": "CredentialClientReadParams",
+    "resultType": "AgentApiOutcome<CredentialClientReadResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9136,26 +9136,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_clients_list",
-    "method": "auth/clients/list",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_list",
+    "method": "credentials/clients/list",
+    "group": "credentials",
     "summary": "List OAuth clients",
     "description": "Lists non-secret OAuth client registrations in the universe.",
-    "paramsType": "AuthClientListParams",
-    "resultType": "AgentApiOutcome<AuthClientListResponse>",
+    "paramsType": "CredentialClientListParams",
+    "resultType": "AgentApiOutcome<CredentialClientListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
     }
   },
   {
-    "name": "lightspeed_auth_clients_delete",
-    "method": "auth/clients/delete",
-    "group": "auth",
+    "name": "lightspeed_credentials_clients_delete",
+    "method": "credentials/clients/delete",
+    "group": "credentials",
     "summary": "Delete an OAuth client",
     "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
-    "paramsType": "AuthClientDeleteParams",
-    "resultType": "AgentApiOutcome<AuthClientDeleteResponse>",
+    "paramsType": "CredentialClientDeleteParams",
+    "resultType": "AgentApiOutcome<CredentialClientDeleteResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9170,13 +9170,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_flows_start",
-    "method": "auth/flows/start",
-    "group": "auth",
+    "name": "lightspeed_credentials_flows_start",
+    "method": "credentials/flows/start",
+    "group": "credentials",
     "summary": "Start an OAuth authorization flow",
-    "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
-    "paramsType": "AuthFlowStartParams",
-    "resultType": "AgentApiOutcome<AuthFlowStartResponse>",
+    "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.",
+    "paramsType": "CredentialFlowStartParams",
+    "resultType": "AgentApiOutcome<CredentialFlowStartResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9192,7 +9192,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered"
@@ -9212,7 +9212,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -9231,13 +9231,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_flows_read",
-    "method": "auth/flows/read",
-    "group": "auth",
+    "name": "lightspeed_credentials_flows_read",
+    "method": "credentials/flows/read",
+    "group": "credentials",
     "summary": "Read OAuth flow status",
     "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
-    "paramsType": "AuthFlowStatusParams",
-    "resultType": "AgentApiOutcome<AuthFlowStatusResponse>",
+    "paramsType": "CredentialFlowStatusParams",
+    "resultType": "AgentApiOutcome<CredentialFlowStatusResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9252,19 +9252,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_create",
-    "method": "auth/providers/create",
-    "group": "auth",
-    "summary": "Register an authentication provider",
+    "name": "lightspeed_credentials_providers_create",
+    "method": "credentials/providers/create",
+    "group": "credentials",
+    "summary": "Register a credential provider",
     "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
-    "paramsType": "AuthProviderCreateParams",
-    "resultType": "AgentApiOutcome<AuthProviderCreateResponse>",
+    "paramsType": "CredentialProviderCreateParams",
+    "resultType": "AgentApiOutcome<CredentialProviderCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
-      "description": "Register an auth provider. `credential` (for GitHub Apps: the private\nkey PEM) is the third deliberate inbound-plaintext path: it is encrypted\non receipt and never returned by any method. `Debug` output redacts it;\nrequest logging must never echo these params.",
+      "description": "Register a credential provider. `credential` (for GitHub Apps: the private\nkey PEM) is the third deliberate inbound-plaintext path: it is encrypted\non receipt and never returned by any method. `Debug` output redacts it;\nrequest logging must never echo these params.",
       "properties": {
         "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
+          "$ref": "#/definitions/CredentialProviderConfigInput"
         },
         "credential": {
           "type": [
@@ -9290,7 +9290,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthProviderConfigInput": {
+        "CredentialProviderConfigInput": {
           "oneOf": [
             {
               "properties": {
@@ -9338,7 +9338,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "object"
             },
             {
-              "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+              "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
               "properties": {
                 "audience": {
                   "type": [
@@ -9457,19 +9457,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_put",
-    "method": "auth/providers/put",
-    "group": "auth",
-    "summary": "Declare an authentication provider",
+    "name": "lightspeed_credentials_providers_put",
+    "method": "credentials/providers/put",
+    "group": "credentials",
+    "summary": "Declare a credential provider",
     "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
-    "paramsType": "AuthProviderPutParams",
-    "resultType": "AgentApiOutcome<AuthProviderPutResponse>",
+    "paramsType": "CredentialProviderPutParams",
+    "resultType": "AgentApiOutcome<CredentialProviderPutResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
       "properties": {
         "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
+          "$ref": "#/definitions/CredentialProviderConfigInput"
         },
         "credential": {
           "description": "The provider's credential, for the kinds that take one. Absent leaves\nthe provider without a credential.",
@@ -9498,7 +9498,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthProviderConfigInput": {
+        "CredentialProviderConfigInput": {
           "oneOf": [
             {
               "properties": {
@@ -9546,7 +9546,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "object"
             },
             {
-              "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+              "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
               "properties": {
                 "audience": {
                   "type": [
@@ -9665,13 +9665,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_read",
-    "method": "auth/providers/read",
-    "group": "auth",
-    "summary": "Read authentication provider metadata",
+    "name": "lightspeed_credentials_providers_read",
+    "method": "credentials/providers/read",
+    "group": "credentials",
+    "summary": "Read credential provider metadata",
     "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
-    "paramsType": "AuthProviderReadParams",
-    "resultType": "AgentApiOutcome<AuthProviderReadResponse>",
+    "paramsType": "CredentialProviderReadParams",
+    "resultType": "AgentApiOutcome<CredentialProviderReadResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9686,26 +9686,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_providers_list",
-    "method": "auth/providers/list",
-    "group": "auth",
-    "summary": "List authentication providers",
+    "name": "lightspeed_credentials_providers_list",
+    "method": "credentials/providers/list",
+    "group": "credentials",
+    "summary": "List credential providers",
     "description": "Lists non-secret model/GitHub provider registrations for the universe.",
-    "paramsType": "AuthProviderListParams",
-    "resultType": "AgentApiOutcome<AuthProviderListResponse>",
+    "paramsType": "CredentialProviderListParams",
+    "resultType": "AgentApiOutcome<CredentialProviderListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
     }
   },
   {
-    "name": "lightspeed_auth_providers_delete",
-    "method": "auth/providers/delete",
-    "group": "auth",
-    "summary": "Delete an authentication provider",
+    "name": "lightspeed_credentials_providers_delete",
+    "method": "credentials/providers/delete",
+    "group": "credentials",
+    "summary": "Delete a credential provider",
     "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
-    "paramsType": "AuthProviderDeleteParams",
-    "resultType": "AgentApiOutcome<AuthProviderDeleteResponse>",
+    "paramsType": "CredentialProviderDeleteParams",
+    "resultType": "AgentApiOutcome<CredentialProviderDeleteResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9720,13 +9720,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_github_installations_list",
-    "method": "auth/github/installations/list",
-    "group": "auth",
+    "name": "lightspeed_credentials_github_installs_list",
+    "method": "credentials/github/installations/list",
+    "group": "credentials",
     "summary": "List GitHub App installations",
     "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
-    "paramsType": "AuthGitHubInstallationListParams",
-    "resultType": "AgentApiOutcome<AuthGitHubInstallationListResponse>",
+    "paramsType": "CredentialGitHubInstallationListParams",
+    "resultType": "AgentApiOutcome<CredentialGitHubInstallationListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9741,13 +9741,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_auth_github_installations_grant",
-    "method": "auth/github/installations/grant",
-    "group": "auth",
+    "name": "lightspeed_credentials_github_installs_grant",
+    "method": "credentials/github/installations/grant",
+    "group": "credentials",
     "summary": "Grant access to a GitHub App installation",
-    "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
-    "paramsType": "AuthGitHubInstallationGrantParams",
-    "resultType": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>",
+    "description": "Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
+    "paramsType": "CredentialGitHubInstallationGrantParams",
+    "resultType": "AgentApiOutcome<CredentialGitHubInstallationGrantResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -9760,7 +9760,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "exposure": {
           "allOf": [
             {
-              "$ref": "#/definitions/AuthGrantExposure"
+              "$ref": "#/definitions/CredentialGrantExposure"
             }
           ],
           "default": "brokered"
@@ -9785,7 +9785,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
-        "AuthGrantExposure": {
+        "CredentialGrantExposure": {
           "description": "Where a credential's plain value may go, fixed when it is created.",
           "oneOf": [
             {
@@ -12050,7 +12050,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/ChannelAccountId"
             },
             "credentialGrantId": {
-              "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+              "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
               "type": [
                 "string",
                 "null"
@@ -12144,7 +12144,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/ChannelAccountId"
             },
             "credentialGrantId": {
-              "description": "Retrievable auth grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
+              "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
               "type": [
                 "string",
                 "null"

@@ -19,9 +19,20 @@ untrusted applications or agents.
 | `authenticated` | Requires at least one configured RPC token. Invalid credentials receive HTTP 401 before the request body is read. |
 | `single` | Unauthenticated local development, using `LIGHTSPEED_PG_UNIVERSE_ID`. Credential, universe and actor headers are rejected. |
 
-The runtime currently serves RPC, OAuth callbacks and bot webhooks on the
-same gateway listener. Restrict `/rpc` at your network or reverse-proxy boundary.
-A dedicated private RPC listener is planned separately.
+The runtime binds separate listeners:
+
+| Listener | Default | Routes |
+| --- | --- | --- |
+| Private RPC | `127.0.0.1:18080` (`LIGHTSPEED_GATEWAY_BIND`) | `/rpc` |
+| Public callbacks and webhooks | `127.0.0.1:18082` (`LIGHTSPEED_PUBLIC_BIND`) | `/credentials/callback`, `/credentials/client-metadata.json`, `/hooks/bots/…` |
+| Environment gateway | `127.0.0.1:18083` (`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`) | Daemon connections, worker routes, replica peers |
+
+Each serves `/health` and `/ready`. The `gateway` role starts the first two;
+`environment-gateway` starts the third. Bind addresses must be distinct, with
+fixed nonzero ports. Network rules should admit only trusted components and
+operators to RPC. Publish callbacks and webhooks using `LIGHTSPEED_PUBLIC_BASE_URL`.
+Daemon origins use `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` and optional
+`LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`; keep worker and peer routes private.
 
 ## Configure tokens
 

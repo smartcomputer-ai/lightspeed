@@ -107,7 +107,7 @@ show how different provider payloads map into the common contract.
 ## Resolve credentials in the connector
 
 An account's `credentialGrantId` points to a stored retrievable grant. The
-retained service client leases it through `auth/grants/lease` in the account's
+retained service client leases it through `credentials/grants/lease` in the account's
 universe. This path remains inactive while the host is disabled. Provider tokens
 are not ordinary account
 settings or workflow arguments.

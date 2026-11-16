@@ -167,201 +167,6 @@ the runtime records them without resolving caller permissions.
 """
 
 
-class AuthClientDeleteParams(TypedDict):
-    clientId: str
-
-
-class AuthClientListParams(TypedDict):
-    pass
-
-
-class AuthClientReadParams(TypedDict):
-    clientId: str
-
-
-class AuthFlowStartResponse(TypedDict):
-    authorizeUrl: str
-    """
-    Authorization URL the user must open. It embeds the one-time `state`;
-    treat it as sensitive and do not log it server-side.
-    """
-    expiresAtMs: int
-    flowId: str
-
-
-AuthFlowStatus: TypeAlias = Literal['pending', 'completed', 'failed', 'expired']
-
-
-class AuthFlowStatusParams(TypedDict):
-    flowId: str
-
-
-class AuthFlowView(TypedDict):
-    clientId: str
-    createdAtMs: int
-    error: NotRequired[str | None]
-    expiresAtMs: int
-    flowId: str
-    grantId: NotRequired[str | None]
-    providerId: str
-    status: AuthFlowStatus
-    updatedAtMs: int
-
-
-class AuthGitHubInstallationListParams(TypedDict):
-    providerId: str
-
-
-AuthGrantExposure: TypeAlias = Literal['brokered', 'retrievable']
-"""
-Where a credential's plain value may go, fixed when it is created.
-"""
-
-
-class AuthGrantImportParams(TypedDict):
-    """
-    Import a new token credential as an auth grant, under the given id or an
-    allocated one; an id already in use is a conflict. Together with
-    [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
-    `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
-    logging must never echo these params.
-    """
-
-    audience: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    expiresAtMs: NotRequired[int | None]
-    exposure: NotRequired[AuthGrantExposure]
-    grantId: NotRequired[str | None]
-    metadata: NotRequired[Any]
-    """
-    Non-secret, caller-defined metadata stored on the grant and returned
-    by reads (for example which product a pasted subscription token
-    belongs to). Must be a JSON object; never put secret material here.
-    """
-    providerId: NotRequired[str | None]
-    scopes: NotRequired[list[str]]
-    subjectHint: NotRequired[str | None]
-    token: str
-
-
-class AuthGrantLeaseParams(TypedDict):
-    """
-    Request a current access-token lease for a retrievable grant. Callers must
-    cache only in memory until shortly before `expiresAtMs` (or for at most
-    five minutes when it is absent), re-lease after target 401/403 responses,
-    and never persist the token or place it in a workflow payload.
-    """
-
-    audience: NotRequired[str | None]
-    grantId: str
-
-
-class AuthGrantPutParams(TypedDict):
-    """
-    Declare a token credential (`staticToken`): its id, its settings and the
-    token it holds. A credential that is missing is created. One that exists
-    has its settings replaced by these (an absent field is unset) and, when it
-    holds a different token, that token replaced, so MCP servers, headers,
-    bot polls and environment variables referencing the id use the new value
-    from their next request or process. Declaring it again changes nothing.
-
-    `token` is encrypted on receipt and never returned; `Debug` output redacts
-    it and request logging must never echo these params.
-    """
-
-    audience: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    dryRun: NotRequired[bool]
-    """
-    Report what the declaration would do without doing it.
-    """
-    expiresAtMs: NotRequired[int | None]
-    """
-    When the token expires. Absent means it does not expire.
-    """
-    exposure: NotRequired[AuthGrantExposure]
-    """
-    Whether the plain token may be leased to a service or bound into an
-    environment. It cannot be changed afterwards.
-    """
-    grantId: str
-    metadata: NotRequired[Any]
-    """
-    Non-secret, caller-defined metadata. Must be a JSON object; never put
-    secret material here.
-    """
-    providerId: NotRequired[str | None]
-    """
-    Label recorded on the credential; `static` when absent. It cannot be
-    changed afterwards.
-    """
-    scopes: NotRequired[list[str]]
-    subjectHint: NotRequired[str | None]
-    token: str
-
-
-class AuthGrantReadParams(TypedDict):
-    grantId: str
-
-
-class AuthGrantRevokeParams(TypedDict):
-    grantId: str
-
-
-AuthGrantStatus: TypeAlias = Literal['active', 'needsReauth', 'revoked', 'failed']
-
-
-class AuthProviderConfigInputGithubApp(TypedDict):
-    apiBaseUrl: NotRequired[str | None]
-    appId: str
-    type: Literal['githubApp']
-
-
-class AuthProviderConfigViewGithubApp(TypedDict):
-    """
-    Non-secret, provider-specific configuration. New providers add a
-    variant, not a table.
-    """
-
-    apiBaseUrl: str
-    appId: str
-    type: Literal['githubApp']
-
-
-class AuthProviderDeleteParams(TypedDict):
-    providerId: str
-
-
-AuthProviderKind: TypeAlias = Literal[
-    'staticToken',
-    'mcpOAuth',
-    'gitHubApp',
-    'customOAuth',
-    'modelApiKey',
-    'modelOAuth',
-    'modelEndpoint',
-]
-"""
-On a grant, how its token is obtained; on a provider, what it configures.
-`staticToken` is a pasted secret, sent under whatever header its consumer
-uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
-endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
-on demand. The `model*` kinds configure model providers; `modelEndpoint`
-is a provider without a credential and never appears on a grant.
-"""
-
-
-class AuthProviderListParams(TypedDict):
-    pass
-
-
-class AuthProviderReadParams(TypedDict):
-    providerId: str
-
-
-AuthProviderStatus: TypeAlias = Literal['active', 'needsConfiguration', 'disabled']
-
-
 class BlobHasItem(TypedDict):
     blobRef: str
     exists: bool
@@ -1117,6 +922,203 @@ ContextReplaceStatus: TypeAlias = (
 )
 
 
+class CredentialClientDeleteParams(TypedDict):
+    clientId: str
+
+
+class CredentialClientListParams(TypedDict):
+    pass
+
+
+class CredentialClientReadParams(TypedDict):
+    clientId: str
+
+
+class CredentialFlowStartResponse(TypedDict):
+    authorizeUrl: str
+    """
+    Authorization URL the user must open. It embeds the one-time `state`;
+    treat it as sensitive and do not log it server-side.
+    """
+    expiresAtMs: int
+    flowId: str
+
+
+CredentialFlowStatus: TypeAlias = Literal['pending', 'completed', 'failed', 'expired']
+
+
+class CredentialFlowStatusParams(TypedDict):
+    flowId: str
+
+
+class CredentialFlowView(TypedDict):
+    clientId: str
+    createdAtMs: int
+    error: NotRequired[str | None]
+    expiresAtMs: int
+    flowId: str
+    grantId: NotRequired[str | None]
+    providerId: str
+    status: CredentialFlowStatus
+    updatedAtMs: int
+
+
+class CredentialGitHubInstallationListParams(TypedDict):
+    providerId: str
+
+
+CredentialGrantExposure: TypeAlias = Literal['brokered', 'retrievable']
+"""
+Where a credential's plain value may go, fixed when it is created.
+"""
+
+
+class CredentialGrantImportParams(TypedDict):
+    """
+    Import a new token credential as a credential grant, under the given id or an
+    allocated one; an id already in use is a conflict. Together with
+    [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
+    `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
+    logging must never echo these params.
+    """
+
+    audience: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    expiresAtMs: NotRequired[int | None]
+    exposure: NotRequired[CredentialGrantExposure]
+    grantId: NotRequired[str | None]
+    metadata: NotRequired[Any]
+    """
+    Non-secret, caller-defined metadata stored on the grant and returned
+    by reads (for example which product a pasted subscription token
+    belongs to). Must be a JSON object; never put secret material here.
+    """
+    providerId: NotRequired[str | None]
+    scopes: NotRequired[list[str]]
+    subjectHint: NotRequired[str | None]
+    token: str
+
+
+class CredentialGrantLeaseParams(TypedDict):
+    """
+    Request a current access-token lease for a retrievable grant. Callers must
+    cache only in memory until shortly before `expiresAtMs` (or for at most
+    five minutes when it is absent), re-lease after target 401/403 responses,
+    and never persist the token or place it in a workflow payload.
+    """
+
+    audience: NotRequired[str | None]
+    grantId: str
+
+
+class CredentialGrantPutParams(TypedDict):
+    """
+    Declare a token credential (`staticToken`): its id, its settings and the
+    token it holds. A credential that is missing is created. One that exists
+    has its settings replaced by these (an absent field is unset) and, when it
+    holds a different token, that token replaced, so MCP servers, headers,
+    bot polls and environment variables referencing the id use the new value
+    from their next request or process. Declaring it again changes nothing.
+
+    `token` is encrypted on receipt and never returned; `Debug` output redacts
+    it and request logging must never echo these params.
+    """
+
+    audience: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
+    """
+    Report what the declaration would do without doing it.
+    """
+    expiresAtMs: NotRequired[int | None]
+    """
+    When the token expires. Absent means it does not expire.
+    """
+    exposure: NotRequired[CredentialGrantExposure]
+    """
+    Whether the plain token may be leased to a service or bound into an
+    environment. It cannot be changed afterwards.
+    """
+    grantId: str
+    metadata: NotRequired[Any]
+    """
+    Non-secret, caller-defined metadata. Must be a JSON object; never put
+    secret material here.
+    """
+    providerId: NotRequired[str | None]
+    """
+    Label recorded on the credential; `static` when absent. It cannot be
+    changed afterwards.
+    """
+    scopes: NotRequired[list[str]]
+    subjectHint: NotRequired[str | None]
+    token: str
+
+
+class CredentialGrantReadParams(TypedDict):
+    grantId: str
+
+
+class CredentialGrantRevokeParams(TypedDict):
+    grantId: str
+
+
+CredentialGrantStatus: TypeAlias = Literal['active', 'needsReauth', 'revoked', 'failed']
+
+
+class CredentialProviderConfigInputGithubApp(TypedDict):
+    apiBaseUrl: NotRequired[str | None]
+    appId: str
+    type: Literal['githubApp']
+
+
+class CredentialProviderConfigViewGithubApp(TypedDict):
+    """
+    Non-secret, provider-specific configuration. New providers add a
+    variant, not a table.
+    """
+
+    apiBaseUrl: str
+    appId: str
+    type: Literal['githubApp']
+
+
+class CredentialProviderDeleteParams(TypedDict):
+    providerId: str
+
+
+CredentialProviderKind: TypeAlias = Literal[
+    'staticToken',
+    'mcpOAuth',
+    'gitHubApp',
+    'customOAuth',
+    'modelApiKey',
+    'modelOAuth',
+    'modelEndpoint',
+]
+"""
+On a grant, how its token is obtained; on a provider, what it configures.
+`staticToken` is a pasted secret, sent under whatever header its consumer
+uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+on demand. The `model*` kinds configure model providers; `modelEndpoint`
+is a provider without a credential and never appears on a grant.
+"""
+
+
+class CredentialProviderListParams(TypedDict):
+    pass
+
+
+class CredentialProviderReadParams(TypedDict):
+    providerId: str
+
+
+CredentialProviderStatus: TypeAlias = Literal[
+    'active', 'needsConfiguration', 'disabled'
+]
+
+
 class DeletedSessionView(TypedDict):
     deletedAtMs: int
     displayName: NotRequired[str | None]
@@ -1156,7 +1158,7 @@ class DeploymentChannelAccountView(TypedDict):
     createdAtMs: int
     credentialGrantId: NotRequired[str | None]
     """
-    Retrievable auth grant holding the provider token (a Telegram bot
+    Retrievable credential grant holding the provider token (a Telegram bot
     token); the connector host leases it. Absent for providers whose
     credential is a session state directory (WhatsApp).
     """
@@ -2179,7 +2181,7 @@ McpServerAuthPolicy: TypeAlias = (
 class McpServerCredential1(TypedDict):
     """
     Non-secret universe credential selected by this configured MCP server.
-    Token material remains in the auth subsystem and is never returned.
+    Token material remains in the credentials subsystem and is never returned.
     """
 
     grantId: str
@@ -2189,7 +2191,7 @@ class McpServerCredential1(TypedDict):
 McpServerCredential: TypeAlias = McpServerCredential1
 """
 Non-secret universe credential selected by this configured MCP server.
-Token material remains in the auth subsystem and is never returned.
+Token material remains in the credentials subsystem and is never returned.
 """
 
 
@@ -2288,8 +2290,8 @@ MethodGroup: TypeAlias = (
     | Literal['environments']
     | Literal['channels']
     | Literal['channels/inbound']
-    | Literal['auth']
-    | Literal['auth/lease']
+    | Literal['credentials']
+    | Literal['credentials/lease']
     | Literal['deployment/environment-providers']
     | Literal['deployment/channels']
 )
@@ -4245,92 +4247,6 @@ class ApprovalDecisionResult(TypedDict):
     status: ApprovalDecisionStatus
 
 
-class AuthClientCreateParams(TypedDict):
-    """
-    Register an OAuth client configuration. `client_secret` is the second
-    deliberate inbound-plaintext path after `auth/grants/import`: it is
-    encrypted on receipt and never returned by any method. `Debug` output
-    redacts it; request logging must never echo these params.
-    """
-
-    audience: NotRequired[str | None]
-    authorizationEndpoint: str
-    authorizationResponseIssParameterSupported: NotRequired[bool]
-    authorizationServerIssuer: NotRequired[str | None]
-    authorizationServerScopesSupported: NotRequired[list[str]]
-    clientId: NotRequired[str | None]
-    clientSecret: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    providerId: NotRequired[str | None]
-    providerKind: AuthProviderKind
-    remoteClientId: str
-    scopesDefault: NotRequired[list[str]]
-    tokenEndpoint: str
-    tokenEndpointAuthMethod: NotRequired[TokenEndpointAuthMethod | None]
-
-
-class AuthFlowStartParams(TypedDict):
-    audience: NotRequired[str | None]
-    clientId: str
-    exposure: NotRequired[AuthGrantExposure]
-    scopes: NotRequired[list[str] | None]
-
-
-class AuthFlowStatusResponse(TypedDict):
-    flow: AuthFlowView
-
-
-class AuthGitHubInstallationGrantParams(TypedDict):
-    displayName: NotRequired[str | None]
-    exposure: NotRequired[AuthGrantExposure]
-    grantId: NotRequired[str | None]
-    installationId: int
-    providerId: str
-
-
-class AuthGitHubInstallationListResponse(TypedDict):
-    installations: NotRequired[list[GitHubInstallationView]]
-
-
-class AuthGrantLeaseResponse(TypedDict):
-    expiresAtMs: NotRequired[int | None]
-    grantId: str
-    providerKind: AuthProviderKind
-    token: str
-
-
-class AuthGrantListParams(TypedDict):
-    status: NotRequired[AuthGrantStatus | None]
-
-
-class AuthGrantView(TypedDict):
-    audience: NotRequired[str | None]
-    createdAtMs: int
-    createdBy: Attribution
-    """
-    Who created the grant. Attribution only; it confers no access.
-    """
-    displayName: NotRequired[str | None]
-    expiresAtMs: NotRequired[int | None]
-    exposure: AuthGrantExposure
-    grantId: str
-    hasAccessToken: bool
-    hasRefreshToken: bool
-    lastLeasedAtMs: NotRequired[int | None]
-    leaseCount: int
-    metadata: NotRequired[Any]
-    """
-    Non-secret provider-specific metadata (for GitHub App installation
-    grants: installation id, account, permissions, repository selection).
-    """
-    providerId: str
-    providerKind: AuthProviderKind
-    scopes: NotRequired[list[str]]
-    status: AuthGrantStatus
-    subjectHint: NotRequired[str | None]
-    updatedAtMs: int
-
-
 class BlobPutResponse(TypedDict):
     blobs: NotRequired[list[BlobPutResult]]
 
@@ -4973,7 +4889,7 @@ class ChannelAccountInput(TypedDict):
     accountId: ChannelAccountId
     credentialGrantId: NotRequired[str | None]
     """
-    Retrievable auth grant holding the provider token (a Telegram bot
+    Retrievable credential grant holding the provider token (a Telegram bot
     token); the connector host leases it. Absent for providers whose
     credential is a session state directory (WhatsApp).
     """
@@ -5009,7 +4925,7 @@ class ChannelAccountView(TypedDict):
     createdAtMs: int
     credentialGrantId: NotRequired[str | None]
     """
-    Retrievable auth grant holding the provider token (a Telegram bot
+    Retrievable credential grant holding the provider token (a Telegram bot
     token); the connector host leases it. Absent for providers whose
     credential is a session state directory (WhatsApp).
     """
@@ -5127,6 +5043,92 @@ class ContextReplaceResult(TypedDict):
     entryId: str
     failure: NotRequired[InputAdmissionFailureView | None]
     status: ContextReplaceStatus
+
+
+class CredentialClientCreateParams(TypedDict):
+    """
+    Register an OAuth client configuration. `client_secret` is the second
+    deliberate inbound-plaintext path after `credentials/grants/import`: it is
+    encrypted on receipt and never returned by any method. `Debug` output
+    redacts it; request logging must never echo these params.
+    """
+
+    audience: NotRequired[str | None]
+    authorizationEndpoint: str
+    authorizationResponseIssParameterSupported: NotRequired[bool]
+    authorizationServerIssuer: NotRequired[str | None]
+    authorizationServerScopesSupported: NotRequired[list[str]]
+    clientId: NotRequired[str | None]
+    clientSecret: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    providerId: NotRequired[str | None]
+    providerKind: CredentialProviderKind
+    remoteClientId: str
+    scopesDefault: NotRequired[list[str]]
+    tokenEndpoint: str
+    tokenEndpointAuthMethod: NotRequired[TokenEndpointAuthMethod | None]
+
+
+class CredentialFlowStartParams(TypedDict):
+    audience: NotRequired[str | None]
+    clientId: str
+    exposure: NotRequired[CredentialGrantExposure]
+    scopes: NotRequired[list[str] | None]
+
+
+class CredentialFlowStatusResponse(TypedDict):
+    flow: CredentialFlowView
+
+
+class CredentialGitHubInstallationGrantParams(TypedDict):
+    displayName: NotRequired[str | None]
+    exposure: NotRequired[CredentialGrantExposure]
+    grantId: NotRequired[str | None]
+    installationId: int
+    providerId: str
+
+
+class CredentialGitHubInstallationListResponse(TypedDict):
+    installations: NotRequired[list[GitHubInstallationView]]
+
+
+class CredentialGrantLeaseResponse(TypedDict):
+    expiresAtMs: NotRequired[int | None]
+    grantId: str
+    providerKind: CredentialProviderKind
+    token: str
+
+
+class CredentialGrantListParams(TypedDict):
+    status: NotRequired[CredentialGrantStatus | None]
+
+
+class CredentialGrantView(TypedDict):
+    audience: NotRequired[str | None]
+    createdAtMs: int
+    createdBy: Attribution
+    """
+    Who created the grant. Attribution only; it confers no access.
+    """
+    displayName: NotRequired[str | None]
+    expiresAtMs: NotRequired[int | None]
+    exposure: CredentialGrantExposure
+    grantId: str
+    hasAccessToken: bool
+    hasRefreshToken: bool
+    lastLeasedAtMs: NotRequired[int | None]
+    leaseCount: int
+    metadata: NotRequired[Any]
+    """
+    Non-secret provider-specific metadata (for GitHub App installation
+    grants: installation id, account, permissions, repository selection).
+    """
+    providerId: str
+    providerKind: CredentialProviderKind
+    scopes: NotRequired[list[str]]
+    status: CredentialGrantStatus
+    subjectHint: NotRequired[str | None]
+    updatedAtMs: int
 
 
 class DeclaredUniverseMember(TypedDict):
@@ -5719,7 +5721,7 @@ class OAuthClientView(TypedDict):
     displayName: NotRequired[str | None]
     hasClientSecret: bool
     providerId: str
-    providerKind: AuthProviderKind
+    providerKind: CredentialProviderKind
     remoteClientId: str
     scopesDefault: NotRequired[list[str]]
     tokenEndpoint: str
@@ -6311,191 +6313,6 @@ class AgentNotificationEnvironmentsChanged(TypedDict):
     params: Params4
 
 
-class AuthClientCreateResponse(TypedDict):
-    client: OAuthClientView
-
-
-class AuthClientDeleteResponse(TypedDict):
-    client: OAuthClientView
-
-
-class AuthClientListResponse(TypedDict):
-    clients: NotRequired[list[OAuthClientView]]
-
-
-class AuthClientReadResponse(TypedDict):
-    client: OAuthClientView
-
-
-class AuthGitHubInstallationGrantResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthGrantImportResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthGrantListResponse(TypedDict):
-    grants: NotRequired[list[AuthGrantView]]
-
-
-class AuthGrantPutResponse(TypedDict):
-    created: bool
-    """
-    False when the credential already existed.
-    """
-    grant: AuthGrantView
-    """
-    The credential as declared: as it is now, or as it would be for a
-    dry run.
-    """
-    tokenReplaced: bool
-    """
-    True when an existing credential held a different token.
-    """
-
-
-class AuthGrantReadResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthGrantRevokeResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthProviderConfigInputModelApiKey(TypedDict):
-    """
-    Stored model provider API key; the key arrives via `credential` and is
-    encrypted on receipt.
-    """
-
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    type: Literal['modelApiKey']
-
-
-class AuthProviderConfigInputModelOAuth(TypedDict):
-    """
-    Bind an existing auth grant as a model provider credential. No
-    `credential` is accepted; the grant's tokens stay in the grant store.
-    """
-
-    audience: NotRequired[str | None]
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    grantId: str
-    type: Literal['modelOAuth']
-
-
-class AuthProviderConfigInputModelEndpoint(TypedDict):
-    """
-    Register an endpoint that requires no provider credential.
-    """
-
-    endpoint: ModelEndpointConfig
-    type: Literal['modelEndpoint']
-
-
-AuthProviderConfigInput: TypeAlias = (
-    AuthProviderConfigInputGithubApp
-    | AuthProviderConfigInputModelApiKey
-    | AuthProviderConfigInputModelOAuth
-    | AuthProviderConfigInputModelEndpoint
-)
-
-
-class AuthProviderConfigViewModelApiKey(TypedDict):
-    """
-    Stored model provider API key (`model:<provider_id>` rows). The key itself
-    is the provider credential and never appears in views.
-    """
-
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    type: Literal['modelApiKey']
-
-
-class AuthProviderConfigViewModelOAuth(TypedDict):
-    """
-    OAuth-grant-backed model provider credential: provider calls send the
-    bound grant's access token as an OAuth bearer token.
-    """
-
-    audience: NotRequired[str | None]
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    grantId: str
-    type: Literal['modelOAuth']
-
-
-class AuthProviderConfigViewModelEndpoint(TypedDict):
-    """
-    Credentialless OpenAI-compatible endpoint.
-    """
-
-    endpoint: ModelEndpointConfig
-    type: Literal['modelEndpoint']
-
-
-AuthProviderConfigView: TypeAlias = (
-    AuthProviderConfigViewGithubApp
-    | AuthProviderConfigViewModelApiKey
-    | AuthProviderConfigViewModelOAuth
-    | AuthProviderConfigViewModelEndpoint
-)
-"""
-Non-secret, provider-specific configuration. New providers add a
-variant, not a table.
-"""
-
-
-class AuthProviderCreateParams(TypedDict):
-    """
-    Register an auth provider. `credential` (for GitHub Apps: the private
-    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
-    on receipt and never returned by any method. `Debug` output redacts it;
-    request logging must never echo these params.
-    """
-
-    config: AuthProviderConfigInput
-    credential: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    providerId: NotRequired[str | None]
-
-
-class AuthProviderPutParams(TypedDict):
-    """
-    Declare a provider: its id, its configuration and its credential. A
-    provider that is missing is created. One that exists is rewritten in place
-    as if it were created again under the same id, where it differs: the new
-    settings are validated before anything changes, so a rejected declaration
-    leaves the provider as it was, and sessions and environment variables
-    referencing the id keep working throughout. Declaring it again changes
-    nothing. `credential` is encrypted on receipt and never returned; `Debug`
-    output redacts it.
-    """
-
-    config: AuthProviderConfigInput
-    credential: NotRequired[str | None]
-    """
-    The provider's credential, for the kinds that take one. Absent leaves
-    the provider without a credential.
-    """
-    displayName: NotRequired[str | None]
-    dryRun: NotRequired[bool]
-    """
-    Report what the declaration would do without doing it.
-    """
-    providerId: str
-
-
-class AuthProviderView(TypedDict):
-    config: AuthProviderConfigView
-    createdAtMs: int
-    displayName: NotRequired[str | None]
-    hasCredential: bool
-    providerId: str
-    providerKind: AuthProviderKind
-    status: AuthProviderStatus
-    updatedAtMs: int
-
-
 class BotCloseResponse(TypedDict):
     bot: BotView
 
@@ -7011,6 +6828,191 @@ class ContextView(TypedDict):
     revision: int
 
 
+class CredentialClientCreateResponse(TypedDict):
+    client: OAuthClientView
+
+
+class CredentialClientDeleteResponse(TypedDict):
+    client: OAuthClientView
+
+
+class CredentialClientListResponse(TypedDict):
+    clients: NotRequired[list[OAuthClientView]]
+
+
+class CredentialClientReadResponse(TypedDict):
+    client: OAuthClientView
+
+
+class CredentialGitHubInstallationGrantResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialGrantImportResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialGrantListResponse(TypedDict):
+    grants: NotRequired[list[CredentialGrantView]]
+
+
+class CredentialGrantPutResponse(TypedDict):
+    created: bool
+    """
+    False when the credential already existed.
+    """
+    grant: CredentialGrantView
+    """
+    The credential as declared: as it is now, or as it would be for a
+    dry run.
+    """
+    tokenReplaced: bool
+    """
+    True when an existing credential held a different token.
+    """
+
+
+class CredentialGrantReadResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialGrantRevokeResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialProviderConfigInputModelApiKey(TypedDict):
+    """
+    Stored model provider API key; the key arrives via `credential` and is
+    encrypted on receipt.
+    """
+
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    type: Literal['modelApiKey']
+
+
+class CredentialProviderConfigInputModelOAuth(TypedDict):
+    """
+    Bind an existing credential grant as a model provider credential. No
+    `credential` is accepted; the grant's tokens stay in the grant store.
+    """
+
+    audience: NotRequired[str | None]
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    grantId: str
+    type: Literal['modelOAuth']
+
+
+class CredentialProviderConfigInputModelEndpoint(TypedDict):
+    """
+    Register an endpoint that requires no provider credential.
+    """
+
+    endpoint: ModelEndpointConfig
+    type: Literal['modelEndpoint']
+
+
+CredentialProviderConfigInput: TypeAlias = (
+    CredentialProviderConfigInputGithubApp
+    | CredentialProviderConfigInputModelApiKey
+    | CredentialProviderConfigInputModelOAuth
+    | CredentialProviderConfigInputModelEndpoint
+)
+
+
+class CredentialProviderConfigViewModelApiKey(TypedDict):
+    """
+    Stored model provider API key (`model:<provider_id>` rows). The key itself
+    is the provider credential and never appears in views.
+    """
+
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    type: Literal['modelApiKey']
+
+
+class CredentialProviderConfigViewModelOAuth(TypedDict):
+    """
+    OAuth-grant-backed model provider credential: provider calls send the
+    bound grant's access token as an OAuth bearer token.
+    """
+
+    audience: NotRequired[str | None]
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    grantId: str
+    type: Literal['modelOAuth']
+
+
+class CredentialProviderConfigViewModelEndpoint(TypedDict):
+    """
+    Credentialless OpenAI-compatible endpoint.
+    """
+
+    endpoint: ModelEndpointConfig
+    type: Literal['modelEndpoint']
+
+
+CredentialProviderConfigView: TypeAlias = (
+    CredentialProviderConfigViewGithubApp
+    | CredentialProviderConfigViewModelApiKey
+    | CredentialProviderConfigViewModelOAuth
+    | CredentialProviderConfigViewModelEndpoint
+)
+"""
+Non-secret, provider-specific configuration. New providers add a
+variant, not a table.
+"""
+
+
+class CredentialProviderCreateParams(TypedDict):
+    """
+    Register a credential provider. `credential` (for GitHub Apps: the private
+    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+    on receipt and never returned by any method. `Debug` output redacts it;
+    request logging must never echo these params.
+    """
+
+    config: CredentialProviderConfigInput
+    credential: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    providerId: NotRequired[str | None]
+
+
+class CredentialProviderPutParams(TypedDict):
+    """
+    Declare a provider: its id, its configuration and its credential. A
+    provider that is missing is created. One that exists is rewritten in place
+    as if it were created again under the same id, where it differs: the new
+    settings are validated before anything changes, so a rejected declaration
+    leaves the provider as it was, and sessions and environment variables
+    referencing the id keep working throughout. Declaring it again changes
+    nothing. `credential` is encrypted on receipt and never returned; `Debug`
+    output redacts it.
+    """
+
+    config: CredentialProviderConfigInput
+    credential: NotRequired[str | None]
+    """
+    The provider's credential, for the kinds that take one. Absent leaves
+    the provider without a credential.
+    """
+    displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
+    """
+    Report what the declaration would do without doing it.
+    """
+    providerId: str
+
+
+class CredentialProviderView(TypedDict):
+    config: CredentialProviderConfigView
+    createdAtMs: int
+    displayName: NotRequired[str | None]
+    hasCredential: bool
+    providerId: str
+    providerKind: CredentialProviderKind
+    status: CredentialProviderStatus
+    updatedAtMs: int
+
+
 class DeploymentUniverseConfigurationPutParams(TypedDict):
     """
     Patch desired Platform configuration. Absent fields retain their values.
@@ -7506,39 +7508,6 @@ class AgentProfileInput(TypedDict):
     """
 
 
-class AuthProviderCreateResponse(TypedDict):
-    provider: AuthProviderView
-
-
-class AuthProviderDeleteResponse(TypedDict):
-    provider: AuthProviderView
-
-
-class AuthProviderListResponse(TypedDict):
-    providers: NotRequired[list[AuthProviderView]]
-
-
-class AuthProviderPutResponse(TypedDict):
-    created: bool
-    """
-    False when the provider already existed.
-    """
-    credentialReplaced: bool
-    """
-    True when an existing provider held a different credential, or gained
-    or lost one.
-    """
-    provider: AuthProviderView
-    """
-    The provider as declared: as it is now, or as it would be for a dry
-    run.
-    """
-
-
-class AuthProviderReadResponse(TypedDict):
-    provider: AuthProviderView
-
-
 class BotCreateParams(TypedDict):
     bot: BotInput
     triggers: NotRequired[list[BotTriggerInput]]
@@ -7587,6 +7556,39 @@ class ContextAppendResult(TypedDict):
     failure: NotRequired[InputAdmissionFailureView | None]
     key: str
     status: ContextAppendStatus
+
+
+class CredentialProviderCreateResponse(TypedDict):
+    provider: CredentialProviderView
+
+
+class CredentialProviderDeleteResponse(TypedDict):
+    provider: CredentialProviderView
+
+
+class CredentialProviderListResponse(TypedDict):
+    providers: NotRequired[list[CredentialProviderView]]
+
+
+class CredentialProviderPutResponse(TypedDict):
+    created: bool
+    """
+    False when the provider already existed.
+    """
+    credentialReplaced: bool
+    """
+    True when an existing provider held a different credential, or gained
+    or lost one.
+    """
+    provider: CredentialProviderView
+    """
+    The provider as declared: as it is now, or as it would be for a dry
+    run.
+    """
+
+
+class CredentialProviderReadResponse(TypedDict):
+    provider: CredentialProviderView
 
 
 class DeploymentUniverseCreateResponse(TypedDict):
@@ -7907,101 +7909,6 @@ class SessionReadResponse(TypedDict):
     session: SessionView
 
 
-class AgentApiOutcomeOfAuthClientCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientCreateResponse
-
-
-class AgentApiOutcomeOfAuthClientDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientDeleteResponse
-
-
-class AgentApiOutcomeOfAuthClientListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientListResponse
-
-
-class AgentApiOutcomeOfAuthClientReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientReadResponse
-
-
-class AgentApiOutcomeOfAuthFlowStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthFlowStartResponse
-
-
-class AgentApiOutcomeOfAuthFlowStatusResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthFlowStatusResponse
-
-
-class AgentApiOutcomeOfAuthGitHubInstallationGrantResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGitHubInstallationGrantResponse
-
-
-class AgentApiOutcomeOfAuthGitHubInstallationListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGitHubInstallationListResponse
-
-
-class AgentApiOutcomeOfAuthGrantImportResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantImportResponse
-
-
-class AgentApiOutcomeOfAuthGrantLeaseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantLeaseResponse
-
-
-class AgentApiOutcomeOfAuthGrantListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantListResponse
-
-
-class AgentApiOutcomeOfAuthGrantPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantPutResponse
-
-
-class AgentApiOutcomeOfAuthGrantReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantReadResponse
-
-
-class AgentApiOutcomeOfAuthGrantRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantRevokeResponse
-
-
-class AgentApiOutcomeOfAuthProviderCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderCreateResponse
-
-
-class AgentApiOutcomeOfAuthProviderDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderDeleteResponse
-
-
-class AgentApiOutcomeOfAuthProviderListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderListResponse
-
-
-class AgentApiOutcomeOfAuthProviderPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderPutResponse
-
-
-class AgentApiOutcomeOfAuthProviderReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderReadResponse
-
-
 class AgentApiOutcomeOfBlobHasResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: BlobHasResponse
@@ -8170,6 +8077,101 @@ class AgentApiOutcomeOfContextRemoveResponse(TypedDict):
 class AgentApiOutcomeOfContextReplaceResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: ContextReplaceResponse
+
+
+class AgentApiOutcomeOfCredentialClientCreateResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialClientCreateResponse
+
+
+class AgentApiOutcomeOfCredentialClientDeleteResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialClientDeleteResponse
+
+
+class AgentApiOutcomeOfCredentialClientListResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialClientListResponse
+
+
+class AgentApiOutcomeOfCredentialClientReadResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialClientReadResponse
+
+
+class AgentApiOutcomeOfCredentialFlowStartResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialFlowStartResponse
+
+
+class AgentApiOutcomeOfCredentialFlowStatusResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialFlowStatusResponse
+
+
+class AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGitHubInstallationGrantResponse
+
+
+class AgentApiOutcomeOfCredentialGitHubInstallationListResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGitHubInstallationListResponse
+
+
+class AgentApiOutcomeOfCredentialGrantImportResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGrantImportResponse
+
+
+class AgentApiOutcomeOfCredentialGrantLeaseResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGrantLeaseResponse
+
+
+class AgentApiOutcomeOfCredentialGrantListResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGrantListResponse
+
+
+class AgentApiOutcomeOfCredentialGrantPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGrantPutResponse
+
+
+class AgentApiOutcomeOfCredentialGrantReadResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGrantReadResponse
+
+
+class AgentApiOutcomeOfCredentialGrantRevokeResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialGrantRevokeResponse
+
+
+class AgentApiOutcomeOfCredentialProviderCreateResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialProviderCreateResponse
+
+
+class AgentApiOutcomeOfCredentialProviderDeleteResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialProviderDeleteResponse
+
+
+class AgentApiOutcomeOfCredentialProviderListResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialProviderListResponse
+
+
+class AgentApiOutcomeOfCredentialProviderPutResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialProviderPutResponse
+
+
+class AgentApiOutcomeOfCredentialProviderReadResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: CredentialProviderReadResponse
 
 
 class AgentApiOutcomeOfDeploymentChannelAccountListResponse(TypedDict):

@@ -177,13 +177,16 @@ impl GatewayAgentApi {
     async fn validate_retrievable_grant_id(
         &self,
         grant_id: &str,
-    ) -> Result<auth::AuthGrantRecord, AgentApiError> {
-        let grant_id = parse_auth_grant_id(grant_id.to_owned())?;
-        let grants: &dyn AuthGrantStore = self.store().as_ref();
-        let record = grants.read_grant(&grant_id).await.map_err(map_auth_error)?;
-        if record.status != auth::AuthGrantStatus::Active {
+    ) -> Result<credentials::CredentialGrantRecord, AgentApiError> {
+        let grant_id = parse_credential_grant_id(grant_id.to_owned())?;
+        let grants: &dyn CredentialGrantStore = self.store().as_ref();
+        let record = grants
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_credential_error)?;
+        if record.status != credentials::CredentialGrantStatus::Active {
             return Err(AgentApiError::rejected(format!(
-                "auth grant {grant_id} is not active"
+                "credential grant {grant_id} is not active"
             )));
         }
         require_retrievable_grant(&record)?;
@@ -216,9 +219,9 @@ impl GatewayAgentApi {
             } => {
                 let grant = self.validate_retrievable_grant_id(&auth.grant_id).await?;
                 match &grant.audience {
-                    Some(audience) if auth::audience_covers(audience, url) => Ok(()),
+                    Some(audience) if credentials::audience_covers(audience, url) => Ok(()),
                     Some(audience) => Err(AgentApiError::rejected(format!(
-                        "auth grant {} is bound to {audience}, which does not cover the poll URL",
+                        "credential grant {} is bound to {audience}, which does not cover the poll URL",
                         grant.grant_id
                     ))),
                     None => {

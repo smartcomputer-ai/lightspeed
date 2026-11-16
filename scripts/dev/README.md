@@ -122,6 +122,16 @@ cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty. Runtime tokens are full
 authority credentials and are never passed to agents. Bots and Channels core
 remain runtime components; removing Channels is separate work.
 
+The runtime uses three separate listeners: private RPC at `127.0.0.1:18080`,
+public callbacks/webhooks at `127.0.0.1:18082`, and environment routes at
+`127.0.0.1:18083`. Override them with `LIGHTSPEED_GATEWAY_BIND`,
+`LIGHTSPEED_PUBLIC_BIND`, and `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`. The launcher
+preflights each port and waits for each listener's health endpoint.
+`LIGHTSPEED_PUBLIC_BASE_URL` sets callback/webhook URLs;
+`LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` sets the environment origin. Each defaults
+from its own bind. Worker `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` points to the
+environment listener, not private RPC.
+
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.
 Pressing Ctrl-C or running `stop` from another terminal stops the
@@ -263,7 +273,7 @@ daemon registration routes, and the environment reconcilers), plus the
 queue — in one process. Each worker runs its workflows and activities together.
 For split-role runs, select roles per shell; keep the `environment-gateway`
 role on exactly one process and point the others at it
-through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`:
+through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` (locally `http://127.0.0.1:18083`):
 
 ```bash
 source scripts/dev/env.sh

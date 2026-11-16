@@ -8,7 +8,7 @@ use super::*;
 /// is a provider without a credential and never appears on a grant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum AuthProviderKind {
+pub enum CredentialProviderKind {
     StaticToken,
     McpOAuth,
     GitHubApp,
@@ -20,7 +20,7 @@ pub enum AuthProviderKind {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum AuthGrantStatus {
+pub enum CredentialGrantStatus {
     #[default]
     Active,
     NeedsReauth,
@@ -31,7 +31,7 @@ pub enum AuthGrantStatus {
 /// Where a credential's plain value may go, fixed when it is created.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum AuthGrantExposure {
+pub enum CredentialGrantExposure {
     /// The value stays inside the runtime, which attaches it to its own
     /// outbound requests (an MCP server, a model endpoint header).
     #[default]
@@ -43,11 +43,11 @@ pub enum AuthGrantExposure {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantView {
+pub struct CredentialGrantView {
     pub grant_id: String,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
-    pub exposure: AuthGrantExposure,
+    pub provider_kind: CredentialProviderKind,
+    pub exposure: CredentialGrantExposure,
     /// Who created the grant. Attribution only; it confers no access.
     pub created_by: Attribution,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,7 +62,7 @@ pub struct AuthGrantView {
     pub has_refresh_token: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
-    pub status: AuthGrantStatus,
+    pub status: CredentialGrantStatus,
     /// Non-secret provider-specific metadata (for GitHub App installation
     /// grants: installation id, account, permissions, repository selection).
     #[serde(default, skip_serializing_if = "metadata_is_empty")]
@@ -82,20 +82,20 @@ fn metadata_is_empty(value: &serde_json::Value) -> bool {
     }
 }
 
-/// Import a new token credential as an auth grant, under the given id or an
+/// Import a new token credential as a credential grant, under the given id or an
 /// allocated one; an id already in use is a conflict. Together with
-/// [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
+/// [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
 /// `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
 /// logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantImportParams {
+pub struct CredentialGrantImportParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(default)]
-    pub exposure: AuthGrantExposure,
+    pub exposure: CredentialGrantExposure,
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -114,9 +114,9 @@ pub struct AuthGrantImportParams {
     pub metadata: Option<serde_json::Value>,
 }
 
-impl std::fmt::Debug for AuthGrantImportParams {
+impl std::fmt::Debug for CredentialGrantImportParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGrantImportParams")
+        f.debug_struct("CredentialGrantImportParams")
             .field("grant_id", &self.grant_id)
             .field("provider_id", &self.provider_id)
             .field("exposure", &self.exposure)
@@ -132,8 +132,8 @@ impl std::fmt::Debug for AuthGrantImportParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantImportResponse {
-    pub grant: AuthGrantView,
+pub struct CredentialGrantImportResponse {
+    pub grant: CredentialGrantView,
 }
 
 /// Request a current access-token lease for a retrievable grant. Callers must
@@ -142,7 +142,7 @@ pub struct AuthGrantImportResponse {
 /// and never persist the token or place it in a workflow payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantLeaseParams {
+pub struct CredentialGrantLeaseParams {
     pub grant_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audience: Option<String>,
@@ -150,17 +150,17 @@ pub struct AuthGrantLeaseParams {
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantLeaseResponse {
+pub struct CredentialGrantLeaseResponse {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
     pub grant_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
 }
 
-impl std::fmt::Debug for AuthGrantLeaseResponse {
+impl std::fmt::Debug for CredentialGrantLeaseResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGrantLeaseResponse")
+        f.debug_struct("CredentialGrantLeaseResponse")
             .field("token", &"<redacted>")
             .field("expires_at_ms", &self.expires_at_ms)
             .field("grant_id", &self.grant_id)
@@ -171,28 +171,28 @@ impl std::fmt::Debug for AuthGrantLeaseResponse {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantListParams {
+pub struct CredentialGrantListParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<AuthGrantStatus>,
+    pub status: Option<CredentialGrantStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantListResponse {
+pub struct CredentialGrantListResponse {
     #[serde(default)]
-    pub grants: Vec<AuthGrantView>,
+    pub grants: Vec<CredentialGrantView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantReadParams {
+pub struct CredentialGrantReadParams {
     pub grant_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantReadResponse {
-    pub grant: AuthGrantView,
+pub struct CredentialGrantReadResponse {
+    pub grant: CredentialGrantView,
 }
 
 /// Declare a token credential (`staticToken`): its id, its settings and the
@@ -206,7 +206,7 @@ pub struct AuthGrantReadResponse {
 /// it and request logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantPutParams {
+pub struct CredentialGrantPutParams {
     pub grant_id: String,
     /// Label recorded on the credential; `static` when absent. It cannot be
     /// changed afterwards.
@@ -215,7 +215,7 @@ pub struct AuthGrantPutParams {
     /// Whether the plain token may be leased to a service or bound into an
     /// environment. It cannot be changed afterwards.
     #[serde(default)]
-    pub exposure: AuthGrantExposure,
+    pub exposure: CredentialGrantExposure,
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -237,9 +237,9 @@ pub struct AuthGrantPutParams {
     pub dry_run: bool,
 }
 
-impl std::fmt::Debug for AuthGrantPutParams {
+impl std::fmt::Debug for CredentialGrantPutParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthGrantPutParams")
+        f.debug_struct("CredentialGrantPutParams")
             .field("grant_id", &self.grant_id)
             .field("provider_id", &self.provider_id)
             .field("exposure", &self.exposure)
@@ -256,10 +256,10 @@ impl std::fmt::Debug for AuthGrantPutParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantPutResponse {
+pub struct CredentialGrantPutResponse {
     /// The credential as declared: as it is now, or as it would be for a
     /// dry run.
-    pub grant: AuthGrantView,
+    pub grant: CredentialGrantView,
     /// False when the credential already existed.
     pub created: bool,
     /// True when an existing credential held a different token.
@@ -268,14 +268,14 @@ pub struct AuthGrantPutResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantRevokeParams {
+pub struct CredentialGrantRevokeParams {
     pub grant_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGrantRevokeResponse {
-    pub grant: AuthGrantView,
+pub struct CredentialGrantRevokeResponse {
+    pub grant: CredentialGrantView,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -292,7 +292,7 @@ pub enum TokenEndpointAuthMethod {
 pub struct OAuthClientView {
     pub client_id: String,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub authorization_endpoint: String,
@@ -315,17 +315,17 @@ pub struct OAuthClientView {
 }
 
 /// Register an OAuth client configuration. `client_secret` is the second
-/// deliberate inbound-plaintext path after `auth/grants/import`: it is
+/// deliberate inbound-plaintext path after `credentials/grants/import`: it is
 /// encrypted on receipt and never returned by any method. `Debug` output
 /// redacts it; request logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientCreateParams {
+pub struct CredentialClientCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     pub authorization_endpoint: String,
@@ -347,9 +347,9 @@ pub struct AuthClientCreateParams {
     pub authorization_server_scopes_supported: Vec<String>,
 }
 
-impl std::fmt::Debug for AuthClientCreateParams {
+impl std::fmt::Debug for CredentialClientCreateParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthClientCreateParams")
+        f.debug_struct("CredentialClientCreateParams")
             .field("client_id", &self.client_id)
             .field("provider_id", &self.provider_id)
             .field("provider_kind", &self.provider_kind)
@@ -385,48 +385,48 @@ impl std::fmt::Debug for AuthClientCreateParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientCreateResponse {
+pub struct CredentialClientCreateResponse {
     pub client: OAuthClientView,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientListParams {}
+pub struct CredentialClientListParams {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientListResponse {
+pub struct CredentialClientListResponse {
     #[serde(default)]
     pub clients: Vec<OAuthClientView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientReadParams {
+pub struct CredentialClientReadParams {
     pub client_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientReadResponse {
+pub struct CredentialClientReadResponse {
     pub client: OAuthClientView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientDeleteParams {
+pub struct CredentialClientDeleteParams {
     pub client_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthClientDeleteResponse {
+pub struct CredentialClientDeleteResponse {
     pub client: OAuthClientView,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum AuthFlowStatus {
+pub enum CredentialFlowStatus {
     Pending,
     Completed,
     Failed,
@@ -435,19 +435,19 @@ pub enum AuthFlowStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthFlowStartParams {
+pub struct CredentialFlowStartParams {
     pub client_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audience: Option<String>,
     #[serde(default)]
-    pub exposure: AuthGrantExposure,
+    pub exposure: CredentialGrantExposure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthFlowStartResponse {
+pub struct CredentialFlowStartResponse {
     pub flow_id: String,
     /// Authorization URL the user must open. It embeds the one-time `state`;
     /// treat it as sensitive and do not log it server-side.
@@ -457,17 +457,17 @@ pub struct AuthFlowStartResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthFlowStatusParams {
+pub struct CredentialFlowStatusParams {
     pub flow_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthFlowView {
+pub struct CredentialFlowView {
     pub flow_id: String,
     pub client_id: String,
     pub provider_id: String,
-    pub status: AuthFlowStatus,
+    pub status: CredentialFlowStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -479,13 +479,13 @@ pub struct AuthFlowView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthFlowStatusResponse {
-    pub flow: AuthFlowView,
+pub struct CredentialFlowStatusResponse {
+    pub flow: CredentialFlowView,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum AuthProviderStatus {
+pub enum CredentialProviderStatus {
     #[default]
     Active,
     NeedsConfiguration,
@@ -496,7 +496,7 @@ pub enum AuthProviderStatus {
 /// variant, not a table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
-pub enum AuthProviderConfigView {
+pub enum CredentialProviderConfigView {
     #[serde(rename = "githubApp", rename_all = "camelCase")]
     GitHubApp {
         app_id: String,
@@ -540,7 +540,7 @@ pub struct ModelEndpointConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
-pub enum AuthProviderConfigInput {
+pub enum CredentialProviderConfigInput {
     #[serde(rename = "githubApp", rename_all = "camelCase")]
     GitHubApp {
         app_id: String,
@@ -554,7 +554,7 @@ pub enum AuthProviderConfigInput {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         endpoint: Option<ModelEndpointConfig>,
     },
-    /// Bind an existing auth grant as a model provider credential. No
+    /// Bind an existing credential grant as a model provider credential. No
     /// `credential` is accepted; the grant's tokens stay in the grant store.
     #[serde(rename = "modelOAuth", rename_all = "camelCase")]
     ModelOAuth {
@@ -571,37 +571,37 @@ pub enum AuthProviderConfigInput {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderView {
+pub struct CredentialProviderView {
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub config: AuthProviderConfigView,
+    pub config: CredentialProviderConfigView,
     pub has_credential: bool,
-    pub status: AuthProviderStatus,
+    pub status: CredentialProviderStatus,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
-/// Register an auth provider. `credential` (for GitHub Apps: the private
+/// Register a credential provider. `credential` (for GitHub Apps: the private
 /// key PEM) is the third deliberate inbound-plaintext path: it is encrypted
 /// on receipt and never returned by any method. `Debug` output redacts it;
 /// request logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderCreateParams {
+pub struct CredentialProviderCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub config: AuthProviderConfigInput,
+    pub config: CredentialProviderConfigInput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
 }
 
-impl std::fmt::Debug for AuthProviderCreateParams {
+impl std::fmt::Debug for CredentialProviderCreateParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthProviderCreateParams")
+        f.debug_struct("CredentialProviderCreateParams")
             .field("provider_id", &self.provider_id)
             .field("display_name", &self.display_name)
             .field("config", &self.config)
@@ -615,8 +615,8 @@ impl std::fmt::Debug for AuthProviderCreateParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderCreateResponse {
-    pub provider: AuthProviderView,
+pub struct CredentialProviderCreateResponse {
+    pub provider: CredentialProviderView,
 }
 
 /// Declare a provider: its id, its configuration and its credential. A
@@ -629,11 +629,11 @@ pub struct AuthProviderCreateResponse {
 /// output redacts it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderPutParams {
+pub struct CredentialProviderPutParams {
     pub provider_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub config: AuthProviderConfigInput,
+    pub config: CredentialProviderConfigInput,
     /// The provider's credential, for the kinds that take one. Absent leaves
     /// the provider without a credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -643,9 +643,9 @@ pub struct AuthProviderPutParams {
     pub dry_run: bool,
 }
 
-impl std::fmt::Debug for AuthProviderPutParams {
+impl std::fmt::Debug for CredentialProviderPutParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthProviderPutParams")
+        f.debug_struct("CredentialProviderPutParams")
             .field("provider_id", &self.provider_id)
             .field("display_name", &self.display_name)
             .field("config", &self.config)
@@ -660,10 +660,10 @@ impl std::fmt::Debug for AuthProviderPutParams {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderPutResponse {
+pub struct CredentialProviderPutResponse {
     /// The provider as declared: as it is now, or as it would be for a dry
     /// run.
-    pub provider: AuthProviderView,
+    pub provider: CredentialProviderView,
     /// False when the provider already existed.
     pub created: bool,
     /// True when an existing provider held a different credential, or gained
@@ -673,37 +673,37 @@ pub struct AuthProviderPutResponse {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderListParams {}
+pub struct CredentialProviderListParams {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderListResponse {
+pub struct CredentialProviderListResponse {
     #[serde(default)]
-    pub providers: Vec<AuthProviderView>,
+    pub providers: Vec<CredentialProviderView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderReadParams {
+pub struct CredentialProviderReadParams {
     pub provider_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderReadResponse {
-    pub provider: AuthProviderView,
+pub struct CredentialProviderReadResponse {
+    pub provider: CredentialProviderView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderDeleteParams {
+pub struct CredentialProviderDeleteParams {
     pub provider_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthProviderDeleteResponse {
-    pub provider: AuthProviderView,
+pub struct CredentialProviderDeleteResponse {
+    pub provider: CredentialProviderView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -721,20 +721,20 @@ pub struct GitHubInstallationView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGitHubInstallationListParams {
+pub struct CredentialGitHubInstallationListParams {
     pub provider_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGitHubInstallationListResponse {
+pub struct CredentialGitHubInstallationListResponse {
     #[serde(default)]
     pub installations: Vec<GitHubInstallationView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGitHubInstallationGrantParams {
+pub struct CredentialGitHubInstallationGrantParams {
     pub provider_id: String,
     pub installation_id: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -742,11 +742,11 @@ pub struct AuthGitHubInstallationGrantParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default)]
-    pub exposure: AuthGrantExposure,
+    pub exposure: CredentialGrantExposure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct AuthGitHubInstallationGrantResponse {
-    pub grant: AuthGrantView,
+pub struct CredentialGitHubInstallationGrantResponse {
+    pub grant: CredentialGrantView,
 }

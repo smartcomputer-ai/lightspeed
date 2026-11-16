@@ -99,12 +99,12 @@ pub enum MethodGroup {
     /// `channels/inbound/admit`: what a connector delivers.
     #[serde(rename = "channels/inbound")]
     ChannelsInbound,
-    /// `auth/*` except leasing.
-    #[serde(rename = "auth")]
-    Auth,
-    /// `auth/grants/lease`: resolving a brokered credential for delivery.
-    #[serde(rename = "auth/lease")]
-    AuthLease,
+    /// `credentials/*` except leasing.
+    #[serde(rename = "credentials")]
+    Credentials,
+    /// `credentials/grants/lease`: resolving a brokered credential for delivery.
+    #[serde(rename = "credentials/lease")]
+    CredentialsLease,
     #[serde(rename = "deployment/universes")]
     DeploymentUniverses,
     /// Environment providers and their universe bindings.
@@ -131,8 +131,8 @@ impl MethodGroup {
         Self::Bots,
         Self::Channels,
         Self::ChannelsInbound,
-        Self::Auth,
-        Self::AuthLease,
+        Self::Credentials,
+        Self::CredentialsLease,
         Self::DeploymentUniverses,
         Self::DeploymentEnvironmentProviders,
         Self::DeploymentChannels,
@@ -154,8 +154,8 @@ impl MethodGroup {
             Self::Bots => "bots",
             Self::Channels => "channels",
             Self::ChannelsInbound => "channels/inbound",
-            Self::Auth => "auth",
-            Self::AuthLease => "auth/lease",
+            Self::Credentials => "credentials",
+            Self::CredentialsLease => "credentials/lease",
             Self::DeploymentUniverses => "deployment/universes",
             Self::DeploymentEnvironmentProviders => "deployment/environment-providers",
             Self::DeploymentChannels => "deployment/channels",
@@ -208,10 +208,10 @@ impl MethodGroup {
             Self::ChannelsInbound
         } else if group("channels/") {
             Self::Channels
-        } else if method == "auth/grants/lease" {
-            Self::AuthLease
-        } else if group("auth/") {
-            Self::Auth
+        } else if method == "credentials/grants/lease" {
+            Self::CredentialsLease
+        } else if group("credentials/") {
+            Self::Credentials
         } else if group("deployment/universes/") {
             Self::DeploymentUniverses
         } else if group("deployment/environment-provider") {
@@ -520,8 +520,11 @@ mod tests {
             ("bots/create", Some(MethodGroup::Bots)),
             ("channels/accounts/create", Some(MethodGroup::Channels)),
             ("channels/inbound/admit", Some(MethodGroup::ChannelsInbound)),
-            ("auth/grants/import", Some(MethodGroup::Auth)),
-            ("auth/grants/lease", Some(MethodGroup::AuthLease)),
+            ("credentials/grants/import", Some(MethodGroup::Credentials)),
+            (
+                "credentials/grants/lease",
+                Some(MethodGroup::CredentialsLease),
+            ),
             (
                 "deployment/universes/create",
                 Some(MethodGroup::DeploymentUniverses),
@@ -616,8 +619,8 @@ mod tests {
             Some(MethodGroup::ChannelsInbound)
         );
         assert_eq!(
-            MethodGroup::of(METHOD_AUTH_GRANTS_LEASE),
-            Some(MethodGroup::AuthLease)
+            MethodGroup::of(METHOD_CREDENTIALS_GRANTS_LEASE),
+            Some(MethodGroup::CredentialsLease)
         );
     }
 
@@ -644,7 +647,7 @@ mod tests {
             Some(RecommendedRole::Operator)
         );
         for method in [
-            METHOD_AUTH_GRANTS_LEASE,
+            METHOD_CREDENTIALS_GRANTS_LEASE,
             METHOD_CHANNELS_INBOUND_ADMIT,
             METHOD_DEPLOYMENT_UNIVERSES_CREATE,
         ] {

@@ -456,10 +456,10 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
         let profile_id = create_profile(&api, "You are a live-test bot.").await?;
         let secret = format!("signing-{}", uuid::Uuid::new_v4().simple());
         let grant_id = api
-            .import_auth_grant(api::AuthGrantImportParams {
+            .import_credential_grant(api::CredentialGrantImportParams {
                 grant_id: None,
                 provider_id: None,
-                exposure: api::AuthGrantExposure::Retrievable,
+                exposure: api::CredentialGrantExposure::Retrievable,
                 token: secret.clone(),
                 display_name: Some("Webhook signing secret".to_owned()),
                 subject_hint: None,

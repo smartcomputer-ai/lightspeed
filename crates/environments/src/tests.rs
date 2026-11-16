@@ -2586,41 +2586,41 @@ fn states_and_close_reasons_round_trip_their_stored_names() {
 
 #[test]
 fn only_retrievable_grants_may_be_bound_into_an_environment() {
-    let grant_id = AuthGrantId::new("authgrant_repo");
+    let grant_id = CredentialGrantId::new("authgrant_repo");
     assert_eq!(
-        require_bindable_grant(&grant_id, AuthGrantExposure::Retrievable),
+        require_bindable_grant(&grant_id, CredentialGrantExposure::Retrievable),
         Ok(())
     );
     assert_eq!(
-        require_bindable_grant(&grant_id, AuthGrantExposure::Brokered),
+        require_bindable_grant(&grant_id, CredentialGrantExposure::Brokered),
         Err(EnvironmentCredentialSourceRefusal::BrokeredGrant { grant_id })
     );
 }
 
 #[test]
 fn only_a_model_api_key_provider_credential_may_be_bound_into_an_environment() {
-    let provider_id = AuthProviderId::new("model:openai");
+    let provider_id = CredentialProviderId::new("model:openai");
     assert_eq!(
-        require_bindable_provider(&provider_id, AuthProviderKind::ModelApiKey),
+        require_bindable_provider(&provider_id, CredentialProviderKind::ModelApiKey),
         Ok(())
     );
 
     // A GitHub App's credential is its private key; the refusal names the
     // grant to bind in its place.
-    let github = AuthProviderId::new("github");
+    let github = CredentialProviderId::new("github");
     assert_eq!(
-        require_bindable_provider(&github, AuthProviderKind::GitHubApp),
+        require_bindable_provider(&github, CredentialProviderKind::GitHubApp),
         Err(EnvironmentCredentialSourceRefusal::GitHubAppProvider {
             provider_id: github,
         })
     );
 
     for kind in [
-        AuthProviderKind::StaticToken,
-        AuthProviderKind::McpOAuth,
-        AuthProviderKind::CustomOAuth,
-        AuthProviderKind::ModelOAuth,
-        AuthProviderKind::ModelEndpoint,
+        CredentialProviderKind::StaticToken,
+        CredentialProviderKind::McpOAuth,
+        CredentialProviderKind::CustomOAuth,
+        CredentialProviderKind::ModelOAuth,
+        CredentialProviderKind::ModelEndpoint,
     ] {
         assert_eq!(
             require_bindable_provider(&provider_id, kind),

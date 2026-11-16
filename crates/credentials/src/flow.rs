@@ -10,23 +10,23 @@ use api::Attribution;
 use std::sync::Arc;
 
 use crate::{
-    AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantExposure, AuthGrantId, AuthGrantStatus,
-    AuthGrantStore, AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord,
-    CreateAuthGrantRecord, FinishAuthFlow, McpOAuthTokenContext, OAuthClientId, OAuthClientStore,
-    OAuthTokenClient, OAuthTokenGrant, OAuthTokenRequest, PutSecretRecord,
-    SECRET_KIND_OAUTH_ACCESS_TOKEN, SECRET_KIND_OAUTH_PKCE_VERIFIER,
-    SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore, SecretValue, build_authorization_url,
-    generate_pkce_verifier, generate_state, pkce_challenge_s256, random_auth_id, state_hash,
-    validate_audience_url,
+    CreateCredentialFlowRecord, CreateCredentialGrantRecord, CredentialFlowId,
+    CredentialFlowRecord, CredentialFlowStore, CredentialGrantExposure, CredentialGrantId,
+    CredentialGrantStatus, CredentialGrantStore, CredentialProviderKind, CredentialRegistryError,
+    FinishCredentialFlow, McpOAuthTokenContext, OAuthClientId, OAuthClientStore, OAuthTokenClient,
+    OAuthTokenGrant, OAuthTokenRequest, PutSecretRecord, SECRET_KIND_OAUTH_ACCESS_TOKEN,
+    SECRET_KIND_OAUTH_PKCE_VERIFIER, SECRET_KIND_OAUTH_REFRESH_TOKEN, SecretId, SecretStore,
+    SecretValue, build_authorization_url, generate_pkce_verifier, generate_state,
+    pkce_challenge_s256, random_credential_id, state_hash, validate_audience_url,
 };
 
-pub const DEFAULT_AUTH_FLOW_TTL_MS: i64 = 10 * 60 * 1000;
+pub const DEFAULT_CREDENTIAL_FLOW_TTL_MS: i64 = 10 * 60 * 1000;
 
 /// Upper bound for error strings persisted onto flow records.
 const FLOW_ERROR_MAX_LEN: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StartAuthFlow {
+pub struct StartCredentialFlow {
     pub client_id: OAuthClientId,
     /// Redirect URI registered for this deployment (the gateway callback).
     pub redirect_uri: String,
@@ -34,13 +34,13 @@ pub struct StartAuthFlow {
     pub scopes: Option<Vec<String>>,
     /// Overrides the client's default audience when set.
     pub audience: Option<String>,
-    pub grant_exposure: AuthGrantExposure,
+    pub grant_exposure: CredentialGrantExposure,
     pub created_by: Attribution,
 }
 
 #[derive(Clone, Debug)]
-pub struct StartedAuthFlow {
-    pub flow: AuthFlowRecord,
+pub struct StartedCredentialFlow {
+    pub flow: CredentialFlowRecord,
     /// Full authorization URL including the raw `state`; shown to the user,
     /// never persisted or logged.
     pub authorize_url: String,
@@ -49,7 +49,7 @@ pub struct StartedAuthFlow {
 /// Query parameters delivered to the redirect URI. `code` is secret-wrapped;
 /// it must never be logged.
 #[derive(Clone, Debug)]
-pub struct AuthCallback {
+pub struct CredentialCallback {
     pub state: String,
     pub code: Option<SecretValue>,
     /// Optional RFC 9207 authorization-response issuer.
@@ -60,8 +60,8 @@ pub struct AuthCallback {
 
 pub struct OAuthFlowService {
     clients: Arc<dyn OAuthClientStore>,
-    flows: Arc<dyn AuthFlowStore>,
-    grants: Arc<dyn AuthGrantStore>,
+    flows: Arc<dyn CredentialFlowStore>,
+    grants: Arc<dyn CredentialGrantStore>,
     secrets: Arc<dyn SecretStore>,
     token_client: Arc<dyn OAuthTokenClient>,
     now_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -71,8 +71,8 @@ pub struct OAuthFlowService {
 impl OAuthFlowService {
     pub fn new(
         clients: Arc<dyn OAuthClientStore>,
-        flows: Arc<dyn AuthFlowStore>,
-        grants: Arc<dyn AuthGrantStore>,
+        flows: Arc<dyn CredentialFlowStore>,
+        grants: Arc<dyn CredentialGrantStore>,
         secrets: Arc<dyn SecretStore>,
         token_client: Arc<dyn OAuthTokenClient>,
     ) -> Self {
@@ -83,7 +83,7 @@ impl OAuthFlowService {
             secrets,
             token_client,
             now_ms: Arc::new(crate::broker::system_now_ms),
-            flow_ttl_ms: DEFAULT_AUTH_FLOW_TTL_MS,
+            flow_ttl_ms: DEFAULT_CREDENTIAL_FLOW_TTL_MS,
         }
     }
 
@@ -101,8 +101,8 @@ impl OAuthFlowService {
     /// one-time flow record, and return the authorization URL to open.
     pub async fn start_flow(
         &self,
-        request: StartAuthFlow,
-    ) -> Result<StartedAuthFlow, AuthRegistryError> {
+        request: StartCredentialFlow,
+    ) -> Result<StartedCredentialFlow, CredentialRegistryError> {
         let client = self.clients.read_oauth_client(&request.client_id).await?;
         let scopes = request
             .scopes
@@ -115,49 +115,51 @@ impl OAuthFlowService {
             None => None,
         };
         validate_audience_url(&request.redirect_uri).map_err(|error| match error {
-            AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
-                message: format!("redirect uri: {message}"),
-            },
+            CredentialRegistryError::InvalidInput { message } => {
+                CredentialRegistryError::InvalidInput {
+                    message: format!("redirect uri: {message}"),
+                }
+            }
             other => other,
         })?;
 
         let now_ms = (self.now_ms)();
-        let (state, verifier, authorize_url, expected_issuer, require_issuer) = if client
-            .provider_kind
-            == AuthProviderKind::McpOAuth
-        {
-            let client_secret = match &client.client_secret {
-                Some(secret_id) => Some(self.secrets.read_secret(secret_id).await?.1),
-                None => None,
-            };
-            let audience = audience
-                .as_deref()
-                .ok_or_else(|| AuthRegistryError::InvalidInput {
-                    message: "MCP OAuth authorization requires a resource audience".to_owned(),
+        let (state, verifier, authorize_url, expected_issuer, require_issuer) =
+            if client.provider_kind == CredentialProviderKind::McpOAuth {
+                let client_secret = match &client.client_secret {
+                    Some(secret_id) => Some(self.secrets.read_secret(secret_id).await?.1),
+                    None => None,
+                };
+                let audience =
+                    audience
+                        .as_deref()
+                        .ok_or_else(|| CredentialRegistryError::InvalidInput {
+                            message: "MCP OAuth authorization requires a resource audience"
+                                .to_owned(),
+                        })?;
+                let started = crate::mcp_oauth::begin_rmcp_authorization(
+                    &client,
+                    client_secret.as_ref(),
+                    &request.redirect_uri,
+                    &scopes,
+                    audience,
+                )
+                .await
+                .map_err(|error| CredentialRegistryError::Store {
+                    message: error.to_string(),
                 })?;
-            let started = crate::mcp_oauth::begin_rmcp_authorization(
-                &client,
-                client_secret.as_ref(),
-                &request.redirect_uri,
-                &scopes,
-                audience,
-            )
-            .await
-            .map_err(|error| AuthRegistryError::Store {
-                message: error.to_string(),
-            })?;
-            (
-                started.state,
-                started.pkce_verifier,
-                Some(started.authorize_url),
-                started.expected_issuer,
-                started.require_issuer,
-            )
-        } else {
-            let state = generate_state();
-            let verifier = generate_pkce_verifier();
-            (state, verifier, None, None, false)
-        };
+                (
+                    started.state,
+                    started.pkce_verifier,
+                    Some(started.authorize_url),
+                    started.expected_issuer,
+                    started.require_issuer,
+                )
+            } else {
+                let state = generate_state();
+                let verifier = generate_pkce_verifier();
+                (state, verifier, None, None, false)
+            };
 
         let authorize_url = authorize_url.unwrap_or_else(|| {
             let challenge = pkce_challenge_s256(&verifier);
@@ -181,12 +183,13 @@ impl OAuthFlowService {
             })
             .await?;
 
-        let flow_id = AuthFlowId::try_new(random_auth_id("authflow_")).map_err(|error| {
-            AuthRegistryError::Store {
-                message: format!("generate auth flow id: {error}"),
-            }
-        })?;
-        let create = CreateAuthFlowRecord {
+        let flow_id =
+            CredentialFlowId::try_new(random_credential_id("authflow_")).map_err(|error| {
+                CredentialRegistryError::Store {
+                    message: format!("generate credential flow id: {error}"),
+                }
+            })?;
+        let create = CreateCredentialFlowRecord {
             flow_id,
             client_id: client.client_id.clone(),
             provider_id: client.provider_id.clone(),
@@ -213,7 +216,7 @@ impl OAuthFlowService {
             }
         };
 
-        Ok(StartedAuthFlow {
+        Ok(StartedCredentialFlow {
             flow,
             authorize_url,
         })
@@ -221,8 +224,8 @@ impl OAuthFlowService {
 
     pub async fn read_flow(
         &self,
-        flow_id: &AuthFlowId,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        flow_id: &CredentialFlowId,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         self.flows.read_flow(flow_id).await
     }
 
@@ -236,17 +239,17 @@ impl OAuthFlowService {
     /// finish the flow as `Failed`; the returned record carries the outcome.
     pub async fn complete_callback(
         &self,
-        callback: AuthCallback,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        callback: CredentialCallback,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         if callback.state.is_empty() {
-            return Err(AuthRegistryError::UnknownCallbackState);
+            return Err(CredentialRegistryError::UnknownCallbackState);
         }
         let Some(flow) = self
             .flows
             .read_flow_by_state_hash(&state_hash(&callback.state))
             .await?
         else {
-            return Err(AuthRegistryError::UnknownCallbackState);
+            return Err(CredentialRegistryError::UnknownCallbackState);
         };
         let now_ms = (self.now_ms)();
         let flow = self.flows.consume_flow(&flow.flow_id, now_ms).await?;
@@ -269,7 +272,7 @@ impl OAuthFlowService {
 
         let client = match self.clients.read_oauth_client(&flow.client_id).await {
             Ok(client) => client,
-            Err(AuthRegistryError::ClientNotFound { client_id }) => {
+            Err(CredentialRegistryError::ClientNotFound { client_id }) => {
                 return self
                     .fail_flow(&flow, format!("oauth client {client_id} no longer exists"))
                     .await;
@@ -293,14 +296,16 @@ impl OAuthFlowService {
                 code_verifier: verifier,
             },
             resource: flow.audience.clone(),
-            mcp: (flow.provider_kind == AuthProviderKind::McpOAuth).then(|| McpOAuthTokenContext {
-                authorization_endpoint: client.authorization_endpoint.clone(),
-                issuer: flow.expected_issuer.clone(),
-                require_issuer: flow.require_issuer,
-                scopes_supported: client.authorization_server_scopes_supported.clone(),
-                requested_scopes: flow.scopes.clone(),
-                callback_state: Some(SecretValue::new(&callback.state)),
-                callback_issuer: callback.issuer.clone(),
+            mcp: (flow.provider_kind == CredentialProviderKind::McpOAuth).then(|| {
+                McpOAuthTokenContext {
+                    authorization_endpoint: client.authorization_endpoint.clone(),
+                    issuer: flow.expected_issuer.clone(),
+                    require_issuer: flow.require_issuer,
+                    scopes_supported: client.authorization_server_scopes_supported.clone(),
+                    requested_scopes: flow.scopes.clone(),
+                    callback_state: Some(SecretValue::new(&callback.state)),
+                    callback_issuer: callback.issuer.clone(),
+                }
             }),
         };
         let response = match self.token_client.request_token(&token_request).await {
@@ -351,12 +356,13 @@ impl OAuthFlowService {
             Some(scope) => scope.split_whitespace().map(str::to_owned).collect(),
             None => flow.scopes.clone(),
         };
-        let grant_id = AuthGrantId::try_new(random_auth_id("authgrant_")).map_err(|error| {
-            AuthRegistryError::Store {
-                message: format!("generate auth grant id: {error}"),
-            }
-        })?;
-        let create_grant = CreateAuthGrantRecord {
+        let grant_id =
+            CredentialGrantId::try_new(random_credential_id("authgrant_")).map_err(|error| {
+                CredentialRegistryError::Store {
+                    message: format!("generate credential grant id: {error}"),
+                }
+            })?;
+        let create_grant = CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: flow.provider_id.clone(),
             provider_kind: flow.provider_kind,
@@ -372,7 +378,7 @@ impl OAuthFlowService {
             expires_at_ms: response
                 .expires_in_secs
                 .map(|secs| now_ms.saturating_add(secs.saturating_mul(1000))),
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: now_ms,
         };
@@ -382,7 +388,7 @@ impl OAuthFlowService {
                 let _ = self.secrets.delete_secret(refresh_secret_id).await;
             }
             return self
-                .fail_flow(&flow, format!("store auth grant: {error}"))
+                .fail_flow(&flow, format!("store credential grant: {error}"))
                 .await;
         }
 
@@ -390,7 +396,7 @@ impl OAuthFlowService {
             .flows
             .finish_flow(
                 &flow.flow_id,
-                FinishAuthFlow {
+                FinishCredentialFlow {
                     grant_id: Some(grant_id),
                     error: None,
                     completed_at_ms: now_ms,
@@ -404,15 +410,15 @@ impl OAuthFlowService {
 
     async fn fail_flow(
         &self,
-        flow: &AuthFlowRecord,
+        flow: &CredentialFlowRecord,
         message: String,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         let message = truncate_error(message);
         let finished = self
             .flows
             .finish_flow(
                 &flow.flow_id,
-                FinishAuthFlow {
+                FinishCredentialFlow {
                     grant_id: None,
                     error: Some(message),
                     completed_at_ms: (self.now_ms)(),
@@ -423,9 +429,11 @@ impl OAuthFlowService {
         Ok(finished)
     }
 
-    fn random_secret_id(&self) -> Result<SecretId, AuthRegistryError> {
-        SecretId::try_new(random_auth_id("authsec_")).map_err(|error| AuthRegistryError::Store {
-            message: format!("generate secret id: {error}"),
+    fn random_secret_id(&self) -> Result<SecretId, CredentialRegistryError> {
+        SecretId::try_new(random_credential_id("authsec_")).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("generate secret id: {error}"),
+            }
         })
     }
 }
@@ -446,9 +454,9 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::{
-        AuthFlowStatus, AuthProviderKind, CreateOAuthClientRecord, InMemoryAuthFlowStore,
-        InMemoryAuthGrantStore, InMemoryOAuthClientStore, InMemorySecretStore, OAuthTokenError,
-        OAuthTokenResponse, TokenEndpointAuthMethod,
+        CreateOAuthClientRecord, CredentialFlowStatus, CredentialProviderKind,
+        InMemoryCredentialFlowStore, InMemoryCredentialGrantStore, InMemoryOAuthClientStore,
+        InMemorySecretStore, OAuthTokenError, OAuthTokenResponse, TokenEndpointAuthMethod,
     };
 
     use super::*;
@@ -492,23 +500,23 @@ mod tests {
     struct Harness {
         service: OAuthFlowService,
         clients: Arc<InMemoryOAuthClientStore>,
-        flows: Arc<InMemoryAuthFlowStore>,
-        grants: Arc<InMemoryAuthGrantStore>,
+        flows: Arc<InMemoryCredentialFlowStore>,
+        grants: Arc<InMemoryCredentialGrantStore>,
         secrets: Arc<InMemorySecretStore>,
         token_client: Arc<FakeTokenClient>,
     }
 
     async fn harness(responses: Vec<Result<OAuthTokenResponse, OAuthTokenError>>) -> Harness {
         let clients = Arc::new(InMemoryOAuthClientStore::new());
-        let flows = Arc::new(InMemoryAuthFlowStore::new());
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let flows = Arc::new(InMemoryCredentialFlowStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         let token_client = Arc::new(FakeTokenClient::with_responses(responses));
         clients
             .create_oauth_client(CreateOAuthClientRecord {
                 client_id: OAuthClientId::new("crm"),
                 provider_id: "crm".to_owned(),
-                provider_kind: AuthProviderKind::McpOAuth,
+                provider_kind: CredentialProviderKind::McpOAuth,
                 display_name: Some("CRM".to_owned()),
                 authorization_endpoint: "https://as.example.com/authorize".to_owned(),
                 token_endpoint: "https://as.example.com/token".to_owned(),
@@ -542,13 +550,13 @@ mod tests {
         }
     }
 
-    fn start_request() -> StartAuthFlow {
-        StartAuthFlow {
+    fn start_request() -> StartCredentialFlow {
+        StartCredentialFlow {
             client_id: OAuthClientId::new("crm"),
-            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/credentials/callback".to_owned(),
             scopes: None,
             audience: None,
-            grant_exposure: AuthGrantExposure::Brokered,
+            grant_exposure: CredentialGrantExposure::Brokered,
             created_by: Attribution::Local,
         }
     }
@@ -574,9 +582,15 @@ mod tests {
         let state = state_from_url(&started.authorize_url);
         assert_eq!(started.flow.state_hash, state_hash(&state));
         assert_ne!(started.flow.state_hash, state);
-        assert_eq!(started.flow.status(1_001), AuthFlowStatus::Pending);
-        assert_eq!(started.flow.grant_exposure, AuthGrantExposure::Brokered);
-        assert_eq!(started.flow.expires_at_ms, 1_000 + DEFAULT_AUTH_FLOW_TTL_MS);
+        assert_eq!(started.flow.status(1_001), CredentialFlowStatus::Pending);
+        assert_eq!(
+            started.flow.grant_exposure,
+            CredentialGrantExposure::Brokered
+        );
+        assert_eq!(
+            started.flow.expires_at_ms,
+            1_000 + DEFAULT_CREDENTIAL_FLOW_TTL_MS
+        );
         let (meta, _) = harness
             .secrets
             .read_secret(&started.flow.pkce_verifier_secret)
@@ -595,7 +609,7 @@ mod tests {
     async fn callbacks_exchange_codes_and_create_grants() {
         let harness = harness(vec![Ok(token_response(Some("rt-1")))]).await;
         let mut request = start_request();
-        request.grant_exposure = AuthGrantExposure::Retrievable;
+        request.grant_exposure = CredentialGrantExposure::Retrievable;
         let started = harness
             .service
             .start_flow(request)
@@ -605,7 +619,7 @@ mod tests {
 
         let finished = harness
             .service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state,
                 code: Some(SecretValue::new("code-1")),
                 issuer: None,
@@ -615,11 +629,11 @@ mod tests {
             .await
             .expect("complete callback");
 
-        assert_eq!(finished.status(1_001), AuthFlowStatus::Completed);
+        assert_eq!(finished.status(1_001), CredentialFlowStatus::Completed);
         let grant_id = finished.grant_id.expect("grant id");
         let grant = harness.grants.read_grant(&grant_id).await.expect("grant");
-        assert_eq!(grant.provider_kind, AuthProviderKind::McpOAuth);
-        assert_eq!(grant.exposure, AuthGrantExposure::Retrievable);
+        assert_eq!(grant.provider_kind, CredentialProviderKind::McpOAuth);
+        assert_eq!(grant.exposure, CredentialGrantExposure::Retrievable);
         assert_eq!(
             grant.audience.as_deref(),
             Some("https://crm.example.com/mcp")
@@ -650,7 +664,7 @@ mod tests {
                 .secrets
                 .read_secret(&started.flow.pkce_verifier_secret)
                 .await,
-            Err(AuthRegistryError::SecretNotFound { .. })
+            Err(CredentialRegistryError::SecretNotFound { .. })
         ));
 
         // The exchange carried PKCE and the resource indicator.
@@ -678,7 +692,7 @@ mod tests {
 
         harness
             .service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state: state.clone(),
                 code: Some(SecretValue::new("code-1")),
                 issuer: None,
@@ -690,7 +704,7 @@ mod tests {
 
         let error = harness
             .service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state,
                 code: Some(SecretValue::new("code-1")),
                 issuer: None,
@@ -702,7 +716,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            AuthRegistryError::FlowAlreadyConsumed { .. }
+            CredentialRegistryError::FlowAlreadyConsumed { .. }
         ));
     }
 
@@ -717,7 +731,7 @@ mod tests {
 
         let error = harness
             .service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state: "forged-state".to_owned(),
                 code: Some(SecretValue::new("code-1")),
                 issuer: None,
@@ -727,7 +741,10 @@ mod tests {
             .await
             .expect_err("forged state must fail");
 
-        assert!(matches!(error, AuthRegistryError::UnknownCallbackState));
+        assert!(matches!(
+            error,
+            CredentialRegistryError::UnknownCallbackState
+        ));
     }
 
     #[tokio::test]
@@ -739,7 +756,7 @@ mod tests {
         let service = service.with_now_fn(Arc::new(|| 5_000));
 
         let error = service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state,
                 code: Some(SecretValue::new("code-1")),
                 issuer: None,
@@ -749,7 +766,7 @@ mod tests {
             .await
             .expect_err("expired flow must fail");
 
-        assert!(matches!(error, AuthRegistryError::FlowExpired { .. }));
+        assert!(matches!(error, CredentialRegistryError::FlowExpired { .. }));
     }
 
     #[tokio::test]
@@ -764,7 +781,7 @@ mod tests {
 
         let finished = harness
             .service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state,
                 code: None,
                 issuer: None,
@@ -774,7 +791,7 @@ mod tests {
             .await
             .expect("denied callback resolves the flow");
 
-        assert_eq!(finished.status(1_001), AuthFlowStatus::Failed);
+        assert_eq!(finished.status(1_001), CredentialFlowStatus::Failed);
         let error = finished.error.expect("failure message");
         assert!(error.contains("access_denied"));
         assert!(finished.grant_id.is_none());
@@ -804,7 +821,7 @@ mod tests {
 
         let finished = harness
             .service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state,
                 code: Some(SecretValue::new("code-1")),
                 issuer: None,
@@ -814,14 +831,14 @@ mod tests {
             .await
             .expect("failed exchange resolves the flow");
 
-        assert_eq!(finished.status(1_001), AuthFlowStatus::Failed);
+        assert_eq!(finished.status(1_001), CredentialFlowStatus::Failed);
         assert!(finished.error.expect("error").contains("invalid_grant"));
         let flow = harness
             .flows
             .read_flow(&started.flow.flow_id)
             .await
             .expect("flow record");
-        assert_eq!(flow.status(1_001), AuthFlowStatus::Failed);
+        assert_eq!(flow.status(1_001), CredentialFlowStatus::Failed);
     }
 
     #[tokio::test]

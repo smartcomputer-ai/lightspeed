@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, AuthProviderId, SecretValue};
+use credentials::{CredentialGrantId, CredentialProviderId, SecretValue};
 use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
 use environments::{
     BeginCloseEnvironment, BindRegisteredEnvironment, CreateEnvironment, CreateExternalEnvironment,
@@ -37,7 +37,7 @@ use uuid::Uuid;
 
 use crate::{
     PgStore, PgStoreError,
-    auth::{LOCAL_KEY_ID, open_secret, seal_secret},
+    credentials::{LOCAL_KEY_ID, open_secret, seal_secret},
 };
 
 const PROVIDER_COLUMNS: &str = r#"
@@ -1945,15 +1945,17 @@ fn credential_from_row(
     let grant = optional_string(row, "grant_id")?;
     let provider = optional_string(row, "auth_provider_id")?;
     let source = match kind.as_str() {
-        "auth_grant" => EnvironmentCredentialSource::AuthGrant {
-            grant_id: AuthGrantId::try_new(grant.ok_or_else(|| store_message("missing grant id"))?)
-                .map_err(|e| store_message(format!("decode grant id: {e}")))?,
-        },
-        "auth_provider_credential" => EnvironmentCredentialSource::AuthProviderCredential {
-            provider_id: AuthProviderId::try_new(
-                provider.ok_or_else(|| store_message("missing auth provider id"))?,
+        "auth_grant" => EnvironmentCredentialSource::CredentialGrant {
+            grant_id: CredentialGrantId::try_new(
+                grant.ok_or_else(|| store_message("missing grant id"))?,
             )
-            .map_err(|e| store_message(format!("decode auth provider id: {e}")))?,
+            .map_err(|e| store_message(format!("decode grant id: {e}")))?,
+        },
+        "auth_provider_credential" => EnvironmentCredentialSource::CredentialProviderCredential {
+            provider_id: CredentialProviderId::try_new(
+                provider.ok_or_else(|| store_message("missing credential provider id"))?,
+            )
+            .map_err(|e| store_message(format!("decode credential provider id: {e}")))?,
         },
         other => return Err(store_message(format!("unknown credential source: {other}"))),
     };
@@ -1974,10 +1976,10 @@ fn credential_source_columns(
     source: &EnvironmentCredentialSource,
 ) -> (&'static str, Option<&str>, Option<&str>) {
     match source {
-        EnvironmentCredentialSource::AuthGrant { grant_id } => {
+        EnvironmentCredentialSource::CredentialGrant { grant_id } => {
             ("auth_grant", Some(grant_id.as_str()), None)
         }
-        EnvironmentCredentialSource::AuthProviderCredential { provider_id } => {
+        EnvironmentCredentialSource::CredentialProviderCredential { provider_id } => {
             ("auth_provider_credential", None, Some(provider_id.as_str()))
         }
     }
@@ -2209,11 +2211,11 @@ mod tests {
 
     #[test]
     fn stored_credential_source_kinds_pass_the_latest_check() {
-        let grant = EnvironmentCredentialSource::AuthGrant {
-            grant_id: AuthGrantId::new("authgrant_repo"),
+        let grant = EnvironmentCredentialSource::CredentialGrant {
+            grant_id: CredentialGrantId::new("authgrant_repo"),
         };
-        let provider = EnvironmentCredentialSource::AuthProviderCredential {
-            provider_id: AuthProviderId::new("model:openai"),
+        let provider = EnvironmentCredentialSource::CredentialProviderCredential {
+            provider_id: CredentialProviderId::new("model:openai"),
         };
         assert_eq!(
             credential_source_columns(&grant),

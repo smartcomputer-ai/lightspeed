@@ -22,7 +22,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use auth::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
+use credentials::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
 use futures_util::StreamExt as _;
 use llm_clients::{
     anthropic::messages as am,
@@ -73,7 +73,7 @@ pub struct DeploymentClients {
     pub(crate) openai_audio: Arc<oai_audio::Client>,
     pub(crate) anthropic: Arc<am::Client>,
     pub(crate) oauth_token: Arc<dyn OAuthTokenClient>,
-    pub(crate) oauth_metadata: Arc<dyn auth::OAuthMetadataClient>,
+    pub(crate) oauth_metadata: Arc<dyn credentials::OAuthMetadataClient>,
     pub(crate) github: Arc<dyn GitHubApiClient>,
     pub(crate) audio_transcoder: Option<Arc<dyn AudioTranscoder>>,
 }
@@ -96,7 +96,7 @@ impl DeploymentClients {
             am::Client::new(am::Config::from_env_allow_missing_key())
                 .map_err(|error| anyhow::anyhow!("construct Anthropic client: {error}"))?,
         );
-        let oauth_metadata: Arc<dyn auth::OAuthMetadataClient> = Arc::new(
+        let oauth_metadata: Arc<dyn credentials::OAuthMetadataClient> = Arc::new(
             crate::worker::mcp::McpPrivateNetworkPolicy::from_env()
                 .map_err(anyhow::Error::msg)?
                 .oauth_http_client(),
@@ -164,25 +164,30 @@ impl UniverseRuntime {
         public_base_url: Option<String>,
         stores: DeploymentStores,
     ) -> anyhow::Result<Self> {
-        Self::new_with_environment_gateway(client, task_queue, public_base_url, stores, true)
+        Self::new_with_environment_gateway(
+            client,
+            task_queue,
+            public_base_url,
+            stores,
+            Some(format!(
+                "http://{}",
+                crate::gateway::DEFAULT_ENVIRONMENT_GATEWAY_BIND
+            )),
+        )
     }
 
-    /// `local_environment_gateway` says whether this process serves the
-    /// environment routes itself; only then may the worker-side route default
-    /// to the local public base URL. Every other process must be told where
-    /// the environment gateway is.
+    /// A local environment listener supplies its own advertised URL. Processes
+    /// without one use the configured remote environment gateway; public OAuth
+    /// callbacks and environment traffic never share an inferred endpoint.
     pub fn new_with_environment_gateway(
         client: Client,
         task_queue: String,
         public_base_url: Option<String>,
         stores: DeploymentStores,
-        local_environment_gateway: bool,
+        environment_gateway_url: Option<String>,
     ) -> anyhow::Result<Self> {
-        let environment_gateway = EnvironmentGatewayClientConfig::from_env(
-            public_base_url
-                .as_deref()
-                .filter(|_| local_environment_gateway),
-        )?;
+        let environment_gateway =
+            EnvironmentGatewayClientConfig::from_env(environment_gateway_url.as_deref())?;
         Ok(Self {
             client,
             task_queues: TaskQueues::derived_from(task_queue),

@@ -13,7 +13,7 @@ export interface TokenSource {
 }
 
 /**
- * In-memory lease of one retrievable grant (`auth/grants/lease`). The token is
+ * In-memory lease of one retrievable grant (`credentials/grants/lease`). The token is
  * never persisted or placed in a workflow payload; it is cached until
  * `expiresAtMs - 30 s` (or five minutes without an expiry) and re-leased on
  * demand after the provider rejects it.
@@ -49,10 +49,10 @@ export class GrantLease implements TokenSource {
 
   private async lease(): Promise<string> {
     const leasedAtMs = this.now();
-    const response = await this.client.call("auth/grants/lease", { grantId: this.grantId });
+    const response = await this.client.call("credentials/grants/lease", { grantId: this.grantId });
     const lease = response.result;
     if (typeof lease.token !== "string" || lease.token.length === 0) {
-      throw new TypeError(`auth/grants/lease returned no token for ${this.grantId}`);
+      throw new TypeError(`credentials/grants/lease returned no token for ${this.grantId}`);
     }
     const untilExpiry =
       lease.expiresAtMs === undefined || lease.expiresAtMs === null

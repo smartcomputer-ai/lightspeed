@@ -5,7 +5,7 @@ import { deploymentClient, GateRefusal, memberClient } from "./runtime-client.js
 import { METHOD_ROLES, UNMEMBERED_METHODS } from "./routes/method-roles.js";
 import type { ServerEnv } from "./env.js";
 
-const env = { lightspeedApiUrl: "https://core.example/rpc", lightspeedRpcToken: "lsk_fixture" } as ServerEnv;
+const env = { lightspeedApiUrl: "https://core.example/rpc", lightspeedRpcToken: "lsr_fixture" } as ServerEnv;
 const universe = { lightspeedUniverseId: "11111111-1111-4111-8111-111111111111", gatewayUrl: null };
 const integration = { version: 1, tools: [] };
 afterEach(() => vi.unstubAllGlobals());
@@ -131,7 +131,7 @@ describe("lists and transport", () => {
     const calls = core();
     await as("viewer").call("profiles/list", {});
     await deploymentClient(env).call("deployment/universes/list", {});
-    expect(calls[0]!.headers.get("authorization")).toBe("Bearer lsk_fixture");
+    expect(calls[0]!.headers.get("authorization")).toBe("Bearer lsr_fixture");
     expect(calls[0]!.headers.get("x-lightspeed-universe")).toBe(universe.lightspeedUniverseId);
     expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");
     expect(calls[1]!.headers.get("x-lightspeed-universe")).toBeNull();

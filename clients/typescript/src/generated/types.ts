@@ -971,68 +971,6 @@ export type InputItem =
     };
 export type MediaKind = "image" | "audio" | "document";
 /**
- * On a grant, how its token is obtained; on a provider, what it configures.
- * `staticToken` is a pasted secret, sent under whatever header its consumer
- * uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
- * endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
- * on demand. The `model*` kinds configure model providers; `modelEndpoint`
- * is a provider without a credential and never appears on a grant.
- */
-export type AuthProviderKind =
-  | "staticToken"
-  | "mcpOAuth"
-  | "gitHubApp"
-  | "customOAuth"
-  | "modelApiKey"
-  | "modelOAuth"
-  | "modelEndpoint";
-export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
-export type AuthFlowStatus = "pending" | "completed" | "failed" | "expired";
-/**
- * Where a credential's plain value may go, fixed when it is created.
- */
-export type AuthGrantExposure = "brokered" | "retrievable";
-export type AuthGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
-/**
- * Non-secret, provider-specific configuration. New providers add a
- * variant, not a table.
- */
-export type AuthProviderConfigView =
-  | {
-      apiBaseUrl: string;
-      appId: string;
-      type: "githubApp";
-    }
-  | {
-      endpoint?: ModelEndpointConfig | null;
-      type: "modelApiKey";
-    }
-  | {
-      audience?: string | null;
-      endpoint?: ModelEndpointConfig | null;
-      grantId: string;
-      type: "modelOAuth";
-    }
-  | {
-      endpoint: ModelEndpointConfig;
-      type: "modelEndpoint";
-    };
-/**
- * Value of one configured request header, as an MCP server and a model
- * provider's endpoint both carry them. A name listed in
- * [`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.
- */
-export type RequestHeader =
-  | {
-      type: "literal";
-      value: string;
-    }
-  | {
-      grantId: string;
-      type: "credential";
-    };
-export type AuthProviderStatus = "active" | "needsConfiguration" | "disabled";
-/**
  * The whole configuration of one trigger, replaced with an expected
  * revision.
  */
@@ -1242,6 +1180,68 @@ export type InputAdmissionFailureKind = "unsupportedMedia" | "blobMissing" | "ad
 export type ContextAppendStatus = "applied" | "unchanged" | "failed";
 export type ContextRemoveStatus = "removed" | "absent" | "failed";
 export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
+/**
+ * On a grant, how its token is obtained; on a provider, what it configures.
+ * `staticToken` is a pasted secret, sent under whatever header its consumer
+ * uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+ * endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+ * on demand. The `model*` kinds configure model providers; `modelEndpoint`
+ * is a provider without a credential and never appears on a grant.
+ */
+export type CredentialProviderKind =
+  | "staticToken"
+  | "mcpOAuth"
+  | "gitHubApp"
+  | "customOAuth"
+  | "modelApiKey"
+  | "modelOAuth"
+  | "modelEndpoint";
+export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
+export type CredentialFlowStatus = "pending" | "completed" | "failed" | "expired";
+/**
+ * Where a credential's plain value may go, fixed when it is created.
+ */
+export type CredentialGrantExposure = "brokered" | "retrievable";
+export type CredentialGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
+/**
+ * Non-secret, provider-specific configuration. New providers add a
+ * variant, not a table.
+ */
+export type CredentialProviderConfigView =
+  | {
+      apiBaseUrl: string;
+      appId: string;
+      type: "githubApp";
+    }
+  | {
+      endpoint?: ModelEndpointConfig | null;
+      type: "modelApiKey";
+    }
+  | {
+      audience?: string | null;
+      endpoint?: ModelEndpointConfig | null;
+      grantId: string;
+      type: "modelOAuth";
+    }
+  | {
+      endpoint: ModelEndpointConfig;
+      type: "modelEndpoint";
+    };
+/**
+ * Value of one configured request header, as an MCP server and a model
+ * provider's endpoint both carry them. A name listed in
+ * [`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.
+ */
+export type RequestHeader =
+  | {
+      type: "literal";
+      value: string;
+    }
+  | {
+      grantId: string;
+      type: "credential";
+    };
+export type CredentialProviderStatus = "active" | "needsConfiguration" | "disabled";
 export type UniverseDeletionStep = "intake" | "workflows" | "environments" | "storage";
 export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
 /**
@@ -1320,7 +1320,7 @@ export type McpServerAuthPolicy =
     };
 /**
  * Non-secret universe credential selected by this configured MCP server.
- * Token material remains in the auth subsystem and is never returned.
+ * Token material remains in the credentials subsystem and is never returned.
  */
 export type McpServerCredential = {
   grantId: string;
@@ -1404,26 +1404,6 @@ export type TranscriptionFailureKind =
   "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
 export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
-export type AuthProviderConfigInput =
-  | {
-      apiBaseUrl?: string | null;
-      appId: string;
-      type: "githubApp";
-    }
-  | {
-      endpoint?: ModelEndpointConfig | null;
-      type: "modelApiKey";
-    }
-  | {
-      audience?: string | null;
-      endpoint?: ModelEndpointConfig | null;
-      grantId: string;
-      type: "modelOAuth";
-    }
-  | {
-      endpoint: ModelEndpointConfig;
-      type: "modelEndpoint";
-    };
 /**
  * The whole configuration of one trigger, replaced with an expected
  * revision.
@@ -1508,6 +1488,26 @@ export type BotTriggerInput1 =
       priority?: number;
     };
 export type ChannelMediaKind = "image" | "audio" | "document";
+export type CredentialProviderConfigInput =
+  | {
+      apiBaseUrl?: string | null;
+      appId: string;
+      type: "githubApp";
+    }
+  | {
+      endpoint?: ModelEndpointConfig | null;
+      type: "modelApiKey";
+    }
+  | {
+      audience?: string | null;
+      endpoint?: ModelEndpointConfig | null;
+      grantId: string;
+      type: "modelOAuth";
+    }
+  | {
+      endpoint: ModelEndpointConfig;
+      type: "modelEndpoint";
+    };
 export type SessionJobCancelScopeView = "job" | "dependents";
 export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
 export type MethodAccess =
@@ -1569,8 +1569,8 @@ export type MethodGroup =
   | "environments"
   | "channels"
   | "channels/inbound"
-  | "auth"
-  | "auth/lease"
+  | "credentials"
+  | "credentials/lease"
   | "deployment/environment-providers"
   | "deployment/channels";
 /**
@@ -1654,9 +1654,9 @@ export interface DeletedUniverseView {
   summary: unknown;
   universeId: string;
 }
-export interface AgentApiOutcomeOfAuthClientCreateResponse {
+export interface AgentApiOutcomeOfBlobHasResponse {
   notifications?: AgentNotification[];
-  result: AuthClientCreateResponse;
+  result: BlobHasResponse;
 }
 /**
  * Display fields materialized with the session log.
@@ -2963,266 +2963,6 @@ export interface ToolCallMediaView {
   mime: string;
   name?: string | null;
 }
-export interface AuthClientCreateResponse {
-  client: OAuthClientView;
-}
-export interface OAuthClientView {
-  audience?: string | null;
-  authorizationEndpoint: string;
-  authorizationResponseIssParameterSupported?: boolean;
-  authorizationServerIssuer?: string | null;
-  authorizationServerScopesSupported?: string[];
-  clientId: string;
-  createdAtMs: number;
-  displayName?: string | null;
-  hasClientSecret: boolean;
-  providerId: string;
-  providerKind: AuthProviderKind;
-  remoteClientId: string;
-  scopesDefault?: string[];
-  tokenEndpoint: string;
-  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfAuthClientDeleteResponse {
-  notifications?: AgentNotification[];
-  result: AuthClientDeleteResponse;
-}
-export interface AuthClientDeleteResponse {
-  client: OAuthClientView;
-}
-export interface AgentApiOutcomeOfAuthClientListResponse {
-  notifications?: AgentNotification[];
-  result: AuthClientListResponse;
-}
-export interface AuthClientListResponse {
-  clients?: OAuthClientView[];
-}
-export interface AgentApiOutcomeOfAuthClientReadResponse {
-  notifications?: AgentNotification[];
-  result: AuthClientReadResponse;
-}
-export interface AuthClientReadResponse {
-  client: OAuthClientView;
-}
-export interface AgentApiOutcomeOfAuthFlowStartResponse {
-  notifications?: AgentNotification[];
-  result: AuthFlowStartResponse;
-}
-export interface AuthFlowStartResponse {
-  /**
-   * Authorization URL the user must open. It embeds the one-time `state`;
-   * treat it as sensitive and do not log it server-side.
-   */
-  authorizeUrl: string;
-  expiresAtMs: number;
-  flowId: string;
-}
-export interface AgentApiOutcomeOfAuthFlowStatusResponse {
-  notifications?: AgentNotification[];
-  result: AuthFlowStatusResponse;
-}
-export interface AuthFlowStatusResponse {
-  flow: AuthFlowView;
-}
-export interface AuthFlowView {
-  clientId: string;
-  createdAtMs: number;
-  error?: string | null;
-  expiresAtMs: number;
-  flowId: string;
-  grantId?: string | null;
-  providerId: string;
-  status: AuthFlowStatus;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfAuthGitHubInstallationGrantResponse {
-  notifications?: AgentNotification[];
-  result: AuthGitHubInstallationGrantResponse;
-}
-export interface AuthGitHubInstallationGrantResponse {
-  grant: AuthGrantView;
-}
-export interface AuthGrantView {
-  audience?: string | null;
-  createdAtMs: number;
-  /**
-   * Who created the grant. Attribution only; it confers no access.
-   */
-  createdBy: Attribution;
-  displayName?: string | null;
-  expiresAtMs?: number | null;
-  exposure: AuthGrantExposure;
-  grantId: string;
-  hasAccessToken: boolean;
-  hasRefreshToken: boolean;
-  lastLeasedAtMs?: number | null;
-  leaseCount: number;
-  /**
-   * Non-secret provider-specific metadata (for GitHub App installation
-   * grants: installation id, account, permissions, repository selection).
-   */
-  metadata?: {
-    [k: string]: unknown;
-  };
-  providerId: string;
-  providerKind: AuthProviderKind;
-  scopes?: string[];
-  status: AuthGrantStatus;
-  subjectHint?: string | null;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfAuthGitHubInstallationListResponse {
-  notifications?: AgentNotification[];
-  result: AuthGitHubInstallationListResponse;
-}
-export interface AuthGitHubInstallationListResponse {
-  installations?: GitHubInstallationView[];
-}
-export interface GitHubInstallationView {
-  accountLogin?: string | null;
-  installationId: number;
-  /**
-   * Fine-grained permission map as GitHub reports it.
-   */
-  permissions?: {
-    [k: string]: unknown;
-  };
-  repositorySelection?: string | null;
-}
-export interface AgentApiOutcomeOfAuthGrantImportResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantImportResponse;
-}
-export interface AuthGrantImportResponse {
-  grant: AuthGrantView;
-}
-export interface AgentApiOutcomeOfAuthGrantLeaseResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantLeaseResponse;
-}
-export interface AuthGrantLeaseResponse {
-  expiresAtMs?: number | null;
-  grantId: string;
-  providerKind: AuthProviderKind;
-  token: string;
-}
-export interface AgentApiOutcomeOfAuthGrantListResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantListResponse;
-}
-export interface AuthGrantListResponse {
-  grants?: AuthGrantView[];
-}
-export interface AgentApiOutcomeOfAuthGrantPutResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantPutResponse;
-}
-export interface AuthGrantPutResponse {
-  /**
-   * False when the credential already existed.
-   */
-  created: boolean;
-  /**
-   * The credential as declared: as it is now, or as it would be for a
-   * dry run.
-   */
-  grant: AuthGrantView;
-  /**
-   * True when an existing credential held a different token.
-   */
-  tokenReplaced: boolean;
-}
-export interface AgentApiOutcomeOfAuthGrantReadResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantReadResponse;
-}
-export interface AuthGrantReadResponse {
-  grant: AuthGrantView;
-}
-export interface AgentApiOutcomeOfAuthGrantRevokeResponse {
-  notifications?: AgentNotification[];
-  result: AuthGrantRevokeResponse;
-}
-export interface AuthGrantRevokeResponse {
-  grant: AuthGrantView;
-}
-export interface AgentApiOutcomeOfAuthProviderCreateResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderCreateResponse;
-}
-export interface AuthProviderCreateResponse {
-  provider: AuthProviderView;
-}
-export interface AuthProviderView {
-  config: AuthProviderConfigView;
-  createdAtMs: number;
-  displayName?: string | null;
-  hasCredential: boolean;
-  providerId: string;
-  providerKind: AuthProviderKind;
-  status: AuthProviderStatus;
-  updatedAtMs: number;
-}
-export interface ModelEndpointConfig {
-  apiKinds: string[];
-  baseUrl: string;
-  /**
-   * Extra request headers sent on every request to the endpoint, alongside
-   * the provider's own credential. Names are case-insensitive and stored
-   * lowercased; transport headers and `authorization` are reserved.
-   * `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
-   * accept only a `credential` value.
-   */
-  headers?: {
-    [k: string]: RequestHeader;
-  };
-}
-export interface AgentApiOutcomeOfAuthProviderDeleteResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderDeleteResponse;
-}
-export interface AuthProviderDeleteResponse {
-  provider: AuthProviderView;
-}
-export interface AgentApiOutcomeOfAuthProviderListResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderListResponse;
-}
-export interface AuthProviderListResponse {
-  providers?: AuthProviderView[];
-}
-export interface AgentApiOutcomeOfAuthProviderPutResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderPutResponse;
-}
-export interface AuthProviderPutResponse {
-  /**
-   * False when the provider already existed.
-   */
-  created: boolean;
-  /**
-   * True when an existing provider held a different credential, or gained
-   * or lost one.
-   */
-  credentialReplaced: boolean;
-  /**
-   * The provider as declared: as it is now, or as it would be for a dry
-   * run.
-   */
-  provider: AuthProviderView;
-}
-export interface AgentApiOutcomeOfAuthProviderReadResponse {
-  notifications?: AgentNotification[];
-  result: AuthProviderReadResponse;
-}
-export interface AuthProviderReadResponse {
-  provider: AuthProviderView;
-}
-export interface AgentApiOutcomeOfBlobHasResponse {
-  notifications?: AgentNotification[];
-  result: BlobHasResponse;
-}
 export interface BlobHasResponse {
   blobs?: BlobHasItem[];
 }
@@ -3691,7 +3431,7 @@ export interface ChannelAccountView {
   accountId: ChannelAccountId;
   createdAtMs: number;
   /**
-   * Retrievable auth grant holding the provider token (a Telegram bot
+   * Retrievable credential grant holding the provider token (a Telegram bot
    * token); the connector host leases it. Absent for providers whose
    * credential is a session state directory (WhatsApp).
    */
@@ -3873,6 +3613,266 @@ export interface ContextReplaceResult {
   failure?: InputAdmissionFailureView | null;
   status: ContextReplaceStatus;
 }
+export interface AgentApiOutcomeOfCredentialClientCreateResponse {
+  notifications?: AgentNotification[];
+  result: CredentialClientCreateResponse;
+}
+export interface CredentialClientCreateResponse {
+  client: OAuthClientView;
+}
+export interface OAuthClientView {
+  audience?: string | null;
+  authorizationEndpoint: string;
+  authorizationResponseIssParameterSupported?: boolean;
+  authorizationServerIssuer?: string | null;
+  authorizationServerScopesSupported?: string[];
+  clientId: string;
+  createdAtMs: number;
+  displayName?: string | null;
+  hasClientSecret: boolean;
+  providerId: string;
+  providerKind: CredentialProviderKind;
+  remoteClientId: string;
+  scopesDefault?: string[];
+  tokenEndpoint: string;
+  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
+  updatedAtMs: number;
+}
+export interface AgentApiOutcomeOfCredentialClientDeleteResponse {
+  notifications?: AgentNotification[];
+  result: CredentialClientDeleteResponse;
+}
+export interface CredentialClientDeleteResponse {
+  client: OAuthClientView;
+}
+export interface AgentApiOutcomeOfCredentialClientListResponse {
+  notifications?: AgentNotification[];
+  result: CredentialClientListResponse;
+}
+export interface CredentialClientListResponse {
+  clients?: OAuthClientView[];
+}
+export interface AgentApiOutcomeOfCredentialClientReadResponse {
+  notifications?: AgentNotification[];
+  result: CredentialClientReadResponse;
+}
+export interface CredentialClientReadResponse {
+  client: OAuthClientView;
+}
+export interface AgentApiOutcomeOfCredentialFlowStartResponse {
+  notifications?: AgentNotification[];
+  result: CredentialFlowStartResponse;
+}
+export interface CredentialFlowStartResponse {
+  /**
+   * Authorization URL the user must open. It embeds the one-time `state`;
+   * treat it as sensitive and do not log it server-side.
+   */
+  authorizeUrl: string;
+  expiresAtMs: number;
+  flowId: string;
+}
+export interface AgentApiOutcomeOfCredentialFlowStatusResponse {
+  notifications?: AgentNotification[];
+  result: CredentialFlowStatusResponse;
+}
+export interface CredentialFlowStatusResponse {
+  flow: CredentialFlowView;
+}
+export interface CredentialFlowView {
+  clientId: string;
+  createdAtMs: number;
+  error?: string | null;
+  expiresAtMs: number;
+  flowId: string;
+  grantId?: string | null;
+  providerId: string;
+  status: CredentialFlowStatus;
+  updatedAtMs: number;
+}
+export interface AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGitHubInstallationGrantResponse;
+}
+export interface CredentialGitHubInstallationGrantResponse {
+  grant: CredentialGrantView;
+}
+export interface CredentialGrantView {
+  audience?: string | null;
+  createdAtMs: number;
+  /**
+   * Who created the grant. Attribution only; it confers no access.
+   */
+  createdBy: Attribution;
+  displayName?: string | null;
+  expiresAtMs?: number | null;
+  exposure: CredentialGrantExposure;
+  grantId: string;
+  hasAccessToken: boolean;
+  hasRefreshToken: boolean;
+  lastLeasedAtMs?: number | null;
+  leaseCount: number;
+  /**
+   * Non-secret provider-specific metadata (for GitHub App installation
+   * grants: installation id, account, permissions, repository selection).
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  providerId: string;
+  providerKind: CredentialProviderKind;
+  scopes?: string[];
+  status: CredentialGrantStatus;
+  subjectHint?: string | null;
+  updatedAtMs: number;
+}
+export interface AgentApiOutcomeOfCredentialGitHubInstallationListResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGitHubInstallationListResponse;
+}
+export interface CredentialGitHubInstallationListResponse {
+  installations?: GitHubInstallationView[];
+}
+export interface GitHubInstallationView {
+  accountLogin?: string | null;
+  installationId: number;
+  /**
+   * Fine-grained permission map as GitHub reports it.
+   */
+  permissions?: {
+    [k: string]: unknown;
+  };
+  repositorySelection?: string | null;
+}
+export interface AgentApiOutcomeOfCredentialGrantImportResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGrantImportResponse;
+}
+export interface CredentialGrantImportResponse {
+  grant: CredentialGrantView;
+}
+export interface AgentApiOutcomeOfCredentialGrantLeaseResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGrantLeaseResponse;
+}
+export interface CredentialGrantLeaseResponse {
+  expiresAtMs?: number | null;
+  grantId: string;
+  providerKind: CredentialProviderKind;
+  token: string;
+}
+export interface AgentApiOutcomeOfCredentialGrantListResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGrantListResponse;
+}
+export interface CredentialGrantListResponse {
+  grants?: CredentialGrantView[];
+}
+export interface AgentApiOutcomeOfCredentialGrantPutResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGrantPutResponse;
+}
+export interface CredentialGrantPutResponse {
+  /**
+   * False when the credential already existed.
+   */
+  created: boolean;
+  /**
+   * The credential as declared: as it is now, or as it would be for a
+   * dry run.
+   */
+  grant: CredentialGrantView;
+  /**
+   * True when an existing credential held a different token.
+   */
+  tokenReplaced: boolean;
+}
+export interface AgentApiOutcomeOfCredentialGrantReadResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGrantReadResponse;
+}
+export interface CredentialGrantReadResponse {
+  grant: CredentialGrantView;
+}
+export interface AgentApiOutcomeOfCredentialGrantRevokeResponse {
+  notifications?: AgentNotification[];
+  result: CredentialGrantRevokeResponse;
+}
+export interface CredentialGrantRevokeResponse {
+  grant: CredentialGrantView;
+}
+export interface AgentApiOutcomeOfCredentialProviderCreateResponse {
+  notifications?: AgentNotification[];
+  result: CredentialProviderCreateResponse;
+}
+export interface CredentialProviderCreateResponse {
+  provider: CredentialProviderView;
+}
+export interface CredentialProviderView {
+  config: CredentialProviderConfigView;
+  createdAtMs: number;
+  displayName?: string | null;
+  hasCredential: boolean;
+  providerId: string;
+  providerKind: CredentialProviderKind;
+  status: CredentialProviderStatus;
+  updatedAtMs: number;
+}
+export interface ModelEndpointConfig {
+  apiKinds: string[];
+  baseUrl: string;
+  /**
+   * Extra request headers sent on every request to the endpoint, alongside
+   * the provider's own credential. Names are case-insensitive and stored
+   * lowercased; transport headers and `authorization` are reserved.
+   * `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
+   * accept only a `credential` value.
+   */
+  headers?: {
+    [k: string]: RequestHeader;
+  };
+}
+export interface AgentApiOutcomeOfCredentialProviderDeleteResponse {
+  notifications?: AgentNotification[];
+  result: CredentialProviderDeleteResponse;
+}
+export interface CredentialProviderDeleteResponse {
+  provider: CredentialProviderView;
+}
+export interface AgentApiOutcomeOfCredentialProviderListResponse {
+  notifications?: AgentNotification[];
+  result: CredentialProviderListResponse;
+}
+export interface CredentialProviderListResponse {
+  providers?: CredentialProviderView[];
+}
+export interface AgentApiOutcomeOfCredentialProviderPutResponse {
+  notifications?: AgentNotification[];
+  result: CredentialProviderPutResponse;
+}
+export interface CredentialProviderPutResponse {
+  /**
+   * False when the provider already existed.
+   */
+  created: boolean;
+  /**
+   * True when an existing provider held a different credential, or gained
+   * or lost one.
+   */
+  credentialReplaced: boolean;
+  /**
+   * The provider as declared: as it is now, or as it would be for a dry
+   * run.
+   */
+  provider: CredentialProviderView;
+}
+export interface AgentApiOutcomeOfCredentialProviderReadResponse {
+  notifications?: AgentNotification[];
+  result: CredentialProviderReadResponse;
+}
+export interface CredentialProviderReadResponse {
+  provider: CredentialProviderView;
+}
 export interface AgentApiOutcomeOfDeploymentChannelAccountListResponse {
   notifications?: AgentNotification[];
   result: DeploymentChannelAccountListResponse;
@@ -3888,7 +3888,7 @@ export interface DeploymentChannelAccountView {
   accountId: ChannelAccountId;
   createdAtMs: number;
   /**
-   * Retrievable auth grant holding the provider token (a Telegram bot
+   * Retrievable credential grant holding the provider token (a Telegram bot
    * token); the connector host leases it. Absent for providers whose
    * credential is a session state directory (WhatsApp).
    */
@@ -5210,186 +5210,6 @@ export interface ApprovalDecisionInput {
   decision: ApprovalDecisionKind;
   note?: string | null;
 }
-/**
- * Register an OAuth client configuration. `client_secret` is the second
- * deliberate inbound-plaintext path after `auth/grants/import`: it is
- * encrypted on receipt and never returned by any method. `Debug` output
- * redacts it; request logging must never echo these params.
- */
-export interface AuthClientCreateParams {
-  audience?: string | null;
-  authorizationEndpoint: string;
-  authorizationResponseIssParameterSupported?: boolean;
-  authorizationServerIssuer?: string | null;
-  authorizationServerScopesSupported?: string[];
-  clientId?: string | null;
-  clientSecret?: string | null;
-  displayName?: string | null;
-  providerId?: string | null;
-  providerKind: AuthProviderKind;
-  remoteClientId: string;
-  scopesDefault?: string[];
-  tokenEndpoint: string;
-  tokenEndpointAuthMethod?: TokenEndpointAuthMethod | null;
-}
-export interface AuthClientDeleteParams {
-  clientId: string;
-}
-export interface AuthClientListParams {}
-export interface AuthClientReadParams {
-  clientId: string;
-}
-export interface AuthFlowStartParams {
-  audience?: string | null;
-  clientId: string;
-  exposure?: AuthGrantExposure & string;
-  scopes?: string[] | null;
-}
-export interface AuthFlowStatusParams {
-  flowId: string;
-}
-export interface AuthGitHubInstallationGrantParams {
-  displayName?: string | null;
-  exposure?: AuthGrantExposure & string;
-  grantId?: string | null;
-  installationId: number;
-  providerId: string;
-}
-export interface AuthGitHubInstallationListParams {
-  providerId: string;
-}
-/**
- * Import a new token credential as an auth grant, under the given id or an
- * allocated one; an id already in use is a conflict. Together with
- * [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
- * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
- * logging must never echo these params.
- */
-export interface AuthGrantImportParams {
-  audience?: string | null;
-  displayName?: string | null;
-  expiresAtMs?: number | null;
-  exposure?: AuthGrantExposure & string;
-  grantId?: string | null;
-  /**
-   * Non-secret, caller-defined metadata stored on the grant and returned
-   * by reads (for example which product a pasted subscription token
-   * belongs to). Must be a JSON object; never put secret material here.
-   */
-  metadata?: {
-    [k: string]: unknown;
-  };
-  providerId?: string | null;
-  scopes?: string[];
-  subjectHint?: string | null;
-  token: string;
-}
-/**
- * Request a current access-token lease for a retrievable grant. Callers must
- * cache only in memory until shortly before `expiresAtMs` (or for at most
- * five minutes when it is absent), re-lease after target 401/403 responses,
- * and never persist the token or place it in a workflow payload.
- */
-export interface AuthGrantLeaseParams {
-  audience?: string | null;
-  grantId: string;
-}
-export interface AuthGrantListParams {
-  status?: AuthGrantStatus | null;
-}
-/**
- * Declare a token credential (`staticToken`): its id, its settings and the
- * token it holds. A credential that is missing is created. One that exists
- * has its settings replaced by these (an absent field is unset) and, when it
- * holds a different token, that token replaced, so MCP servers, headers,
- * bot polls and environment variables referencing the id use the new value
- * from their next request or process. Declaring it again changes nothing.
- *
- * `token` is encrypted on receipt and never returned; `Debug` output redacts
- * it and request logging must never echo these params.
- */
-export interface AuthGrantPutParams {
-  audience?: string | null;
-  displayName?: string | null;
-  /**
-   * Report what the declaration would do without doing it.
-   */
-  dryRun?: boolean;
-  /**
-   * When the token expires. Absent means it does not expire.
-   */
-  expiresAtMs?: number | null;
-  /**
-   * Whether the plain token may be leased to a service or bound into an
-   * environment. It cannot be changed afterwards.
-   */
-  exposure?: AuthGrantExposure & string;
-  grantId: string;
-  /**
-   * Non-secret, caller-defined metadata. Must be a JSON object; never put
-   * secret material here.
-   */
-  metadata?: {
-    [k: string]: unknown;
-  };
-  /**
-   * Label recorded on the credential; `static` when absent. It cannot be
-   * changed afterwards.
-   */
-  providerId?: string | null;
-  scopes?: string[];
-  subjectHint?: string | null;
-  token: string;
-}
-export interface AuthGrantReadParams {
-  grantId: string;
-}
-export interface AuthGrantRevokeParams {
-  grantId: string;
-}
-/**
- * Register an auth provider. `credential` (for GitHub Apps: the private
- * key PEM) is the third deliberate inbound-plaintext path: it is encrypted
- * on receipt and never returned by any method. `Debug` output redacts it;
- * request logging must never echo these params.
- */
-export interface AuthProviderCreateParams {
-  config: AuthProviderConfigInput;
-  credential?: string | null;
-  displayName?: string | null;
-  providerId?: string | null;
-}
-export interface AuthProviderDeleteParams {
-  providerId: string;
-}
-export interface AuthProviderListParams {}
-/**
- * Declare a provider: its id, its configuration and its credential. A
- * provider that is missing is created. One that exists is rewritten in place
- * as if it were created again under the same id, where it differs: the new
- * settings are validated before anything changes, so a rejected declaration
- * leaves the provider as it was, and sessions and environment variables
- * referencing the id keep working throughout. Declaring it again changes
- * nothing. `credential` is encrypted on receipt and never returned; `Debug`
- * output redacts it.
- */
-export interface AuthProviderPutParams {
-  config: AuthProviderConfigInput;
-  /**
-   * The provider's credential, for the kinds that take one. Absent leaves
-   * the provider without a credential.
-   */
-  credential?: string | null;
-  displayName?: string | null;
-  /**
-   * Report what the declaration would do without doing it.
-   */
-  dryRun?: boolean;
-  providerId: string;
-}
-export interface AuthProviderReadParams {
-  providerId: string;
-}
 export interface BlobHasParams {
   blobRefs?: string[];
 }
@@ -5593,7 +5413,7 @@ export interface ChannelAccountCreateParams {
 export interface ChannelAccountInput {
   accountId: ChannelAccountId;
   /**
-   * Retrievable auth grant holding the provider token (a Telegram bot
+   * Retrievable credential grant holding the provider token (a Telegram bot
    * token); the connector host leases it. Absent for providers whose
    * credential is a session state directory (WhatsApp).
    */
@@ -5721,6 +5541,186 @@ export interface ContextReplaceEntry {
 export interface ContextReplaceParams {
   entries: ContextReplaceEntry[];
   sessionId: string;
+}
+/**
+ * Register an OAuth client configuration. `client_secret` is the second
+ * deliberate inbound-plaintext path after `credentials/grants/import`: it is
+ * encrypted on receipt and never returned by any method. `Debug` output
+ * redacts it; request logging must never echo these params.
+ */
+export interface CredentialClientCreateParams {
+  audience?: string | null;
+  authorizationEndpoint: string;
+  authorizationResponseIssParameterSupported?: boolean;
+  authorizationServerIssuer?: string | null;
+  authorizationServerScopesSupported?: string[];
+  clientId?: string | null;
+  clientSecret?: string | null;
+  displayName?: string | null;
+  providerId?: string | null;
+  providerKind: CredentialProviderKind;
+  remoteClientId: string;
+  scopesDefault?: string[];
+  tokenEndpoint: string;
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod | null;
+}
+export interface CredentialClientDeleteParams {
+  clientId: string;
+}
+export interface CredentialClientListParams {}
+export interface CredentialClientReadParams {
+  clientId: string;
+}
+export interface CredentialFlowStartParams {
+  audience?: string | null;
+  clientId: string;
+  exposure?: CredentialGrantExposure & string;
+  scopes?: string[] | null;
+}
+export interface CredentialFlowStatusParams {
+  flowId: string;
+}
+export interface CredentialGitHubInstallationGrantParams {
+  displayName?: string | null;
+  exposure?: CredentialGrantExposure & string;
+  grantId?: string | null;
+  installationId: number;
+  providerId: string;
+}
+export interface CredentialGitHubInstallationListParams {
+  providerId: string;
+}
+/**
+ * Import a new token credential as a credential grant, under the given id or an
+ * allocated one; an id already in use is a conflict. Together with
+ * [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
+ * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
+ * logging must never echo these params.
+ */
+export interface CredentialGrantImportParams {
+  audience?: string | null;
+  displayName?: string | null;
+  expiresAtMs?: number | null;
+  exposure?: CredentialGrantExposure & string;
+  grantId?: string | null;
+  /**
+   * Non-secret, caller-defined metadata stored on the grant and returned
+   * by reads (for example which product a pasted subscription token
+   * belongs to). Must be a JSON object; never put secret material here.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  providerId?: string | null;
+  scopes?: string[];
+  subjectHint?: string | null;
+  token: string;
+}
+/**
+ * Request a current access-token lease for a retrievable grant. Callers must
+ * cache only in memory until shortly before `expiresAtMs` (or for at most
+ * five minutes when it is absent), re-lease after target 401/403 responses,
+ * and never persist the token or place it in a workflow payload.
+ */
+export interface CredentialGrantLeaseParams {
+  audience?: string | null;
+  grantId: string;
+}
+export interface CredentialGrantListParams {
+  status?: CredentialGrantStatus | null;
+}
+/**
+ * Declare a token credential (`staticToken`): its id, its settings and the
+ * token it holds. A credential that is missing is created. One that exists
+ * has its settings replaced by these (an absent field is unset) and, when it
+ * holds a different token, that token replaced, so MCP servers, headers,
+ * bot polls and environment variables referencing the id use the new value
+ * from their next request or process. Declaring it again changes nothing.
+ *
+ * `token` is encrypted on receipt and never returned; `Debug` output redacts
+ * it and request logging must never echo these params.
+ */
+export interface CredentialGrantPutParams {
+  audience?: string | null;
+  displayName?: string | null;
+  /**
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  /**
+   * When the token expires. Absent means it does not expire.
+   */
+  expiresAtMs?: number | null;
+  /**
+   * Whether the plain token may be leased to a service or bound into an
+   * environment. It cannot be changed afterwards.
+   */
+  exposure?: CredentialGrantExposure & string;
+  grantId: string;
+  /**
+   * Non-secret, caller-defined metadata. Must be a JSON object; never put
+   * secret material here.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Label recorded on the credential; `static` when absent. It cannot be
+   * changed afterwards.
+   */
+  providerId?: string | null;
+  scopes?: string[];
+  subjectHint?: string | null;
+  token: string;
+}
+export interface CredentialGrantReadParams {
+  grantId: string;
+}
+export interface CredentialGrantRevokeParams {
+  grantId: string;
+}
+/**
+ * Register a credential provider. `credential` (for GitHub Apps: the private
+ * key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+ * on receipt and never returned by any method. `Debug` output redacts it;
+ * request logging must never echo these params.
+ */
+export interface CredentialProviderCreateParams {
+  config: CredentialProviderConfigInput;
+  credential?: string | null;
+  displayName?: string | null;
+  providerId?: string | null;
+}
+export interface CredentialProviderDeleteParams {
+  providerId: string;
+}
+export interface CredentialProviderListParams {}
+/**
+ * Declare a provider: its id, its configuration and its credential. A
+ * provider that is missing is created. One that exists is rewritten in place
+ * as if it were created again under the same id, where it differs: the new
+ * settings are validated before anything changes, so a rejected declaration
+ * leaves the provider as it was, and sessions and environment variables
+ * referencing the id keep working throughout. Declaring it again changes
+ * nothing. `credential` is encrypted on receipt and never returned; `Debug`
+ * output redacts it.
+ */
+export interface CredentialProviderPutParams {
+  config: CredentialProviderConfigInput;
+  /**
+   * The provider's credential, for the kinds that take one. Absent leaves
+   * the provider without a credential.
+   */
+  credential?: string | null;
+  displayName?: string | null;
+  /**
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  providerId: string;
+}
+export interface CredentialProviderReadParams {
+  providerId: string;
 }
 export interface DeploymentChannelAccountListParams {
   /**

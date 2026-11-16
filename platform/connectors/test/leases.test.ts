@@ -4,7 +4,7 @@ import { GrantLease, LEASE_EXPIRY_MARGIN_MS, LEASE_MAX_AGE_MS } from "../src/cor
 
 function client(responses: Array<{ token: string; expiresAtMs?: number | null }>) {
   const call = vi.fn(async (method: string, params: unknown) => {
-    expect(method).toBe("auth/grants/lease");
+    expect(method).toBe("credentials/grants/lease");
     expect(params).toEqual({ grantId: "grant-1" });
     const next = responses.shift();
     if (next === undefined) throw new Error("no more leases");

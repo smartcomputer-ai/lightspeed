@@ -56,7 +56,7 @@ function materialize(
     return { error: "an active MCP server with a required auth policy needs a credential", status: 400 };
   }
   if (credential && !universe.secrets.grants.some((grant) => grant.grantId === credential.grantId)) {
-    return { error: `auth grant not found: ${credential.grantId}`, status: 404 };
+    return { error: `credential grant not found: ${credential.grantId}`, status: 404 };
   }
   const parsedHeaders = parseRequestHeaders(input.headers, "MCP server");
   if ("error" in parsedHeaders) {
@@ -65,7 +65,7 @@ function materialize(
   const headers = parsedHeaders.headers;
   for (const header of Object.values(headers)) {
     if (header.type === "credential" && !universe.secrets.grants.some((grant) => grant.grantId === header.grantId)) {
-      return { error: `auth grant not found: ${header.grantId}`, status: 404 };
+      return { error: `credential grant not found: ${header.grantId}`, status: 404 };
     }
   }
   if (input.execution === "provider" && Object.keys(headers).length > 0) {

@@ -6,6 +6,11 @@ universes**: one grammy long-poller or Baileys socket per account, one Temporal
 activity worker per account queue, all in one Node process. Its only
 dependencies are the core JSON-RPC API and Temporal; it reads no database.
 
+The host currently refuses startup, and the development launcher does not
+start it. Its former restricted runtime API key no longer exists. Re-enabling
+it requires a scoped Platform credential; do not give it a full runtime RPC
+token. The implementation below is retained for that integration.
+
 ## What it does
 
 1. **Discovery.** Every `LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS` the host
@@ -15,7 +20,7 @@ dependencies are the core JSON-RPC API and Temporal; it reads no database.
    accounts start, missing or disabled ones stop, a changed document revision
    or a failed runner restarts (`src/host/discovery.ts` is the pure planner).
 2. **Per-account runner** (`src/host/account-runner.ts`). A Telegram account
-   leases its bot token through `auth/grants/lease { grantId: credentialGrantId }`
+   leases its bot token through `credentials/grants/lease { grantId: credentialGrantId }`
    (cached in memory until `expiresAtMs - 30 s`, at most five minutes,
    re-leased after Telegram answers 401). A WhatsApp account keeps its Baileys
    session under `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR/<universeId>/<accountId>`
@@ -39,13 +44,12 @@ dependencies are the core JSON-RPC API and Temporal; it reads no database.
    Temporal SDK's Prometheus exporter binds `LIGHTSPEED_CONNECTOR_METRICS_PORT`
    (default 9090).
 
-## Authentication
+## Runtime access
 
-The host authenticates to a core in `authenticated` mode using its own
-`LIGHTSPEED_CONNECTOR_API_KEY`. Universe calls also select
-`x-lightspeed-universe: <universeId>`. The key needs the `deployment/channels`,
-`auth/lease`, `channels/inbound`, and `blobs/put` method groups. Service kind alone
-grants no access.
+The retained client selects `x-lightspeed-universe: <universeId>` on account
+requests. A future Platform credential must authorize discovery, token leases,
+inbound admission, and blob writes for the connector. Runtime RPC tokens have
+full deployment authority and cannot provide that scope.
 
 For implementing another provider, read
 [Channel connectors](../../docs/documentation/integrating-and-extending/channel-connectors.md)
@@ -54,7 +58,7 @@ in the product manual.
 ## Configuration
 
 See the "Connector host" section of [environment-variable reference](../../docs/documentation/reference/environment-variables.md).
-The minimum is `LIGHTSPEED_API_URL`; WhatsApp additionally needs
+The retained configuration uses `LIGHTSPEED_API_URL`; WhatsApp additionally needs
 `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` and
 `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`.
 
@@ -67,17 +71,15 @@ reference's "Temporal connection security" section lists them.
 ```bash
 npm run test --workspace @lightspeed-ai/connectors
 npm run typecheck --workspace @lightspeed-ai/connectors
-LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc npm run dev --workspace @lightspeed-ai/connectors
 ```
 
-`./dev.sh` starts the host as part of the `full` profile when
-`LIGHTSPEED_CHANNELS_CONNECTORS` names providers.
+Setting `LIGHTSPEED_CHANNELS_CONNECTORS` does not enable the disabled host.
 
 ## Layout
 
 - `src/host/` — entry point, configuration, discovery planner, account runner,
   inbound admission, health/metrics, rate limiting.
-- `src/core/` — the core client (universe scoping, service principal), grant
+- `src/core/` — the core client (universe selection), grant
   leases, account identities.
 - `src/providers/telegram/`, `src/providers/whatsapp/` — provider ingress,
   delivery, media, and presence over the shared `ProviderConnector` seam.

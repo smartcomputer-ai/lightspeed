@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthGrantId, AuthRegistryError, OAuthClientId, SecretId, validate_audience_url,
+    CredentialGrantId, CredentialRegistryError, OAuthClientId, SecretId, validate_audience_url,
     validate_nonempty_optional, validate_nonnegative_i64, validate_scopes,
     validate_token_component,
 };
@@ -25,7 +25,7 @@ use crate::{
 /// providers use `CustomOAuth` rather than a kind of their own; `GitHubApp`
 /// exists because installation tokens are not OAuth and need GitHub's API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum AuthProviderKind {
+pub enum CredentialProviderKind {
     #[serde(rename = "static_token")]
     StaticToken,
     #[serde(rename = "mcp_oauth")]
@@ -44,7 +44,7 @@ pub enum AuthProviderKind {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AuthGrantStatus {
+pub enum CredentialGrantStatus {
     #[default]
     Active,
     NeedsReauth,
@@ -57,19 +57,19 @@ pub enum AuthGrantStatus {
 /// Exposure is immutable for the lifetime of a grant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AuthGrantExposure {
+pub enum CredentialGrantExposure {
     #[default]
     Brokered,
     Retrievable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuthGrantRecord {
-    pub grant_id: AuthGrantId,
+pub struct CredentialGrantRecord {
+    pub grant_id: CredentialGrantId,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     #[serde(default)]
-    pub exposure: AuthGrantExposure,
+    pub exposure: CredentialGrantExposure,
     /// Who created the grant, as the request was attributed. Attribution
     /// only; it confers no access.
     pub created_by: Attribution,
@@ -89,7 +89,7 @@ pub struct AuthGrantRecord {
     /// past the margin when a refresh token exists. For static grants it is a
     /// hard expiry.
     pub expires_at_ms: Option<i64>,
-    pub status: AuthGrantStatus,
+    pub status: CredentialGrantStatus,
     /// Non-secret, provider-specific metadata. For GitHub App installation
     /// grants this carries the installation id, account, permissions, and
     /// repository selection. Must be a JSON object; never secret values.
@@ -107,8 +107,8 @@ pub(crate) fn empty_metadata() -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
 
-impl AuthGrantRecord {
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+impl CredentialGrantRecord {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         validate_token_component("provider id", &self.provider_id)?;
         validate_nonempty_optional("display_name", self.display_name.as_deref())?;
         validate_nonempty_optional("subject_hint", self.subject_hint.as_deref())?;
@@ -120,7 +120,7 @@ impl AuthGrantRecord {
             validate_nonnegative_i64(expires_at_ms, "expires_at_ms")?;
         }
         if !self.metadata.is_object() {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "grant metadata must be a JSON object".to_owned(),
             });
         }
@@ -130,7 +130,7 @@ impl AuthGrantRecord {
         validate_nonnegative_i64(self.created_at_ms, "created_at_ms")?;
         validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
         if self.updated_at_ms < self.created_at_ms {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!(
                     "updated_at_ms {} must be >= created_at_ms {}",
                     self.updated_at_ms, self.created_at_ms
@@ -142,12 +142,12 @@ impl AuthGrantRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateAuthGrantRecord {
-    pub grant_id: AuthGrantId,
+pub struct CreateCredentialGrantRecord {
+    pub grant_id: CredentialGrantId,
     pub provider_id: String,
-    pub provider_kind: AuthProviderKind,
+    pub provider_kind: CredentialProviderKind,
     #[serde(default)]
-    pub exposure: AuthGrantExposure,
+    pub exposure: CredentialGrantExposure,
     /// Who created the grant, as the request was attributed. Attribution
     /// only; it confers no access.
     pub created_by: Attribution,
@@ -159,15 +159,15 @@ pub struct CreateAuthGrantRecord {
     pub refresh_token_secret: Option<SecretId>,
     pub oauth_client: Option<OAuthClientId>,
     pub expires_at_ms: Option<i64>,
-    pub status: AuthGrantStatus,
+    pub status: CredentialGrantStatus,
     #[serde(default = "empty_metadata")]
     pub metadata: serde_json::Value,
     pub created_at_ms: i64,
 }
 
-impl CreateAuthGrantRecord {
-    pub fn into_record(self) -> AuthGrantRecord {
-        AuthGrantRecord {
+impl CreateCredentialGrantRecord {
+    pub fn into_record(self) -> CredentialGrantRecord {
+        CredentialGrantRecord {
             grant_id: self.grant_id,
             provider_id: self.provider_id,
             provider_kind: self.provider_kind,
@@ -196,7 +196,7 @@ impl CreateAuthGrantRecord {
 /// grant's references in one step. `refresh_token_secret = None` keeps the
 /// existing refresh token (no rotation).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthGrantTokenRefresh {
+pub struct CredentialGrantTokenRefresh {
     pub access_token_secret: SecretId,
     pub refresh_token_secret: Option<SecretId>,
     pub expires_at_ms: Option<i64>,
@@ -220,7 +220,7 @@ pub struct TokenCredentialUpdate {
 
 impl TokenCredentialUpdate {
     /// The record as it reads once the update is applied.
-    pub fn apply(&self, record: &AuthGrantRecord) -> AuthGrantRecord {
+    pub fn apply(&self, record: &CredentialGrantRecord) -> CredentialGrantRecord {
         let mut next = record.clone();
         next.access_token_secret = Some(self.access_token_secret.clone());
         next.display_name = self.display_name.clone();
@@ -235,83 +235,83 @@ impl TokenCredentialUpdate {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListAuthGrants {
-    pub status: Option<AuthGrantStatus>,
+pub struct ListCredentialGrants {
+    pub status: Option<CredentialGrantStatus>,
 }
 
 #[async_trait]
-pub trait AuthGrantStore: Send + Sync {
+pub trait CredentialGrantStore: Send + Sync {
     async fn create_grant(
         &self,
-        record: CreateAuthGrantRecord,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+        record: CreateCredentialGrantRecord,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 
     async fn read_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+        grant_id: &CredentialGrantId,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 
     async fn list_grants(
         &self,
-        request: ListAuthGrants,
-    ) -> Result<Vec<AuthGrantRecord>, AuthRegistryError>;
+        request: ListCredentialGrants,
+    ) -> Result<Vec<CredentialGrantRecord>, CredentialRegistryError>;
 
     async fn update_grant_status(
         &self,
-        grant_id: &AuthGrantId,
-        status: AuthGrantStatus,
+        grant_id: &CredentialGrantId,
+        status: CredentialGrantStatus,
         updated_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 
     /// Swap the grant's token secret references and expiry after a refresh.
     async fn record_grant_refresh(
         &self,
-        grant_id: &AuthGrantId,
-        refresh: AuthGrantTokenRefresh,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+        grant_id: &CredentialGrantId,
+        refresh: CredentialGrantTokenRefresh,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 
     /// Write a token credential's settings and the secret it points at, only
     /// if it still points at `expected`. `Ok(None)` means another writer
     /// changed its value first; the caller still owns any secret it stored.
     async fn update_token_credential(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         expected: &SecretId,
         update: TokenCredentialUpdate,
-    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError>;
+    ) -> Result<Option<CredentialGrantRecord>, CredentialRegistryError>;
 
     /// Record the expiry of a token minted on demand without persisting the
     /// token itself (for example a GitHub App installation token).
     async fn record_grant_mint_expiry(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         expires_at_ms: i64,
         updated_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 
     /// Atomically record one successful service lease.
     async fn record_grant_lease(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         leased_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 
     async fn delete_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<AuthGrantRecord, AuthRegistryError>;
+        grant_id: &CredentialGrantId,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    pub(crate) fn create_request(grant_id: &str) -> CreateAuthGrantRecord {
-        CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new(grant_id),
+    pub(crate) fn create_request(grant_id: &str) -> CreateCredentialGrantRecord {
+        CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: CredentialGrantExposure::Brokered,
             created_by: Attribution::Local,
             display_name: Some("CRM token".to_owned()),
             subject_hint: None,
@@ -321,7 +321,7 @@ mod tests {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         }
@@ -343,9 +343,10 @@ mod tests {
         object.remove("last_leased_at_ms");
         object.remove("lease_count");
 
-        let decoded: AuthGrantRecord = serde_json::from_value(value).expect("decode legacy grant");
+        let decoded: CredentialGrantRecord =
+            serde_json::from_value(value).expect("decode legacy grant");
 
-        assert_eq!(decoded.exposure, AuthGrantExposure::Brokered);
+        assert_eq!(decoded.exposure, CredentialGrantExposure::Brokered);
         assert_eq!(decoded.last_leased_at_ms, None);
         assert_eq!(decoded.lease_count, 0);
     }
@@ -359,7 +360,10 @@ mod tests {
             .validate()
             .expect_err("audience credentials must be rejected");
 
-        assert!(matches!(error, AuthRegistryError::InvalidInput { .. }));
+        assert!(matches!(
+            error,
+            CredentialRegistryError::InvalidInput { .. }
+        ));
     }
 
     #[test]
@@ -369,6 +373,9 @@ mod tests {
 
         let error = record.validate().expect_err("duplicate scopes rejected");
 
-        assert!(matches!(error, AuthRegistryError::InvalidInput { .. }));
+        assert!(matches!(
+            error,
+            CredentialRegistryError::InvalidInput { .. }
+        ));
     }
 }

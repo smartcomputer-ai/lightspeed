@@ -144,3 +144,14 @@ test("full profile never launches Configurator or connectors with runtime author
     cwd: repoRoot, encoding: "utf8", stdio: "pipe", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "telegram" },
   }), /Channel connectors are disabled/);
 });
+
+for (const profile of ["runtime", "full"]) {
+  test(`${profile} preflights and waits for private RPC, public callbacks, and environment routes separately`, () => {
+    const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
+      cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080", LIGHTSPEED_PUBLIC_BIND: "127.0.0.1:28082", LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: "127.0.0.1:28083" },
+    });
+    assert.match(output, /^ready: runtime gateway -> http:\/\/127\.0\.0\.1:28080\/health$/m);
+    assert.match(output, /^ready: runtime public -> http:\/\/127\.0\.0\.1:28082\/health$/m);
+    assert.match(output, /^ready: environment gateway -> http:\/\/127\.0\.0\.1:28083\/health$/m);
+  });
+}

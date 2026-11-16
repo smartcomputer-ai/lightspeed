@@ -1,12 +1,5 @@
 use std::{collections::HashMap, env, sync::Arc};
 
-use auth::{
-    AuthBrokerError, AuthCallback, AuthFlowStatus, AuthGrantExposure, AuthGrantStatus,
-    AuthGrantStore, AuthRegistryError, AuthTokenBroker, HttpOAuthMetadataClient,
-    HttpOAuthTokenClient, McpOAuthDriver, McpOAuthTarget, OAuthFlowService, OAuthRefreshRuntime,
-    PrivateNetworkList, RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience,
-    parse_mcp_oauth_challenge,
-};
 use axum::{
     Form, Json, Router,
     extract::State,
@@ -15,6 +8,13 @@ use axum::{
     routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use credentials::{
+    CredentialBrokerError, CredentialCallback, CredentialFlowStatus, CredentialGrantExposure,
+    CredentialGrantStatus, CredentialGrantStore, CredentialRegistryError, CredentialTokenBroker,
+    HttpOAuthMetadataClient, HttpOAuthTokenClient, McpOAuthDriver, McpOAuthTarget,
+    OAuthFlowService, OAuthRefreshRuntime, PrivateNetworkList, RegistryTokenBroker, SecretStore,
+    StartCredentialFlow, TokenAudience, parse_mcp_oauth_challenge,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
@@ -41,7 +41,7 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
     let _ = dotenvy::dotenv();
     let store = live_store().await?;
     let (fixture, endpoint, fixture_task) = start_oauth_mcp_fixture().await?;
-    let redirect_uri = "http://127.0.0.1:18999/auth/callback";
+    let redirect_uri = "http://127.0.0.1:18999/credentials/callback";
 
     // The fixture is a loopback HTTP server, reachable only because the
     // private-network list names it; the suite sets the list itself so it does
@@ -94,15 +94,15 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
     let wrong_state = authorization_parameter(&wrong_issuer.authorize_url, "state")?;
     assert_authorization_request(&wrong_issuer.authorize_url, &endpoint)?;
     let failed = wrong_issuer_service
-        .complete_callback(AuthCallback {
+        .complete_callback(CredentialCallback {
             state: wrong_state.clone(),
-            code: Some(auth::SecretValue::new("valid-code")),
+            code: Some(credentials::SecretValue::new("valid-code")),
             issuer: Some("http://wrong-issuer.invalid".to_owned()),
             error: None,
             error_description: None,
         })
         .await?;
-    assert_eq!(failed.status(1_001), AuthFlowStatus::Failed);
+    assert_eq!(failed.status(1_001), CredentialFlowStatus::Failed);
     assert!(
         failed
             .error
@@ -111,15 +111,15 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
     );
     assert!(matches!(
         wrong_issuer_service
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state: wrong_state,
-                code: Some(auth::SecretValue::new("valid-code")),
+                code: Some(credentials::SecretValue::new("valid-code")),
                 issuer: Some(issuer.clone()),
                 error: None,
                 error_description: None,
             })
             .await,
-        Err(AuthRegistryError::FlowAlreadyConsumed { .. })
+        Err(CredentialRegistryError::FlowAlreadyConsumed { .. })
     ));
 
     // Start on one service instance, then reconstruct and finish on another.
@@ -137,9 +137,9 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
 
     let finisher = flow_service(store.clone(), token_client.clone(), 2_100);
     let completed = finisher
-        .complete_callback(AuthCallback {
+        .complete_callback(CredentialCallback {
             state: state.clone(),
-            code: Some(auth::SecretValue::new("valid-code")),
+            code: Some(credentials::SecretValue::new("valid-code")),
             issuer: Some(issuer.clone()),
             error: None,
             error_description: None,
@@ -147,7 +147,7 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
         .await?;
     assert_eq!(
         completed.status(2_100),
-        AuthFlowStatus::Completed,
+        CredentialFlowStatus::Completed,
         "callback failed: {:?}",
         completed.error
     );
@@ -173,20 +173,20 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
 
     assert!(matches!(
         finisher
-            .complete_callback(AuthCallback {
+            .complete_callback(CredentialCallback {
                 state,
-                code: Some(auth::SecretValue::new("valid-code")),
+                code: Some(credentials::SecretValue::new("valid-code")),
                 issuer: Some(issuer.clone()),
                 error: None,
                 error_description: None,
             })
             .await,
-        Err(AuthRegistryError::FlowAlreadyConsumed { .. })
+        Err(CredentialRegistryError::FlowAlreadyConsumed { .. })
     ));
 
     let grant = store.read_grant(&grant_id).await?;
     assert_eq!(grant.audience.as_deref(), Some(endpoint.as_str()));
-    assert_eq!(grant.status, AuthGrantStatus::Active);
+    assert_eq!(grant.status, CredentialGrantStatus::Active);
     let initial_refresh_secret = grant.refresh_token_secret.clone().expect("refresh token");
 
     assert!(matches!(
@@ -196,7 +196,7 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
                 &TokenAudience::McpResource(format!("{issuer}/other"))
             )
             .await,
-        Err(AuthBrokerError::AudienceMismatch { .. })
+        Err(CredentialBrokerError::AudienceMismatch { .. })
     ));
 
     // Two concurrent readers share the database advisory lock and perform one
@@ -257,27 +257,30 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
         .await;
     assert!(matches!(
         rejected,
-        Err(AuthBrokerError::GrantNotActive {
-            status: AuthGrantStatus::NeedsReauth,
+        Err(CredentialBrokerError::GrantNotActive {
+            status: CredentialGrantStatus::NeedsReauth,
             ..
         })
     ));
     assert_eq!(
         store.read_grant(&grant_id).await?.status,
-        AuthGrantStatus::NeedsReauth
+        CredentialGrantStatus::NeedsReauth
     );
 
     fixture_task.abort();
     Ok(())
 }
 
-fn start_request(client_id: &auth::OAuthClientId, redirect_uri: &str) -> StartAuthFlow {
-    StartAuthFlow {
+fn start_request(
+    client_id: &credentials::OAuthClientId,
+    redirect_uri: &str,
+) -> StartCredentialFlow {
+    StartCredentialFlow {
         client_id: client_id.clone(),
         redirect_uri: redirect_uri.to_owned(),
         scopes: None,
         audience: None,
-        grant_exposure: AuthGrantExposure::Brokered,
+        grant_exposure: CredentialGrantExposure::Brokered,
         created_by: api::Attribution::Local,
     }
 }

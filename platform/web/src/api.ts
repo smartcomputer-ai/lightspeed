@@ -232,7 +232,7 @@ export interface ModelListResponse {
   providers?: ModelProviderDiscovery[];
 }
 
-export interface AuthGrantOption {
+export interface CredentialGrantOption {
   grantId: string;
   providerId: string;
   providerKind: string;
@@ -242,7 +242,7 @@ export interface AuthGrantOption {
   exposure: "brokered" | "retrievable";
 }
 
-export interface SecretGrant extends AuthGrantOption {
+export interface SecretGrant extends CredentialGrantOption {
   /// Who created the grant; attribution only.
   createdBy: Attribution;
   scopes?: string[];
@@ -262,7 +262,7 @@ export interface SecretGrant extends AuthGrantOption {
 export interface SecretProvider {
   /// Friendly ModelSelection.providerId, such as `openai`.
   providerId: string;
-  /// Namespaced auth-provider row id, such as `model:openai`.
+  /// Namespaced credential-provider row id, such as `model:openai`.
   credentialId: string;
   /// False only for legacy/malformed rows that the model runtime will ignore.
   usableForModels: boolean;

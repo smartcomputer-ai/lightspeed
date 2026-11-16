@@ -264,30 +264,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "auth"
-version = "0.1.0"
-dependencies = [
- "api",
- "async-trait",
- "base64 0.23.1",
- "futures-util",
- "harness",
- "hex",
- "ipnet",
- "jsonwebtoken",
- "oauth2",
- "rand 0.10.3",
- "reqwest",
- "rmcp",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -924,6 +900,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "credentials"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "async-trait",
+ "base64 0.23.1",
+ "futures-util",
+ "harness",
+ "hex",
+ "ipnet",
+ "jsonwebtoken",
+ "oauth2",
+ "rand 0.10.3",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1467,7 +1467,7 @@ name = "environments"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "auth",
+ "credentials",
  "environment-protocol",
  "harness",
  "serde",
@@ -2809,7 +2809,7 @@ name = "mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "auth",
+ "credentials",
  "harness",
  "serde",
  "serde_json",
@@ -5162,10 +5162,10 @@ dependencies = [
  "aes-gcm",
  "api",
  "async-trait",
- "auth",
  "base64 0.23.1",
  "bots",
  "channels",
+ "credentials",
  "environment-protocol",
  "environments",
  "futures-util",
@@ -5351,7 +5351,6 @@ dependencies = [
  "api",
  "api-projection",
  "async-trait",
- "auth",
  "axum",
  "base64 0.23.1",
  "bots",
@@ -5359,6 +5358,7 @@ dependencies = [
  "chrono",
  "clap",
  "codemode",
+ "credentials",
  "dotenvy",
  "ed25519-dalek",
  "environment-client",

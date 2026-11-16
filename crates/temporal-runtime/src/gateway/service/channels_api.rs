@@ -43,9 +43,12 @@ impl GatewayAgentApi {
         let Some(grant_id) = &record.document.credential_grant_id else {
             return Ok(());
         };
-        let grant_id = parse_auth_grant_id(grant_id.clone())?;
-        let grants: &dyn AuthGrantStore = self.store.as_ref();
-        let grant = grants.read_grant(&grant_id).await.map_err(map_auth_error)?;
+        let grant_id = parse_credential_grant_id(grant_id.clone())?;
+        let grants: &dyn CredentialGrantStore = self.store.as_ref();
+        let grant = grants
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_credential_error)?;
         require_retrievable_grant(&grant)
     }
 

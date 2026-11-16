@@ -173,6 +173,26 @@ cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty; the launcher never give
 full-authority runtime tokens to an agent. Bots and Channels core remain inside
 the runtime.
 
+The runtime starts three HTTP listeners in the full and runtime profiles:
+
+| Listener | Default address | Routes |
+| --- | --- | --- |
+| Private RPC | `127.0.0.1:18080` | `/rpc` |
+| Public ingress | `127.0.0.1:18082` | `/credentials/callback`, `/credentials/client-metadata.json`, `/hooks/bots/…` |
+| Environment gateway | `127.0.0.1:18083` | Machine registration, control, and worker environment routes |
+
+Set `LIGHTSPEED_GATEWAY_BIND`, `LIGHTSPEED_PUBLIC_BIND`, and
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND` to override those binds. The launcher checks
+all three ports before starting infrastructure and waits for all three health
+endpoints. Worker `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` uses the environment
+listener. Keep RPC reachable only by Platform and trusted operator clients.
+
+`LIGHTSPEED_PUBLIC_BASE_URL` advertises the public callback and webhook origin;
+it defaults from the public bind. Daemon origin validation uses the separate
+`LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`, defaulting from the environment bind.
+When putting a reverse proxy in front, configure the advertised origins for their
+respective listeners. Public ingress never serves `/rpc`.
+
 ## Follow a change to its owner
 
 Before changing a behavior, identify which layer decides it. A new user action

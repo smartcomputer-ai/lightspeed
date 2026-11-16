@@ -197,6 +197,10 @@ function createPlan(profile, sourceEnv) {
     sourceEnv.LIGHTSPEED_TEST_POSTGRES_URL;
   const platformPort = positivePort(sourceEnv.PORT, 3_000, "PORT");
   const runtimePort = addressPort(sourceEnv.LIGHTSPEED_GATEWAY_BIND, 18_080);
+  const publicBind = sourceEnv.LIGHTSPEED_PUBLIC_BIND ?? "127.0.0.1:18082";
+  const publicPort = addressPort(publicBind, 18_082, "LIGHTSPEED_PUBLIC_BIND");
+  const environmentBind = sourceEnv.LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND ?? "127.0.0.1:18083";
+  const environmentPort = addressPort(environmentBind, 18_083, "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND");
   const temporalAddress =
     sourceEnv.TEMPORAL_ADDRESS ?? `127.0.0.1:${sourceEnv.TEMPORAL_PORT ?? "7233"}`;
   // The focused platform profile talks to whatever runtime LIGHTSPEED_API_URL
@@ -223,6 +227,9 @@ function createPlan(profile, sourceEnv) {
     ...sourceEnv,
     LIGHTSPEED_API_URL: platformApiUrl,
     LIGHTSPEED_AUTH_MODE: runtimeAuthMode,
+    LIGHTSPEED_PUBLIC_BIND: publicBind,
+    LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: environmentBind,
+    LIGHTSPEED_ENVIRONMENT_GATEWAY_URL: sourceEnv.LIGHTSPEED_ENVIRONMENT_GATEWAY_URL ?? `http://127.0.0.1:${environmentPort}`,
     LIGHTSPEED_MCP_PRIVATE_NETWORKS:
       sourceEnv.LIGHTSPEED_MCP_PRIVATE_NETWORKS ?? "localhost,127.0.0.1,::1",
     LIGHTSPEED_PLATFORM_DATABASE_URL: platformDatabaseUrl,
@@ -262,6 +269,10 @@ function createPlan(profile, sourceEnv) {
   if (profile === "runtime" || profile === "full") {
     ports.push({ name: "runtime gateway", port: runtimePort });
     readiness.push({ name: "runtime gateway", url: `http://127.0.0.1:${runtimePort}/health` });
+    ports.push({ name: "runtime public", port: publicPort });
+    readiness.push({ name: "runtime public", url: `http://127.0.0.1:${publicPort}/health` });
+    ports.push({ name: "environment gateway", port: environmentPort });
+    readiness.push({ name: "environment gateway", url: `http://127.0.0.1:${environmentPort}/health` });
     preparations.push({
       name: "runtime migration",
       command: "cargo",
@@ -377,10 +388,10 @@ function positivePort(raw, fallback, name) {
   return value;
 }
 
-function addressPort(address, fallback) {
+function addressPort(address, fallback, name = "LIGHTSPEED_GATEWAY_BIND") {
   if (!address) return fallback;
   const separator = address.lastIndexOf(":");
-  return positivePort(address.slice(separator + 1), fallback, "LIGHTSPEED_GATEWAY_BIND");
+  return positivePort(address.slice(separator + 1), fallback, name);
 }
 
 function uniquePorts(ports) {
@@ -652,6 +663,9 @@ function printPlan(plan) {
     if (processPlan.startAfter) {
       console.log(`  after: ${processPlan.startAfter.name} -> ${processPlan.startAfter.url ?? processPlan.startAfter.port}`);
     }
+  }
+  for (const service of plan.readiness) {
+    console.log(`ready: ${service.name} -> ${service.url ?? service.port}`);
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);

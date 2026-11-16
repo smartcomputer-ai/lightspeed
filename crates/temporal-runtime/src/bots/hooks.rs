@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use api::{
-    AuthGrantLeaseParams, BotEventDocument, BotId, BotTriggerId, BotTriggerSpec,
+    BotEventDocument, BotId, BotTriggerId, BotTriggerSpec, CredentialGrantLeaseParams,
     WebhookVerification,
 };
 use bots::{
@@ -96,7 +96,7 @@ impl GatewayAgentApi {
                 grant_id, audience, ..
             // Ingest has no caller: the stored trigger names its signing secret.
             } => match self
-                .lease_grant_token(AuthGrantLeaseParams {
+                .lease_grant_token(CredentialGrantLeaseParams {
                     grant_id: grant_id.clone(),
                     audience: audience.clone(),
                 })

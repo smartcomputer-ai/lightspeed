@@ -164,6 +164,7 @@ async fn scenario(pool: sqlx::PgPool) -> anyhow::Result<()> {
             state.clone(),
             DEFAULT_MAX_REQUEST_BODY_BYTES,
             GatewayRoutes {
+                public: false,
                 api: false,
                 environment: true,
             },

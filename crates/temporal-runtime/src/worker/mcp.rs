@@ -5,8 +5,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use auth::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use base64::Engine;
+use credentials::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use harness::RemoteMcpToolSpec;
 use llm_runtime::{
     McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
@@ -134,8 +134,8 @@ impl McpPrivateNetworkPolicy {
     /// refresh. It judges each URL against the list on its own, because an
     /// authorization server is a different host from the MCP server it
     /// protects and neither is known when the client is built.
-    pub fn oauth_http_client(&self) -> auth::HttpOAuthMetadataClient {
-        auth::HttpOAuthMetadataClient::with_private_networks(self.list.clone())
+    pub fn oauth_http_client(&self) -> credentials::HttpOAuthMetadataClient {
+        credentials::HttpOAuthMetadataClient::with_private_networks(self.list.clone())
     }
 }
 
@@ -1589,9 +1589,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn oauth_client_reaches_private_hosts_only_through_the_list() {
         async fn verdict(
-            client: &auth::HttpOAuthMetadataClient,
+            client: &credentials::HttpOAuthMetadataClient,
             url: &str,
-        ) -> Result<(), auth::PinnedHttpError> {
+        ) -> Result<(), credentials::PinnedHttpError> {
             client
                 .policy()
                 .client_for_url(&Url::parse(url).expect("url"))
@@ -1606,25 +1606,25 @@ mod tests {
         assert_eq!(verdict(&listed, "http://10.20.4.8/token").await, Ok(()));
         assert_eq!(
             verdict(&listed, "https://127.0.0.1:9/token").await,
-            Err(auth::PinnedHttpError::NonPublicAddress)
+            Err(credentials::PinnedHttpError::NonPublicAddress)
         );
         assert_eq!(
             verdict(&listed, "https://169.254.169.254/latest").await,
-            Err(auth::PinnedHttpError::NonPublicAddress)
+            Err(credentials::PinnedHttpError::NonPublicAddress)
         );
         assert_eq!(
             verdict(&listed, "http://8.8.8.8/token").await,
-            Err(auth::PinnedHttpError::HttpsRequired)
+            Err(credentials::PinnedHttpError::HttpsRequired)
         );
 
         let unlisted = McpPrivateNetworkPolicy::default().oauth_http_client();
         assert_eq!(
             verdict(&unlisted, "http://localhost:9/token").await,
-            Err(auth::PinnedHttpError::HttpsRequired)
+            Err(credentials::PinnedHttpError::HttpsRequired)
         );
         assert_eq!(
             verdict(&unlisted, "https://localhost:9/token").await,
-            Err(auth::PinnedHttpError::NonPublicAddress)
+            Err(credentials::PinnedHttpError::NonPublicAddress)
         );
         assert_eq!(verdict(&unlisted, "https://8.8.8.8/token").await, Ok(()));
     }

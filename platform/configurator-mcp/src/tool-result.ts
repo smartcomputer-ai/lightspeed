@@ -54,7 +54,7 @@ export function safeError(error: unknown): Record<string, unknown> {
 
 function redact(value: string): string {
   return value
-    .replace(/\blsk_[A-Za-z0-9._~-]+/g, "[REDACTED]")
+    .replace(/\blsr_[A-Za-z0-9._~-]+/g, "[REDACTED]")
     .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]");
 }
 

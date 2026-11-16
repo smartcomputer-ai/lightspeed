@@ -16,7 +16,7 @@ environment-protocol = { path = "../environment-protocol" }
 vfs = { path = "../vfs" }
 anyhow = "1"
 async-trait = "0.1"
-auth = { path = "../auth" }
+credentials = { path = "../credentials" }
 bots = { path = "../bots" }
 channels = { path = "../channels" }
 codemode = { path = "../codemode" }

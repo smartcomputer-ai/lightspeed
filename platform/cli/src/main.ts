@@ -163,7 +163,7 @@ channelAccount
     "provider-native identity (bot username, phone number)",
   )
   .requiredOption("--display-name <name>")
-  .option("--credential-grant <grantId>", "retrievable auth grant holding the provider token")
+  .option("--credential-grant <grantId>", "retrievable credential grant holding the provider token")
   .action(
     async (opts: {
       universe: string;

@@ -115,7 +115,7 @@ environment gateway's Service directly:
 
 1. On the process running the `environment-gateway` role, add the in-cluster
    URL to `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, for example
-   `ws://lightspeed-environment-gateway.lightspeed.svc.cluster.local:18080/environment-gateway/connect`.
+   `ws://lightspeed-environment-gateway.lightspeed.svc.cluster.local:18083/environment-gateway/connect`.
    Daemons sign the origin they dial, and the gateway accepts only the
    origins it is configured with.
 2. Set `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY=true` on the daemons when the

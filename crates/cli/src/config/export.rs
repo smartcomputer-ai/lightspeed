@@ -213,7 +213,7 @@ async fn attach_credentials(
 /// The kind of every provider, by id.
 async fn provider_kinds(target: &Target) -> Result<BTreeMap<String, String>> {
     let response = target
-        .call("auth/providers/list", json!({}))
+        .call("credentials/providers/list", json!({}))
         .await
         .context("read providers")?;
     Ok(response["providers"]

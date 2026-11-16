@@ -43,8 +43,8 @@ const tools = methods.map((entry) => {
     throw new Error(`MCP tool name collision: ${name} for ${prior} and ${entry.method}`);
   }
   seenNames.set(name, entry.method);
-  // Tools are listed by the caller's groups, so a groupless method would be
-  // offered to every key; only `initialize` has none, and it is excluded.
+  // Every exposed universe method carries its contract category. Initialization
+  // has no category and is excluded from the generated tool surface.
   if (typeof entry.group !== "string" || entry.group.length === 0) {
     throw new Error(`method ${entry.method} has no method group`);
   }
@@ -140,7 +140,9 @@ function validateExcludedParams(value, universeEntries, excludedMethods) {
 }
 
 function toolName(method) {
-  return `lightspeed_${method.replaceAll(/[^A-Za-z0-9_-]/g, "_")}`;
+  // Leave room for the first-party MCP server label within the model tool limit.
+  const name = method.replace(/^credentials\/github\/installations\//, "credentials/github/installs/");
+  return `lightspeed_${name.replaceAll(/[^A-Za-z0-9_-]/g, "_")}`;
 }
 
 function standaloneSchema(schema, method, side, excludedProperties = []) {

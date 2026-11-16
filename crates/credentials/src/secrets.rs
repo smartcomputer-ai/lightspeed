@@ -3,7 +3,7 @@ use std::fmt;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{AuthRegistryError, SecretId, validate_token_component};
+use crate::{CredentialRegistryError, SecretId, validate_token_component};
 
 pub const SECRET_KIND_STATIC_TOKEN: &str = "auth.static_token";
 pub const SECRET_KIND_MODEL_API_KEY: &str = "auth.model.api_key";
@@ -113,10 +113,10 @@ pub struct PutSecretRecord {
 }
 
 impl PutSecretRecord {
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         validate_token_component("secret kind", &self.secret_kind)?;
         if self.value.is_empty() {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "secret value must not be empty".to_owned(),
             });
         }
@@ -143,14 +143,14 @@ pub trait SecretStore: Send + Sync {
     async fn put_secret(
         &self,
         record: PutSecretRecord,
-    ) -> Result<SecretRecordMeta, AuthRegistryError>;
+    ) -> Result<SecretRecordMeta, CredentialRegistryError>;
 
     async fn read_secret(
         &self,
         secret_id: &SecretId,
-    ) -> Result<(SecretRecordMeta, SecretValue), AuthRegistryError>;
+    ) -> Result<(SecretRecordMeta, SecretValue), CredentialRegistryError>;
 
-    async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), AuthRegistryError>;
+    async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), CredentialRegistryError>;
 }
 
 #[cfg(test)]
@@ -194,7 +194,7 @@ mod tests {
 
         assert!(matches!(
             record.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 }

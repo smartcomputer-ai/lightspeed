@@ -1,8 +1,8 @@
 # P208 — Runtime access simplification
 
-**Status:** In progress, 2026-11-16. Configuration tokens, removal of the key
-model and consumer cutover are implemented and validated. The listener split
-and credentials rename remain. Decisions are listed under [Decisions](#decisions).
+**Status:** In progress, 2026-11-16. All implementation slices are in place;
+final integration validation is running. Decisions are listed under
+[Decisions](#decisions).
 
 This is the first of two documents. It takes the permission model for
 callers out of the runtime.
@@ -191,9 +191,12 @@ the web app already calls it:
 
 - The `auth/*` methods become `credentials/*`, and the API family in the
   method classification is renamed with them.
-- The crate, the tables and the public callback path follow. How far that
-  goes is settled when the rename is done; the method names are the part
-  that matters to readers of the contract.
+- The crate is `credentials`; domain and API types use `Credential*`.
+  Tables use `credentials_*`. Public paths are `/credentials/callback` and
+  `/credentials/client-metadata.json`.
+- OAuth protocol terminology, contextual `authGrantId`/`authProvider*`
+  references and opaque stored IDs remain unchanged. Platform sign-in
+  authentication is separate from this outbound credentials namespace.
 
 After that, "authentication" and "authorization" mean one thing in
 Lightspeed, the Platform's, and "credentials" means what a universe uses to
@@ -216,16 +219,26 @@ runtime, because they are resources and not caller credentials.
 
 ## A private listener for RPC
 
-`/rpc` shares its listener today with three endpoints that the public must
-reach and that authenticate themselves:
+`/rpc` has a private listener, separate from three endpoints that the public
+must reach and that authenticate themselves:
 
-- `/auth/callback`, where an OAuth provider sends a person's browser back;
-- `/auth/client-metadata.json`, which authorization servers fetch;
+- `/credentials/callback`, where an OAuth provider sends a person's browser back;
+- `/credentials/client-metadata.json`, which authorization servers fetch;
 - `/hooks/bots/…`, the webhook ingress for bot triggers.
 
-These become a route set of their own with their own bind address. `/rpc`
-then has a listener that network rules can close to everything but the door
-and trusted components. The environment routes are already a separate set.
+The `gateway` role starts two listeners: `LIGHTSPEED_GATEWAY_BIND` (default
+`127.0.0.1:18080`) for RPC and `LIGHTSPEED_PUBLIC_BIND` (default
+`127.0.0.1:18082`) for public callbacks and webhooks. The
+`environment-gateway` role starts `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`
+(default `127.0.0.1:18083`) for machine routes. All three serve `/health`
+and `/ready`, with no cross-family routes.
+
+`LIGHTSPEED_PUBLIC_BASE_URL` names the callback/webhook origin.
+`LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` names the daemon origin; additional
+registration origins still use `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`.
+Worker routing defaults to the environment listener, and its dedicated URL
+setting still overrides it. Machine credentials and protocols are unchanged.
+Network rules can close RPC to everything but the door and trusted components.
 
 ## Who holds a runtime token
 
@@ -295,10 +308,11 @@ not of any deployment. While the branch is in it:
 
 ## Storage
 
-One runtime migration with `release/metadata.env` aligned: the `api_keys`
-table is dropped, and stored attributions that name a key by scope are
-rewritten to name it alone. The API contract and every generated consumer
-are regenerated.
+Runtime migration 26 drops `api_keys` and rewrites stored attributions that
+name a key by scope to name it alone. Migration 27 renames the outbound
+credential tables and their constraints/indexes without rewriting encrypted
+values or IDs. `release/metadata.env` is aligned at revision 27. The API
+contract and every generated consumer are regenerated.
 
 ## Slices
 
@@ -387,3 +401,11 @@ Decided, 2026-11-16:
   52 launcher tests; typechecks, builds, documentation and release-metadata
   checks. The launcher and daemon scrub runtime tokens from child command
   environments. Broader Temporal and provider live suites were not run.
+
+- 2026-11-16: implemented separate RPC, public callback/webhook and environment
+  listeners, including coordinated drain/shutdown and distinct origin defaults.
+  Launcher preflight/readiness and deployment guides follow the three ports.
+  Renamed outbound credential methods, API families, crate, DTOs, tables and
+  callbacks; preserved contextual reference fields and machine protocols.
+  Added migration preservation, listener isolation and callback coverage.
+  Final validation results follow when the end-of-change checks complete.

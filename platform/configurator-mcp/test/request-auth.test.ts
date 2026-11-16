@@ -11,9 +11,9 @@ describe("request authentication", () => {
     }
   });
   it("requires a bearer before forwarding selectors and opaque actor assertions", () => {
-    const input = { authorization: "Bearer lsk_service", "x-lightspeed-universe": universe, "x-lightspeed-actor": actor };
+    const input = { authorization: "Bearer lsr_service", "x-lightspeed-universe": universe, "x-lightspeed-actor": actor };
     const auth = authenticateHeaders("authenticated", input);
-    expect(auth).toEqual({ mode: "authenticated", token: "lsk_service", universeId: universe, actor });
+    expect(auth).toEqual({ mode: "authenticated", token: "lsr_service", universeId: universe, actor });
     const headers = new Headers(upstreamHeaders(auth));
     for (const [name,value] of Object.entries(input)) expect(headers.get(name)).toBe(value);
     expect(() => authenticateHeaders("authenticated", { "x-lightspeed-universe": universe })).toThrow(/missing required/);
@@ -21,9 +21,9 @@ describe("request authentication", () => {
     expect(() => authenticateHeaders("authenticated", { ...input, "x-lightspeed-principal": "user:old" })).toThrow();
   });
   it("rejects malformed and duplicate credentials", () => {
-    for (const authorization of ["Basic other", "Bearer bad\u0001token", ["Bearer lsk_a", "Bearer lsk_b"]]) {
+    for (const authorization of ["Basic other", "Bearer bad\u0001token", ["Bearer lsr_a", "Bearer lsr_b"]]) {
       expect(() => authenticateHeaders("authenticated", { authorization } as IncomingHttpHeaders)).toThrow();
     }
-    expect(authenticateHeaders("authenticated", { authorization: "Bearer lsk_only" })).toEqual({ mode:"authenticated",token:"lsk_only" });
+    expect(authenticateHeaders("authenticated", { authorization: "Bearer lsr_only" })).toEqual({ mode:"authenticated",token:"lsr_only" });
   });
 });

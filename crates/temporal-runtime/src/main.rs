@@ -7,9 +7,10 @@ use temporal_runtime::{
         postgres_pool_from_env, task_queues_from_env,
     },
     gateway::{
-        DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
-        DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, TemporalConnectionSettings,
-        gateway_router, prewarm_single_universe, registration, replica::GatewayReplica,
+        DEFAULT_ENVIRONMENT_GATEWAY_BIND, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES,
+        DEFAULT_PUBLIC_BIND, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, GatewayRoutes,
+        GatewayState, TemporalConnectionSettings, gateway_router, prewarm_single_universe,
+        registration, replica::GatewayReplica,
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
@@ -84,6 +85,14 @@ struct RunArgs {
     #[arg(long, env = "LIGHTSPEED_GATEWAY_BIND", default_value = DEFAULT_GATEWAY_BIND)]
     bind: SocketAddr,
 
+    /// Public OAuth callback, client metadata, and bot webhook listener.
+    #[arg(long, env = "LIGHTSPEED_PUBLIC_BIND", default_value = DEFAULT_PUBLIC_BIND)]
+    public_bind: SocketAddr,
+
+    /// Environment daemon, worker, and replica-peer listener.
+    #[arg(long, env = "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND", default_value = DEFAULT_ENVIRONMENT_GATEWAY_BIND)]
+    environment_bind: SocketAddr,
+
     /// Sessions task queue. Deployments sharing a Temporal namespace must
     /// set distinct queues.
     #[arg(long, env = "LIGHTSPEED_TASK_QUEUE")]
@@ -146,11 +155,15 @@ struct RunArgs {
     )]
     max_request_body_bytes: usize,
 
-    /// Externally reachable base URL of the gateway (OAuth callbacks,
-    /// webhook ingest URLs, and the origin registered daemons sign).
-    /// Defaults to http://{bind}.
+    /// Externally reachable URL for OAuth callbacks and webhook ingest.
+    /// Defaults to http://{public-bind}.
     #[arg(long, env = "LIGHTSPEED_PUBLIC_BASE_URL")]
     public_base_url: Option<String>,
+
+    /// Environment gateway origin that registered daemons dial and sign.
+    /// Defaults to http://{environment-bind} for a loopback listener.
+    #[arg(long, env = "LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL")]
+    environment_public_base_url: Option<String>,
 
     /// Further gateway URLs registered daemons may dial and sign, comma
     /// separated: for example a cluster-internal Service address. Only
@@ -164,6 +177,28 @@ struct RunArgs {
 }
 
 impl RunArgs {
+    fn listeners(&self, roles: &RoleSet) -> anyhow::Result<Vec<(SocketAddr, GatewayRoutes)>> {
+        let mut listeners = Vec::new();
+        if roles.has(Role::Gateway) {
+            listeners.push((self.bind, GatewayRoutes::RPC));
+            listeners.push((self.public_bind, GatewayRoutes::PUBLIC));
+        }
+        if roles.has(Role::EnvironmentGateway) {
+            listeners.push((self.environment_bind, GatewayRoutes::ENVIRONMENT));
+        }
+        for (index, (address, _)) in listeners.iter().enumerate() {
+            anyhow::ensure!(
+                address.port() != 0,
+                "gateway listener {address} must have a fixed nonzero port"
+            );
+            anyhow::ensure!(
+                !listeners[..index].iter().any(|(other, _)| other == address),
+                "gateway listeners must use distinct bind addresses: {address}"
+            );
+        }
+        Ok(listeners)
+    }
+
     fn roles(&self) -> anyhow::Result<RoleSet> {
         RoleSet::parse(self.roles.as_deref().unwrap_or("")).map_err(|error| anyhow::anyhow!(error))
     }
@@ -351,6 +386,17 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     let roles = args.roles()?;
     let task_queues = args.task_queues()?;
     let mode = gateway_auth_mode_from_env()?;
+    let listener_specs = args.listeners(&roles)?;
+    // Validate the machine origin before connecting to dependencies.
+    let registration_origins = if roles.has(Role::EnvironmentGateway) {
+        temporal_runtime::gateway::http::registration_origins(
+            args.environment_public_base_url.as_deref(),
+            &args.environment_registration_urls,
+            args.environment_bind,
+        )?
+    } else {
+        Vec::new()
+    };
     let runtime = worker::worker_runtime()?;
     let temporal = args
         .temporal_settings(TemporalConnectionSettings::from_env()?.api_key)
@@ -360,28 +406,21 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         .await?
         .with_blob_cache(temporal_runtime::config::blob_cache_from_env()?);
     let reaper_stores = stores.clone();
-    // Daemons sign the gateway origin they dial; refuse to serve
-    // registration under an origin the gateway cannot name.
-    let registration_origins = if roles.has(Role::EnvironmentGateway) {
-        temporal_runtime::gateway::http::registration_origins(
-            args.public_base_url.as_deref(),
-            &args.environment_registration_urls,
-            args.bind,
-        )?
-    } else {
-        Vec::new()
-    };
     let public_base_url = args
         .public_base_url
         .clone()
-        .unwrap_or_else(|| format!("http://{}", args.bind));
+        .unwrap_or_else(|| format!("http://{}", args.public_bind));
     let universes = Arc::new(
         UniverseRuntime::new_with_environment_gateway(
             client.clone(),
             task_queues.sessions.clone(),
             Some(public_base_url.clone()),
             stores,
-            roles.has(Role::EnvironmentGateway),
+            roles.has(Role::EnvironmentGateway).then(|| {
+                args.environment_public_base_url
+                    .clone()
+                    .unwrap_or_else(|| format!("http://{}", args.environment_bind))
+            }),
         )?
         .with_task_queues(task_queues.clone()),
     );
@@ -389,11 +428,13 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
 
     // Bind before publishing this instance's address. No connections are
     // accepted until its lease and the role workers have been initialized.
-    let listener = if roles.serves_http() {
-        Some(tokio::net::TcpListener::bind(args.bind).await?)
-    } else {
-        None
-    };
+    let mut listeners = Vec::new();
+    for (address, routes) in listener_specs {
+        let listener = tokio::net::TcpListener::bind(address)
+            .await
+            .map_err(|error| anyhow::anyhow!("cannot bind gateway listener {address}: {error}"))?;
+        listeners.push((listener, routes));
+    }
     let gateway_state = if roles.serves_http() {
         let mut state = GatewayState::multi(mode, universes.clone(), public_base_url)
             .with_registration_origins(registration_origins);
@@ -531,48 +572,13 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     }
 
     let gateway_future: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>>>> =
-        if let (Some(state), Some(listener)) = (gateway_state.clone(), listener) {
-            let routes = GatewayRoutes {
-                api: roles.has(Role::Gateway),
-                environment: roles.has(Role::EnvironmentGateway),
-            };
-            let app = gateway_router(state.clone(), args.max_request_body_bytes, routes);
-            tracing::info!(
-                target: "temporal_runtime",
-                bind = %args.bind,
-                api_routes = routes.api,
-                environment_routes = routes.environment,
-                "gateway listening"
-            );
-            Box::pin(async move {
-                use std::future::IntoFuture as _;
-                let (stop_http, http_stopped) = tokio::sync::oneshot::channel();
-                let server = axum::serve(listener, app)
-                    .with_graceful_shutdown(async {
-                        let _ = http_stopped.await;
-                    })
-                    .into_future();
-                tokio::pin!(server);
-                let lease_lost = tokio::select! {
-                    result = server.as_mut() => return result.map_err(anyhow::Error::from),
-                    _ = shutdown_signal() => false,
-                    _ = state.replica().stopped(), if routes.environment => true,
-                };
-                if routes.environment {
-                    // Keep the listener running so readiness probes and
-                    // already-issued daemon dial-backs can finish during drain.
-                    tokio::select! {
-                        result = server.as_mut() => return result.map_err(anyhow::Error::from),
-                        _ = state.replica().drain(&state) => {},
-                    }
-                }
-                let _ = stop_http.send(());
-                tokio::time::timeout(Duration::from_secs(5), server.as_mut())
-                    .await
-                    .map_err(|_| anyhow::anyhow!("gateway HTTP shutdown exceeded 5 seconds"))??;
-                anyhow::ensure!(!lease_lost, "environment gateway instance lease expired");
-                Ok(())
-            })
+        if let Some(state) = gateway_state.clone() {
+            Box::pin(serve_gateways(
+                state,
+                listeners,
+                args.max_request_body_bytes,
+                roles.has(Role::EnvironmentGateway),
+            ))
         } else {
             Box::pin(async {
                 shutdown_signal().await;
@@ -623,6 +629,69 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     }
     stop_background(&background);
     result
+}
+
+/// All listeners share one shutdown boundary. Environment connections finish
+/// draining while their listener remains available for outstanding dial-backs.
+async fn serve_gateways(
+    state: Arc<GatewayState>,
+    listeners: Vec<(tokio::net::TcpListener, GatewayRoutes)>,
+    max_request_body_bytes: usize,
+    environment: bool,
+) -> anyhow::Result<()> {
+    use futures::StreamExt as _;
+    use std::future::IntoFuture as _;
+
+    let (stop_http, http_stopped) = tokio::sync::watch::channel(false);
+    let mut servers = futures::stream::FuturesUnordered::new();
+    for (listener, routes) in listeners {
+        let address = listener.local_addr()?;
+        let app = gateway_router(state.clone(), max_request_body_bytes, routes);
+        let mut stopped = http_stopped.clone();
+        tracing::info!(
+            target: "temporal_runtime",
+            bind = %address,
+            api_routes = routes.api,
+            public_routes = routes.public,
+            environment_routes = routes.environment,
+            "gateway listening"
+        );
+        servers.push(
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = stopped.wait_for(|stop| *stop).await;
+                })
+                .into_future(),
+        );
+    }
+    let lease_lost = tokio::select! {
+        result = servers.next() => {
+            result.ok_or_else(|| anyhow::anyhow!("no gateway listeners configured"))??;
+            anyhow::bail!("gateway listener stopped unexpectedly");
+        },
+        _ = shutdown_signal() => false,
+        _ = state.replica().stopped(), if environment => true,
+    };
+    if environment {
+        tokio::select! {
+            result = servers.next() => {
+                result.ok_or_else(|| anyhow::anyhow!("no gateway listeners configured"))??;
+                anyhow::bail!("gateway listener stopped during environment drain");
+            },
+            _ = state.replica().drain(&state) => {},
+        }
+    }
+    let _ = stop_http.send(true);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(result) = servers.next().await {
+            result?;
+        }
+        Ok::<_, std::io::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("gateway HTTP shutdown exceeded 5 seconds"))??;
+    anyhow::ensure!(!lease_lost, "environment gateway instance lease expired");
+    Ok(())
 }
 
 /// Resolves on SIGINT from a terminal or SIGTERM from a process manager such as
@@ -686,6 +755,65 @@ fn init_logging() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use temporal_runtime::gateway::TemporalConfigError;
+
+    fn listener_args(roles: &str, public_bind: &str, environment_bind: &str) -> RunArgs {
+        Cli::try_parse_from([
+            "lightspeed-runtime",
+            "--roles",
+            roles,
+            "--bind",
+            "127.0.0.1:18080",
+            "--public-bind",
+            public_bind,
+            "--environment-bind",
+            environment_bind,
+        ])
+        .unwrap()
+        .run
+    }
+
+    #[test]
+    fn role_selection_binds_only_its_separate_route_families() {
+        for (roles, expected) in [
+            ("gateway", vec![GatewayRoutes::RPC, GatewayRoutes::PUBLIC]),
+            ("environment-gateway", vec![GatewayRoutes::ENVIRONMENT]),
+            (
+                "gateway,environment-gateway",
+                vec![
+                    GatewayRoutes::RPC,
+                    GatewayRoutes::PUBLIC,
+                    GatewayRoutes::ENVIRONMENT,
+                ],
+            ),
+            ("sessions,bots,channels,code", vec![]),
+        ] {
+            let args = listener_args(roles, "127.0.0.1:18082", "127.0.0.1:18083");
+            let listeners = args.listeners(&args.roles().unwrap()).unwrap();
+            assert_eq!(
+                listeners
+                    .into_iter()
+                    .map(|(_, routes)| routes)
+                    .collect::<Vec<_>>(),
+                expected,
+                "{roles}"
+            );
+        }
+    }
+
+    #[test]
+    fn active_listeners_require_distinct_fixed_bind_addresses() {
+        for (public_bind, environment_bind) in [
+            ("127.0.0.1:18080", "127.0.0.1:18083"),
+            ("127.0.0.1:18082", "127.0.0.1:18080"),
+            ("127.0.0.1:0", "127.0.0.1:18083"),
+        ] {
+            let args = listener_args("gateway,environment-gateway", public_bind, environment_bind);
+            assert!(args.listeners(&args.roles().unwrap()).is_err());
+        }
+        // Unused listener settings do not constrain worker-only processes.
+        let args = listener_args("sessions", "127.0.0.1:18080", "127.0.0.1:0");
+        assert!(args.listeners(&args.roles().unwrap()).unwrap().is_empty());
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn sigterm_starts_graceful_shutdown() {

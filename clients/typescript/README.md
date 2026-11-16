@@ -120,7 +120,7 @@ The durable session event stream is the same either way. Both layers reject with
 | MCP servers | `readMcpServer`, `listMcpServers` |
 | Bots | `readBot`, `listBots`, `listBotEvents`, `admitBotEvent` |
 
-Everything else stays on `call`: auth grants and providers, deployment and universe
+Everything else stays on `call`: credential grants and providers (`credentials/*`), deployment and universe
 management, channels, registration keys, transcription, and the remaining bot, MCP, and
 environment operations. A few helpers do more than wrap one method:
 

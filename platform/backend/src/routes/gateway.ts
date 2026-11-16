@@ -8,14 +8,14 @@ import {
   LightspeedClient,
   LightspeedRpcError,
   type AgentProfileInput,
-  type AuthFlowStatusResponse,
-  type AuthGrantImportParams,
-  type AuthGrantPutParams,
-  type AuthGrantView,
-  type AuthGitHubInstallationGrantParams,
-  type AuthGitHubInstallationListParams,
-  type AuthGrantListParams,
-  type AuthProviderCreateParams,
+  type CredentialFlowStatusResponse,
+  type CredentialGrantImportParams,
+  type CredentialGrantPutParams,
+  type CredentialGrantView,
+  type CredentialGitHubInstallationGrantParams,
+  type CredentialGitHubInstallationListParams,
+  type CredentialGrantListParams,
+  type CredentialProviderCreateParams,
   type EnvironmentCreateParams,
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
@@ -378,9 +378,9 @@ const credentialReplaceSchema = z.object({
 /// with the new token: its settings are carried over, the old token's expiry
 /// is not.
 export function credentialReplaceParams(
-  current: AuthGrantView,
+  current: CredentialGrantView,
   input: z.infer<typeof credentialReplaceSchema>,
-): AuthGrantPutParams {
+): CredentialGrantPutParams {
   return {
     grantId: current.grantId,
     providerId: current.providerId,
@@ -399,7 +399,7 @@ export function credentialReplaceParams(
 /// plain form, which the engine allows only for a retrievable credential.
 export function environmentSecretGrantParams(
   input: z.infer<typeof environmentSecretCreateSchema>,
-): AuthGrantImportParams {
+): CredentialGrantImportParams {
   return {
     grantId: input.grantId,
     providerId: ENVIRONMENT_SECRET_PROVIDER_ID,
@@ -1195,15 +1195,15 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Non-secret active grant metadata for universe MCP-server credential selection.
-  app.get("/:id/auth-grants", async (c) => {
+  app.get("/:id/credential-grants", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const params: AuthGrantListParams = { status: "active" };
-      const response = await client.call("auth/grants/list", params);
+      const params: CredentialGrantListParams = { status: "active" };
+      const response = await client.call("credentials/grants/list", params);
       return c.json(response.result.grants ?? []);
     });
   });
@@ -1218,8 +1218,8 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const [providers, grants] = await Promise.all([
-        client.call("auth/providers/list", {}),
-        client.call("auth/grants/list", {}),
+        client.call("credentials/providers/list", {}),
+        client.call("credentials/grants/list", {}),
       ]);
       return c.json({
         providers: (providers.result.providers ?? [])
@@ -1244,14 +1244,14 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     return withGateway(c, async () => {
-      const params: AuthProviderCreateParams = {
+      const params: CredentialProviderCreateParams = {
         providerId: modelProviderCredentialId(body.data.providerId),
         displayName: body.data.displayName,
         config: { type: "modelApiKey" },
         credential: body.data.credential,
       };
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/create", params);
+      const response = await client.call("credentials/providers/create", params);
       return c.json(modelProviderCredentialView(response.result.provider), 201);
     });
   });
@@ -1263,7 +1263,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/delete", {
+      const response = await client.call("credentials/providers/delete", {
         providerId: c.req.param("providerId"),
       });
       return c.json(modelProviderCredentialView(response.result.provider));
@@ -1271,7 +1271,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   /// Model provider API keys for Lightspeed sessions (`model:<provider>` rows).
-  /// `replace` declares the row through `auth/providers/put`, which swaps an
+  /// `replace` declares the row through `credentials/providers/put`, which swaps an
   /// existing one in place: the engine validates first, so a rejected
   /// replacement keeps the old key, and sessions or environment variables
   /// using the provider never see it missing.
@@ -1287,12 +1287,12 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const providerId = modelProviderCredentialId(body.data.provider);
-      const config: AuthProviderCreateParams["config"] = body.data.endpoint
+      const config: CredentialProviderCreateParams["config"] = body.data.endpoint
         ? body.data.credential
           ? { type: "modelApiKey", endpoint: body.data.endpoint }
           : { type: "modelEndpoint", endpoint: body.data.endpoint }
         : { type: "modelApiKey" };
-      const params: AuthProviderCreateParams = {
+      const params: CredentialProviderCreateParams = {
         providerId,
         displayName: body.data.displayName,
         config,
@@ -1300,10 +1300,10 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       if (body.data.replace) {
         // Creates the row when there is nothing to replace yet.
-        const put = await client.call("auth/providers/put", { ...params, providerId });
+        const put = await client.call("credentials/providers/put", { ...params, providerId });
         return c.json(modelProviderCredentialView(put.result.provider), put.result.created ? 201 : 200);
       }
-      const response = await client.call("auth/providers/create", params);
+      const response = await client.call("credentials/providers/create", params);
       return c.json(modelProviderCredentialView(response.result.provider), 201);
     });
   });
@@ -1317,7 +1317,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/list", {});
+      const response = await client.call("credentials/grants/list", {});
       return c.json(
         (response.result.grants ?? []).filter((grant) => isSubscriptionGrant(grant)),
       );
@@ -1343,7 +1343,7 @@ export function gatewayRoutes(ctx: AppContext) {
       throw error;
     }
     return withGateway(c, async () => {
-      const params: AuthGrantImportParams = {
+      const params: CredentialGrantImportParams = {
         providerId: parsed.providerId,
         exposure: "retrievable",
         token: parsed.secret,
@@ -1353,7 +1353,7 @@ export function gatewayRoutes(ctx: AppContext) {
         metadata: parsed.metadata,
       };
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/import", params);
+      const response = await client.call("credentials/grants/import", params);
       return c.json({ grant: response.result.grant, shape: parsed.shape }, 201);
     });
   });
@@ -1365,7 +1365,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/revoke", {
+      const response = await client.call("credentials/grants/revoke", {
         grantId: c.req.param("grantId"),
       });
       return c.json(response.result.grant);
@@ -1382,8 +1382,8 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const [providers, grants] = await Promise.all([
-        client.call("auth/providers/list", {}),
-        client.call("auth/grants/list", {}),
+        client.call("credentials/providers/list", {}),
+        client.call("credentials/grants/list", {}),
       ]);
       return c.json({
         apps: (providers.result.providers ?? []).filter(
@@ -1406,7 +1406,7 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     return withGateway(c, async () => {
-      const params: AuthProviderCreateParams = {
+      const params: CredentialProviderCreateParams = {
         providerId: body.data.providerId ?? gitHubAppProviderId(body.data.appId),
         displayName: body.data.displayName,
         config: {
@@ -1417,7 +1417,7 @@ export function gatewayRoutes(ctx: AppContext) {
         credential: body.data.privateKey,
       };
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/create", params);
+      const response = await client.call("credentials/providers/create", params);
       return c.json(response.result.provider, 201);
     });
   });
@@ -1429,7 +1429,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/delete", {
+      const response = await client.call("credentials/providers/delete", {
         providerId: c.req.param("providerId"),
       });
       return c.json(response.result.provider);
@@ -1445,10 +1445,10 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const params: AuthGitHubInstallationListParams = {
+      const params: CredentialGitHubInstallationListParams = {
         providerId: c.req.param("providerId"),
       };
-      const response = await client.call("auth/github/installations/list", params);
+      const response = await client.call("credentials/github/installations/list", params);
       return c.json(response.result.installations ?? []);
     });
   });
@@ -1472,14 +1472,14 @@ export function gatewayRoutes(ctx: AppContext) {
         // Retrievable, so the installation's short-lived tokens can be bound
         // into environments. That is the way a machine gets GitHub access:
         // the App's private key itself can never be bound.
-        const params: AuthGitHubInstallationGrantParams = {
+        const params: CredentialGitHubInstallationGrantParams = {
           providerId: c.req.param("providerId"),
           installationId,
           exposure: "retrievable",
           displayName: body.data.displayName,
         };
         const client = engineClientFor(ctx, access);
-        const response = await client.call("auth/github/installations/grant", params);
+        const response = await client.call("credentials/github/installations/grant", params);
         return c.json(response.result.grant, 201);
       });
     },
@@ -1495,11 +1495,11 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     return withGateway(c, async () => {
-      const params: AuthGrantImportParams = body.data;
+      const params: CredentialGrantImportParams = body.data;
       const client = engineClientFor(ctx, access);
       if (body.data.grantId) {
         try {
-          const existing = await client.call("auth/grants/read", {
+          const existing = await client.call("credentials/grants/read", {
             grantId: body.data.grantId,
           });
           return c.json(
@@ -1513,7 +1513,7 @@ export function gatewayRoutes(ctx: AppContext) {
         }
       }
       try {
-        const response = await client.call("auth/grants/import", params);
+        const response = await client.call("credentials/grants/import", params);
         return c.json(response.result.grant, 201);
       } catch (error) {
         if (body.data.grantId && error instanceof LightspeedRpcError && error.kind === "conflict") {
@@ -1543,7 +1543,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       if (body.data.grantId) {
         try {
-          const existing = await client.call("auth/grants/read", {
+          const existing = await client.call("credentials/grants/read", {
             grantId: body.data.grantId,
           });
           return c.json(
@@ -1558,7 +1558,7 @@ export function gatewayRoutes(ctx: AppContext) {
       }
       try {
         const response = await client.call(
-          "auth/grants/import",
+          "credentials/grants/import",
           environmentSecretGrantParams(body.data),
         );
         return c.json(response.result.grant, 201);
@@ -1588,8 +1588,8 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const current = await client.call("auth/grants/read", { grantId: c.req.param("grantId") });
-      const response = await client.call("auth/grants/put", credentialReplaceParams(current.result.grant, body.data));
+      const current = await client.call("credentials/grants/read", { grantId: c.req.param("grantId") });
+      const response = await client.call("credentials/grants/put", credentialReplaceParams(current.result.grant, body.data));
       return c.json(response.result.grant);
     });
   });
@@ -1601,7 +1601,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/revoke", {
+      const response = await client.call("credentials/grants/revoke", {
         grantId: c.req.param("grantId"),
       });
       return c.json(response.result.grant);
@@ -1682,7 +1682,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const server = await client.call("mcp/servers/read", {
         serverId: c.req.param("serverId"),
       });
-      const response = await client.call("auth/flows/start", {
+      const response = await client.call("credentials/flows/start", {
         clientId: `mcp:${c.req.param("serverId")}`,
         exposure: "brokered",
         scopes: body.data.scopes,
@@ -1702,7 +1702,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/flows/read", {
+      const response = await client.call("credentials/flows/read", {
         flowId: c.req.param("flowId"),
       });
       return c.json(response.result.flow);
@@ -1723,7 +1723,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const flowResponse = await client.call("auth/flows/read", {
+      const flowResponse = await client.call("credentials/flows/read", {
         flowId: c.req.param("flowId"),
       });
       const flow = flowResponse.result.flow;
@@ -2573,7 +2573,7 @@ export function modelProviderCredentialId(providerId: string): string {
 }
 
 export function mcpOAuthFlowCompletionError(
-  response: AuthFlowStatusResponse,
+  response: CredentialFlowStatusResponse,
 ): string | null {
   switch (response.flow.status) {
     case "completed":

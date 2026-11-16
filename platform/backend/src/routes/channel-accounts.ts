@@ -1,5 +1,5 @@
 import type {
-  AuthGrantImportParams,
+  CredentialGrantImportParams,
   ChannelAccountCreateParams,
   ChannelAccountListParams,
   ChannelAccountPutParams,
@@ -185,7 +185,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
     const displayName = input.displayName ?? identity.firstName;
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const grantParams: AuthGrantImportParams = {
+      const grantParams: CredentialGrantImportParams = {
         providerId: "telegram",
         exposure: "retrievable",
         token: input.token,
@@ -193,7 +193,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
         subjectHint: `@${identity.username}`,
         metadata: { managedBy: "channelAccount", accountId },
       };
-      const imported = await client.call("auth/grants/import", grantParams);
+      const imported = await client.call("credentials/grants/import", grantParams);
       try {
         const response = await client.call("channels/accounts/create", {
           account: {
@@ -207,7 +207,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
         } as ChannelAccountCreateParams);
         return c.json(response.result, 201);
       } catch (error) {
-        await client.call("auth/grants/revoke", {
+        await client.call("credentials/grants/revoke", {
           grantId: imported.result.grant.grantId,
         }).catch(() => undefined);
         throw error;

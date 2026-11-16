@@ -223,6 +223,14 @@ checks prevent a stale connection from modifying or serving its successor.
 Background environment loops each have one PostgreSQL advisory-lock leader.
 See [Operations](../deployment/operations.md) for scaling and shutdown behavior.
 
+Runtime HTTP traffic uses three listeners, even when every role runs in one
+process: private RPC for trusted components, public credential callbacks and
+bot webhooks, and the environment gateway for machine traffic. Each listener
+serves only its own routes plus health and readiness probes. The `gateway`
+role owns RPC and public callbacks; `environment-gateway` owns machine routes.
+Credentials held for outbound provider and MCP calls remain in the runtime,
+under the `credentials` crate and `credentials/*` API methods.
+
 A deployment can serve several universes over shared processes, database
 connections, and provider clients. Universe-bound queries, object references,
 and workflow identities keep tenant resources distinct. This is logical data

@@ -8,9 +8,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use auth::{
-    AuthGrantStore, AuthProviderKind, AuthProviderStore, AuthTokenBroker, GitHubAppRuntime,
-    GrantRefreshLock, OAuthClientStore, OAuthRefreshRuntime, RegistryTokenBroker, SecretStore,
+use credentials::{
+    CredentialGrantStore, CredentialProviderKind, CredentialProviderStore, CredentialTokenBroker,
+    GitHubAppRuntime, GrantRefreshLock, OAuthClientStore, OAuthRefreshRuntime, RegistryTokenBroker,
+    SecretStore,
 };
 use futures_util::future::join_all;
 use llm_clients::{LlmApiError, anthropic::messages as anthropic, openai::responses as openai};
@@ -39,7 +40,7 @@ pub(crate) struct ModelDiscoveryService {
     openai: Arc<openai::Client>,
     anthropic: Arc<anthropic::Client>,
     provider_keys: Arc<dyn ModelProviderResolver>,
-    providers: Arc<dyn AuthProviderStore>,
+    providers: Arc<dyn CredentialProviderStore>,
     cache: ModelDiscoveryCache,
 }
 
@@ -136,7 +137,7 @@ impl ModelDiscoveryService {
         openai: Arc<openai::Client>,
         anthropic: Arc<anthropic::Client>,
         provider_keys: Arc<dyn ModelProviderResolver>,
-        providers: Arc<dyn AuthProviderStore>,
+        providers: Arc<dyn CredentialProviderStore>,
     ) -> Self {
         Self {
             openai,
@@ -150,7 +151,7 @@ impl ModelDiscoveryService {
         }
     }
 
-    pub(super) fn invalidate_auth_provider(&self, auth_provider_id: &str) {
+    pub(super) fn invalidate_credential_provider(&self, auth_provider_id: &str) {
         if let Some(provider_id) = auth_provider_id.strip_prefix("model:")
             && !provider_id.is_empty()
         {
@@ -364,7 +365,7 @@ impl ModelDiscoveryService {
     }
 
     async fn list_custom_providers(&self) -> (Vec<ModelView>, Vec<ModelProviderDiscoveryView>) {
-        let records = match self.providers.list_auth_providers().await {
+        let records = match self.providers.list_credential_providers().await {
             Ok(records) => records,
             Err(error) => {
                 tracing::warn!(error = %error, "list universe model providers for discovery");
@@ -387,7 +388,10 @@ impl ModelDiscoveryService {
             Some((
                 provider_id,
                 endpoint.api_kinds.clone(),
-                matches!(record.config, auth::AuthProviderConfig::ModelEndpoint(_)),
+                matches!(
+                    record.config,
+                    credentials::CredentialProviderConfig::ModelEndpoint(_)
+                ),
             ))
         });
         let results = join_all(
@@ -505,12 +509,14 @@ impl ModelDiscoveryService {
     }
 }
 
-fn model_endpoint(config: &auth::AuthProviderConfig) -> Option<&auth::ModelEndpointConfig> {
+fn model_endpoint(
+    config: &credentials::CredentialProviderConfig,
+) -> Option<&credentials::ModelEndpointConfig> {
     match config {
-        auth::AuthProviderConfig::ModelApiKey(config) => config.endpoint.as_ref(),
-        auth::AuthProviderConfig::ModelOAuth(config) => config.endpoint.as_ref(),
-        auth::AuthProviderConfig::ModelEndpoint(config) => Some(&config.endpoint),
-        auth::AuthProviderConfig::GitHubApp(_) => None,
+        credentials::CredentialProviderConfig::ModelApiKey(config) => config.endpoint.as_ref(),
+        credentials::CredentialProviderConfig::ModelOAuth(config) => config.endpoint.as_ref(),
+        credentials::CredentialProviderConfig::ModelEndpoint(config) => Some(&config.endpoint),
+        credentials::CredentialProviderConfig::GitHubApp(_) => None,
     }
 }
 
@@ -791,19 +797,19 @@ impl DiscoveryError {
 
 pub(super) fn stored_provider_key_resolver(
     store: Arc<PgStore>,
-    token_client: Arc<dyn auth::OAuthTokenClient>,
-    github_api: Arc<dyn auth::GitHubApiClient>,
+    token_client: Arc<dyn credentials::OAuthTokenClient>,
+    github_api: Arc<dyn credentials::GitHubApiClient>,
 ) -> Arc<dyn ModelProviderResolver> {
-    let grants: Arc<dyn AuthGrantStore> = store.clone();
+    let grants: Arc<dyn CredentialGrantStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store.clone();
     let clients: Arc<dyn OAuthClientStore> = store.clone();
-    let providers: Arc<dyn AuthProviderStore> = store.clone();
+    let providers: Arc<dyn CredentialProviderStore> = store.clone();
     let locks: Arc<dyn GrantRefreshLock> = store.clone();
-    let broker: Arc<dyn AuthTokenBroker> = Arc::new(
+    let broker: Arc<dyn CredentialTokenBroker> = Arc::new(
         RegistryTokenBroker::new(grants.clone(), secrets.clone(), locks)
             .with_oauth_refresh(OAuthRefreshRuntime::new(clients, token_client))
             .with_token_source(
-                AuthProviderKind::GitHubApp,
+                CredentialProviderKind::GitHubApp,
                 Arc::new(GitHubAppRuntime::new(
                     providers.clone(),
                     github_api,
@@ -827,10 +833,11 @@ mod tests {
         },
     };
 
-    use auth::{
-        AuthProviderConfig, AuthProviderId, AuthProviderStatus, CreateAuthProviderRecord,
-        InMemoryAuthGrantStore, InMemoryAuthProviderStore, InMemoryGrantLocks, InMemorySecretStore,
-        ModelEndpointConfig, ModelEndpointOnlyConfig, RegistryTokenBroker,
+    use credentials::{
+        CreateCredentialProviderRecord, CredentialProviderConfig, CredentialProviderId,
+        CredentialProviderStatus, InMemoryCredentialGrantStore, InMemoryCredentialProviderStore,
+        InMemoryGrantLocks, InMemorySecretStore, ModelEndpointConfig, ModelEndpointOnlyConfig,
+        RegistryTokenBroker,
     };
     use tokio::{
         io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -1236,63 +1243,63 @@ mod tests {
             headers: BTreeMap::from([
                 (
                     "x-client".to_owned(),
-                    auth::RequestHeaderValue::Literal {
+                    credentials::RequestHeaderValue::Literal {
                         value: "lightspeed".to_owned(),
                     },
                 ),
                 (
                     "x-api-key".to_owned(),
-                    auth::RequestHeaderValue::Credential {
-                        grant_id: auth::AuthGrantId::new("authgrant_router"),
+                    credentials::RequestHeaderValue::Credential {
+                        grant_id: credentials::CredentialGrantId::new("authgrant_router"),
                     },
                 ),
             ]),
             api_kinds: vec![OPENAI_COMPLETIONS_API_KIND.to_owned()],
         };
-        let providers = Arc::new(InMemoryAuthProviderStore::new());
+        let providers = Arc::new(InMemoryCredentialProviderStore::new());
         providers
-            .create_auth_provider(CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new("model:ollama"),
+            .create_credential_provider(CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new("model:ollama"),
                 display_name: Some("Ollama".to_owned()),
-                config: AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+                config: CredentialProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
                     endpoint: endpoint.clone(),
                 }),
                 credential_secret: None,
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 1,
             })
             .await
             .expect("provider row");
         let secrets = Arc::new(InMemorySecretStore::new());
-        auth::SecretStore::put_secret(
+        credentials::SecretStore::put_secret(
             secrets.as_ref(),
-            auth::PutSecretRecord {
-                secret_id: auth::SecretId::new("authsec_router"),
-                secret_kind: auth::SECRET_KIND_STATIC_TOKEN.to_owned(),
-                value: auth::SecretValue::new("router-token"),
+            credentials::PutSecretRecord {
+                secret_id: credentials::SecretId::new("authsec_router"),
+                secret_kind: credentials::SECRET_KIND_STATIC_TOKEN.to_owned(),
+                value: credentials::SecretValue::new("router-token"),
                 created_at_ms: 1,
             },
         )
         .await
         .expect("header secret");
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
-        auth::AuthGrantStore::create_grant(
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
+        credentials::CredentialGrantStore::create_grant(
             grants.as_ref(),
-            auth::CreateAuthGrantRecord {
-                grant_id: auth::AuthGrantId::new("authgrant_router"),
+            credentials::CreateCredentialGrantRecord {
+                grant_id: credentials::CredentialGrantId::new("authgrant_router"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticToken,
-                exposure: auth::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::StaticToken,
+                exposure: credentials::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
                 scopes: Vec::new(),
                 audience: None,
-                access_token_secret: Some(auth::SecretId::new("authsec_router")),
+                access_token_secret: Some(credentials::SecretId::new("authsec_router")),
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: auth::AuthGrantStatus::Active,
+                status: credentials::CredentialGrantStatus::Active,
                 metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 1,
             },

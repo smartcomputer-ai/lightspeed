@@ -4,10 +4,10 @@
 //! .env.
 use std::{panic::AssertUnwindSafe, str::FromStr};
 
-use auth::{
-    AuthGrantExposure, AuthGrantId, AuthGrantStatus, AuthGrantStore as _, AuthProviderKind,
-    CreateAuthGrantRecord, PutSecretRecord, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore as _,
-    SecretValue,
+use credentials::{
+    CreateCredentialGrantRecord, CredentialGrantExposure, CredentialGrantId, CredentialGrantStatus,
+    CredentialGrantStore as _, CredentialProviderKind, PutSecretRecord, SECRET_KIND_STATIC_TOKEN,
+    SecretId, SecretStore as _, SecretValue,
 };
 use environments::{
     CreateExternalEnvironment, EnvironmentCredentialSource, EnvironmentCredentialStore as _,
@@ -76,7 +76,7 @@ ALTER TABLE environment_credentials
 ALTER TABLE environment_credentials ADD COLUMN secret_id text;
 ALTER TABLE environment_credentials
     ADD FOREIGN KEY (universe_id, secret_id)
-        REFERENCES auth_secrets (universe_id, secret_id)
+        REFERENCES credentials_secrets (universe_id, secret_id)
         ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE,
     ADD CONSTRAINT environment_credentials_source_kind_known
         CHECK (source_kind IN ('auth_grant', 'auth_provider_credential', 'direct_secret')),
@@ -111,12 +111,12 @@ async fn universe(pool: &sqlx::PgPool) -> PgStore {
     store
 }
 
-async fn grant(store: &PgStore, grant_id: &str, exposure: AuthGrantExposure) {
+async fn grant(store: &PgStore, grant_id: &str, exposure: CredentialGrantExposure) {
     store
-        .create_grant(CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new(grant_id),
+        .create_grant(CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
+            provider_kind: CredentialProviderKind::StaticToken,
             exposure,
             created_by: api::Attribution::Local,
             display_name: None,
@@ -127,7 +127,7 @@ async fn grant(store: &PgStore, grant_id: &str, exposure: AuthGrantExposure) {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::json!({}),
             created_at_ms: 2,
         })
@@ -140,8 +140,8 @@ async fn bind(store: &PgStore, env_name: &str, grant_id: &str) {
         .bind_credential(PutEnvironmentCredential {
             environment_id: EnvironmentId::new(ENVIRONMENT),
             env_name: env_name.to_owned(),
-            source: EnvironmentCredentialSource::AuthGrant {
-                grant_id: AuthGrantId::new(grant_id),
+            source: EnvironmentCredentialSource::CredentialGrant {
+                grant_id: CredentialGrantId::new(grant_id),
             },
             created_at_ms: 3,
         })
@@ -149,9 +149,9 @@ async fn bind(store: &PgStore, env_name: &str, grant_id: &str) {
         .expect("bind grant");
 }
 
-async fn exposure(store: &PgStore, grant_id: &str) -> AuthGrantExposure {
+async fn exposure(store: &PgStore, grant_id: &str) -> CredentialGrantExposure {
     store
-        .read_grant(&AuthGrantId::new(grant_id))
+        .read_grant(&CredentialGrantId::new(grant_id))
         .await
         .expect("read grant")
         .exposure
@@ -164,12 +164,12 @@ async fn exercise(pool: &sqlx::PgPool) {
 
     // Grants as the previous release let them be: brokered ones bound into
     // an environment, which then received their plain value anyway.
-    grant(&here, "bound", AuthGrantExposure::Brokered).await;
-    grant(&here, "unbound", AuthGrantExposure::Brokered).await;
-    grant(&here, "already", AuthGrantExposure::Retrievable).await;
+    grant(&here, "bound", CredentialGrantExposure::Brokered).await;
+    grant(&here, "unbound", CredentialGrantExposure::Brokered).await;
+    grant(&here, "already", CredentialGrantExposure::Retrievable).await;
     // The same id in two universes, bound in only one of them.
-    grant(&here, "shared-id", AuthGrantExposure::Brokered).await;
-    grant(&elsewhere, "shared-id", AuthGrantExposure::Brokered).await;
+    grant(&here, "shared-id", CredentialGrantExposure::Brokered).await;
+    grant(&elsewhere, "shared-id", CredentialGrantExposure::Brokered).await;
     bind(&here, "TOKEN_BOUND", "bound").await;
     bind(&here, "TOKEN_ALREADY", "already").await;
     bind(&elsewhere, "TOKEN", "shared-id").await;
@@ -208,9 +208,27 @@ async fn exercise(pool: &sqlx::PgPool) {
         .iter()
         .find(|migration| migration.name == "environment_credential_sources")
         .expect("embedded migration");
-    pool.execute(sqlx::raw_sql(migration.sql))
+    // This historical migration predates the credential namespace rename.
+    // Restore its table name within the transaction, then return to the
+    // current namespace before exercising the current store adapter.
+    let mut upgrade = pool.begin().await.expect("begin historical upgrade");
+    upgrade
+        .execute(sqlx::raw_sql(
+            "ALTER TABLE credentials_grants RENAME TO auth_grants",
+        ))
+        .await
+        .expect("restore historical grant table name");
+    upgrade
+        .execute(sqlx::raw_sql(migration.sql))
         .await
         .expect("apply migration");
+    upgrade
+        .execute(sqlx::raw_sql(
+            "ALTER TABLE auth_grants RENAME TO credentials_grants",
+        ))
+        .await
+        .expect("restore current grant table name");
+    upgrade.commit().await.expect("commit historical upgrade");
 
     // The stored-secret binding is gone; grant bindings are untouched and
     // decode through the store.
@@ -228,14 +246,14 @@ async fn exercise(pool: &sqlx::PgPool) {
         vec![
             (
                 "TOKEN_ALREADY".to_owned(),
-                EnvironmentCredentialSource::AuthGrant {
-                    grant_id: AuthGrantId::new("already"),
+                EnvironmentCredentialSource::CredentialGrant {
+                    grant_id: CredentialGrantId::new("already"),
                 }
             ),
             (
                 "TOKEN_BOUND".to_owned(),
-                EnvironmentCredentialSource::AuthGrant {
-                    grant_id: AuthGrantId::new("bound"),
+                EnvironmentCredentialSource::CredentialGrant {
+                    grant_id: CredentialGrantId::new("bound"),
                 }
             ),
         ]
@@ -285,22 +303,22 @@ async fn exercise(pool: &sqlx::PgPool) {
     // grant of the same id is bound in another universe.
     assert_eq!(
         exposure(&here, "bound").await,
-        AuthGrantExposure::Retrievable
+        CredentialGrantExposure::Retrievable
     );
     assert_eq!(
         exposure(&here, "already").await,
-        AuthGrantExposure::Retrievable
+        CredentialGrantExposure::Retrievable
     );
     assert_eq!(
         exposure(&here, "unbound").await,
-        AuthGrantExposure::Brokered
+        CredentialGrantExposure::Brokered
     );
     assert_eq!(
         exposure(&here, "shared-id").await,
-        AuthGrantExposure::Brokered
+        CredentialGrantExposure::Brokered
     );
     assert_eq!(
         exposure(&elsewhere, "shared-id").await,
-        AuthGrantExposure::Retrievable
+        CredentialGrantExposure::Retrievable
     );
 }

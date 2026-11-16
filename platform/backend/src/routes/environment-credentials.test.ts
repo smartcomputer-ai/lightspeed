@@ -35,7 +35,7 @@ function post(path: string, body: unknown) {
     c.set("session", { user: { id: "user" } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
   return app.request(`/universe${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -52,19 +52,19 @@ function sent(method: string) {
 it("creates an environment secret as a retrievable credential", async () => {
   const response = await post("/secrets/environment", { displayName: "Deploy key", value: "v" });
   expect(response.status).toBe(201);
-  expect(sent("auth/grants/import")).toEqual([expect.objectContaining({ exposure: "retrievable" })]);
+  expect(sent("credentials/grants/import")).toEqual([expect.objectContaining({ exposure: "retrievable" })]);
 });
 
 it("imports a coding-agent subscription as a retrievable credential", async () => {
   const response = await post("/integrations/subscriptions", { provider: "anthropic", credential: "sk-ant-oat01-abc" });
   expect(response.status).toBe(201);
-  expect(sent("auth/grants/import")).toEqual([expect.objectContaining({ providerId: "anthropic", exposure: "retrievable" })]);
+  expect(sent("credentials/grants/import")).toEqual([expect.objectContaining({ providerId: "anthropic", exposure: "retrievable" })]);
 });
 
 it("grants a GitHub App installation as a retrievable credential", async () => {
   const response = await post("/integrations/github/apps/github/installations/42/grant", {});
   expect(response.status).toBe(201);
-  expect(sent("auth/github/installations/grant")).toEqual([
+  expect(sent("credentials/github/installations/grant")).toEqual([
     expect.objectContaining({ providerId: "github", installationId: 42, exposure: "retrievable" }),
   ]);
 });
@@ -72,7 +72,7 @@ it("grants a GitHub App installation as a retrievable credential", async () => {
 it("leaves a pasted token brokered unless it is created retrievable", async () => {
   expect((await post("/secrets/grants", { token: "t" })).status).toBe(201);
   expect((await post("/secrets/grants", { token: "t", exposure: "retrievable" })).status).toBe(201);
-  expect(sent("auth/grants/import").map((params) => params.exposure)).toEqual(["brokered", "retrievable"]);
+  expect(sent("credentials/grants/import").map((params) => params.exposure)).toEqual(["brokered", "retrievable"]);
 });
 
 it("binds a credential or a provider key, and nothing that names a stored secret", async () => {

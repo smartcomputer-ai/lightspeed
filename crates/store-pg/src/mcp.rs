@@ -4,7 +4,7 @@ use ::mcp::{
     PutMcpServerRecord, RemoteMcpTransport,
 };
 use async_trait::async_trait;
-use auth::{RequestHeaderValue, RequestHeaders};
+use credentials::{RequestHeaderValue, RequestHeaders};
 use sqlx::Row;
 
 use crate::PgStore;
@@ -445,11 +445,11 @@ fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, McpRegi
             let value = match (row.literal_value, row.grant_id) {
                 (Some(value), None) => RequestHeaderValue::Literal { value },
                 (None, Some(grant_id)) => RequestHeaderValue::Credential {
-                    grant_id: auth::AuthGrantId::try_new(grant_id).map_err(|error| {
-                        McpRegistryError::Store {
+                    grant_id: credentials::CredentialGrantId::try_new(grant_id).map_err(
+                        |error| McpRegistryError::Store {
                             message: format!("decode mcp header grant id: {error}"),
-                        }
-                    })?,
+                        },
+                    )?,
                 },
                 _ => {
                     return Err(McpRegistryError::Store {
@@ -488,7 +488,7 @@ fn server_record_from_row(
         .map_err(|error| mcp_sql_error("decode mcp auth metadata", error))?;
     let auth_grant_id: Option<String> = row
         .try_get("auth_grant_id")
-        .map_err(|error| mcp_sql_error("decode mcp auth grant id", error))?;
+        .map_err(|error| mcp_sql_error("decode mcp credential grant id", error))?;
     let status: String = row
         .try_get("status")
         .map_err(|error| mcp_sql_error("decode mcp status", error))?;
@@ -530,10 +530,10 @@ fn server_record_from_row(
             .map_err(|error| mcp_sql_error("decode mcp private-network flag", error))?,
         auth_policy: auth_policy_from_columns(&auth_policy, auth_metadata_json)?,
         auth_grant_id: auth_grant_id
-            .map(auth::AuthGrantId::try_new)
+            .map(credentials::CredentialGrantId::try_new)
             .transpose()
             .map_err(|error| McpRegistryError::Store {
-                message: format!("decode mcp auth grant id: {error}"),
+                message: format!("decode mcp credential grant id: {error}"),
             })?,
         headers: headers_from_json(headers_json)?,
         status: status_from_str(&status)?,

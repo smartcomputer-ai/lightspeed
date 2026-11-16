@@ -92,6 +92,7 @@ async fn serve(
         )),
         1024 * 1024,
         GatewayRoutes {
+            public: false,
             api: true,
             environment: false,
         },
@@ -145,7 +146,7 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
         )?);
         let (endpoint, server) = serve(runtime).await?;
         let outcome = async {
-            // A request that presents no valid key is answered 401 from its
+            // A request that presents no valid token is answered 401 from its
             // headers alone. Its body was not read, so the JSON-RPC error
             // answers no request id.
             let read = json!({"id":1,"method":"session/read","params":{"sessionId":"any"}});
@@ -226,4 +227,135 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
         outcome
     })
     .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires disposable Postgres and Temporal; no external OAuth provider; serialized"]
+async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyhow::Result<()> {
+    let _lock = support::live::LIVE_TEST_LOCK.lock().await;
+    let (_pool, universe) = disposable_pool().await?;
+    let activities = support::live::fake_worker_activities().await?;
+    support::live::run_with_live_worker(activities, move |client, queue, _session_id| async move {
+        let private_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let public_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let environment_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let private_url = format!("http://{}", private_listener.local_addr()?);
+        let public_url = format!("http://{}", public_listener.local_addr()?);
+        let environment_url = format!("http://{}", environment_listener.local_addr()?);
+        let runtime = Arc::new(UniverseRuntime::new_with_environment_gateway(
+            client, queue, Some(public_url.clone()), DeploymentStores::from_env().await?,
+            Some(environment_url.clone()),
+        )?);
+        let state = Arc::new(GatewayState::multi(
+            GatewayAuthMode::Authenticated {
+                tokens: Arc::new(RpcTokens::from_configuration(
+                    [("LIGHTSPEED_RPC_TOKEN_PLATFORM".into(), PLATFORM_TOKEN.into())],
+                    |_| unreachable!(),
+                )?),
+            }, runtime, public_url.clone(),
+        ));
+        let token_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let token_url = format!("http://{}/token", token_listener.local_addr()?);
+        type TokenForm = std::collections::HashMap<String, String>;
+        type CapturedTokenForms = Arc<tokio::sync::Mutex<Vec<TokenForm>>>;
+        let token_forms: CapturedTokenForms = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let token_router = axum::Router::new().route("/token", axum::routing::post(
+            |axum::extract::State(forms): axum::extract::State<CapturedTokenForms>,
+             axum::Form(form): axum::Form<TokenForm>| async move {
+                forms.lock().await.push(form);
+                axum::Json(json!({"access_token":"provider-test-access-token", "token_type":"Bearer", "expires_in":3600}))
+            }
+        )).with_state(token_forms.clone());
+        let mut servers = vec![tokio::spawn(async move { axum::serve(token_listener, token_router).await })];
+        for (listener, routes) in [
+            (private_listener, GatewayRoutes::RPC),
+            (public_listener, GatewayRoutes::PUBLIC),
+            (environment_listener, GatewayRoutes::ENVIRONMENT),
+        ] {
+            let router = gateway_router(state.clone(), 1024 * 1024, routes);
+            servers.push(tokio::spawn(async move { axum::serve(listener, router).await }));
+        }
+        let outcome = async {
+            let http = reqwest::Client::new();
+            for base in [&private_url, &public_url, &environment_url] {
+                for path in ["/health", "/ready"] {
+                    assert_eq!(http.get(format!("{base}{path}")).send().await?.status(), reqwest::StatusCode::OK);
+                }
+            }
+            for base in [&private_url, &public_url] {
+                for path in ["/environment-gateway/connect", "/environment-gateway/data", "/environment-gateway/routes/universe/environment"] {
+                    assert_eq!(http.get(format!("{base}{path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+                }
+            }
+            for base in [&public_url, &environment_url] {
+                assert_eq!(http.post(format!("{base}/rpc")).json(&json!({"id":1,"method":"initialize","params":{}}))
+                    .send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+            }
+            assert_eq!(http.post(format!("{private_url}/rpc")).json(&json!({"id":1,"method":"initialize","params":{}}))
+                .send().await?.status(), reqwest::StatusCode::UNAUTHORIZED);
+            for base in [&private_url, &environment_url] {
+                for path in ["/credentials/callback", "/credentials/client-metadata.json"] {
+                    assert_eq!(http.get(format!("{base}{path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+                }
+                assert_eq!(http.post(format!("{base}/hooks/bots/{universe}/bot/trigger/token")).body("{}").send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+            }
+            let metadata = http.get(format!("{public_url}/credentials/client-metadata.json")).send().await?;
+            assert_eq!(metadata.status(), reqwest::StatusCode::OK);
+            let metadata: Value = metadata.json().await?;
+            assert_eq!(metadata["client_id"], format!("{public_url}/credentials/client-metadata.json"));
+            assert_eq!(metadata["redirect_uris"], json!([format!("{public_url}/credentials/callback")]));
+            for old_path in ["/auth/callback", "/auth/client-metadata.json"] {
+                assert_eq!(http.get(format!("{public_url}{old_path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+            }
+
+            // Start through the authenticated private API. The browser callback
+            // has no token or universe header and resolves the stored flow by
+            // its one-time state. A denied login exercises that whole HTTP path
+            // without contacting an external OAuth provider.
+            let caller = Caller { secret: PLATFORM_TOKEN.into(), universe: Some(universe), actor: Some("alice".into()) };
+            let endpoint = format!("{private_url}/rpc");
+            let created = success(rpc(&endpoint, &caller, "credentials/clients/create", json!({
+                "providerKind":"customOAuth", "authorizationEndpoint":"https://example.com/authorize",
+                "tokenEndpoint":token_url, "remoteClientId":"browser-client", "tokenEndpointAuthMethod":"none"
+            })).await);
+            let started = success(rpc(&endpoint, &caller, "credentials/flows/start", json!({"clientId":created["client"]["clientId"]})).await);
+            let authorize_url = url::Url::parse(started["authorizeUrl"].as_str().expect("authorization URL"))?;
+            let state = authorize_url.query_pairs().find(|(key, _)| key == "state").expect("state").1.into_owned();
+            assert_eq!(authorize_url.query_pairs().find(|(key, _)| key == "redirect_uri").expect("redirect URI").1, format!("{public_url}/credentials/callback"));
+            let callback = format!("{public_url}/credentials/callback");
+            let response = http.get(&callback).query(&[("state", state.as_str()), ("error", "access_denied")]).send().await?;
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            assert!(response.text().await?.contains("Authorization failed"));
+            let read = success(rpc(&endpoint, &caller, "credentials/flows/read", json!({"flowId":started["flowId"]})).await);
+            assert_eq!(read["flow"]["status"], "failed");
+            assert_eq!(http.get(&callback).query(&[("state", state.as_str()), ("error", "access_denied")]).send().await?.status(), reqwest::StatusCode::BAD_REQUEST);
+            assert!(token_forms.lock().await.is_empty(), "denial never exchanges a token");
+
+            let started = success(rpc(&endpoint, &caller, "credentials/flows/start", json!({"clientId":created["client"]["clientId"]})).await);
+            let authorize_url = url::Url::parse(started["authorizeUrl"].as_str().expect("authorization URL"))?;
+            let state = authorize_url.query_pairs().find(|(key, _)| key == "state").expect("state").1.into_owned();
+            let challenge = authorize_url.query_pairs().find(|(key, _)| key == "code_challenge").expect("PKCE challenge").1.into_owned();
+            let response = http.get(&callback).query(&[("state", state.as_str()), ("code", "browser-code")]).send().await?;
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            let page = response.text().await?;
+            assert!(page.contains("Authorization complete"), "{page}");
+            assert!(!page.contains("provider-test-access-token"));
+            let read = success(rpc(&endpoint, &caller, "credentials/flows/read", json!({"flowId":started["flowId"]})).await);
+            assert_eq!(read["flow"]["status"], "completed");
+            let grant = success(rpc(&endpoint, &caller, "credentials/grants/read", json!({"grantId":read["flow"]["grantId"]})).await);
+            assert_eq!(grant["grant"]["hasAccessToken"], true);
+            assert_eq!(grant["grant"]["createdBy"], json!({"kind":"actor", "id":"alice"}));
+            assert_eq!(grant["grant"]["status"], "active");
+            assert_eq!(http.get(&callback).query(&[("state", state.as_str()), ("code", "browser-code")]).send().await?.status(), reqwest::StatusCode::BAD_REQUEST);
+            let forms = token_forms.lock().await;
+            assert_eq!(forms.len(), 1, "replay never exchanges the code again");
+            assert_eq!(forms[0]["grant_type"], "authorization_code");
+            assert_eq!(forms[0]["code"], "browser-code");
+            assert_eq!(forms[0]["redirect_uri"], format!("{public_url}/credentials/callback"));
+            assert_eq!(credentials::pkce_challenge_s256(&credentials::SecretValue::new(&forms[0]["code_verifier"])), challenge);
+            Ok::<_, anyhow::Error>(())
+        }.await;
+        for server in servers { server.abort(); }
+        outcome
+    }).await
 }

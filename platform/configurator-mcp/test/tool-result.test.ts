@@ -35,16 +35,28 @@ describe("safe MCP tool errors", () => {
   it("preserves typed Lightspeed RPC facts while redacting credentials", () => {
     const error = new LightspeedRpcError({
       code: -32010,
-      message: "rejected Bearer lsk_secret_value",
-      data: { kind: "rejected", message: "key lsk_secret_value was rejected" },
+      message: "rejected Bearer lsr_secret_value",
+      data: { kind: "rejected", message: "key lsr_secret_value was rejected" },
     });
     const result = failedToolResult(error);
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).not.toContain("lsk_secret_value");
+    expect(JSON.stringify(result)).not.toContain("lsr_secret_value");
     expect(result.structuredContent).toBeUndefined();
     expect(
       JSON.parse((result.content[0] as { text: string }).text),
     ).toMatchObject({ code: -32010, kind: "rejected" });
+  });
+
+  it("redacts arbitrary bearer tokens without requiring a generated prefix", () => {
+    const token = "configured-runtime-secret-without-prefix";
+    const error = new LightspeedRpcError({
+      code: -32010,
+      message: `rejected Bearer ${token}`,
+      data: { kind: "rejected", message: `authorization: bearer ${token}` },
+    });
+    const result = safeError(error);
+    expect(JSON.stringify(result)).not.toContain(token);
+    expect(result.message).toBe("rejected Bearer [REDACTED]");
   });
 
   it("does not expose upstream response bodies or unexpected error messages", () => {
@@ -53,7 +65,7 @@ describe("safe MCP tool errors", () => {
       body: { secret: "do-not-return" },
     });
     expect(JSON.stringify(safeError(transport))).not.toContain("do-not-return");
-    expect(safeError(new Error("lsk_hidden"))).toEqual({
+    expect(safeError(new Error("lsr_hidden"))).toEqual({
       type: "internal",
       message: "unexpected internal error",
     });

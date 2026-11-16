@@ -113,7 +113,7 @@ If the service implements an existing OpenAI-style API, configure an endpoint
 before considering a native adapter. The provider record selects transport
 and credentials; the session selects provider ID, API kind, and model name.
 
-For example, the following are `auth/providers/create` parameters for a
+For example, the following are `credentials/providers/create` parameters for a
 credentialless loopback service:
 
 ```json
@@ -184,7 +184,7 @@ Use the existing implementation layers as the source map:
 | --- | --- |
 | [Native clients](../../../crates/llm-clients/README.md) | Provider request/response types, transport, streaming where supported, and provider error handling. |
 | [Runtime executor](../../../crates/llm-runtime/src/executor.rs) | Generation and compaction adapter implementations and retry classification. |
-| [Provider credentials](../../../crates/llm-runtime/src/provider_keys.rs) and [endpoint admission](../../../crates/auth/src/providers.rs) | Admit supported endpoint/API kinds and resolve the configured connection and credentials at the effectful boundary. |
+| [Provider credentials](../../../crates/llm-runtime/src/provider_keys.rs) and [endpoint admission](../../../crates/credentials/src/providers.rs) | Admit supported endpoint/API kinds and resolve the configured connection and credentials at the effectful boundary. |
 | [Tool catalog materialization](../../../crates/llm-runtime/src/tool_catalog.rs) | Render admitted tool definitions and map model calls back to their identities. |
 | [API route conversion](../../../crates/temporal-runtime/src/gateway/service/api_config.rs) | Validate the public model route against supported kinds. |
 | [Hosted adapter assembly](../../../crates/temporal-runtime/src/worker/activities/state.rs) | Register generation and compaction implementations used by workers. |

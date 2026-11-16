@@ -255,7 +255,7 @@ describe("runtime service authentication", () => {
   });
   it("never sends a deployment credential to a universe endpoint override", async () => {
     const { engineClientFor, deploymentClientFor } = await import("./gateway.js");
-    const context = { env: { lightspeedApiUrl: "https://core.example/rpc", lightspeedRpcToken: "lsk_test" } } as Parameters<typeof engineClientFor>[0];
+    const context = { env: { lightspeedApiUrl: "https://core.example/rpc", lightspeedRpcToken: "lsr_test" } } as Parameters<typeof engineClientFor>[0];
     for (const gatewayUrl of ["https://other.example/rpc", "https://core.example/another-path"]) {
       const access = {
         universe: { lightspeedUniverseId: "00000000-0000-4000-8000-000000000001", gatewayUrl },

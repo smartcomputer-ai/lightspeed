@@ -26,6 +26,9 @@ describe("generated universe tools", () => {
       .sort();
     expect(GENERATED_TOOLS.map((tool) => tool.method).sort()).toEqual(expectedMethods);
     expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(expectedMethods.length);
+    expect(GENERATED_TOOLS.find((tool) => tool.method === "credentials/github/installations/grant")?.name).toBe(
+      "lightspeed_credentials_github_installs_grant",
+    );
     expect(GENERATED_TOOLS.some((tool) => tool.method.startsWith("deployment/"))).toBe(false);
     expect(GENERATED_TOOLS.find((tool) => tool.method === "session/config/put")?.name).toBe(
       "lightspeed_session_config_put",
@@ -82,8 +85,8 @@ describe("generated universe tools", () => {
   });
 
   it("carries operational method documentation into MCP descriptors", () => {
-    expect(GENERATED_TOOLS.find((tool) => tool.method === "auth/grants/read")).toMatchObject({
-      summary: "Read authentication grant metadata",
+    expect(GENERATED_TOOLS.find((tool) => tool.method === "credentials/grants/read")).toMatchObject({
+      summary: "Read credential grant metadata",
       description: expect.stringContaining("token values are never returned"),
     });
   });

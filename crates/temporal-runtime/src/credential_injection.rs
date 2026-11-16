@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use auth::{
-    AuthGrantRecord, AuthGrantStore, AuthProviderKind, AuthProviderStatus, AuthProviderStore,
-    AuthTokenBroker, DEFAULT_GITHUB_API_BASE_URL, GitHubAppRuntime, GrantRefreshLock,
-    HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore, OAuthRefreshRuntime,
-    RegistryTokenBroker, SecretStore, TokenAudience,
+use credentials::{
+    CredentialGrantRecord, CredentialGrantStore, CredentialProviderKind, CredentialProviderStatus,
+    CredentialProviderStore, CredentialTokenBroker, DEFAULT_GITHUB_API_BASE_URL, GitHubAppRuntime,
+    GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthClientStore,
+    OAuthRefreshRuntime, RegistryTokenBroker, SecretStore, TokenAudience,
 };
 use environment_protocol::{
     bytes::SecretString,
@@ -35,19 +35,19 @@ use tools::environment::{
 #[derive(Clone)]
 pub(crate) struct EnvironmentCredentialResolver {
     credentials: Arc<dyn EnvironmentCredentialStore>,
-    grants: Arc<dyn AuthGrantStore>,
-    providers: Arc<dyn AuthProviderStore>,
+    grants: Arc<dyn CredentialGrantStore>,
+    providers: Arc<dyn CredentialProviderStore>,
     secrets: Arc<dyn SecretStore>,
-    broker: Option<Arc<dyn AuthTokenBroker>>,
+    broker: Option<Arc<dyn CredentialTokenBroker>>,
 }
 
 impl EnvironmentCredentialResolver {
     pub(crate) fn new(
         credentials: Arc<dyn EnvironmentCredentialStore>,
-        grants: Arc<dyn AuthGrantStore>,
-        providers: Arc<dyn AuthProviderStore>,
+        grants: Arc<dyn CredentialGrantStore>,
+        providers: Arc<dyn CredentialProviderStore>,
         secrets: Arc<dyn SecretStore>,
-        broker: Option<Arc<dyn AuthTokenBroker>>,
+        broker: Option<Arc<dyn CredentialTokenBroker>>,
     ) -> Self {
         Self {
             credentials,
@@ -60,8 +60,8 @@ impl EnvironmentCredentialResolver {
 
     pub(crate) fn from_pg_store(store: Arc<PgStore>) -> Self {
         let credentials: Arc<dyn EnvironmentCredentialStore> = store.clone();
-        let grants: Arc<dyn AuthGrantStore> = store.clone();
-        let providers: Arc<dyn AuthProviderStore> = store.clone();
+        let grants: Arc<dyn CredentialGrantStore> = store.clone();
+        let providers: Arc<dyn CredentialProviderStore> = store.clone();
         let secrets: Arc<dyn SecretStore> = store.clone();
         let broker = registry_token_broker(store);
         Self::new(credentials, grants, providers, secrets, broker)
@@ -117,7 +117,7 @@ impl EnvironmentCredentialResolver {
         environment_id: &EnvironmentId,
     ) -> Result<SecretString, EnvironmentCredentialResolutionError> {
         match source {
-            EnvironmentCredentialSource::AuthGrant { grant_id } => {
+            EnvironmentCredentialSource::CredentialGrant { grant_id } => {
                 let grant = self.grants.read_grant(grant_id).await.map_err(|error| {
                     EnvironmentCredentialResolutionError::Source {
                         env_name: env_name.to_owned(),
@@ -146,19 +146,19 @@ impl EnvironmentCredentialResolver {
                     })?;
                 Ok(SecretString::new(value.expose()))
             }
-            EnvironmentCredentialSource::AuthProviderCredential { provider_id } => {
+            EnvironmentCredentialSource::CredentialProviderCredential { provider_id } => {
                 let provider = self
                     .providers
-                    .read_auth_provider(provider_id)
+                    .read_credential_provider(provider_id)
                     .await
                     .map_err(|error| EnvironmentCredentialResolutionError::Source {
                         env_name: env_name.to_owned(),
                         message: error.to_string(),
                     })?;
-                if provider.status != AuthProviderStatus::Active {
+                if provider.status != CredentialProviderStatus::Active {
                     return Err(EnvironmentCredentialResolutionError::Source {
                         env_name: env_name.to_owned(),
-                        message: format!("auth provider is not active: {provider_id}"),
+                        message: format!("credential provider is not active: {provider_id}"),
                     });
                 }
                 require_bindable_provider(&provider.provider_id, provider.provider_kind).map_err(
@@ -170,7 +170,9 @@ impl EnvironmentCredentialResolver {
                 let Some(secret_id) = provider.credential_secret else {
                     return Err(EnvironmentCredentialResolutionError::Source {
                         env_name: env_name.to_owned(),
-                        message: format!("auth provider has no credential secret: {provider_id}"),
+                        message: format!(
+                            "credential provider has no credential secret: {provider_id}"
+                        ),
                     });
                 };
                 let (_, value) = self
@@ -292,11 +294,11 @@ impl JobExecutor for CredentialInjectingJobExecutor {
     }
 }
 
-fn registry_token_broker(store: Arc<PgStore>) -> Option<Arc<dyn AuthTokenBroker>> {
-    let grants: Arc<dyn AuthGrantStore> = store.clone();
+fn registry_token_broker(store: Arc<PgStore>) -> Option<Arc<dyn CredentialTokenBroker>> {
+    let grants: Arc<dyn CredentialGrantStore> = store.clone();
     let secrets: Arc<dyn SecretStore> = store.clone();
     let clients: Arc<dyn OAuthClientStore> = store.clone();
-    let providers: Arc<dyn AuthProviderStore> = store.clone();
+    let providers: Arc<dyn CredentialProviderStore> = store.clone();
     let locks: Arc<dyn GrantRefreshLock> = store;
     // An MCP OAuth grant leased here is refreshed under the same
     // private-network list as one used by a session, so a grant that works in
@@ -309,7 +311,7 @@ fn registry_token_broker(store: Arc<PgStore>) -> Option<Arc<dyn AuthTokenBroker>
     let broker = RegistryTokenBroker::new(grants.clone(), secrets.clone(), locks)
         .with_oauth_refresh(OAuthRefreshRuntime::new(clients, Arc::new(token_client)))
         .with_token_source(
-            AuthProviderKind::GitHubApp,
+            CredentialProviderKind::GitHubApp,
             Arc::new(GitHubAppRuntime::new(
                 providers,
                 Arc::new(github_api),
@@ -321,17 +323,17 @@ fn registry_token_broker(store: Arc<PgStore>) -> Option<Arc<dyn AuthTokenBroker>
 }
 
 fn token_audience_for_grant(
-    grant: &AuthGrantRecord,
+    grant: &CredentialGrantRecord,
     environment_id: &EnvironmentId,
 ) -> TokenAudience {
     match grant.provider_kind {
-        AuthProviderKind::GitHubApp => TokenAudience::GitHubApi(
+        CredentialProviderKind::GitHubApp => TokenAudience::GitHubApi(
             grant
                 .audience
                 .clone()
                 .unwrap_or_else(|| DEFAULT_GITHUB_API_BASE_URL.to_owned()),
         ),
-        AuthProviderKind::ModelOAuth => TokenAudience::ModelProvider(
+        CredentialProviderKind::ModelOAuth => TokenAudience::ModelProvider(
             grant
                 .audience
                 .clone()
@@ -349,11 +351,12 @@ fn token_audience_for_grant(
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use auth::{
-        AuthGrantExposure, AuthGrantId, AuthProviderConfig, AuthProviderId, CreateAuthGrantRecord,
-        CreateAuthProviderRecord, InMemoryAuthGrantStore, InMemoryAuthProviderStore,
-        InMemorySecretStore, ModelApiKeyConfig, PutSecretRecord, SECRET_KIND_STATIC_TOKEN,
-        SecretId, SecretStore, SecretValue,
+    use credentials::{
+        CreateCredentialGrantRecord, CreateCredentialProviderRecord, CredentialGrantExposure,
+        CredentialGrantId, CredentialProviderConfig, CredentialProviderId,
+        InMemoryCredentialGrantStore, InMemoryCredentialProviderStore, InMemorySecretStore,
+        ModelApiKeyConfig, PutSecretRecord, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore,
+        SecretValue,
     };
     use environments::{
         EnvironmentCredentialRecord, EnvironmentRegistryError, ListEnvironmentCredentials,
@@ -400,7 +403,10 @@ mod tests {
 
     /// Stores holding one active model API key provider whose key is
     /// `environment-token`.
-    async fn model_api_key_stores() -> (Arc<InMemoryAuthProviderStore>, Arc<InMemorySecretStore>) {
+    async fn model_api_key_stores() -> (
+        Arc<InMemoryCredentialProviderStore>,
+        Arc<InMemorySecretStore>,
+    ) {
         let secret_id = SecretId::new("secret_1");
         let secrets = Arc::new(InMemorySecretStore::new());
         secrets
@@ -412,14 +418,14 @@ mod tests {
             })
             .await
             .expect("store secret");
-        let providers = Arc::new(InMemoryAuthProviderStore::new());
+        let providers = Arc::new(InMemoryCredentialProviderStore::new());
         providers
-            .create_auth_provider(CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new(MODEL_PROVIDER),
+            .create_credential_provider(CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new(MODEL_PROVIDER),
                 display_name: None,
-                config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+                config: CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
                 credential_secret: Some(secret_id),
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 1,
             })
             .await
@@ -445,17 +451,20 @@ mod tests {
         binding(
             environment_id,
             "OPENAI_API_KEY",
-            EnvironmentCredentialSource::AuthProviderCredential {
-                provider_id: AuthProviderId::new(MODEL_PROVIDER),
+            EnvironmentCredentialSource::CredentialProviderCredential {
+                provider_id: CredentialProviderId::new(MODEL_PROVIDER),
             },
         )
     }
 
-    fn static_token_grant(grant_id: &str, exposure: AuthGrantExposure) -> CreateAuthGrantRecord {
-        CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new(grant_id),
+    fn static_token_grant(
+        grant_id: &str,
+        exposure: CredentialGrantExposure,
+    ) -> CreateCredentialGrantRecord {
+        CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
+            provider_kind: CredentialProviderKind::StaticToken,
             exposure,
             created_by: api::Attribution::Local,
             display_name: None,
@@ -466,7 +475,7 @@ mod tests {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: auth::AuthGrantStatus::Active,
+            status: credentials::CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 1,
         }
@@ -479,12 +488,12 @@ mod tests {
     }
 
     #[async_trait]
-    impl AuthTokenBroker for CountingBroker {
+    impl CredentialTokenBroker for CountingBroker {
         async fn bearer_token(
             &self,
-            _grant_id: &AuthGrantId,
+            _grant_id: &CredentialGrantId,
             _audience: &TokenAudience,
-        ) -> Result<SecretValue, auth::AuthBrokerError> {
+        ) -> Result<SecretValue, credentials::CredentialBrokerError> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(SecretValue::new("grant-token"))
         }
@@ -499,7 +508,7 @@ mod tests {
         });
         let resolver = EnvironmentCredentialResolver::new(
             credentials,
-            Arc::new(InMemoryAuthGrantStore::new()),
+            Arc::new(InMemoryCredentialGrantStore::new()),
             providers,
             secrets,
             None,
@@ -516,11 +525,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn resolves_a_retrievable_grant_through_the_broker() {
         let environment_id = EnvironmentId::new("environment_1");
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         grants
             .create_grant(static_token_grant(
                 "authgrant_repo",
-                AuthGrantExposure::Retrievable,
+                CredentialGrantExposure::Retrievable,
             ))
             .await
             .expect("create grant");
@@ -530,13 +539,13 @@ mod tests {
                 credentials: vec![binding(
                     &environment_id,
                     "GH_TOKEN",
-                    EnvironmentCredentialSource::AuthGrant {
-                        grant_id: AuthGrantId::new("authgrant_repo"),
+                    EnvironmentCredentialSource::CredentialGrant {
+                        grant_id: CredentialGrantId::new("authgrant_repo"),
                     },
                 )],
             }),
             grants,
-            Arc::new(InMemoryAuthProviderStore::new()),
+            Arc::new(InMemoryCredentialProviderStore::new()),
             Arc::new(InMemorySecretStore::new()),
             Some(broker.clone()),
         );
@@ -553,11 +562,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_bound_brokered_grant_is_refused_before_the_broker_is_asked() {
         let environment_id = EnvironmentId::new("environment_1");
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         grants
             .create_grant(static_token_grant(
                 "authgrant_repo",
-                AuthGrantExposure::Brokered,
+                CredentialGrantExposure::Brokered,
             ))
             .await
             .expect("create grant");
@@ -567,13 +576,13 @@ mod tests {
                 credentials: vec![binding(
                     &environment_id,
                     "GH_TOKEN",
-                    EnvironmentCredentialSource::AuthGrant {
-                        grant_id: AuthGrantId::new("authgrant_repo"),
+                    EnvironmentCredentialSource::CredentialGrant {
+                        grant_id: CredentialGrantId::new("authgrant_repo"),
                     },
                 )],
             }),
             grants,
-            Arc::new(InMemoryAuthProviderStore::new()),
+            Arc::new(InMemoryCredentialProviderStore::new()),
             Arc::new(InMemorySecretStore::new()),
             Some(broker.clone()),
         );
@@ -596,12 +605,12 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn a_bound_github_app_provider_is_refused_without_reading_its_key() {
         let environment_id = EnvironmentId::new("environment_1");
-        let providers = Arc::new(InMemoryAuthProviderStore::new());
+        let providers = Arc::new(InMemoryCredentialProviderStore::new());
         providers
-            .create_auth_provider(CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new("github"),
+            .create_credential_provider(CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new("github"),
                 display_name: None,
-                config: AuthProviderConfig::GitHubApp(auth::GitHubAppConfig {
+                config: CredentialProviderConfig::GitHubApp(credentials::GitHubAppConfig {
                     app_id: "12345".to_owned(),
                     api_base_url: DEFAULT_GITHUB_API_BASE_URL.to_owned(),
                 }),
@@ -609,7 +618,7 @@ mod tests {
                 // refusal that came after the read would surface as a
                 // missing secret instead.
                 credential_secret: Some(SecretId::new("authsec_github_key")),
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 1,
             })
             .await
@@ -619,12 +628,12 @@ mod tests {
                 credentials: vec![binding(
                     &environment_id,
                     "GITHUB_APP_KEY",
-                    EnvironmentCredentialSource::AuthProviderCredential {
-                        provider_id: AuthProviderId::new("github"),
+                    EnvironmentCredentialSource::CredentialProviderCredential {
+                        provider_id: CredentialProviderId::new("github"),
                     },
                 )],
             }),
-            Arc::new(InMemoryAuthGrantStore::new()),
+            Arc::new(InMemoryCredentialGrantStore::new()),
             providers,
             Arc::new(InMemorySecretStore::new()),
             None,
@@ -688,7 +697,7 @@ mod tests {
             Arc::new(FixedCredentialStore {
                 credentials: vec![model_api_key_binding(&environment_id)],
             }),
-            Arc::new(InMemoryAuthGrantStore::new()),
+            Arc::new(InMemoryCredentialGrantStore::new()),
             providers,
             secrets,
             None,
@@ -738,11 +747,11 @@ mod tests {
 
     #[test]
     fn default_grant_audience_is_environment_scoped() {
-        let grant = AuthGrantRecord {
-            grant_id: auth::AuthGrantId::new("grant_1"),
+        let grant = CredentialGrantRecord {
+            grant_id: credentials::CredentialGrantId::new("grant_1"),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Retrievable,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Retrievable,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -752,7 +761,7 @@ mod tests {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: auth::AuthGrantStatus::Active,
+            status: credentials::CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             last_leased_at_ms: None,
             lease_count: 0,

@@ -1,36 +1,40 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, AuthClientCreateParams,
-    AuthClientCreateResponse, AuthClientDeleteParams, AuthClientDeleteResponse,
-    AuthClientListParams, AuthClientListResponse, AuthClientReadParams, AuthClientReadResponse,
-    AuthFlowStartParams, AuthFlowStartResponse, AuthFlowStatusParams, AuthFlowStatusResponse,
-    AuthGitHubInstallationGrantParams, AuthGitHubInstallationGrantResponse,
-    AuthGitHubInstallationListParams, AuthGitHubInstallationListResponse, AuthGrantListParams,
-    AuthGrantListResponse, AuthGrantReadParams, AuthGrantReadResponse, AuthGrantRevokeParams,
-    AuthGrantRevokeResponse, AuthProviderCreateParams, AuthProviderCreateResponse,
-    AuthProviderDeleteParams, AuthProviderDeleteResponse, AuthProviderListParams,
-    AuthProviderListResponse, AuthProviderReadParams, AuthProviderReadResponse, BlobHasParams,
-    BlobHasResponse, BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse,
+    AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobHasParams, BlobHasResponse,
+    BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse, CredentialClientCreateParams,
+    CredentialClientCreateResponse, CredentialClientDeleteParams, CredentialClientDeleteResponse,
+    CredentialClientListParams, CredentialClientListResponse, CredentialClientReadParams,
+    CredentialClientReadResponse, CredentialFlowStartParams, CredentialFlowStartResponse,
+    CredentialFlowStatusParams, CredentialFlowStatusResponse,
+    CredentialGitHubInstallationGrantParams, CredentialGitHubInstallationGrantResponse,
+    CredentialGitHubInstallationListParams, CredentialGitHubInstallationListResponse,
+    CredentialGrantListParams, CredentialGrantListResponse, CredentialGrantReadParams,
+    CredentialGrantReadResponse, CredentialGrantRevokeParams, CredentialGrantRevokeResponse,
+    CredentialProviderCreateParams, CredentialProviderCreateResponse,
+    CredentialProviderDeleteParams, CredentialProviderDeleteResponse, CredentialProviderListParams,
+    CredentialProviderListResponse, CredentialProviderReadParams, CredentialProviderReadResponse,
     EnvironmentCloseParams, EnvironmentCloseResponse, EnvironmentCredentialBindParams,
     EnvironmentCredentialBindResponse, EnvironmentCredentialListParams,
     EnvironmentCredentialListResponse, EnvironmentCredentialUnbindParams,
     EnvironmentCredentialUnbindResponse, EnvironmentListParams, EnvironmentListResponse,
     EnvironmentPowerPutParams, EnvironmentPowerPutResponse, EnvironmentProviderBindingListParams,
     EnvironmentProviderBindingListResponse, EnvironmentReadParams, EnvironmentReadResponse,
-    JsonRpcRequest, JsonRpcResponse, METHOD_AUTH_CLIENTS_CREATE, METHOD_AUTH_CLIENTS_DELETE,
-    METHOD_AUTH_CLIENTS_LIST, METHOD_AUTH_CLIENTS_READ, METHOD_AUTH_FLOWS_READ,
-    METHOD_AUTH_FLOWS_START, METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT,
-    METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, METHOD_AUTH_GRANTS_LIST, METHOD_AUTH_GRANTS_READ,
-    METHOD_AUTH_GRANTS_REVOKE, METHOD_AUTH_PROVIDERS_CREATE, METHOD_AUTH_PROVIDERS_DELETE,
-    METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
-    METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_CLOSE, METHOD_ENVIRONMENTS_CREDENTIALS_BIND,
-    METHOD_ENVIRONMENTS_CREDENTIALS_LIST, METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND,
-    METHOD_ENVIRONMENTS_LIST, METHOD_ENVIRONMENTS_POWER_PUT,
-    METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, METHOD_ENVIRONMENTS_READ,
-    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_PUT,
-    METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
-    METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
+    JsonRpcRequest, JsonRpcResponse, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT, METHOD_BLOBS_READ,
+    METHOD_CREDENTIALS_CLIENTS_CREATE, METHOD_CREDENTIALS_CLIENTS_DELETE,
+    METHOD_CREDENTIALS_CLIENTS_LIST, METHOD_CREDENTIALS_CLIENTS_READ,
+    METHOD_CREDENTIALS_FLOWS_READ, METHOD_CREDENTIALS_FLOWS_START,
+    METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST,
+    METHOD_CREDENTIALS_GRANTS_LIST, METHOD_CREDENTIALS_GRANTS_READ,
+    METHOD_CREDENTIALS_GRANTS_REVOKE, METHOD_CREDENTIALS_PROVIDERS_CREATE,
+    METHOD_CREDENTIALS_PROVIDERS_DELETE, METHOD_CREDENTIALS_PROVIDERS_LIST,
+    METHOD_CREDENTIALS_PROVIDERS_READ, METHOD_ENVIRONMENTS_CLOSE,
+    METHOD_ENVIRONMENTS_CREDENTIALS_BIND, METHOD_ENVIRONMENTS_CREDENTIALS_LIST,
+    METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND, METHOD_ENVIRONMENTS_LIST,
+    METHOD_ENVIRONMENTS_POWER_PUT, METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST,
+    METHOD_ENVIRONMENTS_READ, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
+    METHOD_MCP_SERVERS_PUT, METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE,
+    METHOD_PROFILES_LIST, METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
     METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST, METHOD_SESSION_PROFILES_APPLY,
     METHOD_SESSION_READ, METHOD_SESSION_RUNS_APPROVALS_DECIDE, METHOD_SESSION_RUNS_CANCEL,
     METHOD_SESSION_RUNS_READ, METHOD_SESSION_RUNS_START, METHOD_SESSION_RUNS_STEER,
@@ -389,117 +393,124 @@ impl HttpAgentApi {
         self.request(METHOD_MCP_SERVERS_DELETE, params).await
     }
 
-    pub(crate) async fn list_auth_grants(
+    pub(crate) async fn list_credential_grants(
         &self,
-        params: AuthGrantListParams,
-    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_LIST, params).await
+        params: CredentialGrantListParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantListResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GRANTS_LIST, params).await
     }
 
-    pub(crate) async fn read_auth_grant(
+    pub(crate) async fn read_credential_grant(
         &self,
-        params: AuthGrantReadParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_READ, params).await
+        params: CredentialGrantReadParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantReadResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GRANTS_READ, params).await
     }
 
-    pub(crate) async fn put_auth_grant(
+    pub(crate) async fn put_credential_grant(
         &self,
-        params: api::AuthGrantPutParams,
-    ) -> Result<AgentApiOutcome<api::AuthGrantPutResponse>, AgentApiError> {
-        self.request(api::METHOD_AUTH_GRANTS_PUT, params).await
+        params: api::CredentialGrantPutParams,
+    ) -> Result<AgentApiOutcome<api::CredentialGrantPutResponse>, AgentApiError> {
+        self.request(api::METHOD_CREDENTIALS_GRANTS_PUT, params)
+            .await
     }
 
-    pub(crate) async fn revoke_auth_grant(
+    pub(crate) async fn revoke_credential_grant(
         &self,
-        params: AuthGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GRANTS_REVOKE, params).await
+        params: CredentialGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantRevokeResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GRANTS_REVOKE, params).await
     }
 
-    pub(crate) async fn create_auth_client(
+    pub(crate) async fn create_credential_client(
         &self,
-        params: AuthClientCreateParams,
-    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_CREATE, params).await
+        params: CredentialClientCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialClientCreateResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_CREATE, params)
+            .await
     }
 
-    pub(crate) async fn list_auth_clients(
+    pub(crate) async fn list_credential_clients(
         &self,
-        params: AuthClientListParams,
-    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_LIST, params).await
+        params: CredentialClientListParams,
+    ) -> Result<AgentApiOutcome<CredentialClientListResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_LIST, params).await
     }
 
-    pub(crate) async fn read_auth_client(
+    pub(crate) async fn read_credential_client(
         &self,
-        params: AuthClientReadParams,
-    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_READ, params).await
+        params: CredentialClientReadParams,
+    ) -> Result<AgentApiOutcome<CredentialClientReadResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_READ, params).await
     }
 
-    pub(crate) async fn delete_auth_client(
+    pub(crate) async fn delete_credential_client(
         &self,
-        params: AuthClientDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_CLIENTS_DELETE, params).await
+        params: CredentialClientDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialClientDeleteResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_CLIENTS_DELETE, params)
+            .await
     }
 
-    pub(crate) async fn start_auth_flow(
+    pub(crate) async fn start_credential_flow(
         &self,
-        params: AuthFlowStartParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_FLOWS_START, params).await
+        params: CredentialFlowStartParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStartResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_FLOWS_START, params).await
     }
 
-    pub(crate) async fn read_auth_flow_status(
+    pub(crate) async fn read_credential_flow_status(
         &self,
-        params: AuthFlowStatusParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_FLOWS_READ, params).await
+        params: CredentialFlowStatusParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStatusResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_FLOWS_READ, params).await
     }
 
-    pub(crate) async fn create_auth_provider(
+    pub(crate) async fn create_credential_provider(
         &self,
-        params: AuthProviderCreateParams,
-    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_CREATE, params).await
+        params: CredentialProviderCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderCreateResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_CREATE, params)
+            .await
     }
 
-    pub(crate) async fn list_auth_providers(
+    pub(crate) async fn list_credential_providers(
         &self,
-        params: AuthProviderListParams,
-    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_LIST, params).await
+        params: CredentialProviderListParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderListResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_LIST, params)
+            .await
     }
 
-    pub(crate) async fn read_auth_provider(
+    pub(crate) async fn read_credential_provider(
         &self,
-        params: AuthProviderReadParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_READ, params).await
+        params: CredentialProviderReadParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderReadResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_READ, params)
+            .await
     }
 
-    pub(crate) async fn delete_auth_provider(
+    pub(crate) async fn delete_credential_provider(
         &self,
-        params: AuthProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_PROVIDERS_DELETE, params).await
+        params: CredentialProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderDeleteResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_PROVIDERS_DELETE, params)
+            .await
     }
 
     pub(crate) async fn list_github_installations(
         &self,
-        params: AuthGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, params)
+        params: CredentialGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationListResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST, params)
             .await
     }
 
     pub(crate) async fn grant_github_installation(
         &self,
-        params: AuthGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
-        self.request(METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, params)
+        params: CredentialGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationGrantResponse>, AgentApiError> {
+        self.request(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, params)
             .await
     }
 

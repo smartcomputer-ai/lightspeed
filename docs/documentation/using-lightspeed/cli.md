@@ -90,6 +90,13 @@ Environment, stdin and prompt input is stored in a protected local credential
 file; an explicitly supplied file remains externally owned. Use `--single` only
 for a server explicitly configured for single mode.
 
+The CLI address is the private RPC listener, normally port `18080`. The runtime's
+OAuth callback and client metadata use the separate public listener, normally
+port `18082`, under `/credentials/callback` and
+`/credentials/client-metadata.json`. The public listener does not accept CLI RPC
+calls. Credential management methods use the `credentials/*` API family; the CLI
+keeps its `credential`/`credentials` resource command.
+
 ## Manage connections and universes
 
 ```bash
@@ -188,8 +195,7 @@ lightspeed model provider put my-provider \
 For a credentialless endpoint, use `--no-auth` instead of
 a key source. `put` declares the provider: repeating it changes nothing. The
 runtime validates endpoint configuration; its loopback URLs
-refer to the runtime host. Provider setup requires the `auth` group and model
-discovery requires `models`.
+refer to the runtime host. Provider setup and model discovery use the direct runtime token.
 
 Choose a discovered route explicitly when starting a new session:
 
@@ -378,7 +384,7 @@ Its `oauth-client` and `github` subcommands configure reusable OAuth clients and
 GitHub Apps. Model endpoint credentials belong under `model provider`; MCP
 credential binding and OAuth login belong under `mcp`. `token generate-secret`
 generates a runtime token offline; runtime access is configured on the host.
-API family names such as `auth` and `models` remain contract metadata.
+API family names such as `credentials` and `models` remain contract metadata.
 
 Human output uses labeled details, table headers and explicit empty states.
 Resource operations accept `--json` for scripts. OAuth authorization instructions

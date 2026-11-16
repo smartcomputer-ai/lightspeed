@@ -1,28 +1,29 @@
-//! Generic auth provider configurations.
+//! Generic credential provider configurations.
 //!
 //! One table serves every provider kind. Non-secret config is stored as
-//! tagged JSON and decoded into the typed `AuthProviderConfig` enum on read;
+//! tagged JSON and decoded into the typed `CredentialProviderConfig` enum on read;
 //! the credential reference is a typed column with a foreign key into
-//! `auth_secrets` (ON DELETE RESTRICT), so a provider's private key cannot
+//! `credentials_secrets` (ON DELETE RESTRICT), so a provider's private key cannot
 //! be deleted out from under it. A model endpoint's extra request headers are
-//! rows of `auth_provider_headers`, not part of the JSON, so a credential a
+//! rows of `credentials_provider_headers`, not part of the JSON, so a credential a
 //! header names is held by a foreign key too.
 
 // Formatted SQL uses internal schema fragments; request values use bind parameters.
 use async_trait::async_trait;
-use auth::{
-    AuthProviderConfig, AuthProviderId, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
-    AuthRegistryError, CreateAuthProviderRecord, RequestHeaderValue, RequestHeaders, SecretId,
+use credentials::{
+    CreateCredentialProviderRecord, CredentialProviderConfig, CredentialProviderId,
+    CredentialProviderRecord, CredentialProviderStatus, CredentialProviderStore,
+    CredentialRegistryError, RequestHeaderValue, RequestHeaders, SecretId,
 };
 use sqlx::Row;
 
 use crate::PgStore;
-use crate::auth::{auth_sql_error, auth_store_error, provider_kind_to_str};
+use crate::credentials::{credential_sql_error, credential_store_error, provider_kind_to_str};
 
 /// Every column of a provider row plus its endpoint header rows folded into
 /// one JSON array, so reads, lists and post-write reads decode the whole
 /// record.
-const AUTH_PROVIDER_COLUMNS: &str = r#"
+const CREDENTIAL_PROVIDER_COLUMNS: &str = r#"
     p.provider_id,
     p.provider_kind,
     p.display_name,
@@ -41,24 +42,24 @@ const AUTH_PROVIDER_COLUMNS: &str = r#"
                 )
                 ORDER BY h.name
             )
-            FROM auth_provider_headers AS h
+            FROM credentials_provider_headers AS h
             WHERE h.universe_id = p.universe_id AND h.provider_id = p.provider_id
         ),
         '[]'::jsonb
     ) AS headers_json
 "#;
 
-const HEADER_GRANT_FK: &str = "auth_provider_headers_grant_fk";
+const HEADER_GRANT_FK: &str = "credentials_provider_headers_grant_fk";
 
 #[async_trait]
-impl AuthProviderStore for PgStore {
-    async fn create_auth_provider(
+impl CredentialProviderStore for PgStore {
+    async fn create_credential_provider(
         &self,
-        record: CreateAuthProviderRecord,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        record: CreateCredentialProviderRecord,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         self.require_active_universe()
             .await
-            .map_err(|error| auth_store_error("ensure universe", error))?;
+            .map_err(|error| credential_store_error("ensure universe", error))?;
         let record = record.into_record();
         record.validate()?;
         let (config_json, headers) = stored_config(&record.config)?;
@@ -66,10 +67,10 @@ impl AuthProviderStore for PgStore {
             .pool
             .begin()
             .await
-            .map_err(|error| auth_sql_error("begin auth provider create", error))?;
+            .map_err(|error| credential_sql_error("begin credential provider create", error))?;
         let inserted = sqlx::query(
             r#"
-            INSERT INTO auth_providers (
+            INSERT INTO credentials_providers (
                 universe_id,
                 provider_id,
                 provider_kind,
@@ -95,9 +96,9 @@ impl AuthProviderStore for PgStore {
         .bind(record.created_at_ms)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|error| auth_sql_error("create auth provider", error))?;
+        .map_err(|error| credential_sql_error("create credential provider", error))?;
         if inserted.is_none() {
-            return Err(AuthRegistryError::ProviderAlreadyExists {
+            return Err(CredentialRegistryError::ProviderAlreadyExists {
                 provider_id: record.provider_id,
             });
         }
@@ -105,22 +106,24 @@ impl AuthProviderStore for PgStore {
             .await
     }
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        provider_id: &AuthProviderId,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        provider_id: &CredentialProviderId,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         select_provider(&self.pool, self.config.universe_id, provider_id, false)
             .await?
-            .ok_or_else(|| AuthRegistryError::ProviderNotFound {
+            .ok_or_else(|| CredentialRegistryError::ProviderNotFound {
                 provider_id: provider_id.clone(),
             })
     }
 
-    async fn list_auth_providers(&self) -> Result<Vec<AuthProviderRecord>, AuthRegistryError> {
+    async fn list_credential_providers(
+        &self,
+    ) -> Result<Vec<CredentialProviderRecord>, CredentialRegistryError> {
         let query = format!(
             r#"
-            SELECT {AUTH_PROVIDER_COLUMNS}
-            FROM auth_providers AS p
+            SELECT {CREDENTIAL_PROVIDER_COLUMNS}
+            FROM credentials_providers AS p
             WHERE p.universe_id = $1
             ORDER BY p.provider_id
             "#
@@ -129,54 +132,55 @@ impl AuthProviderStore for PgStore {
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| auth_sql_error("list auth providers", error))?;
-        rows.iter().map(auth_provider_from_row).collect()
+            .map_err(|error| credential_sql_error("list credential providers", error))?;
+        rows.iter().map(credential_provider_from_row).collect()
     }
 
-    async fn delete_auth_provider(
+    async fn delete_credential_provider(
         &self,
-        provider_id: &AuthProviderId,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        provider_id: &CredentialProviderId,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(|error| auth_sql_error("begin auth provider delete", error))?;
+            .map_err(|error| credential_sql_error("begin credential provider delete", error))?;
         let Some(record) =
             select_provider(&mut *tx, self.config.universe_id, provider_id, true).await?
         else {
-            return Err(AuthRegistryError::ProviderNotFound {
+            return Err(CredentialRegistryError::ProviderNotFound {
                 provider_id: provider_id.clone(),
             });
         };
         // Header rows cascade with the provider.
-        sqlx::query("DELETE FROM auth_providers WHERE universe_id = $1 AND provider_id = $2")
-            .bind(self.config.universe_id)
-            .bind(provider_id.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(|error| auth_sql_error("delete auth provider", error))?;
+        sqlx::query(
+            "DELETE FROM credentials_providers WHERE universe_id = $1 AND provider_id = $2",
+        )
+        .bind(self.config.universe_id)
+        .bind(provider_id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| credential_sql_error("delete credential provider", error))?;
         tx.commit()
             .await
-            .map_err(|error| auth_sql_error("commit auth provider delete", error))?;
+            .map_err(|error| credential_sql_error("commit credential provider delete", error))?;
         Ok(record)
     }
 
-    async fn replace_auth_provider(
+    async fn replace_credential_provider(
         &self,
-        record: AuthProviderRecord,
+        record: CredentialProviderRecord,
         expected_credential: Option<&SecretId>,
-    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError> {
+    ) -> Result<Option<CredentialProviderRecord>, CredentialRegistryError> {
         record.validate()?;
         let (config_json, headers) = stored_config(&record.config)?;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| auth_sql_error("begin auth provider replace", error))?;
+        let mut tx =
+            self.pool.begin().await.map_err(|error| {
+                credential_sql_error("begin credential provider replace", error)
+            })?;
         let updated = sqlx::query(
             r#"
-            UPDATE auth_providers
+            UPDATE credentials_providers
             SET provider_kind = $3,
                 display_name = $4,
                 config_json = $5,
@@ -199,11 +203,11 @@ impl AuthProviderStore for PgStore {
         .bind(expected_credential.map(SecretId::as_str))
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|error| auth_sql_error("replace auth provider", error))?;
+        .map_err(|error| credential_sql_error("replace credential provider", error))?;
         if updated.is_none() {
             drop(tx);
             // Distinguish a lost race from a missing provider.
-            self.read_auth_provider(&record.provider_id).await?;
+            self.read_credential_provider(&record.provider_id).await?;
             return Ok(None);
         }
         self.finish_provider_write(tx, &record.provider_id, &headers)
@@ -218,18 +222,18 @@ impl PgStore {
     async fn finish_provider_write(
         &self,
         mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
-        provider_id: &AuthProviderId,
+        provider_id: &CredentialProviderId,
         headers: &RequestHeaders,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         let universe_id = self.config.universe_id;
         sqlx::query(
-            "DELETE FROM auth_provider_headers WHERE universe_id = $1 AND provider_id = $2",
+            "DELETE FROM credentials_provider_headers WHERE universe_id = $1 AND provider_id = $2",
         )
         .bind(universe_id)
         .bind(provider_id.as_str())
         .execute(&mut *tx)
         .await
-        .map_err(|error| auth_sql_error("clear model endpoint headers", error))?;
+        .map_err(|error| credential_sql_error("clear model endpoint headers", error))?;
         if !headers.is_empty() {
             let mut names = Vec::with_capacity(headers.len());
             let mut literals = Vec::with_capacity(headers.len());
@@ -249,7 +253,7 @@ impl PgStore {
             }
             sqlx::query(
                 r#"
-                INSERT INTO auth_provider_headers (
+                INSERT INTO credentials_provider_headers (
                     universe_id, provider_id, name, literal_value, grant_id
                 )
                 SELECT $1, $2, header.name, header.literal_value, header.grant_id
@@ -266,24 +270,24 @@ impl PgStore {
             .await
             .map_err(|error| {
                 if foreign_key_constraint(&error) == Some(HEADER_GRANT_FK) {
-                    AuthRegistryError::InvalidInput {
+                    CredentialRegistryError::InvalidInput {
                         message: "a model endpoint header references a credential that does \
                                   not exist"
                             .to_owned(),
                     }
                 } else {
-                    auth_sql_error("write model endpoint headers", error)
+                    credential_sql_error("write model endpoint headers", error)
                 }
             })?;
         }
         let written = select_provider(&mut *tx, universe_id, provider_id, false)
             .await?
-            .ok_or_else(|| AuthRegistryError::Store {
-                message: format!("auth provider {provider_id} vanished during write"),
+            .ok_or_else(|| CredentialRegistryError::Store {
+                message: format!("credential provider {provider_id} vanished during write"),
             })?;
         tx.commit()
             .await
-            .map_err(|error| auth_sql_error("commit auth provider write", error))?;
+            .map_err(|error| credential_sql_error("commit credential provider write", error))?;
         Ok(written)
     }
 }
@@ -291,8 +295,8 @@ impl PgStore {
 /// The configuration document as stored, and the endpoint headers that are
 /// stored beside it as rows instead.
 fn stored_config(
-    config: &AuthProviderConfig,
-) -> Result<(serde_json::Value, RequestHeaders), AuthRegistryError> {
+    config: &CredentialProviderConfig,
+) -> Result<(serde_json::Value, RequestHeaders), CredentialRegistryError> {
     let mut document = config.clone();
     let headers = document
         .model_endpoint_mut()
@@ -304,17 +308,17 @@ fn stored_config(
 async fn select_provider<'e, E>(
     executor: E,
     universe_id: uuid::Uuid,
-    provider_id: &AuthProviderId,
+    provider_id: &CredentialProviderId,
     for_update: bool,
-) -> Result<Option<AuthProviderRecord>, AuthRegistryError>
+) -> Result<Option<CredentialProviderRecord>, CredentialRegistryError>
 where
     E: sqlx::PgExecutor<'e>,
 {
     let lock = if for_update { "FOR UPDATE OF p" } else { "" };
     let query = format!(
         r#"
-        SELECT {AUTH_PROVIDER_COLUMNS}
-        FROM auth_providers AS p
+        SELECT {CREDENTIAL_PROVIDER_COLUMNS}
+        FROM credentials_providers AS p
         WHERE p.universe_id = $1 AND p.provider_id = $2
         {lock}
         "#
@@ -324,8 +328,8 @@ where
         .bind(provider_id.as_str())
         .fetch_optional(executor)
         .await
-        .map_err(|error| auth_sql_error("read auth provider", error))?;
-    row.as_ref().map(auth_provider_from_row).transpose()
+        .map_err(|error| credential_sql_error("read credential provider", error))?;
+    row.as_ref().map(credential_provider_from_row).transpose()
 }
 
 fn foreign_key_constraint(error: &sqlx::Error) -> Option<&str> {
@@ -343,9 +347,9 @@ struct HeaderRow {
     grant_id: Option<String>,
 }
 
-fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, AuthRegistryError> {
+fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, CredentialRegistryError> {
     let rows: Vec<HeaderRow> =
-        serde_json::from_value(value).map_err(|error| AuthRegistryError::Store {
+        serde_json::from_value(value).map_err(|error| CredentialRegistryError::Store {
             message: format!("decode model endpoint headers: {error}"),
         })?;
     rows.into_iter()
@@ -353,14 +357,14 @@ fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, AuthReg
             let value = match (row.literal_value, row.grant_id) {
                 (Some(value), None) => RequestHeaderValue::Literal { value },
                 (None, Some(grant_id)) => RequestHeaderValue::Credential {
-                    grant_id: auth::AuthGrantId::try_new(grant_id).map_err(|error| {
-                        AuthRegistryError::Store {
+                    grant_id: credentials::CredentialGrantId::try_new(grant_id).map_err(
+                        |error| CredentialRegistryError::Store {
                             message: format!("decode model endpoint header grant id: {error}"),
-                        }
-                    })?,
+                        },
+                    )?,
                 },
                 _ => {
-                    return Err(AuthRegistryError::Store {
+                    return Err(CredentialRegistryError::Store {
                         message: format!(
                             "model endpoint header {} has no single value source",
                             row.name
@@ -373,82 +377,84 @@ fn headers_from_json(value: serde_json::Value) -> Result<RequestHeaders, AuthReg
         .collect()
 }
 
-fn provider_status_to_str(value: AuthProviderStatus) -> &'static str {
+fn provider_status_to_str(value: CredentialProviderStatus) -> &'static str {
     match value {
-        AuthProviderStatus::Active => "active",
-        AuthProviderStatus::NeedsConfiguration => "needs_configuration",
-        AuthProviderStatus::Disabled => "disabled",
+        CredentialProviderStatus::Active => "active",
+        CredentialProviderStatus::NeedsConfiguration => "needs_configuration",
+        CredentialProviderStatus::Disabled => "disabled",
     }
 }
 
-fn provider_status_from_str(value: &str) -> Result<AuthProviderStatus, AuthRegistryError> {
+fn provider_status_from_str(
+    value: &str,
+) -> Result<CredentialProviderStatus, CredentialRegistryError> {
     match value {
-        "active" => Ok(AuthProviderStatus::Active),
-        "needs_configuration" => Ok(AuthProviderStatus::NeedsConfiguration),
-        "disabled" => Ok(AuthProviderStatus::Disabled),
-        other => Err(AuthRegistryError::Store {
-            message: format!("unsupported auth provider status '{other}'"),
+        "active" => Ok(CredentialProviderStatus::Active),
+        "needs_configuration" => Ok(CredentialProviderStatus::NeedsConfiguration),
+        "disabled" => Ok(CredentialProviderStatus::Disabled),
+        other => Err(CredentialRegistryError::Store {
+            message: format!("unsupported credential provider status '{other}'"),
         }),
     }
 }
 
-fn auth_provider_from_row(
+fn credential_provider_from_row(
     row: &sqlx::postgres::PgRow,
-) -> Result<AuthProviderRecord, AuthRegistryError> {
+) -> Result<CredentialProviderRecord, CredentialRegistryError> {
     let provider_id: String = row
         .try_get("provider_id")
-        .map_err(|error| auth_sql_error("decode auth provider id", error))?;
+        .map_err(|error| credential_sql_error("decode credential provider id", error))?;
     let status: String = row
         .try_get("status")
-        .map_err(|error| auth_sql_error("decode auth provider status", error))?;
+        .map_err(|error| credential_sql_error("decode credential provider status", error))?;
     let config_json: serde_json::Value = row
         .try_get("config_json")
-        .map_err(|error| auth_sql_error("decode auth provider config", error))?;
+        .map_err(|error| credential_sql_error("decode credential provider config", error))?;
     let credential_secret_id: Option<String> = row
         .try_get("credential_secret_id")
-        .map_err(|error| auth_sql_error("decode auth provider credential id", error))?;
+        .map_err(|error| credential_sql_error("decode credential provider credential id", error))?;
 
     let headers_json: serde_json::Value = row
         .try_get("headers_json")
-        .map_err(|error| auth_sql_error("decode model endpoint headers", error))?;
+        .map_err(|error| credential_sql_error("decode model endpoint headers", error))?;
 
-    let mut config = AuthProviderConfig::from_json(&config_json)?;
+    let mut config = CredentialProviderConfig::from_json(&config_json)?;
     let headers = headers_from_json(headers_json)?;
     match config.model_endpoint_mut() {
         Some(endpoint) => endpoint.headers = headers,
         None if headers.is_empty() => {}
         None => {
-            return Err(AuthRegistryError::Store {
+            return Err(CredentialRegistryError::Store {
                 message: format!(
-                    "auth provider {provider_id} has endpoint headers but no model endpoint"
+                    "credential provider {provider_id} has endpoint headers but no model endpoint"
                 ),
             });
         }
     }
-    let record = AuthProviderRecord {
-        provider_id: AuthProviderId::try_new(provider_id).map_err(|error| {
-            AuthRegistryError::Store {
-                message: format!("decode auth provider id: {error}"),
+    let record = CredentialProviderRecord {
+        provider_id: CredentialProviderId::try_new(provider_id).map_err(|error| {
+            CredentialRegistryError::Store {
+                message: format!("decode credential provider id: {error}"),
             }
         })?,
         provider_kind: config.provider_kind(),
-        display_name: row
-            .try_get("display_name")
-            .map_err(|error| auth_sql_error("decode auth provider display name", error))?,
+        display_name: row.try_get("display_name").map_err(|error| {
+            credential_sql_error("decode credential provider display name", error)
+        })?,
         config,
         credential_secret: credential_secret_id
             .map(SecretId::try_new)
             .transpose()
-            .map_err(|error| AuthRegistryError::Store {
-                message: format!("decode auth provider credential id: {error}"),
+            .map_err(|error| CredentialRegistryError::Store {
+                message: format!("decode credential provider credential id: {error}"),
             })?,
         status: provider_status_from_str(&status)?,
-        created_at_ms: row
-            .try_get("created_at_ms")
-            .map_err(|error| auth_sql_error("decode auth provider created_at_ms", error))?,
-        updated_at_ms: row
-            .try_get("updated_at_ms")
-            .map_err(|error| auth_sql_error("decode auth provider updated_at_ms", error))?,
+        created_at_ms: row.try_get("created_at_ms").map_err(|error| {
+            credential_sql_error("decode credential provider created_at_ms", error)
+        })?,
+        updated_at_ms: row.try_get("updated_at_ms").map_err(|error| {
+            credential_sql_error("decode credential provider updated_at_ms", error)
+        })?,
     };
     record.validate()?;
     Ok(record)
@@ -458,7 +464,7 @@ fn auth_provider_from_row(
 mod tests {
     use std::collections::BTreeMap;
 
-    use auth::{AuthGrantId, ModelEndpointConfig, ModelEndpointOnlyConfig};
+    use credentials::{CredentialGrantId, ModelEndpointConfig, ModelEndpointOnlyConfig};
 
     use super::*;
 
@@ -474,11 +480,11 @@ mod tests {
             (
                 "x-api-key".to_owned(),
                 RequestHeaderValue::Credential {
-                    grant_id: AuthGrantId::new("authgrant_router"),
+                    grant_id: CredentialGrantId::new("authgrant_router"),
                 },
             ),
         ]);
-        let config = AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+        let config = CredentialProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
             endpoint: ModelEndpointConfig {
                 base_url: "https://router.example/v1".to_owned(),
                 headers: headers.clone(),
@@ -492,7 +498,7 @@ mod tests {
         assert!(document["endpoint"].get("headers").is_none());
         // Decoding the document alone yields the endpoint without headers;
         // the rows put them back.
-        let mut decoded = AuthProviderConfig::from_json(&document).expect("decode document");
+        let mut decoded = CredentialProviderConfig::from_json(&document).expect("decode document");
         assert!(
             decoded
                 .model_endpoint()
@@ -506,7 +512,8 @@ mod tests {
 
     #[test]
     fn stored_config_of_a_provider_without_an_endpoint_has_no_headers() {
-        let config = AuthProviderConfig::ModelApiKey(auth::ModelApiKeyConfig::default());
+        let config =
+            CredentialProviderConfig::ModelApiKey(credentials::ModelApiKeyConfig::default());
         let (document, headers) = stored_config(&config).expect("split config");
         assert!(headers.is_empty());
         assert_eq!(document, config.to_json().expect("encode"));
@@ -522,7 +529,7 @@ mod tests {
         assert_eq!(
             decoded.get("x-api-key"),
             Some(&RequestHeaderValue::Credential {
-                grant_id: AuthGrantId::new("authgrant_router"),
+                grant_id: CredentialGrantId::new("authgrant_router"),
             })
         );
         assert_eq!(
@@ -538,7 +545,7 @@ mod tests {
         ] {
             assert!(matches!(
                 headers_from_json(invalid),
-                Err(AuthRegistryError::Store { .. })
+                Err(CredentialRegistryError::Store { .. })
             ));
         }
     }

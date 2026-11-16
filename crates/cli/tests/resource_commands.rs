@@ -395,8 +395,8 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
     );
     let model = provider("model:openai", "modelApiKey", json!({"type":"modelApiKey"}));
     let runtime = Runtime::start(move |method, _| match method {
-        "auth/providers/list" => json!({"providers":[github,model]}),
-        "auth/providers/read" => json!({"provider":model}),
+        "credentials/providers/list" => json!({"providers":[github,model]}),
+        "credentials/providers/read" => json!({"provider":model}),
         _ => panic!("unexpected request: {method}"),
     });
     let listed = runtime.json(&["credentials", "github", "app", "list", "--json"]);
@@ -414,7 +414,7 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
             .lock()
             .unwrap()
             .iter()
-            .any(|r| r["method"] == "auth/providers/delete")
+            .any(|r| r["method"] == "credentials/providers/delete")
     );
     assert_eq!(
         runtime.json(&["models", "providers", "list", "--json"])[0]["providerId"],
@@ -425,7 +425,7 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
 #[test]
 fn model_provider_put_sends_each_header_with_its_value_source() {
     let runtime = Runtime::start(|method, params| {
-        assert_eq!(method, "auth/providers/put");
+        assert_eq!(method, "credentials/providers/put");
         assert_eq!(params["providerId"], "model:router");
         assert_eq!(params["config"]["type"], "modelEndpoint");
         assert_eq!(
@@ -476,7 +476,7 @@ fn model_provider_put_sends_each_header_with_its_value_source() {
 #[test]
 fn oauth_no_wait_and_empty_lists_have_useful_output_and_clean_json() {
     let runtime = Runtime::start(|method, _| match method {
-        "auth/flows/start" => {
+        "credentials/flows/start" => {
             json!({"flowId":"flow1","authorizeUrl":"https://auth.example/authorize","expiresAtMs":9999999999999_i64})
         }
         "vfs/workspaces/list" => json!({"workspaces":[]}),
@@ -873,11 +873,11 @@ fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
 fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
     let grant = |token_marker: &str| json!({"grantId":"tracker-token","providerId":"static","providerKind":"staticToken","exposure":"brokered","createdBy":{"kind":"local"},"displayName":"Tracker","subjectHint":"ci","scopes":["read"],"audience":"https://tracker.example.com/mcp","hasAccessToken":true,"hasRefreshToken":false,"expiresAtMs":99,"status":"active","metadata":{"owner":token_marker},"leaseCount":0,"createdAtMs":1,"updatedAtMs":2});
     let runtime = Runtime::start(move |method, params| match method {
-        "auth/grants/read" => {
+        "credentials/grants/read" => {
             assert_eq!(*params, json!({"grantId":"tracker-token"}));
             json!({"grant": grant("ops")})
         }
-        "auth/grants/put" => {
+        "credentials/grants/put" => {
             if params["dryRun"] == true {
                 // A declaration: exactly the settings given, nothing carried over.
                 assert_eq!(
@@ -983,11 +983,15 @@ fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
         .unwrap()
         .iter()
         .map(|request| request["method"].as_str().unwrap().to_owned())
-        .filter(|method| method.starts_with("auth/"))
+        .filter(|method| method.starts_with("credentials/"))
         .collect();
     assert_eq!(
         methods,
-        ["auth/grants/put", "auth/grants/read", "auth/grants/put"]
+        [
+            "credentials/grants/put",
+            "credentials/grants/read",
+            "credentials/grants/put"
+        ]
     );
 }
 
@@ -1017,10 +1021,10 @@ fn document_runtime() -> Runtime {
                 );
                 json!({ "universe": universe, "created": true })
             }
-            "auth/grants/list" => json!({
+            "credentials/grants/list" => json!({
                 "grants": tokens.values().map(|(view, _)| view.clone()).collect::<Vec<_>>()
             }),
-            "auth/grants/put" => {
+            "credentials/grants/put" => {
                 let id = params["grantId"].as_str().unwrap().to_owned();
                 let token = params["token"].as_str().unwrap().to_owned();
                 assert!(!token.is_empty(), "a put carries the resolved token");

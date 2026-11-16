@@ -243,7 +243,7 @@ fn list(value: &Value, field: &str) -> Vec<Value> {
 
 // --- credentials -------------------------------------------------------------
 
-/// Token credentials (`auth/grants/put`). The runtime compares the supplied
+/// Token credentials (`credentials/grants/put`). The runtime compares the supplied
 /// token itself, so a dry run says whether it would be replaced.
 pub(crate) struct Credentials;
 
@@ -284,11 +284,11 @@ impl Resource for Credentials {
         (field == "providerId").then(|| json!("static"))
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
-        let typed = strict::<api::AuthGrantPutParams>(with(entry, "token", json!("")))?;
+        let typed = strict::<api::CredentialGrantPutParams>(with(entry, "token", json!("")))?;
         Ok(without(typed, &["token", "dryRun"]))
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
-        schema_of::<api::AuthGrantPutParams>(generator)
+        schema_of::<api::CredentialGrantPutParams>(generator)
     }
     fn undeclared_fields(&self) -> &'static [&'static str] {
         &["dryRun"]
@@ -298,7 +298,7 @@ impl Resource for Credentials {
         if !target.exists() {
             return Ok(live);
         }
-        let response = target.call("auth/grants/list", json!({})).await?;
+        let response = target.call("credentials/grants/list", json!({})).await?;
         for view in list(&response, "grants") {
             let Some(id) = text(&view, "grantId").map(str::to_owned) else {
                 continue;
@@ -306,7 +306,7 @@ impl Resource for Credentials {
             let token_credential = text(&view, "providerKind") == Some("staticToken");
             let active = text(&view, "status") == Some("active");
             let entry =
-                from_view::<api::AuthGrantPutParams>(with(view.clone(), "token", json!("")))
+                from_view::<api::CredentialGrantPutParams>(with(view.clone(), "token", json!("")))
                     .map(|entry| without(entry, &["token", "dryRun"]))
                     .unwrap_or(Value::Null);
             live.insert(
@@ -333,7 +333,7 @@ impl Resource for Credentials {
         _live: &Live,
     ) -> Result<bool> {
         let response = target
-            .call("auth/grants/put", Self::params(entry, secret, true)?)
+            .call("credentials/grants/put", Self::params(entry, secret, true)?)
             .await?;
         Ok(response["tokenReplaced"] == json!(true))
     }
@@ -345,7 +345,10 @@ impl Resource for Credentials {
         _live: Option<&Live>,
     ) -> Result<()> {
         target
-            .call("auth/grants/put", Self::params(entry, secret, false)?)
+            .call(
+                "credentials/grants/put",
+                Self::params(entry, secret, false)?,
+            )
             .await
             .map(drop)
     }
@@ -381,7 +384,7 @@ fn normalize_request_headers(headers: Option<&mut Value>, what: &str) -> Result<
 
 // --- providers ---------------------------------------------------------------
 
-/// Model providers and GitHub Apps (`auth/providers/put`). A provider's
+/// Model providers and GitHub Apps (`credentials/providers/put`). A provider's
 /// credential is optional; a dry run says whether it would change.
 pub(crate) struct Providers;
 
@@ -432,7 +435,7 @@ impl Resource for Providers {
         false
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
-        let typed = strict::<api::AuthProviderPutParams>(entry)?;
+        let typed = strict::<api::CredentialProviderPutParams>(entry)?;
         let mut entry = without(typed, &["credential", "dryRun"]);
         normalize_request_headers(
             entry.pointer_mut("/config/endpoint/headers"),
@@ -441,7 +444,7 @@ impl Resource for Providers {
         Ok(entry)
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
-        schema_of::<api::AuthProviderPutParams>(generator)
+        schema_of::<api::CredentialProviderPutParams>(generator)
     }
     fn undeclared_fields(&self) -> &'static [&'static str] {
         &["dryRun"]
@@ -462,14 +465,14 @@ impl Resource for Providers {
         if !target.exists() {
             return Ok(live);
         }
-        let response = target.call("auth/providers/list", json!({})).await?;
+        let response = target.call("credentials/providers/list", json!({})).await?;
         for view in list(&response, "providers") {
             let Some(id) = text(&view, "providerId").map(str::to_owned) else {
                 continue;
             };
             // Kinds the put method cannot express are not configuration a
             // document can hold.
-            let entry = from_view::<api::AuthProviderPutParams>(view.clone())
+            let entry = from_view::<api::CredentialProviderPutParams>(view.clone())
                 .map(|entry| without(entry, &["credential", "dryRun"]));
             let live_entry = match entry {
                 Ok(entry) => Live {
@@ -495,7 +498,10 @@ impl Resource for Providers {
         _live: &Live,
     ) -> Result<bool> {
         let response = target
-            .call("auth/providers/put", Self::credential_probe(entry, secret))
+            .call(
+                "credentials/providers/put",
+                Self::credential_probe(entry, secret),
+            )
             .await?;
         Ok(response["credentialReplaced"] == json!(true))
     }
@@ -507,7 +513,10 @@ impl Resource for Providers {
         _live: Option<&Live>,
     ) -> Result<()> {
         target
-            .call("auth/providers/put", Self::params(entry, secret, false))
+            .call(
+                "credentials/providers/put",
+                Self::params(entry, secret, false),
+            )
             .await
             .map(drop)
     }
@@ -1393,7 +1402,7 @@ mod tests {
             json!({ "x-title": { "type": "literal", "value": "Lightspeed" } })
         );
         // What is left is still a declaration the runtime accepts.
-        strict::<api::AuthProviderPutParams>(probe).unwrap();
+        strict::<api::CredentialProviderPutParams>(probe).unwrap();
 
         // The write names every header.
         let write = Providers::params(&entry, Some("model-key"), false);

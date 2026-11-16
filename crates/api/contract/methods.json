@@ -2093,7 +2093,7 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
+      "description": "Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.",
       "group": "mcp",
       "method": "mcp/servers/put",
       "notifications": [],
@@ -2256,20 +2256,20 @@
         "kind": "universe"
       },
       "description": "Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.",
-      "group": "auth",
-      "method": "auth/grants/import",
+      "group": "credentials",
+      "method": "credentials/grants/import",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantImportParams"
+          "$ref": "#/definitions/CredentialGrantImportParams"
         },
-        "type": "AuthGrantImportParams"
+        "type": "CredentialGrantImportParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantImportResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGrantImportResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantImportResponse>"
+        "type": "AgentApiOutcome<CredentialGrantImportResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2282,25 +2282,25 @@
         "kind": "service"
       },
       "description": "Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.",
-      "group": "auth/lease",
-      "method": "auth/grants/lease",
+      "group": "credentials/lease",
+      "method": "credentials/grants/lease",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantLeaseParams"
+          "$ref": "#/definitions/CredentialGrantLeaseParams"
         },
-        "type": "AuthGrantLeaseParams"
+        "type": "CredentialGrantLeaseParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantLeaseResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGrantLeaseResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantLeaseResponse>"
+        "type": "AgentApiOutcome<CredentialGrantLeaseResponse>"
       },
       "role": null,
       "scope": "service",
       "streaming": false,
-      "summary": "Lease a retrievable authentication grant",
+      "summary": "Lease a retrievable credential grant",
       "target": null
     },
     {
@@ -2309,25 +2309,25 @@
         "kind": "universe"
       },
       "description": "Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.",
-      "group": "auth",
-      "method": "auth/grants/read",
+      "group": "credentials",
+      "method": "credentials/grants/read",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantReadParams"
+          "$ref": "#/definitions/CredentialGrantReadParams"
         },
-        "type": "AuthGrantReadParams"
+        "type": "CredentialGrantReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantReadResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGrantReadResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantReadResponse>"
+        "type": "AgentApiOutcome<CredentialGrantReadResponse>"
       },
       "role": "viewer",
       "scope": "universe",
       "streaming": false,
-      "summary": "Read authentication grant metadata",
+      "summary": "Read credential grant metadata",
       "target": null
     },
     {
@@ -2336,25 +2336,25 @@
         "kind": "universe"
       },
       "description": "Lists non-secret grant metadata for the universe, optionally filtered by status.",
-      "group": "auth",
-      "method": "auth/grants/list",
+      "group": "credentials",
+      "method": "credentials/grants/list",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantListParams"
+          "$ref": "#/definitions/CredentialGrantListParams"
         },
-        "type": "AuthGrantListParams"
+        "type": "CredentialGrantListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGrantListResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantListResponse>"
+        "type": "AgentApiOutcome<CredentialGrantListResponse>"
       },
       "role": "viewer",
       "scope": "universe",
       "streaming": false,
-      "summary": "List authentication grants",
+      "summary": "List credential grants",
       "target": null
     },
     {
@@ -2363,20 +2363,20 @@
         "kind": "universe"
       },
       "description": "Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.",
-      "group": "auth",
-      "method": "auth/grants/put",
+      "group": "credentials",
+      "method": "credentials/grants/put",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantPutParams"
+          "$ref": "#/definitions/CredentialGrantPutParams"
         },
-        "type": "AuthGrantPutParams"
+        "type": "CredentialGrantPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantPutResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGrantPutResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantPutResponse>"
+        "type": "AgentApiOutcome<CredentialGrantPutResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2390,25 +2390,25 @@
         "kind": "universe"
       },
       "description": "Marks the grant unusable by token consumers while retaining non-secret audit metadata.",
-      "group": "auth",
-      "method": "auth/grants/revoke",
+      "group": "credentials",
+      "method": "credentials/grants/revoke",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGrantRevokeParams"
+          "$ref": "#/definitions/CredentialGrantRevokeParams"
         },
-        "type": "AuthGrantRevokeParams"
+        "type": "CredentialGrantRevokeParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGrantRevokeResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGrantRevokeResponse"
         },
-        "type": "AgentApiOutcome<AuthGrantRevokeResponse>"
+        "type": "AgentApiOutcome<CredentialGrantRevokeResponse>"
       },
       "role": "operator",
       "scope": "universe",
       "streaming": false,
-      "summary": "Revoke an authentication grant",
+      "summary": "Revoke a credential grant",
       "target": null
     },
     {
@@ -2417,20 +2417,20 @@
         "kind": "universe"
       },
       "description": "Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.",
-      "group": "auth",
-      "method": "auth/clients/create",
+      "group": "credentials",
+      "method": "credentials/clients/create",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthClientCreateParams"
+          "$ref": "#/definitions/CredentialClientCreateParams"
         },
-        "type": "AuthClientCreateParams"
+        "type": "CredentialClientCreateParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthClientCreateResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialClientCreateResponse"
         },
-        "type": "AgentApiOutcome<AuthClientCreateResponse>"
+        "type": "AgentApiOutcome<CredentialClientCreateResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2444,20 +2444,20 @@
         "kind": "universe"
       },
       "description": "Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.",
-      "group": "auth",
-      "method": "auth/clients/read",
+      "group": "credentials",
+      "method": "credentials/clients/read",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthClientReadParams"
+          "$ref": "#/definitions/CredentialClientReadParams"
         },
-        "type": "AuthClientReadParams"
+        "type": "CredentialClientReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthClientReadResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialClientReadResponse"
         },
-        "type": "AgentApiOutcome<AuthClientReadResponse>"
+        "type": "AgentApiOutcome<CredentialClientReadResponse>"
       },
       "role": "viewer",
       "scope": "universe",
@@ -2471,20 +2471,20 @@
         "kind": "universe"
       },
       "description": "Lists non-secret OAuth client registrations in the universe.",
-      "group": "auth",
-      "method": "auth/clients/list",
+      "group": "credentials",
+      "method": "credentials/clients/list",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthClientListParams"
+          "$ref": "#/definitions/CredentialClientListParams"
         },
-        "type": "AuthClientListParams"
+        "type": "CredentialClientListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthClientListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialClientListResponse"
         },
-        "type": "AgentApiOutcome<AuthClientListResponse>"
+        "type": "AgentApiOutcome<CredentialClientListResponse>"
       },
       "role": "viewer",
       "scope": "universe",
@@ -2498,20 +2498,20 @@
         "kind": "universe"
       },
       "description": "Deletes the client registration and its stored client secret; grants already created from it remain separate records.",
-      "group": "auth",
-      "method": "auth/clients/delete",
+      "group": "credentials",
+      "method": "credentials/clients/delete",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthClientDeleteParams"
+          "$ref": "#/definitions/CredentialClientDeleteParams"
         },
-        "type": "AuthClientDeleteParams"
+        "type": "CredentialClientDeleteParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthClientDeleteResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialClientDeleteResponse"
         },
-        "type": "AgentApiOutcome<AuthClientDeleteResponse>"
+        "type": "AgentApiOutcome<CredentialClientDeleteResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2524,21 +2524,21 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.",
-      "group": "auth",
-      "method": "auth/flows/start",
+      "description": "Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.",
+      "group": "credentials",
+      "method": "credentials/flows/start",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthFlowStartParams"
+          "$ref": "#/definitions/CredentialFlowStartParams"
         },
-        "type": "AuthFlowStartParams"
+        "type": "CredentialFlowStartParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthFlowStartResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialFlowStartResponse"
         },
-        "type": "AgentApiOutcome<AuthFlowStartResponse>"
+        "type": "AgentApiOutcome<CredentialFlowStartResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2552,20 +2552,20 @@
         "kind": "universe"
       },
       "description": "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.",
-      "group": "auth",
-      "method": "auth/flows/read",
+      "group": "credentials",
+      "method": "credentials/flows/read",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthFlowStatusParams"
+          "$ref": "#/definitions/CredentialFlowStatusParams"
         },
-        "type": "AuthFlowStatusParams"
+        "type": "CredentialFlowStatusParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthFlowStatusResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialFlowStatusResponse"
         },
-        "type": "AgentApiOutcome<AuthFlowStatusResponse>"
+        "type": "AgentApiOutcome<CredentialFlowStatusResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2579,25 +2579,25 @@
         "kind": "universe"
       },
       "description": "Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.",
-      "group": "auth",
-      "method": "auth/providers/create",
+      "group": "credentials",
+      "method": "credentials/providers/create",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderCreateParams"
+          "$ref": "#/definitions/CredentialProviderCreateParams"
         },
-        "type": "AuthProviderCreateParams"
+        "type": "CredentialProviderCreateParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderCreateResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialProviderCreateResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderCreateResponse>"
+        "type": "AgentApiOutcome<CredentialProviderCreateResponse>"
       },
       "role": "operator",
       "scope": "universe",
       "streaming": false,
-      "summary": "Register an authentication provider",
+      "summary": "Register a credential provider",
       "target": null
     },
     {
@@ -2606,25 +2606,25 @@
         "kind": "universe"
       },
       "description": "Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.",
-      "group": "auth",
-      "method": "auth/providers/put",
+      "group": "credentials",
+      "method": "credentials/providers/put",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderPutParams"
+          "$ref": "#/definitions/CredentialProviderPutParams"
         },
-        "type": "AuthProviderPutParams"
+        "type": "CredentialProviderPutParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderPutResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialProviderPutResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderPutResponse>"
+        "type": "AgentApiOutcome<CredentialProviderPutResponse>"
       },
       "role": "operator",
       "scope": "universe",
       "streaming": false,
-      "summary": "Declare an authentication provider",
+      "summary": "Declare a credential provider",
       "target": null
     },
     {
@@ -2633,25 +2633,25 @@
         "kind": "universe"
       },
       "description": "Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.",
-      "group": "auth",
-      "method": "auth/providers/read",
+      "group": "credentials",
+      "method": "credentials/providers/read",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderReadParams"
+          "$ref": "#/definitions/CredentialProviderReadParams"
         },
-        "type": "AuthProviderReadParams"
+        "type": "CredentialProviderReadParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderReadResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialProviderReadResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderReadResponse>"
+        "type": "AgentApiOutcome<CredentialProviderReadResponse>"
       },
       "role": "viewer",
       "scope": "universe",
       "streaming": false,
-      "summary": "Read authentication provider metadata",
+      "summary": "Read credential provider metadata",
       "target": null
     },
     {
@@ -2660,25 +2660,25 @@
         "kind": "universe"
       },
       "description": "Lists non-secret model/GitHub provider registrations for the universe.",
-      "group": "auth",
-      "method": "auth/providers/list",
+      "group": "credentials",
+      "method": "credentials/providers/list",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderListParams"
+          "$ref": "#/definitions/CredentialProviderListParams"
         },
-        "type": "AuthProviderListParams"
+        "type": "CredentialProviderListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialProviderListResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderListResponse>"
+        "type": "AgentApiOutcome<CredentialProviderListResponse>"
       },
       "role": "viewer",
       "scope": "universe",
       "streaming": false,
-      "summary": "List authentication providers",
+      "summary": "List credential providers",
       "target": null
     },
     {
@@ -2687,25 +2687,25 @@
         "kind": "universe"
       },
       "description": "Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.",
-      "group": "auth",
-      "method": "auth/providers/delete",
+      "group": "credentials",
+      "method": "credentials/providers/delete",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthProviderDeleteParams"
+          "$ref": "#/definitions/CredentialProviderDeleteParams"
         },
-        "type": "AuthProviderDeleteParams"
+        "type": "CredentialProviderDeleteParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthProviderDeleteResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialProviderDeleteResponse"
         },
-        "type": "AgentApiOutcome<AuthProviderDeleteResponse>"
+        "type": "AgentApiOutcome<CredentialProviderDeleteResponse>"
       },
       "role": "operator",
       "scope": "universe",
       "streaming": false,
-      "summary": "Delete an authentication provider",
+      "summary": "Delete a credential provider",
       "target": null
     },
     {
@@ -2714,20 +2714,20 @@
         "kind": "universe"
       },
       "description": "Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.",
-      "group": "auth",
-      "method": "auth/github/installations/list",
+      "group": "credentials",
+      "method": "credentials/github/installations/list",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGitHubInstallationListParams"
+          "$ref": "#/definitions/CredentialGitHubInstallationListParams"
         },
-        "type": "AuthGitHubInstallationListParams"
+        "type": "CredentialGitHubInstallationListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGitHubInstallationListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGitHubInstallationListResponse"
         },
-        "type": "AgentApiOutcome<AuthGitHubInstallationListResponse>"
+        "type": "AgentApiOutcome<CredentialGitHubInstallationListResponse>"
       },
       "role": "operator",
       "scope": "universe",
@@ -2740,21 +2740,21 @@
         "action": "configureResource",
         "kind": "universe"
       },
-      "description": "Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
-      "group": "auth",
-      "method": "auth/github/installations/grant",
+      "description": "Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.",
+      "group": "credentials",
+      "method": "credentials/github/installations/grant",
       "notifications": [],
       "params": {
         "schema": {
-          "$ref": "#/definitions/AuthGitHubInstallationGrantParams"
+          "$ref": "#/definitions/CredentialGitHubInstallationGrantParams"
         },
-        "type": "AuthGitHubInstallationGrantParams"
+        "type": "CredentialGitHubInstallationGrantParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfAuthGitHubInstallationGrantResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse"
         },
-        "type": "AgentApiOutcome<AuthGitHubInstallationGrantResponse>"
+        "type": "AgentApiOutcome<CredentialGitHubInstallationGrantResponse>"
       },
       "role": "operator",
       "scope": "universe",

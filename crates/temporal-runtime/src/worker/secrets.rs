@@ -7,10 +7,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use auth::{
-    AuthBrokerError, AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
-    AuthRegistryError, AuthTokenBroker, CredentialHeaderError, RequestHeaderValue, SecretStore,
-    TokenAudience, model_auth_provider_id,
+use credentials::{
+    CredentialBrokerError, CredentialHeaderError, CredentialProviderConfig, CredentialProviderId,
+    CredentialProviderStatus, CredentialProviderStore, CredentialRegistryError,
+    CredentialTokenBroker, RequestHeaderValue, SecretStore, TokenAudience, model_auth_provider_id,
 };
 use llm_runtime::provider_keys::{
     ModelProviderResolver, ProviderKeyError, ResolvedEndpoint, ResolvedModelProvider,
@@ -30,13 +30,16 @@ use mcp::{
 /// `mcp_server_header` does the same for one of its credential headers; `env`
 /// falls back to environment variables for development.
 pub struct BrokerSecretResolver {
-    broker: Arc<dyn AuthTokenBroker>,
+    broker: Arc<dyn CredentialTokenBroker>,
     mcp_servers: Arc<dyn McpRegistryStore>,
     env: EnvSecretResolver,
 }
 
 impl BrokerSecretResolver {
-    pub fn new(broker: Arc<dyn AuthTokenBroker>, mcp_servers: Arc<dyn McpRegistryStore>) -> Self {
+    pub fn new(
+        broker: Arc<dyn CredentialTokenBroker>,
+        mcp_servers: Arc<dyn McpRegistryStore>,
+    ) -> Self {
         Self {
             broker,
             mcp_servers,
@@ -124,7 +127,7 @@ impl SecretResolver for BrokerSecretResolver {
                             namespace: secret_ref.namespace.clone(),
                             id: secret_ref.id.clone(),
                             message: format!(
-                                "MCP server {} requires an auth grant",
+                                "MCP server {} requires a credential grant",
                                 server.server_id
                             ),
                         });
@@ -167,7 +170,7 @@ impl SecretResolver for BrokerSecretResolver {
                         });
                     }
                 };
-                let value = auth::resolve_credential_header(
+                let value = credentials::resolve_credential_header(
                     self.broker.as_ref(),
                     &grant_id,
                     &TokenAudience::McpResource(server.server_url.clone()),
@@ -190,7 +193,7 @@ impl SecretResolver for BrokerSecretResolver {
 }
 
 /// Resolves stored model provider credentials from `model:<provider_id>`
-/// auth provider rows. An absent row resolves to `None` so
+/// credential provider rows. An absent row resolves to `None` so
 /// adapters fall back to the env-configured client key; a row that exists but
 /// is disabled, of the wrong kind, missing its credential, or bound to an
 /// unusable grant fails resolution instead of silently falling back.
@@ -202,16 +205,16 @@ impl SecretResolver for BrokerSecretResolver {
 /// with an endpoint also resolves the endpoint's credential headers through
 /// the broker, at every request.
 pub struct StoredModelProviderResolver {
-    providers: Arc<dyn AuthProviderStore>,
+    providers: Arc<dyn CredentialProviderStore>,
     secrets: Arc<dyn SecretStore>,
-    broker: Arc<dyn AuthTokenBroker>,
+    broker: Arc<dyn CredentialTokenBroker>,
 }
 
 impl StoredModelProviderResolver {
     pub fn new(
-        providers: Arc<dyn AuthProviderStore>,
+        providers: Arc<dyn CredentialProviderStore>,
         secrets: Arc<dyn SecretStore>,
-        broker: Arc<dyn AuthTokenBroker>,
+        broker: Arc<dyn CredentialTokenBroker>,
     ) -> Self {
         Self {
             providers,
@@ -227,16 +230,15 @@ impl ModelProviderResolver for StoredModelProviderResolver {
         &self,
         provider_id: &str,
     ) -> Result<Option<ResolvedModelProvider>, ProviderKeyError> {
-        let row_id =
-            AuthProviderId::try_new(model_auth_provider_id(provider_id)).map_err(|error| {
-                ProviderKeyError::Backend {
-                    provider_id: provider_id.to_owned(),
-                    message: format!("invalid model auth provider id: {error}"),
-                }
-            })?;
-        let record = match self.providers.read_auth_provider(&row_id).await {
+        let row_id = CredentialProviderId::try_new(model_auth_provider_id(provider_id)).map_err(
+            |error| ProviderKeyError::Backend {
+                provider_id: provider_id.to_owned(),
+                message: format!("invalid model credential provider id: {error}"),
+            },
+        )?;
+        let record = match self.providers.read_credential_provider(&row_id).await {
             Ok(record) => record,
-            Err(AuthRegistryError::ProviderNotFound { .. }) => return Ok(None),
+            Err(CredentialRegistryError::ProviderNotFound { .. }) => return Ok(None),
             Err(error) => {
                 return Err(ProviderKeyError::Backend {
                     provider_id: provider_id.to_owned(),
@@ -244,18 +246,18 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                 });
             }
         };
-        if record.status != AuthProviderStatus::Active {
+        if record.status != CredentialProviderStatus::Active {
             return Err(ProviderKeyError::NotUsable {
                 provider_id: provider_id.to_owned(),
-                message: format!("auth provider {row_id} is {:?}", record.status),
+                message: format!("credential provider {row_id} is {:?}", record.status),
             });
         }
         match &record.config {
-            AuthProviderConfig::ModelApiKey(config) => {
+            CredentialProviderConfig::ModelApiKey(config) => {
                 let Some(secret_id) = &record.credential_secret else {
                     return Err(ProviderKeyError::NotUsable {
                         provider_id: provider_id.to_owned(),
-                        message: format!("auth provider {row_id} has no credential secret"),
+                        message: format!("credential provider {row_id} has no credential secret"),
                     });
                 };
                 let (_, value) = self.secrets.read_secret(secret_id).await.map_err(|error| {
@@ -271,7 +273,7 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                         .await?,
                 }))
             }
-            AuthProviderConfig::ModelOAuth(config) => {
+            CredentialProviderConfig::ModelOAuth(config) => {
                 let audience = config
                     .audience
                     .clone()
@@ -281,7 +283,7 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                     .bearer_token(&config.grant_id, &TokenAudience::ModelProvider(audience))
                     .await
                     .map_err(|error| match error {
-                        AuthBrokerError::Store { message } => ProviderKeyError::Backend {
+                        CredentialBrokerError::Store { message } => ProviderKeyError::Backend {
                             provider_id: provider_id.to_owned(),
                             message,
                         },
@@ -297,7 +299,7 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                         .await?,
                 }))
             }
-            AuthProviderConfig::ModelEndpoint(config) => Ok(Some(ResolvedModelProvider {
+            CredentialProviderConfig::ModelEndpoint(config) => Ok(Some(ResolvedModelProvider {
                 auth: None,
                 endpoint: self
                     .resolve_endpoint(provider_id, Some(&config.endpoint))
@@ -306,7 +308,7 @@ impl ModelProviderResolver for StoredModelProviderResolver {
             other => Err(ProviderKeyError::NotUsable {
                 provider_id: provider_id.to_owned(),
                 message: format!(
-                    "auth provider {row_id} is kind {:?}, not a model provider credential",
+                    "credential provider {row_id} is kind {:?}, not a model provider credential",
                     other.provider_kind()
                 ),
             }),
@@ -322,7 +324,7 @@ impl StoredModelProviderResolver {
     async fn resolve_endpoint(
         &self,
         provider_id: &str,
-        endpoint: Option<&auth::ModelEndpointConfig>,
+        endpoint: Option<&credentials::ModelEndpointConfig>,
     ) -> Result<Option<ResolvedEndpoint>, ProviderKeyError> {
         let Some(endpoint) = endpoint else {
             return Ok(None);
@@ -349,18 +351,19 @@ impl StoredModelProviderResolver {
             let RequestHeaderValue::Credential { grant_id } = value else {
                 continue;
             };
-            let value = auth::resolve_credential_header(self.broker.as_ref(), grant_id, &audience)
-                .await
-                .map_err(|error| match error {
-                    CredentialHeaderError::Store { message } => ProviderKeyError::Backend {
-                        provider_id: provider_id.to_owned(),
-                        message,
-                    },
-                    other => ProviderKeyError::NotUsable {
-                        provider_id: provider_id.to_owned(),
-                        message: format!("model endpoint header {name:?}: {other}"),
-                    },
-                })?;
+            let value =
+                credentials::resolve_credential_header(self.broker.as_ref(), grant_id, &audience)
+                    .await
+                    .map_err(|error| match error {
+                        CredentialHeaderError::Store { message } => ProviderKeyError::Backend {
+                            provider_id: provider_id.to_owned(),
+                            message,
+                        },
+                        other => ProviderKeyError::NotUsable {
+                            provider_id: provider_id.to_owned(),
+                            message: format!("model endpoint header {name:?}: {other}"),
+                        },
+                    })?;
             resolved.transport = resolved
                 .transport
                 .with_credential_header(name, value)
@@ -374,19 +377,19 @@ pub type StoredProviderKeyResolver = StoredModelProviderResolver;
 
 fn broker_error_to_resolve_error(
     secret_ref: &SecretRef,
-    error: AuthBrokerError,
+    error: CredentialBrokerError,
 ) -> SecretResolveError {
     match error {
-        AuthBrokerError::GrantNotFound { .. } => SecretResolveError::Backend {
+        CredentialBrokerError::GrantNotFound { .. } => SecretResolveError::Backend {
             namespace: secret_ref.namespace.clone(),
             id: secret_ref.id.clone(),
-            message: "MCP server is bound to an auth grant that no longer exists".to_owned(),
+            message: "MCP server is bound to a credential grant that no longer exists".to_owned(),
         },
         // This text can reach the model, so it names the grant and not the URL.
-        AuthBrokerError::AudienceMismatch { grant_id, .. } => SecretResolveError::Backend {
+        CredentialBrokerError::AudienceMismatch { grant_id, .. } => SecretResolveError::Backend {
             namespace: secret_ref.namespace.clone(),
             id: secret_ref.id.clone(),
-            message: format!("auth grant {grant_id} does not cover this MCP server's URL"),
+            message: format!("credential grant {grant_id} does not cover this MCP server's URL"),
         },
         other => SecretResolveError::Backend {
             namespace: secret_ref.namespace.clone(),
@@ -400,10 +403,11 @@ fn broker_error_to_resolve_error(
 mod tests {
     use std::sync::Arc;
 
-    use auth::{
-        AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthProviderKind, CreateAuthGrantRecord,
-        InMemoryAuthGrantStore, InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord,
-        RegistryTokenBroker, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
+    use credentials::{
+        CreateCredentialGrantRecord, CredentialGrantId, CredentialGrantStatus,
+        CredentialGrantStore, CredentialProviderKind, InMemoryCredentialGrantStore,
+        InMemoryGrantLocks, InMemorySecretStore, PutSecretRecord, RegistryTokenBroker,
+        SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore, SecretValue,
     };
     use mcp::{
         InMemoryMcpRegistryStore, McpApprovalPolicy, McpRegistryStore, McpServerAuthPolicy,
@@ -414,20 +418,20 @@ mod tests {
 
     struct McpResolverFixture {
         resolver: BrokerSecretResolver,
-        grants: Arc<InMemoryAuthGrantStore>,
+        grants: Arc<InMemoryCredentialGrantStore>,
         secrets: Arc<InMemorySecretStore>,
         mcp_servers: Arc<InMemoryMcpRegistryStore>,
     }
 
     async fn resolver_with_grant(audience: Option<&str>) -> McpResolverFixture {
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_1"),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new("authgrant_1"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticToken,
-                exposure: auth::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::StaticToken,
+                exposure: credentials::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -437,7 +441,7 @@ mod tests {
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 10,
             })
@@ -469,7 +473,7 @@ mod tests {
                     defer_loading: None,
                     allow_private_network: false,
                     auth_policy: McpServerAuthPolicy::RequiredBearer,
-                    auth_grant_id: Some(AuthGrantId::new("authgrant_1")),
+                    auth_grant_id: Some(CredentialGrantId::new("authgrant_1")),
                     headers: Default::default(),
                     status: McpServerStatus::Active,
                     now_ms: 10,
@@ -689,11 +693,11 @@ mod tests {
 
         fixture
             .grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_2"),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new("authgrant_2"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticToken,
-                exposure: auth::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::StaticToken,
+                exposure: credentials::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -703,7 +707,7 @@ mod tests {
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 20,
             })
@@ -721,7 +725,7 @@ mod tests {
             .expect("put replacement secret");
 
         edit_crm_server(&fixture, |record| {
-            record.auth_grant_id = Some(AuthGrantId::new("authgrant_2"));
+            record.auth_grant_id = Some(CredentialGrantId::new("authgrant_2"));
         })
         .await;
 
@@ -748,7 +752,7 @@ mod tests {
             record.headers.insert(
                 "x-upstream-token".to_owned(),
                 RequestHeaderValue::Credential {
-                    grant_id: AuthGrantId::new("authgrant_1"),
+                    grant_id: CredentialGrantId::new("authgrant_1"),
                 },
             );
             record.headers.insert(
@@ -830,8 +834,8 @@ mod tests {
         fixture
             .grants
             .update_grant_status(
-                &AuthGrantId::new("authgrant_1"),
-                AuthGrantStatus::Revoked,
+                &CredentialGrantId::new("authgrant_1"),
+                CredentialGrantStatus::Revoked,
                 30,
             )
             .await
@@ -878,31 +882,35 @@ mod tests {
 
     /// Broker over empty stores: good enough for the api-key paths, which
     /// never consult it.
-    fn empty_broker() -> Arc<dyn AuthTokenBroker> {
+    fn empty_broker() -> Arc<dyn CredentialTokenBroker> {
         Arc::new(RegistryTokenBroker::new(
-            Arc::new(InMemoryAuthGrantStore::new()),
+            Arc::new(InMemoryCredentialGrantStore::new()),
             Arc::new(InMemorySecretStore::new()),
             Arc::new(InMemoryGrantLocks::new()),
         ))
     }
 
-    async fn provider_key_resolver(status: auth::AuthProviderStatus) -> StoredProviderKeyResolver {
-        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
+    async fn provider_key_resolver(
+        status: credentials::CredentialProviderStatus,
+    ) -> StoredProviderKeyResolver {
+        let providers = Arc::new(credentials::InMemoryCredentialProviderStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_llm"),
-                secret_kind: auth::SECRET_KIND_MODEL_API_KEY.to_owned(),
+                secret_kind: credentials::SECRET_KIND_MODEL_API_KEY.to_owned(),
                 value: SecretValue::new("stored-api-key"),
                 created_at_ms: 10,
             })
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth::CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new(model_auth_provider_id("openai")),
+            .create_credential_provider(credentials::CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new(model_auth_provider_id("openai")),
                 display_name: None,
-                config: AuthProviderConfig::ModelApiKey(auth::ModelApiKeyConfig::default()),
+                config: CredentialProviderConfig::ModelApiKey(
+                    credentials::ModelApiKeyConfig::default(),
+                ),
                 credential_secret: Some(SecretId::new("authsec_llm")),
                 status,
                 created_at_ms: 10,
@@ -914,7 +922,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_stored_llm_provider_keys() {
-        let resolver = provider_key_resolver(AuthProviderStatus::Active).await;
+        let resolver = provider_key_resolver(CredentialProviderStatus::Active).await;
 
         let auth = resolver
             .resolve_model_provider("openai")
@@ -932,7 +940,7 @@ mod tests {
 
     #[tokio::test]
     async fn absent_llm_provider_rows_resolve_to_none() {
-        let resolver = provider_key_resolver(AuthProviderStatus::Active).await;
+        let resolver = provider_key_resolver(CredentialProviderStatus::Active).await;
 
         let key = resolver
             .resolve_model_provider("anthropic")
@@ -944,25 +952,27 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn credentialless_model_provider_resolves_its_endpoint_and_api_kinds() {
-        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
+        let providers = Arc::new(credentials::InMemoryCredentialProviderStore::new());
         providers
-            .create_auth_provider(auth::CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new(model_auth_provider_id("ollama")),
+            .create_credential_provider(credentials::CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new(model_auth_provider_id("ollama")),
                 display_name: Some("Local Ollama".to_owned()),
-                config: AuthProviderConfig::ModelEndpoint(auth::ModelEndpointOnlyConfig {
-                    endpoint: auth::ModelEndpointConfig {
-                        base_url: "http://127.0.0.1:11434/v1".to_owned(),
-                        headers: std::collections::BTreeMap::from([(
-                            "x-client".to_owned(),
-                            RequestHeaderValue::Literal {
-                                value: "lightspeed".to_owned(),
-                            },
-                        )]),
-                        api_kinds: vec!["openai:completions".to_owned()],
+                config: CredentialProviderConfig::ModelEndpoint(
+                    credentials::ModelEndpointOnlyConfig {
+                        endpoint: credentials::ModelEndpointConfig {
+                            base_url: "http://127.0.0.1:11434/v1".to_owned(),
+                            headers: std::collections::BTreeMap::from([(
+                                "x-client".to_owned(),
+                                RequestHeaderValue::Literal {
+                                    value: "lightspeed".to_owned(),
+                                },
+                            )]),
+                            api_kinds: vec!["openai:completions".to_owned()],
+                        },
                     },
-                }),
+                ),
                 credential_secret: None,
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 10,
             })
             .await
@@ -999,18 +1009,18 @@ mod tests {
         grant_audience: Option<&str>,
     ) -> (
         StoredProviderKeyResolver,
-        Arc<InMemoryAuthGrantStore>,
+        Arc<InMemoryCredentialGrantStore>,
         Arc<InMemorySecretStore>,
     ) {
-        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let providers = Arc::new(credentials::InMemoryCredentialProviderStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_router"),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new("authgrant_router"),
                 provider_id: "static".to_owned(),
-                provider_kind: AuthProviderKind::StaticToken,
-                exposure: auth::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::StaticToken,
+                exposure: credentials::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -1020,7 +1030,7 @@ mod tests {
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 10,
             })
@@ -1036,36 +1046,38 @@ mod tests {
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth::CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new(model_auth_provider_id("router")),
+            .create_credential_provider(credentials::CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new(model_auth_provider_id("router")),
                 display_name: None,
-                config: AuthProviderConfig::ModelEndpoint(auth::ModelEndpointOnlyConfig {
-                    endpoint: auth::ModelEndpointConfig {
-                        base_url: "https://router.example/v1".to_owned(),
-                        headers: std::collections::BTreeMap::from([
-                            (
-                                "x-title".to_owned(),
-                                RequestHeaderValue::Literal {
-                                    value: "Lightspeed".to_owned(),
-                                },
-                            ),
-                            (
-                                "x-api-key".to_owned(),
-                                RequestHeaderValue::Credential {
-                                    grant_id: AuthGrantId::new("authgrant_router"),
-                                },
-                            ),
-                        ]),
-                        api_kinds: vec!["openai:completions".to_owned()],
+                config: CredentialProviderConfig::ModelEndpoint(
+                    credentials::ModelEndpointOnlyConfig {
+                        endpoint: credentials::ModelEndpointConfig {
+                            base_url: "https://router.example/v1".to_owned(),
+                            headers: std::collections::BTreeMap::from([
+                                (
+                                    "x-title".to_owned(),
+                                    RequestHeaderValue::Literal {
+                                        value: "Lightspeed".to_owned(),
+                                    },
+                                ),
+                                (
+                                    "x-api-key".to_owned(),
+                                    RequestHeaderValue::Credential {
+                                        grant_id: CredentialGrantId::new("authgrant_router"),
+                                    },
+                                ),
+                            ]),
+                            api_kinds: vec!["openai:completions".to_owned()],
+                        },
                     },
-                }),
+                ),
                 credential_secret: None,
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 10,
             })
             .await
             .expect("create provider");
-        let broker: Arc<dyn AuthTokenBroker> = Arc::new(RegistryTokenBroker::new(
+        let broker: Arc<dyn CredentialTokenBroker> = Arc::new(RegistryTokenBroker::new(
             grants.clone(),
             secrets.clone(),
             Arc::new(InMemoryGrantLocks::new()),
@@ -1102,8 +1114,8 @@ mod tests {
         let (resolver, grants, _secrets) = endpoint_header_resolver(None).await;
         grants
             .update_grant_status(
-                &AuthGrantId::new("authgrant_router"),
-                AuthGrantStatus::Revoked,
+                &CredentialGrantId::new("authgrant_router"),
+                CredentialGrantStatus::Revoked,
                 20,
             )
             .await
@@ -1146,7 +1158,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_llm_provider_rows_fail_instead_of_falling_back() {
-        let resolver = provider_key_resolver(AuthProviderStatus::Disabled).await;
+        let resolver = provider_key_resolver(CredentialProviderStatus::Disabled).await;
 
         let error = resolver
             .resolve_model_provider("openai")
@@ -1158,27 +1170,27 @@ mod tests {
 
     #[tokio::test]
     async fn non_llm_provider_rows_fail_with_a_kind_error() {
-        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
+        let providers = Arc::new(credentials::InMemoryCredentialProviderStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         secrets
             .put_secret(PutSecretRecord {
                 secret_id: SecretId::new("authsec_pem"),
-                secret_kind: auth::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
+                secret_kind: credentials::SECRET_KIND_GITHUB_APP_PRIVATE_KEY.to_owned(),
                 value: SecretValue::new("pem"),
                 created_at_ms: 10,
             })
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth::CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new("model:openai"),
+            .create_credential_provider(credentials::CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new("model:openai"),
                 display_name: None,
-                config: AuthProviderConfig::GitHubApp(auth::GitHubAppConfig {
+                config: CredentialProviderConfig::GitHubApp(credentials::GitHubAppConfig {
                     app_id: "12345".to_owned(),
                     api_base_url: "https://api.github.com".to_owned(),
                 }),
                 credential_secret: Some(SecretId::new("authsec_pem")),
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 10,
             })
             .await
@@ -1199,15 +1211,15 @@ mod tests {
         grant_audience: Option<&str>,
         binding_audience: Option<&str>,
     ) -> StoredProviderKeyResolver {
-        let providers = Arc::new(auth::InMemoryAuthProviderStore::new());
-        let grants = Arc::new(InMemoryAuthGrantStore::new());
+        let providers = Arc::new(credentials::InMemoryCredentialProviderStore::new());
+        let grants = Arc::new(InMemoryCredentialGrantStore::new());
         let secrets = Arc::new(InMemorySecretStore::new());
         grants
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new("authgrant_model"),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new("authgrant_model"),
                 provider_id: "custom".to_owned(),
-                provider_kind: AuthProviderKind::CustomOAuth,
-                exposure: auth::AuthGrantExposure::Brokered,
+                provider_kind: CredentialProviderKind::CustomOAuth,
+                exposure: credentials::CredentialGrantExposure::Brokered,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -1217,7 +1229,7 @@ mod tests {
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::Value::Object(Default::default()),
                 created_at_ms: 10,
             })
@@ -1233,21 +1245,21 @@ mod tests {
             .await
             .expect("put secret");
         providers
-            .create_auth_provider(auth::CreateAuthProviderRecord {
-                provider_id: AuthProviderId::new(model_auth_provider_id("anthropic")),
+            .create_credential_provider(credentials::CreateCredentialProviderRecord {
+                provider_id: CredentialProviderId::new(model_auth_provider_id("anthropic")),
                 display_name: None,
-                config: AuthProviderConfig::ModelOAuth(auth::ModelOAuthConfig {
-                    grant_id: AuthGrantId::new("authgrant_model"),
+                config: CredentialProviderConfig::ModelOAuth(credentials::ModelOAuthConfig {
+                    grant_id: CredentialGrantId::new("authgrant_model"),
                     audience: binding_audience.map(str::to_owned),
                     endpoint: None,
                 }),
                 credential_secret: None,
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 10,
             })
             .await
             .expect("create provider");
-        let broker: Arc<dyn AuthTokenBroker> = Arc::new(RegistryTokenBroker::new(
+        let broker: Arc<dyn CredentialTokenBroker> = Arc::new(RegistryTokenBroker::new(
             grants,
             secrets.clone(),
             Arc::new(InMemoryGrantLocks::new()),

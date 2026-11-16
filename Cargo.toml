@@ -7,7 +7,7 @@ members = [
     "crates/environment-protocol",
     "crates/llm-clients",
     "crates/api",
-    "crates/auth",
+    "crates/credentials",
     "crates/bots",
     "crates/channels",
     "crates/codemode",

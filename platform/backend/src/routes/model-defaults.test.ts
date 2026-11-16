@@ -31,7 +31,7 @@ function fixture() {
   vi.stubGlobal("fetch", fetch);
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("session", { user: { id: "member" } } as ApiVariables["session"]); await next(); });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
   const call = (method = "GET", body?: unknown) => app.request("/universe/models/defaults", {
     method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });

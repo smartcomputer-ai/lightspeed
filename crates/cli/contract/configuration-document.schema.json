@@ -2,124 +2,6 @@
   "$ref": "#/definitions/UniverseDocument",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AuthGrantExposure": {
-      "description": "Where a credential's plain value may go, fixed when it is created.",
-      "oneOf": [
-        {
-          "const": "brokered",
-          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
-          "type": "string"
-        },
-        {
-          "const": "retrievable",
-          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
-          "type": "string"
-        }
-      ]
-    },
-    "AuthProviderConfigInput": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "apiBaseUrl": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "appId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "githubApp",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "appId"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
-          "properties": {
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": {
-              "const": "modelApiKey",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Bind an existing auth grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
-          "properties": {
-            "audience": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "endpoint": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ModelEndpointConfig"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "grantId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "modelOAuth",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "grantId"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Register an endpoint that requires no provider credential.",
-          "properties": {
-            "endpoint": {
-              "$ref": "#/definitions/ModelEndpointConfig"
-            },
-            "type": {
-              "const": "modelEndpoint",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "endpoint"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "CodeModeFeature": {
       "additionalProperties": false,
       "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
@@ -307,6 +189,124 @@
       },
       "type": "object"
     },
+    "CredentialGrantExposure": {
+      "description": "Where a credential's plain value may go, fixed when it is created.",
+      "oneOf": [
+        {
+          "const": "brokered",
+          "description": "The value stays inside the runtime, which attaches it to its own\noutbound requests (an MCP server, a model endpoint header).",
+          "type": "string"
+        },
+        {
+          "const": "retrievable",
+          "description": "The value may also be leased to a trusted service and bound into an\nenvironment, where commands receive it.",
+          "type": "string"
+        }
+      ]
+    },
+    "CredentialProviderConfigInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "apiBaseUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "appId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "githubApp",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Stored model provider API key; the key arrives via `credential` and is\nencrypted on receipt.",
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "const": "modelApiKey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Bind an existing credential grant as a model provider credential. No\n`credential` is accepted; the grant's tokens stay in the grant store.",
+          "properties": {
+            "audience": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "endpoint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ModelEndpointConfig"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grantId": {
+              "type": "string"
+            },
+            "type": {
+              "const": "modelOAuth",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "grantId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Register an endpoint that requires no provider credential.",
+          "properties": {
+            "endpoint": {
+              "$ref": "#/definitions/ModelEndpointConfig"
+            },
+            "type": {
+              "const": "modelEndpoint",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "endpoint"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CredentialsEntry": {
       "additionalProperties": false,
       "description": "Declare a token credential (`staticToken`): its id, its settings and the\ntoken it holds. A credential that is missing is created. One that exists\nhas its settings replaced by these (an absent field is unset) and, when it\nholds a different token, that token replaced, so MCP servers, headers,\nbot polls and environment variables referencing the id use the new value\nfrom their next request or process. Declaring it again changes nothing.\n\n`token` is encrypted on receipt and never returned; `Debug` output redacts\nit and request logging must never echo these params.",
@@ -332,7 +332,7 @@
           ]
         },
         "exposure": {
-          "$ref": "#/definitions/AuthGrantExposure",
+          "$ref": "#/definitions/CredentialGrantExposure",
           "default": "brokered",
           "description": "Whether the plain token may be leased to a service or bound into an\nenvironment. It cannot be changed afterwards."
         },
@@ -1085,7 +1085,7 @@
       ]
     },
     "McpServerCredential": {
-      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the auth subsystem and is never returned.",
+      "description": "Non-secret universe credential selected by this configured MCP server.\nToken material remains in the credentials subsystem and is never returned.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -1409,7 +1409,7 @@
       "description": "Declare a provider: its id, its configuration and its credential. A\nprovider that is missing is created. One that exists is rewritten in place\nas if it were created again under the same id, where it differs: the new\nsettings are validated before anything changes, so a rejected declaration\nleaves the provider as it was, and sessions and environment variables\nreferencing the id keep working throughout. Declaring it again changes\nnothing. `credential` is encrypted on receipt and never returned; `Debug`\noutput redacts it.",
       "properties": {
         "config": {
-          "$ref": "#/definitions/AuthProviderConfigInput"
+          "$ref": "#/definitions/CredentialProviderConfigInput"
         },
         "credentialFrom": {
           "$ref": "#/definitions/SecretSource",

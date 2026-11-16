@@ -162,8 +162,11 @@ LIGHTSPEED_POSTGRES_URL=<runtime-postgres-connection-url>
 LIGHTSPEED_AUTH_MODE=authenticated
 LIGHTSPEED_RPC_TOKEN_PLATFORM=<platform-runtime-token>
 LIGHTSPEED_GATEWAY_BIND=0.0.0.0:18080
+LIGHTSPEED_PUBLIC_BIND=0.0.0.0:18082
+LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND=0.0.0.0:18083
 LIGHTSPEED_PUBLIC_BASE_URL=https://lightspeed.example.com
-LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18080
+LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL=https://lightspeed.example.com
+LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18083
 LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN=<internal-routing-secret>
 LIGHTSPEED_SECRETS_MASTER_KEY=<base64-master-key>
 TEMPORAL_ADDRESS=<private-temporal-host>:7233
@@ -184,11 +187,11 @@ A database URL has the form
 in credentials. Supply the connection options required by your PostgreSQL
 deployment.
 
-The public base URL generates addresses that external clients need, such as
-OAuth callbacks and daemon data connections. The separate environment gateway
-URL keeps worker-to-environment traffic on the Docker network. Both values
-are needed here because the public proxy will expose only selected runtime
-routes.
+The public base URL generates OAuth callback and bot webhook addresses. The
+environment public base URL generates daemon addresses and identifies the
+origin daemons sign when registering. The private environment gateway URL
+keeps worker-to-environment traffic on the Docker network. Set all three here
+because the public proxy exposes only selected runtime routes.
 
 Leave all `LIGHTSPEED_OBJECT_STORE_*` settings absent for the initial small-blob
 PostgreSQL setup. Writes above 64 KiB fail without object storage. Even setting
@@ -265,13 +268,15 @@ docker run -d --name lightspeed-runtime \
   --stop-timeout 30 \
   --env-file runtime.env \
   -p 127.0.0.1:18080:18080 \
+  -p 127.0.0.1:18082:18082 \
+  -p 127.0.0.1:18083:18083 \
   "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID"
 ```
 
-The host mapping is loopback-only. The Platform can reach the runtime by
-container name on the Docker network, and the host proxy can reach its selected
-public routes at `127.0.0.1:18080`. Docker's stop signal starts the runtime's
-graceful shutdown, and the timeout gives it time to finish.
+The host mappings are loopback-only. The Platform reaches private RPC by
+container name on the Docker network. The host proxy reaches public callbacks
+at `127.0.0.1:18082` and daemon connections at `127.0.0.1:18083`. Docker's
+stop signal starts graceful shutdown; the timeout gives it time to finish.
 
 Wait for the listener; the retries allow time for startup:
 
@@ -311,12 +316,12 @@ the proxy runs on the application host.
 
 | Public path | Upstream | Purpose |
 | --- | --- | --- |
-| Exact `/auth/callback` | `http://127.0.0.1:18080` | Runtime OAuth callback |
-| Exact `/auth/client-metadata.json` | `http://127.0.0.1:18080` | Runtime OAuth client metadata |
-| Prefix `/hooks/bots/` | `http://127.0.0.1:18080` | Bot webhooks |
-| Exact `/environment-gateway/connect` | `http://127.0.0.1:18080` | Daemon control WebSocket |
-| Exact `/environment-gateway/data` | `http://127.0.0.1:18080` | Daemon data WebSocket |
-| `/rpc` and prefix `/environment-gateway/routes/` | Reject at the public edge | Private runtime and worker APIs |
+| Exact `/credentials/callback` | `http://127.0.0.1:18082` | Runtime OAuth callback |
+| Exact `/credentials/client-metadata.json` | `http://127.0.0.1:18082` | Runtime OAuth client metadata |
+| Prefix `/hooks/bots/` | `http://127.0.0.1:18082` | Bot webhooks |
+| Exact `/environment-gateway/connect` | `http://127.0.0.1:18083` | Daemon control WebSocket |
+| Exact `/environment-gateway/data` | `http://127.0.0.1:18083` | Daemon data WebSocket |
+| `/rpc` and prefixes `/environment-gateway/routes/`, `/environment-gateway/peer/` | Reject at the public edge | Private runtime and worker APIs |
 | All remaining paths | `http://127.0.0.1:3000` | Platform, including `/app/`, `/api/auth/`, and `/api/v1/` |
 
 Allow WebSocket upgrades and long-lived connections on the two public daemon
@@ -325,17 +330,17 @@ headers, pass WebSocket ping frames through, accept messages of up to 16 MiB,
 and do not close a quiet connection sooner than 60 seconds. Match those two
 routes exactly; forwarding the entire `/environment-gateway/` prefix would
 also expose internal worker routes. Daemons must dial these routes on the
-host of `LIGHTSPEED_PUBLIC_BASE_URL`, or on a URL listed in
+host of `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`, or on a URL listed in
 `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`: they sign that origin when they
 register, and the runtime refuses to serve registration on a non-loopback
 bind with neither.
 
 The Platform checks login, membership, role, and session visibility before
 calling the runtime with its configured token, universe selector, and actor ID.
-Keep `/rpc` private so browser access passes through those checks. RPC, OAuth
-callbacks, and bot webhooks currently share a listener; the exact route rules
-above protect RPC while allowing the public callbacks. Keep port `18080`
-private and never proxy the whole runtime listener publicly.
+Keep `/rpc` private so browser access passes through those checks. RPC, public
+callbacks, and environment traffic use separate listeners. Keep port `18080`
+private; publish only the callback and daemon routes listed above. Each
+listener has `/health` and `/ready` endpoints for operational checks.
 
 Direct runtime access is for operators and trusted components only. Its token
 is not a tenant credential and has no universe or method restrictions. The

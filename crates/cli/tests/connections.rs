@@ -135,8 +135,8 @@ impl Runtime {
                         }
                         json!({"universe": universe})
                     }
-                    "auth/grants/list" => json!({"grants":[]}),
-                    "auth/providers/list" => json!({"providers":[]}),
+                    "credentials/grants/list" => json!({"grants":[]}),
+                    "credentials/providers/list" => json!({"providers":[]}),
                     "models/defaults/read" => json!({"defaults":{}}),
                     "mcp/servers/list" => json!({"servers":[]}),
                     "environments/provider-bindings/list" => json!({"bindings":[]}),

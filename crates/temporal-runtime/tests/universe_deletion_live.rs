@@ -1,8 +1,8 @@
 //! Real PostgreSQL, object-store and Temporal teardown, including restartable steps.
 use api::{AgentApiErrorKind, AgentApiService, DeploymentApiService, UniverseDeletionState};
-use auth::{AuthGrantStore, SecretStore};
 use bots::{BotStore, BotTriggerStore};
 use channels::ChannelAccountStore;
+use credentials::{CredentialGrantStore, SecretStore};
 use environments::EnvironmentStore;
 use futures_util::TryStreamExt;
 use harness::{
@@ -305,29 +305,29 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
         })
         .await?;
     store
-        .put_secret(auth::PutSecretRecord {
-            secret_id: auth::SecretId::new("authsec_deletion"),
-            secret_kind: auth::SECRET_KIND_STATIC_TOKEN.into(),
-            value: auth::SecretValue::new("fixture-token"),
+        .put_secret(credentials::PutSecretRecord {
+            secret_id: credentials::SecretId::new("authsec_deletion"),
+            secret_kind: credentials::SECRET_KIND_STATIC_TOKEN.into(),
+            value: credentials::SecretValue::new("fixture-token"),
             created_at_ms: 1,
         })
         .await?;
     store
-        .create_grant(auth::CreateAuthGrantRecord {
-            grant_id: auth::AuthGrantId::new("authgrant_deletion"),
+        .create_grant(credentials::CreateCredentialGrantRecord {
+            grant_id: credentials::CredentialGrantId::new("authgrant_deletion"),
             provider_id: "static".into(),
-            provider_kind: auth::AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: credentials::CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
             scopes: Vec::new(),
             audience: None,
-            access_token_secret: Some(auth::SecretId::new("authsec_deletion")),
+            access_token_secret: Some(credentials::SecretId::new("authsec_deletion")),
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: auth::AuthGrantStatus::Active,
+            status: credentials::CredentialGrantStatus::Active,
             metadata: serde_json::json!({}),
             created_at_ms: 1,
         })
@@ -349,7 +349,7 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
                 allow_private_network: false,
                 auth_policy: mcp::McpServerAuthPolicy::None,
                 auth_grant_id: None,
-                headers: auth::RequestHeaders::new(),
+                headers: credentials::RequestHeaders::new(),
                 status: mcp::McpServerStatus::Active,
                 now_ms: 1,
             },

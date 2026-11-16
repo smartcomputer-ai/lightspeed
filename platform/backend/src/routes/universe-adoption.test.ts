@@ -41,7 +41,7 @@ function fixture({ role = "admin", exists = true, handle = "runtime-handle", con
   });
   app.route("/", universeRoutes({
     db: { ...db, transaction: async (work: (tx: typeof db) => unknown) => work(db) },
-    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsk_platform" },
+    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_platform" },
   } as unknown as AppContext));
   const request = (body: object = {}, path = "/adopt") => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Display name", lightspeedUniverseId: id, ...body }) });
   return { request, writes, calls };

@@ -4,42 +4,43 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 
 use crate::{
-    AuthFlowId, AuthFlowRecord, AuthFlowStore, AuthGrantId, AuthGrantRecord, AuthGrantStatus,
-    AuthGrantStore, AuthGrantTokenRefresh, AuthProviderId, AuthProviderRecord, AuthProviderStore,
-    AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord, CreateAuthProviderRecord,
-    CreateOAuthClientRecord, FinishAuthFlow, ListAuthGrants, OAuthClientId, OAuthClientRecord,
-    OAuthClientStore, PutSecretRecord, SecretId, SecretRecordMeta, SecretStore, SecretValue,
-    TokenCredentialUpdate,
+    CreateCredentialFlowRecord, CreateCredentialGrantRecord, CreateCredentialProviderRecord,
+    CreateOAuthClientRecord, CredentialFlowId, CredentialFlowRecord, CredentialFlowStore,
+    CredentialGrantId, CredentialGrantRecord, CredentialGrantStatus, CredentialGrantStore,
+    CredentialGrantTokenRefresh, CredentialProviderId, CredentialProviderRecord,
+    CredentialProviderStore, CredentialRegistryError, FinishCredentialFlow, ListCredentialGrants,
+    OAuthClientId, OAuthClientRecord, OAuthClientStore, PutSecretRecord, SecretId,
+    SecretRecordMeta, SecretStore, SecretValue, TokenCredentialUpdate,
 };
 
 #[derive(Clone, Default)]
-pub struct InMemoryAuthGrantStore {
-    inner: Arc<RwLock<BTreeMap<AuthGrantId, AuthGrantRecord>>>,
+pub struct InMemoryCredentialGrantStore {
+    inner: Arc<RwLock<BTreeMap<CredentialGrantId, CredentialGrantRecord>>>,
 }
 
-impl InMemoryAuthGrantStore {
+impl InMemoryCredentialGrantStore {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-fn lock_poisoned() -> AuthRegistryError {
-    AuthRegistryError::Store {
-        message: "auth registry lock poisoned".to_owned(),
+fn lock_poisoned() -> CredentialRegistryError {
+    CredentialRegistryError::Store {
+        message: "credential registry lock poisoned".to_owned(),
     }
 }
 
 #[async_trait]
-impl AuthGrantStore for InMemoryAuthGrantStore {
+impl CredentialGrantStore for InMemoryCredentialGrantStore {
     async fn create_grant(
         &self,
-        record: CreateAuthGrantRecord,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        record: CreateCredentialGrantRecord,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let record = record.into_record();
         record.validate()?;
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         if inner.contains_key(&record.grant_id) {
-            return Err(AuthRegistryError::GrantAlreadyExists {
+            return Err(CredentialRegistryError::GrantAlreadyExists {
                 grant_id: record.grant_id,
             });
         }
@@ -49,21 +50,21 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn read_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         inner
             .get(grant_id)
             .cloned()
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
+            .ok_or_else(|| CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             })
     }
 
     async fn list_grants(
         &self,
-        request: ListAuthGrants,
-    ) -> Result<Vec<AuthGrantRecord>, AuthRegistryError> {
+        request: ListCredentialGrants,
+    ) -> Result<Vec<CredentialGrantRecord>, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         Ok(inner
             .values()
@@ -74,16 +75,17 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn update_grant_status(
         &self,
-        grant_id: &AuthGrantId,
-        status: AuthGrantStatus,
+        grant_id: &CredentialGrantId,
+        status: CredentialGrantStatus,
         updated_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(grant_id)
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
-                grant_id: grant_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(grant_id)
+                .ok_or_else(|| CredentialRegistryError::GrantNotFound {
+                    grant_id: grant_id.clone(),
+                })?;
         record.status = status;
         record.updated_at_ms = updated_at_ms;
         record.validate()?;
@@ -92,15 +94,16 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn record_grant_refresh(
         &self,
-        grant_id: &AuthGrantId,
-        refresh: AuthGrantTokenRefresh,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+        refresh: CredentialGrantTokenRefresh,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(grant_id)
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
-                grant_id: grant_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(grant_id)
+                .ok_or_else(|| CredentialRegistryError::GrantNotFound {
+                    grant_id: grant_id.clone(),
+                })?;
         record.access_token_secret = Some(refresh.access_token_secret);
         if let Some(refresh_token_secret) = refresh.refresh_token_secret {
             record.refresh_token_secret = Some(refresh_token_secret);
@@ -113,16 +116,17 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn update_token_credential(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         expected: &SecretId,
         update: TokenCredentialUpdate,
-    ) -> Result<Option<AuthGrantRecord>, AuthRegistryError> {
+    ) -> Result<Option<CredentialGrantRecord>, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(grant_id)
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
-                grant_id: grant_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(grant_id)
+                .ok_or_else(|| CredentialRegistryError::GrantNotFound {
+                    grant_id: grant_id.clone(),
+                })?;
         if record.access_token_secret.as_ref() != Some(expected) {
             return Ok(None);
         }
@@ -134,15 +138,16 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn record_grant_lease(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         leased_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(grant_id)
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
-                grant_id: grant_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(grant_id)
+                .ok_or_else(|| CredentialRegistryError::GrantNotFound {
+                    grant_id: grant_id.clone(),
+                })?;
         record.last_leased_at_ms = Some(leased_at_ms);
         record.lease_count = record.lease_count.saturating_add(1);
         record.validate()?;
@@ -151,16 +156,17 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn record_grant_mint_expiry(
         &self,
-        grant_id: &AuthGrantId,
+        grant_id: &CredentialGrantId,
         expires_at_ms: i64,
         updated_at_ms: i64,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(grant_id)
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
-                grant_id: grant_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(grant_id)
+                .ok_or_else(|| CredentialRegistryError::GrantNotFound {
+                    grant_id: grant_id.clone(),
+                })?;
         record.expires_at_ms = Some(expires_at_ms);
         record.updated_at_ms = updated_at_ms;
         record.validate()?;
@@ -169,12 +175,12 @@ impl AuthGrantStore for InMemoryAuthGrantStore {
 
     async fn delete_grant(
         &self,
-        grant_id: &AuthGrantId,
-    ) -> Result<AuthGrantRecord, AuthRegistryError> {
+        grant_id: &CredentialGrantId,
+    ) -> Result<CredentialGrantRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         inner
             .remove(grant_id)
-            .ok_or_else(|| AuthRegistryError::GrantNotFound {
+            .ok_or_else(|| CredentialRegistryError::GrantNotFound {
                 grant_id: grant_id.clone(),
             })
     }
@@ -196,12 +202,12 @@ impl OAuthClientStore for InMemoryOAuthClientStore {
     async fn create_oauth_client(
         &self,
         record: CreateOAuthClientRecord,
-    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+    ) -> Result<OAuthClientRecord, CredentialRegistryError> {
         let record = record.into_record();
         record.validate()?;
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         if inner.contains_key(&record.client_id) {
-            return Err(AuthRegistryError::ClientAlreadyExists {
+            return Err(CredentialRegistryError::ClientAlreadyExists {
                 client_id: record.client_id,
             });
         }
@@ -212,17 +218,17 @@ impl OAuthClientStore for InMemoryOAuthClientStore {
     async fn read_oauth_client(
         &self,
         client_id: &OAuthClientId,
-    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+    ) -> Result<OAuthClientRecord, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         inner
             .get(client_id)
             .cloned()
-            .ok_or_else(|| AuthRegistryError::ClientNotFound {
+            .ok_or_else(|| CredentialRegistryError::ClientNotFound {
                 client_id: client_id.clone(),
             })
     }
 
-    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, AuthRegistryError> {
+    async fn list_oauth_clients(&self) -> Result<Vec<OAuthClientRecord>, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         Ok(inner.values().cloned().collect())
     }
@@ -230,38 +236,38 @@ impl OAuthClientStore for InMemoryOAuthClientStore {
     async fn delete_oauth_client(
         &self,
         client_id: &OAuthClientId,
-    ) -> Result<OAuthClientRecord, AuthRegistryError> {
+    ) -> Result<OAuthClientRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         inner
             .remove(client_id)
-            .ok_or_else(|| AuthRegistryError::ClientNotFound {
+            .ok_or_else(|| CredentialRegistryError::ClientNotFound {
                 client_id: client_id.clone(),
             })
     }
 }
 
 #[derive(Clone, Default)]
-pub struct InMemoryAuthProviderStore {
-    inner: Arc<RwLock<BTreeMap<AuthProviderId, AuthProviderRecord>>>,
+pub struct InMemoryCredentialProviderStore {
+    inner: Arc<RwLock<BTreeMap<CredentialProviderId, CredentialProviderRecord>>>,
 }
 
-impl InMemoryAuthProviderStore {
+impl InMemoryCredentialProviderStore {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 #[async_trait]
-impl AuthProviderStore for InMemoryAuthProviderStore {
-    async fn create_auth_provider(
+impl CredentialProviderStore for InMemoryCredentialProviderStore {
+    async fn create_credential_provider(
         &self,
-        record: CreateAuthProviderRecord,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        record: CreateCredentialProviderRecord,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         let record = record.into_record();
         record.validate()?;
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         if inner.contains_key(&record.provider_id) {
-            return Err(AuthRegistryError::ProviderAlreadyExists {
+            return Err(CredentialRegistryError::ProviderAlreadyExists {
                 provider_id: record.provider_id,
             });
         }
@@ -269,51 +275,53 @@ impl AuthProviderStore for InMemoryAuthProviderStore {
         Ok(record)
     }
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        provider_id: &AuthProviderId,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        provider_id: &CredentialProviderId,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         inner
             .get(provider_id)
             .cloned()
-            .ok_or_else(|| AuthRegistryError::ProviderNotFound {
+            .ok_or_else(|| CredentialRegistryError::ProviderNotFound {
                 provider_id: provider_id.clone(),
             })
     }
 
-    async fn list_auth_providers(&self) -> Result<Vec<AuthProviderRecord>, AuthRegistryError> {
+    async fn list_credential_providers(
+        &self,
+    ) -> Result<Vec<CredentialProviderRecord>, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         Ok(inner.values().cloned().collect())
     }
 
-    async fn delete_auth_provider(
+    async fn delete_credential_provider(
         &self,
-        provider_id: &AuthProviderId,
-    ) -> Result<AuthProviderRecord, AuthRegistryError> {
+        provider_id: &CredentialProviderId,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         inner
             .remove(provider_id)
-            .ok_or_else(|| AuthRegistryError::ProviderNotFound {
+            .ok_or_else(|| CredentialRegistryError::ProviderNotFound {
                 provider_id: provider_id.clone(),
             })
     }
 
-    async fn replace_auth_provider(
+    async fn replace_credential_provider(
         &self,
-        record: AuthProviderRecord,
+        record: CredentialProviderRecord,
         expected_credential: Option<&SecretId>,
-    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError> {
+    ) -> Result<Option<CredentialProviderRecord>, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         let current = inner.get_mut(&record.provider_id).ok_or_else(|| {
-            AuthRegistryError::ProviderNotFound {
+            CredentialRegistryError::ProviderNotFound {
                 provider_id: record.provider_id.clone(),
             }
         })?;
         if current.credential_secret.as_ref() != expected_credential {
             return Ok(None);
         }
-        let next = AuthProviderRecord {
+        let next = CredentialProviderRecord {
             created_at_ms: current.created_at_ms,
             ..record
         };
@@ -324,27 +332,27 @@ impl AuthProviderStore for InMemoryAuthProviderStore {
 }
 
 #[derive(Clone, Default)]
-pub struct InMemoryAuthFlowStore {
-    inner: Arc<RwLock<BTreeMap<AuthFlowId, AuthFlowRecord>>>,
+pub struct InMemoryCredentialFlowStore {
+    inner: Arc<RwLock<BTreeMap<CredentialFlowId, CredentialFlowRecord>>>,
 }
 
-impl InMemoryAuthFlowStore {
+impl InMemoryCredentialFlowStore {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 #[async_trait]
-impl AuthFlowStore for InMemoryAuthFlowStore {
+impl CredentialFlowStore for InMemoryCredentialFlowStore {
     async fn create_flow(
         &self,
-        record: CreateAuthFlowRecord,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        record: CreateCredentialFlowRecord,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         let record = record.into_record();
         record.validate()?;
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         if inner.contains_key(&record.flow_id) {
-            return Err(AuthRegistryError::FlowAlreadyExists {
+            return Err(CredentialRegistryError::FlowAlreadyExists {
                 flow_id: record.flow_id,
             });
         }
@@ -352,20 +360,23 @@ impl AuthFlowStore for InMemoryAuthFlowStore {
             .values()
             .any(|existing| existing.state_hash == record.state_hash)
         {
-            return Err(AuthRegistryError::Store {
-                message: "auth flow state hash collision".to_owned(),
+            return Err(CredentialRegistryError::Store {
+                message: "credential flow state hash collision".to_owned(),
             });
         }
         inner.insert(record.flow_id.clone(), record.clone());
         Ok(record)
     }
 
-    async fn read_flow(&self, flow_id: &AuthFlowId) -> Result<AuthFlowRecord, AuthRegistryError> {
+    async fn read_flow(
+        &self,
+        flow_id: &CredentialFlowId,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         inner
             .get(flow_id)
             .cloned()
-            .ok_or_else(|| AuthRegistryError::FlowNotFound {
+            .ok_or_else(|| CredentialRegistryError::FlowNotFound {
                 flow_id: flow_id.clone(),
             })
     }
@@ -373,7 +384,7 @@ impl AuthFlowStore for InMemoryAuthFlowStore {
     async fn read_flow_by_state_hash(
         &self,
         state_hash: &str,
-    ) -> Result<Option<AuthFlowRecord>, AuthRegistryError> {
+    ) -> Result<Option<CredentialFlowRecord>, CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         Ok(inner
             .values()
@@ -383,22 +394,23 @@ impl AuthFlowStore for InMemoryAuthFlowStore {
 
     async fn consume_flow(
         &self,
-        flow_id: &AuthFlowId,
+        flow_id: &CredentialFlowId,
         now_ms: i64,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(flow_id)
-            .ok_or_else(|| AuthRegistryError::FlowNotFound {
-                flow_id: flow_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(flow_id)
+                .ok_or_else(|| CredentialRegistryError::FlowNotFound {
+                    flow_id: flow_id.clone(),
+                })?;
         if record.consumed_at_ms.is_some() {
-            return Err(AuthRegistryError::FlowAlreadyConsumed {
+            return Err(CredentialRegistryError::FlowAlreadyConsumed {
                 flow_id: flow_id.clone(),
             });
         }
         if now_ms >= record.expires_at_ms {
-            return Err(AuthRegistryError::FlowExpired {
+            return Err(CredentialRegistryError::FlowExpired {
                 flow_id: flow_id.clone(),
             });
         }
@@ -409,18 +421,19 @@ impl AuthFlowStore for InMemoryAuthFlowStore {
 
     async fn finish_flow(
         &self,
-        flow_id: &AuthFlowId,
-        outcome: FinishAuthFlow,
-    ) -> Result<AuthFlowRecord, AuthRegistryError> {
+        flow_id: &CredentialFlowId,
+        outcome: FinishCredentialFlow,
+    ) -> Result<CredentialFlowRecord, CredentialRegistryError> {
         outcome.validate()?;
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
-        let record = inner
-            .get_mut(flow_id)
-            .ok_or_else(|| AuthRegistryError::FlowNotFound {
-                flow_id: flow_id.clone(),
-            })?;
+        let record =
+            inner
+                .get_mut(flow_id)
+                .ok_or_else(|| CredentialRegistryError::FlowNotFound {
+                    flow_id: flow_id.clone(),
+                })?;
         if record.completed_at_ms.is_some() {
-            return Err(AuthRegistryError::FlowAlreadyCompleted {
+            return Err(CredentialRegistryError::FlowAlreadyCompleted {
                 flow_id: flow_id.clone(),
             });
         }
@@ -451,11 +464,11 @@ impl SecretStore for InMemorySecretStore {
     async fn put_secret(
         &self,
         record: PutSecretRecord,
-    ) -> Result<SecretRecordMeta, AuthRegistryError> {
+    ) -> Result<SecretRecordMeta, CredentialRegistryError> {
         record.validate()?;
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         if inner.contains_key(&record.secret_id) {
-            return Err(AuthRegistryError::SecretAlreadyExists {
+            return Err(CredentialRegistryError::SecretAlreadyExists {
                 secret_id: record.secret_id,
             });
         }
@@ -472,22 +485,22 @@ impl SecretStore for InMemorySecretStore {
     async fn read_secret(
         &self,
         secret_id: &SecretId,
-    ) -> Result<(SecretRecordMeta, SecretValue), AuthRegistryError> {
+    ) -> Result<(SecretRecordMeta, SecretValue), CredentialRegistryError> {
         let inner = self.inner.read().map_err(|_| lock_poisoned())?;
         inner
             .get(secret_id)
             .cloned()
-            .ok_or_else(|| AuthRegistryError::SecretNotFound {
+            .ok_or_else(|| CredentialRegistryError::SecretNotFound {
                 secret_id: secret_id.clone(),
             })
     }
 
-    async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), AuthRegistryError> {
+    async fn delete_secret(&self, secret_id: &SecretId) -> Result<(), CredentialRegistryError> {
         let mut inner = self.inner.write().map_err(|_| lock_poisoned())?;
         inner
             .remove(secret_id)
             .map(|_| ())
-            .ok_or_else(|| AuthRegistryError::SecretNotFound {
+            .ok_or_else(|| CredentialRegistryError::SecretNotFound {
                 secret_id: secret_id.clone(),
             })
     }
@@ -496,14 +509,14 @@ impl SecretStore for InMemorySecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AuthProviderKind, SECRET_KIND_STATIC_TOKEN};
+    use crate::{CredentialProviderKind, SECRET_KIND_STATIC_TOKEN};
 
-    fn grant_request(grant_id: &str) -> CreateAuthGrantRecord {
-        CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new(grant_id),
+    fn grant_request(grant_id: &str) -> CreateCredentialGrantRecord {
+        CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new(grant_id),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: crate::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: crate::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -513,7 +526,7 @@ mod tests {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         }
@@ -521,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn in_memory_grant_store_supports_crud_and_status_updates() {
-        let store = InMemoryAuthGrantStore::new();
+        let store = InMemoryCredentialGrantStore::new();
 
         let created = store
             .create_grant(grant_request("authgrant_1"))
@@ -531,11 +544,11 @@ mod tests {
 
         assert!(matches!(
             store.create_grant(grant_request("authgrant_1")).await,
-            Err(AuthRegistryError::GrantAlreadyExists { .. })
+            Err(CredentialRegistryError::GrantAlreadyExists { .. })
         ));
 
         let listed = store
-            .list_grants(ListAuthGrants::default())
+            .list_grants(ListCredentialGrants::default())
             .await
             .expect("list grants");
         assert_eq!(listed, vec![created.clone()]);
@@ -554,15 +567,15 @@ mod tests {
         assert_eq!(second_lease.lease_count, 2);
 
         let revoked = store
-            .update_grant_status(&created.grant_id, AuthGrantStatus::Revoked, 20)
+            .update_grant_status(&created.grant_id, CredentialGrantStatus::Revoked, 20)
             .await
             .expect("revoke grant");
-        assert_eq!(revoked.status, AuthGrantStatus::Revoked);
+        assert_eq!(revoked.status, CredentialGrantStatus::Revoked);
         assert_eq!(revoked.updated_at_ms, 20);
 
         let active = store
-            .list_grants(ListAuthGrants {
-                status: Some(AuthGrantStatus::Active),
+            .list_grants(ListCredentialGrants {
+                status: Some(CredentialGrantStatus::Active),
             })
             .await
             .expect("list active grants");
@@ -574,14 +587,14 @@ mod tests {
             .expect("delete grant");
         assert!(matches!(
             store.read_grant(&created.grant_id).await,
-            Err(AuthRegistryError::GrantNotFound { .. })
+            Err(CredentialRegistryError::GrantNotFound { .. })
         ));
     }
 
     #[tokio::test]
     async fn in_memory_token_credential_update_writes_only_over_the_expected_value() {
-        let store = InMemoryAuthGrantStore::new();
-        let grant_id = AuthGrantId::new("authgrant_1");
+        let store = InMemoryCredentialGrantStore::new();
+        let grant_id = CredentialGrantId::new("authgrant_1");
         store
             .create_grant(grant_request("authgrant_1"))
             .await
@@ -648,35 +661,38 @@ mod tests {
         assert!(matches!(
             store
                 .update_token_credential(
-                    &AuthGrantId::new("authgrant_missing"),
+                    &CredentialGrantId::new("authgrant_missing"),
                     &SecretId::new("authsec_1"),
                     replacement("authsec_4"),
                 )
                 .await,
-            Err(AuthRegistryError::GrantNotFound { .. })
+            Err(CredentialRegistryError::GrantNotFound { .. })
         ));
     }
 
     #[tokio::test]
     async fn in_memory_provider_replacement_swaps_only_from_the_expected_credential() {
-        use crate::{AuthProviderConfig, AuthProviderId, AuthProviderStatus, ModelApiKeyConfig};
+        use crate::{
+            CredentialProviderConfig, CredentialProviderId, CredentialProviderStatus,
+            ModelApiKeyConfig,
+        };
 
-        let store = InMemoryAuthProviderStore::new();
-        let provider = |secret: &str, at: i64| CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new("model:openai"),
+        let store = InMemoryCredentialProviderStore::new();
+        let provider = |secret: &str, at: i64| CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new("model:openai"),
             display_name: None,
-            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            config: CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
             credential_secret: Some(SecretId::new(secret)),
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: at,
         };
         store
-            .create_auth_provider(provider("authsec_1", 10))
+            .create_credential_provider(provider("authsec_1", 10))
             .await
             .expect("create provider");
 
         let replaced = store
-            .replace_auth_provider(
+            .replace_credential_provider(
                 provider("authsec_2", 20).into_record(),
                 Some(&SecretId::new("authsec_1")),
             )
@@ -689,7 +705,7 @@ mod tests {
         // A writer that read the old credential loses and changes nothing.
         assert!(
             store
-                .replace_auth_provider(
+                .replace_credential_provider(
                     provider("authsec_3", 30).into_record(),
                     Some(&SecretId::new("authsec_1")),
                 )
@@ -699,7 +715,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .read_auth_provider(&AuthProviderId::new("model:openai"))
+                .read_credential_provider(&CredentialProviderId::new("model:openai"))
                 .await
                 .expect("read")
                 .credential_secret,
@@ -731,7 +747,7 @@ mod tests {
                     created_at_ms: 11,
                 })
                 .await,
-            Err(AuthRegistryError::SecretAlreadyExists { .. })
+            Err(CredentialRegistryError::SecretAlreadyExists { .. })
         ));
 
         let (read_meta, value) = store
@@ -747,7 +763,7 @@ mod tests {
             .expect("delete secret");
         assert!(matches!(
             store.read_secret(&SecretId::new("authsec_1")).await,
-            Err(AuthRegistryError::SecretNotFound { .. })
+            Err(CredentialRegistryError::SecretNotFound { .. })
         ));
     }
 }

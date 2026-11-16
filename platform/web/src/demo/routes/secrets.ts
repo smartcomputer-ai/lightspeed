@@ -1,4 +1,4 @@
-/// Universe secrets and what is built on them: auth grants, model provider
+/// Universe secrets and what is built on them: credential grants, model provider
 /// keys, coding-agent subscriptions, GitHub Apps, model discovery, and setup
 /// installation. Secret values are accepted and dropped; only the non-secret
 /// views the real gateway returns are kept.
@@ -100,7 +100,7 @@ interface GrantInit {
   metadata?: Record<string, unknown>;
 }
 
-/// `auth/grants/import`: the token is dropped on the floor, the metadata
+/// `credentials/grants/import`: the token is dropped on the floor, the metadata
 /// row is what every read returns.
 function mintGrant(store: DemoStore, universe: UniverseState, init: GrantInit): SecretGrant {
   const now = Date.now();
@@ -433,7 +433,7 @@ export function secretRoutes(store: DemoStore): Hono {
   });
 
   /// Active grants for MCP-server credential selection.
-  app.get("/:id/auth-grants", (c) => {
+  app.get("/:id/credential-grants", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     return c.json(universe.secrets.grants.filter((grant) => grant.status === "active"));
@@ -465,7 +465,7 @@ export function secretRoutes(store: DemoStore): Hono {
     }
     const providerId = optionalString(body.providerId) ?? `github-app:${appId}`;
     if (universe.githubApps.some((app) => app.providerId === providerId)) {
-      return conflict(c, `auth provider ${providerId} already exists`);
+      return conflict(c, `credential provider ${providerId} already exists`);
     }
     const now = Date.now();
     const app: GitHubApp = {

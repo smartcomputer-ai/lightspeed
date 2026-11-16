@@ -98,8 +98,8 @@ fn notification_serializes_as_json_rpc_lite_shape() {
 }
 
 #[test]
-fn auth_grant_import_params_redact_token_in_debug_output() {
-    let params: AuthGrantImportParams = serde_json::from_value(json!({
+fn credential_grant_import_params_redact_token_in_debug_output() {
+    let params: CredentialGrantImportParams = serde_json::from_value(json!({
         "grantId": "authgrant_1",
         "token": "super-secret-token",
         "audience": "https://crm.example.com/mcp"
@@ -111,16 +111,16 @@ fn auth_grant_import_params_redact_token_in_debug_output() {
     assert!(!debug.contains("super-secret-token"), "{debug}");
     assert!(debug.contains("<redacted>"));
     assert_eq!(params.token, "super-secret-token");
-    assert_eq!(params.exposure, AuthGrantExposure::Brokered);
+    assert_eq!(params.exposure, CredentialGrantExposure::Brokered);
 }
 
 #[test]
-fn auth_grant_lease_response_redacts_token_in_debug_output() {
-    let response = AuthGrantLeaseResponse {
+fn credential_grant_lease_response_redacts_token_in_debug_output() {
+    let response = CredentialGrantLeaseResponse {
         token: "super-secret-leased-token".to_owned(),
         expires_at_ms: Some(1234),
         grant_id: "authgrant_1".to_owned(),
-        provider_kind: AuthProviderKind::StaticToken,
+        provider_kind: CredentialProviderKind::StaticToken,
     };
 
     let debug = format!("{response:?}");
@@ -131,8 +131,8 @@ fn auth_grant_lease_response_redacts_token_in_debug_output() {
 }
 
 #[test]
-fn auth_client_create_params_redact_client_secret_in_debug_output() {
-    let params: AuthClientCreateParams = serde_json::from_value(json!({
+fn credential_client_create_params_redact_client_secret_in_debug_output() {
+    let params: CredentialClientCreateParams = serde_json::from_value(json!({
         "providerKind": "customOAuth",
         "authorizationEndpoint": "https://as.example.com/authorize",
         "tokenEndpoint": "https://as.example.com/token",
@@ -152,8 +152,8 @@ fn auth_client_create_params_redact_client_secret_in_debug_output() {
 }
 
 #[test]
-fn auth_provider_create_params_redact_credential_in_debug_output() {
-    let params: AuthProviderCreateParams = serde_json::from_value(json!({
+fn credential_provider_create_params_redact_credential_in_debug_output() {
+    let params: CredentialProviderCreateParams = serde_json::from_value(json!({
         "providerId": "lightspeed-github",
         "config": {"type": "githubApp", "appId": "12345"},
         "credential": "-----BEGIN RSA PRIVATE KEY-----\nsuper-secret-key"
@@ -1373,12 +1373,12 @@ async fn dispatch_json_rpc_routes_live_mcp_tool_discovery_without_revision() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_auth_grant_lease() {
+async fn dispatch_json_rpc_routes_credential_grant_lease() {
     let response = dispatch_json_rpc(
         &TestService,
         JsonRpcRequest {
             id: RequestId::Number(1),
-            method: METHOD_AUTH_GRANTS_LEASE.to_owned(),
+            method: METHOD_CREDENTIALS_GRANTS_LEASE.to_owned(),
             params: Some(json!({
                 "grantId": "authgrant_1",
                 "audience": "https://api.example.com"
@@ -1410,7 +1410,7 @@ fn mcp_server_put_params_default_approval_is_never_and_revision_optional() {
 }
 
 #[test]
-fn mcp_server_put_decodes_universe_auth_grant_credential() {
+fn mcp_server_put_decodes_universe_credential_grant_credential() {
     let params: McpServerPutParams = serde_json::from_value(json!({
         "server": {
             "serverId": "echo",
@@ -1424,7 +1424,7 @@ fn mcp_server_put_decodes_universe_auth_grant_credential() {
 
     assert_eq!(
         params.server.credential,
-        Some(McpServerCredential::AuthGrant {
+        Some(McpServerCredential::CredentialGrant {
             grant_id: "authgrant_1".to_owned(),
         })
     );
@@ -2659,7 +2659,7 @@ impl AgentApiService for TestService {
             credentials: vec![test_environment_credential(
                 params.environment_id,
                 "GITHUB_TOKEN".to_owned(),
-                EnvironmentCredentialSourceView::AuthGrant {
+                EnvironmentCredentialSourceView::CredentialGrant {
                     grant_id: "authgrant_repo".to_owned(),
                 },
             )],
@@ -2674,7 +2674,7 @@ impl AgentApiService for TestService {
             credential: test_environment_credential(
                 params.environment_id,
                 params.env_name,
-                EnvironmentCredentialSourceView::AuthGrant {
+                EnvironmentCredentialSourceView::CredentialGrant {
                     grant_id: "authgrant_repo".to_owned(),
                 },
             ),
@@ -3015,129 +3015,129 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn import_auth_grant(
+    async fn import_credential_grant(
         &self,
-        params: AuthGrantImportParams,
-    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantImportResponse {
-            grant: test_auth_grant(
+        params: CredentialGrantImportParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantImportResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialGrantImportResponse {
+            grant: test_credential_grant(
                 params.grant_id.unwrap_or_else(|| "authgrant_1".to_owned()),
-                AuthGrantStatus::Active,
+                CredentialGrantStatus::Active,
             ),
         }))
     }
 
-    async fn lease_auth_grant(
+    async fn lease_credential_grant(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantLeaseResponse {
+        params: CredentialGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantLeaseResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialGrantLeaseResponse {
             token: "leased-token".to_owned(),
             expires_at_ms: None,
             grant_id: params.grant_id,
-            provider_kind: AuthProviderKind::StaticToken,
+            provider_kind: CredentialProviderKind::StaticToken,
         }))
     }
 
-    async fn list_auth_grants(
+    async fn list_credential_grants(
         &self,
-        _params: AuthGrantListParams,
-    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantListResponse {
-            grants: vec![test_auth_grant(
+        _params: CredentialGrantListParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialGrantListResponse {
+            grants: vec![test_credential_grant(
                 "authgrant_1".to_owned(),
-                AuthGrantStatus::Active,
+                CredentialGrantStatus::Active,
             )],
         }))
     }
 
-    async fn read_auth_grant(
+    async fn read_credential_grant(
         &self,
-        params: AuthGrantReadParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantReadResponse {
-            grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+        params: CredentialGrantReadParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialGrantReadResponse {
+            grant: test_credential_grant(params.grant_id, CredentialGrantStatus::Active),
         }))
     }
 
-    async fn put_auth_grant(
+    async fn put_credential_grant(
         &self,
-        params: AuthGrantPutParams,
-    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantPutResponse {
-            grant: test_auth_grant(params.grant_id, AuthGrantStatus::Active),
+        params: CredentialGrantPutParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialGrantPutResponse {
+            grant: test_credential_grant(params.grant_id, CredentialGrantStatus::Active),
             created: false,
             token_replaced: !params.dry_run,
         }))
     }
 
-    async fn revoke_auth_grant(
+    async fn revoke_credential_grant(
         &self,
-        params: AuthGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
-            grant: test_auth_grant(params.grant_id, AuthGrantStatus::Revoked),
+        params: CredentialGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantRevokeResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialGrantRevokeResponse {
+            grant: test_credential_grant(params.grant_id, CredentialGrantStatus::Revoked),
         }))
     }
 
-    async fn create_auth_client(
+    async fn create_credential_client(
         &self,
-        params: AuthClientCreateParams,
-    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthClientCreateResponse {
-            client: test_auth_client(params.client_id.unwrap_or_else(|| "crm".to_owned())),
+        params: CredentialClientCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialClientCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialClientCreateResponse {
+            client: test_credential_client(params.client_id.unwrap_or_else(|| "crm".to_owned())),
         }))
     }
 
-    async fn list_auth_clients(
+    async fn list_credential_clients(
         &self,
-        _params: AuthClientListParams,
-    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthClientListResponse {
-            clients: vec![test_auth_client("crm".to_owned())],
+        _params: CredentialClientListParams,
+    ) -> Result<AgentApiOutcome<CredentialClientListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialClientListResponse {
+            clients: vec![test_credential_client("crm".to_owned())],
         }))
     }
 
-    async fn read_auth_client(
+    async fn read_credential_client(
         &self,
-        params: AuthClientReadParams,
-    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthClientReadResponse {
-            client: test_auth_client(params.client_id),
+        params: CredentialClientReadParams,
+    ) -> Result<AgentApiOutcome<CredentialClientReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialClientReadResponse {
+            client: test_credential_client(params.client_id),
         }))
     }
 
-    async fn delete_auth_client(
+    async fn delete_credential_client(
         &self,
-        params: AuthClientDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
-            client: test_auth_client(params.client_id),
+        params: CredentialClientDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialClientDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialClientDeleteResponse {
+            client: test_credential_client(params.client_id),
         }))
     }
 
-    async fn start_auth_flow(
+    async fn start_credential_flow(
         &self,
-        params: AuthFlowStartParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        params: CredentialFlowStartParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStartResponse>, AgentApiError> {
         let _ = params;
-        Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+        Ok(AgentApiOutcome::new(CredentialFlowStartResponse {
             flow_id: "authflow_1".to_owned(),
             authorize_url: "https://as.example.com/authorize?state=test".to_owned(),
             expires_at_ms: 600_000,
         }))
     }
 
-    async fn read_auth_flow_status(
+    async fn read_credential_flow_status(
         &self,
-        params: AuthFlowStatusParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
-            flow: AuthFlowView {
+        params: CredentialFlowStatusParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStatusResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialFlowStatusResponse {
+            flow: CredentialFlowView {
                 flow_id: params.flow_id,
                 client_id: "crm".to_owned(),
                 provider_id: "crm".to_owned(),
-                status: AuthFlowStatus::Pending,
+                status: CredentialFlowStatus::Pending,
                 grant_id: None,
                 error: None,
                 expires_at_ms: 600_000,
@@ -3147,12 +3147,12 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn create_auth_provider(
+    async fn create_credential_provider(
         &self,
-        params: AuthProviderCreateParams,
-    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
-            provider: test_auth_provider(
+        params: CredentialProviderCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderCreateResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialProviderCreateResponse {
+            provider: test_credential_provider(
                 params
                     .provider_id
                     .unwrap_or_else(|| "lightspeed-github".to_owned()),
@@ -3160,65 +3160,72 @@ impl AgentApiService for TestService {
         }))
     }
 
-    async fn put_auth_provider(
+    async fn put_credential_provider(
         &self,
-        params: AuthProviderPutParams,
-    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderPutResponse {
-            provider: test_auth_provider(params.provider_id),
+        params: CredentialProviderPutParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialProviderPutResponse {
+            provider: test_credential_provider(params.provider_id),
             created: true,
             credential_replaced: false,
         }))
     }
 
-    async fn list_auth_providers(
+    async fn list_credential_providers(
         &self,
-        _params: AuthProviderListParams,
-    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderListResponse {
-            providers: vec![test_auth_provider("lightspeed-github".to_owned())],
+        _params: CredentialProviderListParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialProviderListResponse {
+            providers: vec![test_credential_provider("lightspeed-github".to_owned())],
         }))
     }
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        params: AuthProviderReadParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderReadResponse {
-            provider: test_auth_provider(params.provider_id),
+        params: CredentialProviderReadParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderReadResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialProviderReadResponse {
+            provider: test_credential_provider(params.provider_id),
         }))
     }
 
-    async fn delete_auth_provider(
+    async fn delete_credential_provider(
         &self,
-        params: AuthProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
-            provider: test_auth_provider(params.provider_id),
+        params: CredentialProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(CredentialProviderDeleteResponse {
+            provider: test_credential_provider(params.provider_id),
         }))
     }
 
     async fn list_github_installations(
         &self,
-        _params: AuthGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
-            installations: vec![GitHubInstallationView {
-                installation_id: 678,
-                account_login: Some("acme".to_owned()),
-                repository_selection: Some("selected".to_owned()),
-                permissions: serde_json::json!({"contents": "read"}),
-            }],
-        }))
+        _params: CredentialGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationListResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            CredentialGitHubInstallationListResponse {
+                installations: vec![GitHubInstallationView {
+                    installation_id: 678,
+                    account_login: Some("acme".to_owned()),
+                    repository_selection: Some("selected".to_owned()),
+                    permissions: serde_json::json!({"contents": "read"}),
+                }],
+            },
+        ))
     }
 
     async fn grant_github_installation(
         &self,
-        _params: AuthGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
-            grant: test_auth_grant("authgrant_install".to_owned(), AuthGrantStatus::Active),
-        }))
+        _params: CredentialGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationGrantResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            CredentialGitHubInstallationGrantResponse {
+                grant: test_credential_grant(
+                    "authgrant_install".to_owned(),
+                    CredentialGrantStatus::Active,
+                ),
+            },
+        ))
     }
 
     async fn create_bot(
@@ -3465,27 +3472,27 @@ impl AgentApiService for TestService {
     }
 }
 
-fn test_auth_provider(provider_id: String) -> AuthProviderView {
-    AuthProviderView {
+fn test_credential_provider(provider_id: String) -> CredentialProviderView {
+    CredentialProviderView {
         provider_id,
-        provider_kind: AuthProviderKind::GitHubApp,
+        provider_kind: CredentialProviderKind::GitHubApp,
         display_name: None,
-        config: AuthProviderConfigView::GitHubApp {
+        config: CredentialProviderConfigView::GitHubApp {
             app_id: "12345".to_owned(),
             api_base_url: "https://api.github.com".to_owned(),
         },
         has_credential: true,
-        status: AuthProviderStatus::Active,
+        status: CredentialProviderStatus::Active,
         created_at_ms: 1,
         updated_at_ms: 2,
     }
 }
 
-fn test_auth_client(client_id: String) -> OAuthClientView {
+fn test_credential_client(client_id: String) -> OAuthClientView {
     OAuthClientView {
         client_id,
         provider_id: "crm".to_owned(),
-        provider_kind: AuthProviderKind::McpOAuth,
+        provider_kind: CredentialProviderKind::McpOAuth,
         display_name: None,
         authorization_endpoint: "https://as.example.com/authorize".to_owned(),
         token_endpoint: "https://as.example.com/token".to_owned(),
@@ -3502,12 +3509,12 @@ fn test_auth_client(client_id: String) -> OAuthClientView {
     }
 }
 
-fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
-    AuthGrantView {
+fn test_credential_grant(grant_id: String, status: CredentialGrantStatus) -> CredentialGrantView {
+    CredentialGrantView {
         grant_id,
         provider_id: "static".to_owned(),
-        provider_kind: AuthProviderKind::StaticToken,
-        exposure: AuthGrantExposure::Brokered,
+        provider_kind: CredentialProviderKind::StaticToken,
+        exposure: CredentialGrantExposure::Brokered,
         created_by: Attribution::Token {
             name: "ci-bot".into(),
         },
@@ -4278,13 +4285,13 @@ fn an_environment_credential_source_is_a_grant_or_a_provider_credential() {
     for (wire, source) in [
         (
             json!({ "type": "authGrant", "grantId": "authgrant_repo" }),
-            EnvironmentCredentialSourceView::AuthGrant {
+            EnvironmentCredentialSourceView::CredentialGrant {
                 grant_id: "authgrant_repo".to_owned(),
             },
         ),
         (
             json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
-            EnvironmentCredentialSourceView::AuthProviderCredential {
+            EnvironmentCredentialSourceView::CredentialProviderCredential {
                 provider_id: "model:openai".to_owned(),
             },
         ),

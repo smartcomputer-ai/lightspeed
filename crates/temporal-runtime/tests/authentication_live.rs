@@ -108,7 +108,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                         "session/delete",
                         "transcriptions/read",
                         "transcriptions/cancel",
-                        "auth/grants/lease",
+                        "credentials/grants/lease",
                     ] {
                         let context =
                             authenticate(&tokens, pool, secret, Some(&reference), actor, method)

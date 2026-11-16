@@ -1,10 +1,10 @@
 //! `api` gateway for the Temporal-backed agent workflow.
 
 mod api_config;
-pub(crate) mod auth_api;
 pub(crate) mod authorization;
 mod blobs;
 mod bots_api;
+pub(crate) mod credentials_api;
 pub(super) use bots_api::bot_list_item;
 mod catalogs;
 pub(crate) mod channels_api;
@@ -39,22 +39,23 @@ mod workflow;
 use api_config::harness_session_config_from_api;
 #[cfg(test)]
 use api_config::*;
-use auth_api::{
-    api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_broker_error,
-    map_auth_error, parse_auth_grant_id, registry_auth_grant_exposure,
-    registry_auth_grant_status_for_filter, require_retrievable_grant,
-};
 use blobs::{has_blobs, put_blobs, read_blob};
 use catalogs::parse_client_context_key;
 use common::now_ms;
+use credentials_api::{
+    api_credential_provider_kind, credential_grant_import_draft, credential_grant_view,
+    map_credential_broker_error, map_credential_error, parse_credential_grant_id,
+    registry_credential_grant_exposure, registry_credential_grant_status_for_filter,
+    require_retrievable_grant,
+};
 pub use environment_lifecycle::ReconcileFailureLog;
 use environment_lifecycle::parse_registry_environment_id;
 use environment_providers::map_environments_error;
 use environments::{activate_environment_command, deactivate_environment_command};
 use errors::*;
 use github_api::{
-    auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
-    github_installation_view, map_github_app_error, parse_auth_provider_id,
+    credential_provider_create_draft, credential_provider_view, github_installation_grant_draft,
+    github_installation_view, map_github_app_error, parse_credential_provider_id,
 };
 use input::{context_entry_input_from_api, refuse_oversized_text, run_input_from_api};
 use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_server_record};
@@ -64,8 +65,8 @@ use mcp_discovery::{
 pub(crate) use models_api::ModelDiscoveryService;
 use models_api::stored_provider_key_resolver;
 use oauth_api::{
-    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
-    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
+    cimd_config, credential_client_create_draft, credential_flow_view, map_mcp_oauth_error,
+    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_credential_flow_id,
     parse_oauth_client_id,
 };
 use parse::*;
@@ -96,13 +97,13 @@ use api_projection::{
     map_session_store_error, parse_api_run_id, project_context_entry_inputs,
 };
 use async_trait::async_trait;
-use auth::{
-    AuthFlowStore, AuthGrantStore, AuthProviderStore, AuthTokenBroker, GitHubApiClient,
-    GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient, McpOAuthDriver,
-    OAuthClientStore, OAuthFlowService, OAuthMetadataClient, OAuthRefreshRuntime, OAuthTokenClient,
-    RegistryTokenBroker, SecretStore, StartAuthFlow, TokenAudience,
-};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use credentials::{
+    CredentialFlowStore, CredentialGrantStore, CredentialProviderStore, CredentialTokenBroker,
+    GitHubApiClient, GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient, HttpOAuthTokenClient,
+    McpOAuthDriver, OAuthClientStore, OAuthFlowService, OAuthMetadataClient, OAuthRefreshRuntime,
+    OAuthTokenClient, RegistryTokenBroker, SecretStore, StartCredentialFlow, TokenAudience,
+};
 use harness::{
     ApprovalId, BlobRef, BoundWorkflowToolDispatch, CompactionPolicy, ContextEntry,
     ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
@@ -169,8 +170,8 @@ const MAX_RUN_DETAIL_EVENTS: usize = 20_000;
 const MAX_RUN_TERMINAL_NOTIFICATION_TOKEN_BYTES: usize = 512;
 
 /// Default public base URL for the gateway-hosted OAuth callback; matches
-/// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
-pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+/// `DEFAULT_PUBLIC_BIND`. Hosted deployments must set the real public URL.
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18082";
 
 /// Caller-supplied metadata on sessions and environments shares one validator
 /// (bounds plus the reserved-prefix rule), so a session and the environment
@@ -547,7 +548,7 @@ impl GatewayAgentApiBuilder {
     }
 
     /// Externally reachable base URL of this gateway, used to build the OAuth
-    /// redirect URI (`{base}/auth/callback`).
+    /// redirect URI (`{base}/credentials/callback`).
     pub fn with_public_base_url(mut self, public_base_url: impl Into<String>) -> Self {
         self.public_base_url = public_base_url.into();
         self
@@ -648,8 +649,8 @@ impl GatewayAgentApiBuilder {
         });
         let oauth_flows = OAuthFlowService::new(
             self.store.clone() as Arc<dyn OAuthClientStore>,
-            self.store.clone() as Arc<dyn AuthFlowStore>,
-            self.store.clone() as Arc<dyn AuthGrantStore>,
+            self.store.clone() as Arc<dyn CredentialFlowStore>,
+            self.store.clone() as Arc<dyn CredentialGrantStore>,
             self.store.clone() as Arc<dyn SecretStore>,
             token_client.clone(),
         );
@@ -664,10 +665,10 @@ impl GatewayAgentApiBuilder {
         let github_api = self.github_api_client.unwrap_or_else(|| {
             Arc::new(HttpGitHubApiClient::new().expect("construct GitHub REST HTTP client"))
         });
-        let grants: Arc<dyn AuthGrantStore> = self.store.clone();
+        let grants: Arc<dyn CredentialGrantStore> = self.store.clone();
         let secrets: Arc<dyn SecretStore> = self.store.clone();
-        let providers: Arc<dyn AuthProviderStore> = self.store.clone();
-        let auth_token_broker: Arc<dyn AuthTokenBroker> = Arc::new(
+        let providers: Arc<dyn CredentialProviderStore> = self.store.clone();
+        let auth_token_broker: Arc<dyn CredentialTokenBroker> = Arc::new(
             RegistryTokenBroker::new(
                 grants.clone(),
                 secrets.clone(),
@@ -678,7 +679,7 @@ impl GatewayAgentApiBuilder {
                 token_client.clone(),
             ))
             .with_token_source(
-                auth::AuthProviderKind::GitHubApp,
+                credentials::CredentialProviderKind::GitHubApp,
                 Arc::new(GitHubAppRuntime::new(
                     providers,
                     github_api.clone(),
@@ -707,7 +708,7 @@ impl GatewayAgentApiBuilder {
                 token_client.clone(),
                 github_api.clone(),
             ),
-            self.store.clone() as Arc<dyn AuthProviderStore>,
+            self.store.clone() as Arc<dyn CredentialProviderStore>,
         );
         GatewayAgentApi {
             client: self.client,
@@ -750,7 +751,7 @@ pub struct GatewayAgentApi {
     events_wait_cap: Duration,
     public_base_url: String,
     oauth_flows: OAuthFlowService,
-    auth_token_broker: Arc<dyn AuthTokenBroker>,
+    auth_token_broker: Arc<dyn CredentialTokenBroker>,
     mcp_oauth: McpOAuthDriver,
     mcp_tool_discoverer: Arc<dyn McpToolDiscoverer>,
     mcp_private_networks: crate::worker::mcp::McpPrivateNetworkPolicy,
@@ -777,7 +778,7 @@ impl GatewayAgentApi {
 
     pub fn builder(client: Client, store: Arc<PgStore>) -> GatewayAgentApiBuilder {
         let environment_gateway = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
-            DEFAULT_PUBLIC_BASE_URL,
+            format!("http://{}", super::DEFAULT_ENVIRONMENT_GATEWAY_BIND),
             format!("local-{}", uuid::Uuid::new_v4()),
         );
         GatewayAgentApiBuilder {
@@ -4022,7 +4023,7 @@ impl AgentApiService for GatewayAgentApi {
                 self.store
                     .read_grant(grant_id)
                     .await
-                    .map_err(map_auth_error)?,
+                    .map_err(map_credential_error)?,
             ),
             None => None,
         };
@@ -4050,7 +4051,7 @@ impl AgentApiService for GatewayAgentApi {
         self.authorize_method(METHOD_MCP_SERVERS_AUTH_DISCOVER, None)
             .await?;
         mcp::validate_remote_mcp_server_url(&params.server_url).map_err(map_mcp_error)?;
-        let target = auth::McpOAuthTarget {
+        let target = credentials::McpOAuthTarget {
             server_id: "discovery".to_owned(),
             server_url: params.server_url,
             scopes_default: Vec::new(),
@@ -4068,9 +4069,10 @@ impl AgentApiService for GatewayAgentApi {
                 authorization_servers: metadata.authorization_servers,
                 scopes_supported: metadata.scopes_supported,
             }),
-            Ok(Err(auth::McpOAuthError::ProtectedResourceMetadataUnavailable { .. })) | Err(_) => {
-                None
-            }
+            Ok(Err(credentials::McpOAuthError::ProtectedResourceMetadataUnavailable {
+                ..
+            }))
+            | Err(_) => None,
             Ok(Err(error)) => return Err(map_mcp_oauth_error(error)),
         };
         Ok(AgentApiOutcome::new(McpServerAuthDiscoverResponse {
@@ -4135,7 +4137,7 @@ impl AgentApiService for GatewayAgentApi {
                 .await
             {
                 Ok(token) => Some(token),
-                Err(auth::AuthBrokerError::AudienceMismatch { .. }) => {
+                Err(credentials::CredentialBrokerError::AudienceMismatch { .. }) => {
                     return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
                         mcp::McpToolDiscoveryFailure::new(
                             mcp::McpToolDiscoveryFailureKind::GrantAudienceMismatch,
@@ -4143,7 +4145,7 @@ impl AgentApiService for GatewayAgentApi {
                         ),
                     )));
                 }
-                Err(auth::AuthBrokerError::Store { message }) => {
+                Err(credentials::CredentialBrokerError::Store { message }) => {
                     return Err(AgentApiError::internal(message));
                 }
                 Err(_) => {
@@ -4277,11 +4279,15 @@ impl AgentApiService for GatewayAgentApi {
         }
         if let Some(grant_id) = &server.auth_grant_id
             && let Ok(grant) = self.store.read_grant(grant_id).await
-            && grant.provider_kind == auth::AuthProviderKind::McpOAuth
+            && grant.provider_kind == credentials::CredentialProviderKind::McpOAuth
         {
             let _ = self
                 .store
-                .update_grant_status(grant_id, auth::AuthGrantStatus::Revoked, now_ms()?)
+                .update_grant_status(
+                    grant_id,
+                    credentials::CredentialGrantStatus::Revoked,
+                    now_ms()?,
+                )
                 .await;
         }
         Ok(AgentApiOutcome::new(McpServerDeleteResponse {
@@ -4289,83 +4295,88 @@ impl AgentApiService for GatewayAgentApi {
         }))
     }
 
-    async fn import_auth_grant(
+    async fn import_credential_grant(
         &self,
-        params: AuthGrantImportParams,
-    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_IMPORT, None)
+        params: CredentialGrantImportParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantImportResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GRANTS_IMPORT, None)
             .await?;
-        let draft = auth_grant_import_draft(params, now_ms()?)?;
+        let draft = credential_grant_import_draft(params, now_ms()?)?;
         self.store
             .put_secret(draft.secret.clone())
             .await
-            .map_err(map_auth_error)?;
+            .map_err(map_credential_error)?;
         match self.store.create_grant(draft.grant).await {
-            Ok(record) => Ok(AgentApiOutcome::new(AuthGrantImportResponse {
-                grant: auth_grant_view(record),
+            Ok(record) => Ok(AgentApiOutcome::new(CredentialGrantImportResponse {
+                grant: credential_grant_view(record),
             })),
             Err(error) => {
                 // The secret is orphaned without its grant; clean up best-effort
                 // so a failed import does not leave sealed values behind.
                 let _ = self.store.delete_secret(&draft.secret.secret_id).await;
-                Err(map_auth_error(error))
+                Err(map_credential_error(error))
             }
         }
     }
 
-    async fn lease_auth_grant(
+    async fn lease_credential_grant(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_LEASE, None)
+        params: CredentialGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantLeaseResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GRANTS_LEASE, None)
             .await?;
         self.lease_grant_token(params).await
     }
 
-    async fn list_auth_grants(
+    async fn list_credential_grants(
         &self,
-        params: AuthGrantListParams,
-    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_LIST, None).await?;
+        params: CredentialGrantListParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GRANTS_LIST, None)
+            .await?;
         let grants = self
             .store
-            .list_grants(auth::ListAuthGrants {
-                status: params.status.map(registry_auth_grant_status_for_filter),
+            .list_grants(credentials::ListCredentialGrants {
+                status: params
+                    .status
+                    .map(registry_credential_grant_status_for_filter),
             })
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthGrantListResponse {
-            grants: grants.into_iter().map(auth_grant_view).collect(),
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialGrantListResponse {
+            grants: grants.into_iter().map(credential_grant_view).collect(),
         }))
     }
 
-    async fn read_auth_grant(
+    async fn read_credential_grant(
         &self,
-        params: AuthGrantReadParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_READ, None).await?;
-        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        params: CredentialGrantReadParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GRANTS_READ, None)
+            .await?;
+        let grant_id = parse_credential_grant_id(params.grant_id)?;
         let record = self
             .store
             .read_grant(&grant_id)
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthGrantReadResponse {
-            grant: auth_grant_view(record),
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialGrantReadResponse {
+            grant: credential_grant_view(record),
         }))
     }
 
-    async fn put_auth_grant(
+    async fn put_credential_grant(
         &self,
-        params: AuthGrantPutParams,
-    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_PUT, None).await?;
+        params: CredentialGrantPutParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GRANTS_PUT, None)
+            .await?;
         let dry_run = params.dry_run;
         let now = now_ms()?;
         // The declaration is validated exactly as an import is, so the rules
         // cannot drift; nothing is written until it is known to be valid.
-        let draft = auth_grant_import_draft(
-            AuthGrantImportParams {
+        let draft = credential_grant_import_draft(
+            CredentialGrantImportParams {
                 grant_id: Some(params.grant_id),
                 provider_id: params.provider_id,
                 exposure: params.exposure,
@@ -4382,12 +4393,12 @@ impl AgentApiService for GatewayAgentApi {
         let grant_id = draft.grant.grant_id.clone();
         let current = match self.store.read_grant(&grant_id).await {
             Ok(record) => Some(record),
-            Err(auth::AuthRegistryError::GrantNotFound { .. }) => None,
-            Err(error) => return Err(map_auth_error(error)),
+            Err(credentials::CredentialRegistryError::GrantNotFound { .. }) => None,
+            Err(error) => return Err(map_credential_error(error)),
         };
         let outcome = |record, created, token_replaced| {
-            Ok(AgentApiOutcome::new(AuthGrantPutResponse {
-                grant: auth_grant_view(record),
+            Ok(AgentApiOutcome::new(CredentialGrantPutResponse {
+                grant: credential_grant_view(record),
                 created,
                 token_replaced,
             }))
@@ -4399,26 +4410,26 @@ impl AgentApiService for GatewayAgentApi {
             self.store
                 .put_secret(draft.secret.clone())
                 .await
-                .map_err(map_auth_error)?;
+                .map_err(map_credential_error)?;
             return match self.store.create_grant(draft.grant).await {
                 Ok(record) => outcome(record, true, false),
                 Err(error) => {
                     let _ = self.store.delete_secret(&draft.secret.secret_id).await;
-                    Err(map_auth_error(error))
+                    Err(map_credential_error(error))
                 }
             };
         };
-        let (expected, update) = auth_api::token_credential_update(&current, &draft, now)?;
+        let (expected, update) = credentials_api::token_credential_update(&current, &draft, now)?;
         // The stored token is compared here, where it can be read, so the
         // caller never has to keep a fingerprint of what it last supplied.
         let (_, stored) = self
             .store
             .read_secret(&expected)
             .await
-            .map_err(map_auth_error)?;
-        let token_replaced = auth::secret_sha256_hex(stored.expose())
-            != auth::secret_sha256_hex(draft.secret.value.expose());
-        let update = auth::TokenCredentialUpdate {
+            .map_err(map_credential_error)?;
+        let token_replaced = credentials::secret_sha256_hex(stored.expose())
+            != credentials::secret_sha256_hex(draft.secret.value.expose());
+        let update = credentials::TokenCredentialUpdate {
             access_token_secret: if token_replaced {
                 draft.secret.secret_id.clone()
             } else {
@@ -4427,7 +4438,7 @@ impl AgentApiService for GatewayAgentApi {
             ..update
         };
         let declared = update.apply(&current);
-        declared.validate().map_err(map_auth_error)?;
+        declared.validate().map_err(map_credential_error)?;
         let unchanged = !token_replaced && {
             let mut same_time = declared.clone();
             same_time.updated_at_ms = current.updated_at_ms;
@@ -4443,7 +4454,7 @@ impl AgentApiService for GatewayAgentApi {
             self.store
                 .put_secret(draft.secret.clone())
                 .await
-                .map_err(map_auth_error)?;
+                .map_err(map_credential_error)?;
         }
         // Write only if nobody changed the value since the read, so two
         // concurrent declarations never strand each other's secrets.
@@ -4459,9 +4470,9 @@ impl AgentApiService for GatewayAgentApi {
                 }
                 return Err(match other {
                     Ok(_) => AgentApiError::conflict(format!(
-                        "auth grant {grant_id} was changed while it was being declared; retry"
+                        "credential grant {grant_id} was changed while it was being declared; retry"
                     )),
-                    Err(error) => map_auth_error(error),
+                    Err(error) => map_credential_error(error),
                 });
             }
         };
@@ -4473,41 +4484,45 @@ impl AgentApiService for GatewayAgentApi {
         outcome(record, false, token_replaced)
     }
 
-    async fn revoke_auth_grant(
+    async fn revoke_credential_grant(
         &self,
-        params: AuthGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GRANTS_REVOKE, None)
+        params: CredentialGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantRevokeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GRANTS_REVOKE, None)
             .await?;
-        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let grant_id = parse_credential_grant_id(params.grant_id)?;
         let record = self
             .store
-            .update_grant_status(&grant_id, auth::AuthGrantStatus::Revoked, now_ms()?)
+            .update_grant_status(
+                &grant_id,
+                credentials::CredentialGrantStatus::Revoked,
+                now_ms()?,
+            )
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
-            grant: auth_grant_view(record),
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialGrantRevokeResponse {
+            grant: credential_grant_view(record),
         }))
     }
 
-    async fn create_auth_client(
+    async fn create_credential_client(
         &self,
-        params: AuthClientCreateParams,
-    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+        params: CredentialClientCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialClientCreateResponse>, AgentApiError> {
         self.authorize_method(
-            METHOD_AUTH_CLIENTS_CREATE,
+            METHOD_CREDENTIALS_CLIENTS_CREATE,
             params.client_id.as_deref().and_then(mcp_client_server),
         )
         .await?;
-        let draft = auth_client_create_draft(params, now_ms()?)?;
+        let draft = credential_client_create_draft(params, now_ms()?)?;
         if let Some(secret) = &draft.secret {
             self.store
                 .put_secret(secret.clone())
                 .await
-                .map_err(map_auth_error)?;
+                .map_err(map_credential_error)?;
         }
         match self.store.create_oauth_client(draft.client).await {
-            Ok(record) => Ok(AgentApiOutcome::new(AuthClientCreateResponse {
+            Ok(record) => Ok(AgentApiOutcome::new(CredentialClientCreateResponse {
                 client: oauth_client_view(record),
             })),
             Err(error) => {
@@ -4516,34 +4531,36 @@ impl AgentApiService for GatewayAgentApi {
                 if let Some(secret) = &draft.secret {
                     let _ = self.store.delete_secret(&secret.secret_id).await;
                 }
-                Err(map_auth_error(error))
+                Err(map_credential_error(error))
             }
         }
     }
 
-    async fn list_auth_clients(
+    async fn list_credential_clients(
         &self,
-        _params: AuthClientListParams,
-    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_CLIENTS_LIST, None)
+        _params: CredentialClientListParams,
+    ) -> Result<AgentApiOutcome<CredentialClientListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_CLIENTS_LIST, None)
             .await?;
         let clients = self
             .store
             .list_oauth_clients()
             .await
-            .map_err(map_auth_error)?
+            .map_err(map_credential_error)?
             .into_iter()
             .map(oauth_client_view)
             .collect();
-        Ok(AgentApiOutcome::new(AuthClientListResponse { clients }))
+        Ok(AgentApiOutcome::new(CredentialClientListResponse {
+            clients,
+        }))
     }
 
-    async fn read_auth_client(
+    async fn read_credential_client(
         &self,
-        params: AuthClientReadParams,
-    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+        params: CredentialClientReadParams,
+    ) -> Result<AgentApiOutcome<CredentialClientReadResponse>, AgentApiError> {
         self.authorize_method(
-            METHOD_AUTH_CLIENTS_READ,
+            METHOD_CREDENTIALS_CLIENTS_READ,
             mcp_client_server(&params.client_id),
         )
         .await?;
@@ -4552,18 +4569,18 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .read_oauth_client(&client_id)
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthClientReadResponse {
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialClientReadResponse {
             client: oauth_client_view(record),
         }))
     }
 
-    async fn delete_auth_client(
+    async fn delete_credential_client(
         &self,
-        params: AuthClientDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+        params: CredentialClientDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialClientDeleteResponse>, AgentApiError> {
         self.authorize_method(
-            METHOD_AUTH_CLIENTS_DELETE,
+            METHOD_CREDENTIALS_CLIENTS_DELETE,
             mcp_client_server(&params.client_id),
         )
         .await?;
@@ -4572,23 +4589,23 @@ impl AgentApiService for GatewayAgentApi {
             .store
             .delete_oauth_client(&client_id)
             .await
-            .map_err(map_auth_error)?;
+            .map_err(map_credential_error)?;
         // The stored client secret is unreachable without its client.
         if let Some(secret_id) = &record.client_secret {
             let _ = self.store.delete_secret(secret_id).await;
         }
-        Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
+        Ok(AgentApiOutcome::new(CredentialClientDeleteResponse {
             client: oauth_client_view(record),
         }))
     }
 
-    async fn start_auth_flow(
+    async fn start_credential_flow(
         &self,
-        params: AuthFlowStartParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        params: CredentialFlowStartParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStartResponse>, AgentApiError> {
         // A flow for a catalogued MCP server configures that server.
         self.authorize_method(
-            METHOD_AUTH_FLOWS_START,
+            METHOD_CREDENTIALS_FLOWS_START,
             mcp_client_server(&params.client_id),
         )
         .await?;
@@ -4601,101 +4618,102 @@ impl AgentApiService for GatewayAgentApi {
         };
         let started = self
             .oauth_flows
-            .start_flow(StartAuthFlow {
+            .start_flow(StartCredentialFlow {
                 client_id,
                 redirect_uri: oauth_redirect_uri(&self.public_base_url),
                 scopes: params.scopes,
                 audience: params.audience,
-                grant_exposure: registry_auth_grant_exposure(params.exposure),
+                grant_exposure: registry_credential_grant_exposure(params.exposure),
                 created_by,
             })
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialFlowStartResponse {
             flow_id: started.flow.flow_id.as_str().to_owned(),
             authorize_url: started.authorize_url,
             expires_at_ms: started.flow.expires_at_ms,
         }))
     }
 
-    async fn read_auth_flow_status(
+    async fn read_credential_flow_status(
         &self,
-        params: AuthFlowStatusParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_FLOWS_READ, None).await?;
-        let flow_id = parse_auth_flow_id(params.flow_id)?;
+        params: CredentialFlowStatusParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStatusResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_FLOWS_READ, None)
+            .await?;
+        let flow_id = parse_credential_flow_id(params.flow_id)?;
         let record = self
             .oauth_flows
             .read_flow(&flow_id)
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
-            flow: auth_flow_view(record, self.oauth_flows.now_ms()),
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialFlowStatusResponse {
+            flow: credential_flow_view(record, self.oauth_flows.now_ms()),
         }))
     }
 
-    async fn create_auth_provider(
+    async fn create_credential_provider(
         &self,
-        params: AuthProviderCreateParams,
-    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_PROVIDERS_CREATE, None)
+        params: CredentialProviderCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_PROVIDERS_CREATE, None)
             .await?;
-        let draft = auth_provider_create_draft(params, now_ms()?)?;
+        let draft = credential_provider_create_draft(params, now_ms()?)?;
         // A model_oauth binding must point at a real, active grant; validate
         // before committing the provider row.
-        if let auth::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+        if let credentials::CredentialProviderConfig::ModelOAuth(config) = &draft.provider.config {
             let grant = self
                 .store
                 .read_grant(&config.grant_id)
                 .await
-                .map_err(map_auth_error)?;
-            if grant.status != auth::AuthGrantStatus::Active {
+                .map_err(map_credential_error)?;
+            if grant.status != credentials::CredentialGrantStatus::Active {
                 return Err(AgentApiError::rejected(format!(
-                    "auth grant {} is not active: {:?}",
+                    "credential grant {} is not active: {:?}",
                     grant.grant_id, grant.status
                 )));
             }
         }
         self.validate_model_endpoint_header_credentials(&draft.provider.config)
             .await?;
-        // The secret must exist before the provider row: auth_providers
-        // carries a foreign key into auth_secrets.
+        // The secret must exist before the provider row: credentials_providers
+        // carries a foreign key into credentials_secrets.
         if let Some(secret) = &draft.secret {
             self.store
                 .put_secret(secret.clone())
                 .await
-                .map_err(map_auth_error)?;
+                .map_err(map_credential_error)?;
         }
-        match self.store.create_auth_provider(draft.provider).await {
+        match self.store.create_credential_provider(draft.provider).await {
             Ok(record) => {
                 self.model_discovery
-                    .invalidate_auth_provider(record.provider_id.as_str());
-                Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
-                    provider: auth_provider_view(record),
+                    .invalidate_credential_provider(record.provider_id.as_str());
+                Ok(AgentApiOutcome::new(CredentialProviderCreateResponse {
+                    provider: credential_provider_view(record),
                 }))
             }
             Err(error) => {
                 if let Some(secret) = &draft.secret {
                     let _ = self.store.delete_secret(&secret.secret_id).await;
                 }
-                Err(map_auth_error(error))
+                Err(map_credential_error(error))
             }
         }
     }
 
-    async fn put_auth_provider(
+    async fn put_credential_provider(
         &self,
-        params: AuthProviderPutParams,
-    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_PROVIDERS_PUT, None)
+        params: CredentialProviderPutParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_PROVIDERS_PUT, None)
             .await?;
         let dry_run = params.dry_run;
-        let provider_id = parse_auth_provider_id(params.provider_id.clone())?;
+        let provider_id = parse_credential_provider_id(params.provider_id.clone())?;
         let now = now_ms()?;
         // Same validation as create, so the rules cannot drift; nothing is
         // written until the whole declaration is known to be valid.
-        let draft = auth_provider_create_draft(
-            AuthProviderCreateParams {
+        let draft = credential_provider_create_draft(
+            CredentialProviderCreateParams {
                 provider_id: Some(params.provider_id),
                 display_name: params.display_name,
                 config: params.config,
@@ -4704,29 +4722,29 @@ impl AgentApiService for GatewayAgentApi {
             now,
         )?;
         // A model_oauth binding must point at a real, active grant.
-        if let auth::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+        if let credentials::CredentialProviderConfig::ModelOAuth(config) = &draft.provider.config {
             let grant = self
                 .store
                 .read_grant(&config.grant_id)
                 .await
-                .map_err(map_auth_error)?;
-            if grant.status != auth::AuthGrantStatus::Active {
+                .map_err(map_credential_error)?;
+            if grant.status != credentials::CredentialGrantStatus::Active {
                 return Err(AgentApiError::rejected(format!(
-                    "auth grant {} is not active: {:?}",
+                    "credential grant {} is not active: {:?}",
                     grant.grant_id, grant.status
                 )));
             }
         }
         self.validate_model_endpoint_header_credentials(&draft.provider.config)
             .await?;
-        let current = match self.store.read_auth_provider(&provider_id).await {
+        let current = match self.store.read_credential_provider(&provider_id).await {
             Ok(record) => Some(record),
-            Err(auth::AuthRegistryError::ProviderNotFound { .. }) => None,
-            Err(error) => return Err(map_auth_error(error)),
+            Err(credentials::CredentialRegistryError::ProviderNotFound { .. }) => None,
+            Err(error) => return Err(map_credential_error(error)),
         };
         let outcome = |record, created, credential_replaced| {
-            Ok(AgentApiOutcome::new(AuthProviderPutResponse {
-                provider: auth_provider_view(record),
+            Ok(AgentApiOutcome::new(CredentialProviderPutResponse {
+                provider: credential_provider_view(record),
                 created,
                 credential_replaced,
             }))
@@ -4735,25 +4753,25 @@ impl AgentApiService for GatewayAgentApi {
             if dry_run {
                 return outcome(draft.provider.into_record(), true, false);
             }
-            // The secret must exist before the provider row: auth_providers
-            // carries a foreign key into auth_secrets.
+            // The secret must exist before the provider row: credentials_providers
+            // carries a foreign key into credentials_secrets.
             if let Some(secret) = &draft.secret {
                 self.store
                     .put_secret(secret.clone())
                     .await
-                    .map_err(map_auth_error)?;
+                    .map_err(map_credential_error)?;
             }
-            return match self.store.create_auth_provider(draft.provider).await {
+            return match self.store.create_credential_provider(draft.provider).await {
                 Ok(record) => {
                     self.model_discovery
-                        .invalidate_auth_provider(record.provider_id.as_str());
+                        .invalidate_credential_provider(record.provider_id.as_str());
                     outcome(record, true, false)
                 }
                 Err(error) => {
                     if let Some(secret) = &draft.secret {
                         let _ = self.store.delete_secret(&secret.secret_id).await;
                     }
-                    Err(map_auth_error(error))
+                    Err(map_credential_error(error))
                 }
             };
         };
@@ -4765,9 +4783,9 @@ impl AgentApiService for GatewayAgentApi {
                     .store
                     .read_secret(stored)
                     .await
-                    .map_err(map_auth_error)?;
-                auth::secret_sha256_hex(stored.expose())
-                    != auth::secret_sha256_hex(supplied.value.expose())
+                    .map_err(map_credential_error)?;
+                credentials::secret_sha256_hex(stored.expose())
+                    != credentials::secret_sha256_hex(supplied.value.expose())
             }
             _ => true,
         };
@@ -4792,11 +4810,11 @@ impl AgentApiService for GatewayAgentApi {
             self.store
                 .put_secret(secret.clone())
                 .await
-                .map_err(map_auth_error)?;
+                .map_err(map_credential_error)?;
         }
         let written = self
             .store
-            .replace_auth_provider(declared, current.credential_secret.as_ref())
+            .replace_credential_provider(declared, current.credential_secret.as_ref())
             .await;
         let record = match written {
             Ok(Some(record)) => record,
@@ -4806,14 +4824,14 @@ impl AgentApiService for GatewayAgentApi {
                 }
                 return Err(match other {
                     Ok(_) => AgentApiError::conflict(format!(
-                        "auth provider {provider_id} was changed while it was being declared; retry"
+                        "credential provider {provider_id} was changed while it was being declared; retry"
                     )),
-                    Err(error) => map_auth_error(error),
+                    Err(error) => map_credential_error(error),
                 });
             }
         };
         self.model_discovery
-            .invalidate_auth_provider(record.provider_id.as_str());
+            .invalidate_credential_provider(record.provider_id.as_str());
         // The old credential is unreferenced now. A failed delete leaves an
         // unreachable sealed value behind, never a broken provider.
         if credential_replaced
@@ -4825,73 +4843,76 @@ impl AgentApiService for GatewayAgentApi {
         outcome(record, false, credential_replaced)
     }
 
-    async fn list_auth_providers(
+    async fn list_credential_providers(
         &self,
-        _params: AuthProviderListParams,
-    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_PROVIDERS_LIST, None)
+        _params: CredentialProviderListParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_PROVIDERS_LIST, None)
             .await?;
         let providers = self
             .store
-            .list_auth_providers()
+            .list_credential_providers()
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthProviderListResponse {
-            providers: providers.into_iter().map(auth_provider_view).collect(),
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialProviderListResponse {
+            providers: providers
+                .into_iter()
+                .map(credential_provider_view)
+                .collect(),
         }))
     }
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        params: AuthProviderReadParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_PROVIDERS_READ, None)
+        params: CredentialProviderReadParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_PROVIDERS_READ, None)
             .await?;
-        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        let provider_id = parse_credential_provider_id(params.provider_id)?;
         let record = self
             .store
-            .read_auth_provider(&provider_id)
+            .read_credential_provider(&provider_id)
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthProviderReadResponse {
-            provider: auth_provider_view(record),
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialProviderReadResponse {
+            provider: credential_provider_view(record),
         }))
     }
 
-    async fn delete_auth_provider(
+    async fn delete_credential_provider(
         &self,
-        params: AuthProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_PROVIDERS_DELETE, None)
+        params: CredentialProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_PROVIDERS_DELETE, None)
             .await?;
-        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        let provider_id = parse_credential_provider_id(params.provider_id)?;
         // The provider row must go first: its foreign key prevents deleting
         // the credential secret while the provider references it.
         let record = self
             .store
-            .delete_auth_provider(&provider_id)
+            .delete_credential_provider(&provider_id)
             .await
-            .map_err(map_auth_error)?;
+            .map_err(map_credential_error)?;
         self.model_discovery
-            .invalidate_auth_provider(record.provider_id.as_str());
+            .invalidate_credential_provider(record.provider_id.as_str());
         if let Some(secret_id) = &record.credential_secret {
             let _ = self.store.delete_secret(secret_id).await;
         }
-        Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
-            provider: auth_provider_view(record),
+        Ok(AgentApiOutcome::new(CredentialProviderDeleteResponse {
+            provider: credential_provider_view(record),
         }))
     }
 
     async fn list_github_installations(
         &self,
-        params: AuthGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, None)
+        params: CredentialGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST, None)
             .await?;
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
-        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+        let credentials::CredentialProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
-                "auth provider {} is not a github_app provider",
+                "credential provider {} is not a github_app provider",
                 provider.provider_id
             )));
         };
@@ -4900,21 +4921,23 @@ impl AgentApiService for GatewayAgentApi {
             .list_installations(&config.api_base_url, &app_jwt)
             .await
             .map_err(map_github_app_error)?;
-        Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
-            installations: installations.iter().map(github_installation_view).collect(),
-        }))
+        Ok(AgentApiOutcome::new(
+            CredentialGitHubInstallationListResponse {
+                installations: installations.iter().map(github_installation_view).collect(),
+            },
+        ))
     }
 
     async fn grant_github_installation(
         &self,
-        params: AuthGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
-        self.authorize_method(METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, None)
+        params: CredentialGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationGrantResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, None)
             .await?;
         let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
-        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+        let credentials::CredentialProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
-                "auth provider {} is not a github_app provider",
+                "credential provider {} is not a github_app provider",
                 provider.provider_id
             )));
         };
@@ -4939,17 +4962,19 @@ impl AgentApiService for GatewayAgentApi {
             installation,
             params.grant_id,
             params.display_name,
-            registry_auth_grant_exposure(params.exposure),
+            registry_credential_grant_exposure(params.exposure),
             now_ms()?,
         )?;
         let record = self
             .store
             .create_grant(draft)
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
-            grant: auth_grant_view(record),
-        }))
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(
+            CredentialGitHubInstallationGrantResponse {
+                grant: credential_grant_view(record),
+            },
+        ))
     }
 }
 
@@ -4974,15 +4999,16 @@ impl GatewayAgentApi {
     async fn ensure_mcp_oauth_client(
         &self,
         server_id: &str,
-    ) -> Result<auth::OAuthClientId, AgentApiError> {
+    ) -> Result<credentials::OAuthClientId, AgentApiError> {
         // A manually registered `mcp:<server_id>` client always wins: reuse
         // it without touching the catalog or the network, so login works
         // even when the catalog record is named differently or absent.
-        let client_id = auth::mcp_oauth_client_id(server_id).map_err(map_auth_error)?;
+        let client_id =
+            credentials::mcp_oauth_client_id(server_id).map_err(map_credential_error)?;
         match self.store.read_oauth_client(&client_id).await {
             Ok(existing) => return Ok(existing.client_id),
-            Err(auth::AuthRegistryError::ClientNotFound { .. }) => {}
-            Err(error) => return Err(map_auth_error(error)),
+            Err(credentials::CredentialRegistryError::ClientNotFound { .. }) => {}
+            Err(error) => return Err(map_credential_error(error)),
         }
 
         let server_id = parse_mcp_server_id(server_id.to_owned())?;
@@ -5003,7 +5029,7 @@ impl GatewayAgentApi {
     }
 
     /// The Client ID Metadata Document served at
-    /// `/auth/client-metadata.json` for authorization servers that support
+    /// `/credentials/client-metadata.json` for authorization servers that support
     /// CIMD client ids.
     pub fn cimd_document(&self) -> serde_json::Value {
         oauth_api::cimd_document(&self.public_base_url)
@@ -5017,9 +5043,9 @@ impl GatewayAgentApi {
     /// carry to `target_url`; checked before the owner's row is written.
     async fn validate_header_credentials(
         &self,
-        policy: &auth::RequestHeaderPolicy,
+        policy: &credentials::RequestHeaderPolicy,
         target_url: &str,
-        headers: &auth::RequestHeaders,
+        headers: &credentials::RequestHeaders,
     ) -> Result<(), AgentApiError> {
         for (header, value) in headers {
             if let Some(grant_id) = value.grant_id() {
@@ -5027,7 +5053,7 @@ impl GatewayAgentApi {
                     .store
                     .read_grant(grant_id)
                     .await
-                    .map_err(map_auth_error)?;
+                    .map_err(map_credential_error)?;
                 validate_header_credential(policy, header, target_url, &grant)?;
             }
         }
@@ -5036,13 +5062,13 @@ impl GatewayAgentApi {
 
     async fn validate_model_endpoint_header_credentials(
         &self,
-        config: &auth::AuthProviderConfig,
+        config: &credentials::CredentialProviderConfig,
     ) -> Result<(), AgentApiError> {
         let Some(endpoint) = config.model_endpoint() else {
             return Ok(());
         };
         self.validate_header_credentials(
-            &auth::MODEL_ENDPOINT_HEADER_POLICY,
+            &credentials::MODEL_ENDPOINT_HEADER_POLICY,
             &endpoint.base_url,
             &endpoint.headers,
         )
@@ -5051,33 +5077,39 @@ impl GatewayAgentApi {
 
     /// Load a GitHub App provider and sign its app JWT for control-plane
     /// calls (installation listing/verification). The JWT and the key only
-    /// exist in memory inside [`auth::SecretValue`] wrappers.
+    /// exist in memory inside [`credentials::SecretValue`] wrappers.
     async fn github_provider_jwt(
         &self,
         provider_id: String,
-    ) -> Result<(auth::AuthProviderRecord, auth::SecretValue), AgentApiError> {
-        let provider_id = parse_auth_provider_id(provider_id)?;
+    ) -> Result<
+        (
+            credentials::CredentialProviderRecord,
+            credentials::SecretValue,
+        ),
+        AgentApiError,
+    > {
+        let provider_id = parse_credential_provider_id(provider_id)?;
         let provider = self
             .store
-            .read_auth_provider(&provider_id)
+            .read_credential_provider(&provider_id)
             .await
-            .map_err(map_auth_error)?;
-        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            .map_err(map_credential_error)?;
+        let credentials::CredentialProviderConfig::GitHubApp(config) = &provider.config else {
             return Err(AgentApiError::rejected(format!(
-                "auth provider {provider_id} is not a github_app provider"
+                "credential provider {provider_id} is not a github_app provider"
             )));
         };
         let Some(credential_secret) = &provider.credential_secret else {
             return Err(AgentApiError::rejected(format!(
-                "auth provider {provider_id} has no private key credential"
+                "credential provider {provider_id} has no private key credential"
             )));
         };
         let (_, private_key) = self
             .store
             .read_secret(credential_secret)
             .await
-            .map_err(map_auth_error)?;
-        let app_jwt = auth::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
+            .map_err(map_credential_error)?;
+        let app_jwt = credentials::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
             .map_err(map_github_app_error)?;
         Ok((provider, app_jwt))
     }
@@ -5087,7 +5119,7 @@ impl GatewayAgentApi {
     /// route, not via JSON-RPC.
     pub async fn complete_oauth_callback(
         &self,
-        callback: auth::AuthCallback,
+        callback: credentials::CredentialCallback,
     ) -> OAuthCallbackOutcome {
         match self.oauth_flows.complete_callback(callback).await {
             Ok(record) => match (&record.grant_id, &record.error) {
@@ -5102,7 +5134,7 @@ impl GatewayAgentApi {
                 },
             },
             Err(error) => OAuthCallbackOutcome::Rejected {
-                message: map_auth_error(error).message,
+                message: map_credential_error(error).message,
             },
         }
     }
@@ -5303,23 +5335,23 @@ impl GatewayAgentApi {
     /// never from request input.
     pub(crate) async fn lease_grant_token(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
-        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        params: CredentialGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantLeaseResponse>, AgentApiError> {
+        let grant_id = parse_credential_grant_id(params.grant_id)?;
         let grant = self
             .store
             .read_grant(&grant_id)
             .await
-            .map_err(map_auth_error)?;
+            .map_err(map_credential_error)?;
         require_retrievable_grant(&grant)?;
 
         let audience = match grant.provider_kind {
-            auth::AuthProviderKind::McpOAuth => {
+            credentials::CredentialProviderKind::McpOAuth => {
                 TokenAudience::McpResource(params.audience.ok_or_else(|| {
-                    AgentApiError::rejected("mcp_oauth grant leases require an audience")
+                    AgentApiError::rejected("mcp_ocredential grant leases require an audience")
                 })?)
             }
-            auth::AuthProviderKind::GitHubApp => {
+            credentials::CredentialProviderKind::GitHubApp => {
                 TokenAudience::GitHubApi(params.audience.ok_or_else(|| {
                     AgentApiError::rejected("github_app grant leases require an audience")
                 })?)
@@ -5335,17 +5367,17 @@ impl GatewayAgentApi {
             .auth_token_broker
             .bearer_token(&grant_id, &audience)
             .await
-            .map_err(map_auth_broker_error)?;
+            .map_err(map_credential_broker_error)?;
         let leased = self
             .store
             .record_grant_lease(&grant_id, now_ms()?)
             .await
-            .map_err(map_auth_error)?;
-        Ok(AgentApiOutcome::new(AuthGrantLeaseResponse {
+            .map_err(map_credential_error)?;
+        Ok(AgentApiOutcome::new(CredentialGrantLeaseResponse {
             token: token.expose().to_owned(),
             expires_at_ms: leased.expires_at_ms,
             grant_id: grant_id.as_str().to_owned(),
-            provider_kind: api_auth_provider_kind(leased.provider_kind),
+            provider_kind: api_credential_provider_kind(leased.provider_kind),
         }))
     }
 }

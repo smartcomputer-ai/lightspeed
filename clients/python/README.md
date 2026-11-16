@@ -175,7 +175,7 @@ treat differently from an absent field, so pass it only when you mean it.
 | MCP servers | `read_mcp_server`, `list_mcp_servers` |
 | Bots | `read_bot`, `list_bots`, `list_bot_events`, `admit_bot_event` |
 
-Everything else stays on `call`: auth grants and providers, deployment and universe
+Everything else stays on `call`: credential grants and providers (`credentials/*`), deployment and universe
 management, channels, registration keys, transcription, and the remaining bot, MCP, and
 environment operations. A few helpers do more than wrap one method:
 

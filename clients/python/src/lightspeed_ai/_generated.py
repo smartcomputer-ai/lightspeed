@@ -90,25 +90,25 @@ METHODS = (
     'mcp/servers/read',
     'mcp/servers/list',
     'mcp/servers/delete',
-    'auth/grants/import',
-    'auth/grants/lease',
-    'auth/grants/read',
-    'auth/grants/list',
-    'auth/grants/put',
-    'auth/grants/revoke',
-    'auth/clients/create',
-    'auth/clients/read',
-    'auth/clients/list',
-    'auth/clients/delete',
-    'auth/flows/start',
-    'auth/flows/read',
-    'auth/providers/create',
-    'auth/providers/put',
-    'auth/providers/read',
-    'auth/providers/list',
-    'auth/providers/delete',
-    'auth/github/installations/list',
-    'auth/github/installations/grant',
+    'credentials/grants/import',
+    'credentials/grants/lease',
+    'credentials/grants/read',
+    'credentials/grants/list',
+    'credentials/grants/put',
+    'credentials/grants/revoke',
+    'credentials/clients/create',
+    'credentials/clients/read',
+    'credentials/clients/list',
+    'credentials/clients/delete',
+    'credentials/flows/start',
+    'credentials/flows/read',
+    'credentials/providers/create',
+    'credentials/providers/put',
+    'credentials/providers/read',
+    'credentials/providers/list',
+    'credentials/providers/delete',
+    'credentials/github/installations/list',
+    'credentials/github/installations/grant',
     'bots/create',
     'bots/put',
     'bots/read',
@@ -250,31 +250,31 @@ METHOD_INFO = {
     'vfs/workspaces/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List VFS workspaces', 'description': 'Lists the mutable universe workspaces with head snapshots, sizes, and revisions.', 'streaming': False, 'notifications': []},
     'vfs/workspaces/update': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Update a VFS workspace', 'description': 'Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.', 'streaming': False, 'notifications': []},
     'vfs/workspaces/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete a VFS workspace', 'description': 'Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.', 'streaming': False, 'notifications': []},
-    'mcp/servers/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Create or replace an MCP server record', 'description': 'Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.', 'streaming': False, 'notifications': []},
+    'mcp/servers/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Create or replace an MCP server record', 'description': 'Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.', 'streaming': False, 'notifications': []},
     'mcp/servers/auth/discover': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Discover MCP server authentication', 'description': 'Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.', 'streaming': False, 'notifications': []},
     'mcp/servers/tools/discover': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Discover MCP server tools', 'description': 'Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.', 'streaming': False, 'notifications': []},
     'mcp/servers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an MCP server record', 'description': 'Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.', 'streaming': False, 'notifications': []},
     'mcp/servers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List MCP server records', 'description': 'Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.', 'streaming': False, 'notifications': []},
     'mcp/servers/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete an MCP server record', 'description': 'Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.', 'streaming': False, 'notifications': []},
-    'auth/grants/import': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Import a token credential', 'description': 'Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.', 'streaming': False, 'notifications': []},
-    'auth/grants/lease': {'scope': 'service', 'access': {'kind': 'service'}, 'summary': 'Lease a retrievable authentication grant', 'description': 'Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.', 'streaming': False, 'notifications': []},
-    'auth/grants/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read authentication grant metadata', 'description': 'Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.', 'streaming': False, 'notifications': []},
-    'auth/grants/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List authentication grants', 'description': 'Lists non-secret grant metadata for the universe, optionally filtered by status.', 'streaming': False, 'notifications': []},
-    'auth/grants/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Declare a token credential', 'description': 'Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.', 'streaming': False, 'notifications': []},
-    'auth/grants/revoke': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Revoke an authentication grant', 'description': 'Marks the grant unusable by token consumers while retaining non-secret audit metadata.', 'streaming': False, 'notifications': []},
-    'auth/clients/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Register an OAuth client', 'description': 'Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.', 'streaming': False, 'notifications': []},
-    'auth/clients/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read OAuth client metadata', 'description': 'Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.', 'streaming': False, 'notifications': []},
-    'auth/clients/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List OAuth clients', 'description': 'Lists non-secret OAuth client registrations in the universe.', 'streaming': False, 'notifications': []},
-    'auth/clients/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete an OAuth client', 'description': 'Deletes the client registration and its stored client secret; grants already created from it remain separate records.', 'streaming': False, 'notifications': []},
-    'auth/flows/start': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Start an OAuth authorization flow', 'description': 'Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.', 'streaming': False, 'notifications': []},
-    'auth/flows/read': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Read OAuth flow status', 'description': "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.", 'streaming': False, 'notifications': []},
-    'auth/providers/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Register an authentication provider', 'description': 'Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.', 'streaming': False, 'notifications': []},
-    'auth/providers/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Declare an authentication provider', 'description': 'Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.', 'streaming': False, 'notifications': []},
-    'auth/providers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read authentication provider metadata', 'description': 'Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.', 'streaming': False, 'notifications': []},
-    'auth/providers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List authentication providers', 'description': 'Lists non-secret model/GitHub provider registrations for the universe.', 'streaming': False, 'notifications': []},
-    'auth/providers/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete an authentication provider', 'description': 'Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.', 'streaming': False, 'notifications': []},
-    'auth/github/installations/list': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'List GitHub App installations', 'description': 'Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.', 'streaming': False, 'notifications': []},
-    'auth/github/installations/grant': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Grant access to a GitHub App installation', 'description': 'Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.', 'streaming': False, 'notifications': []},
+    'credentials/grants/import': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Import a token credential', 'description': 'Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.', 'streaming': False, 'notifications': []},
+    'credentials/grants/lease': {'scope': 'service', 'access': {'kind': 'service'}, 'summary': 'Lease a retrievable credential grant', 'description': 'Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.', 'streaming': False, 'notifications': []},
+    'credentials/grants/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read credential grant metadata', 'description': 'Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.', 'streaming': False, 'notifications': []},
+    'credentials/grants/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List credential grants', 'description': 'Lists non-secret grant metadata for the universe, optionally filtered by status.', 'streaming': False, 'notifications': []},
+    'credentials/grants/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Declare a token credential', 'description': 'Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.', 'streaming': False, 'notifications': []},
+    'credentials/grants/revoke': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Revoke a credential grant', 'description': 'Marks the grant unusable by token consumers while retaining non-secret audit metadata.', 'streaming': False, 'notifications': []},
+    'credentials/clients/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Register an OAuth client', 'description': 'Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.', 'streaming': False, 'notifications': []},
+    'credentials/clients/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read OAuth client metadata', 'description': 'Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.', 'streaming': False, 'notifications': []},
+    'credentials/clients/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List OAuth clients', 'description': 'Lists non-secret OAuth client registrations in the universe.', 'streaming': False, 'notifications': []},
+    'credentials/clients/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete an OAuth client', 'description': 'Deletes the client registration and its stored client secret; grants already created from it remain separate records.', 'streaming': False, 'notifications': []},
+    'credentials/flows/start': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Start an OAuth authorization flow', 'description': 'Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.', 'streaming': False, 'notifications': []},
+    'credentials/flows/read': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Read OAuth flow status', 'description': "Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.", 'streaming': False, 'notifications': []},
+    'credentials/providers/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Register a credential provider', 'description': 'Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.', 'streaming': False, 'notifications': []},
+    'credentials/providers/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Declare a credential provider', 'description': 'Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.', 'streaming': False, 'notifications': []},
+    'credentials/providers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read credential provider metadata', 'description': 'Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.', 'streaming': False, 'notifications': []},
+    'credentials/providers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List credential providers', 'description': 'Lists non-secret model/GitHub provider registrations for the universe.', 'streaming': False, 'notifications': []},
+    'credentials/providers/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete a credential provider', 'description': 'Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.', 'streaming': False, 'notifications': []},
+    'credentials/github/installations/list': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'List GitHub App installations', 'description': 'Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.', 'streaming': False, 'notifications': []},
+    'credentials/github/installations/grant': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Grant access to a GitHub App installation', 'description': 'Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.', 'streaming': False, 'notifications': []},
     'bots/create': {'scope': 'universe', 'access': {'action': 'createBot', 'kind': 'universe'}, 'summary': 'Create a bot', 'description': "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.", 'streaming': False, 'notifications': []},
     'bots/put': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Create or replace a bot document', 'description': 'Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.', 'streaming': False, 'notifications': []},
     'bots/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a bot', 'description': 'Returns the bot record, its current revision, and lifecycle columns.', 'streaming': False, 'notifications': []},
@@ -625,62 +625,62 @@ class GeneratedClient:
     async def call(self, method: Literal['mcp/servers/delete'], params: Api.McpServerDeleteParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerDeleteResponse: ...
     @overload
-    async def call(self, method: Literal['auth/grants/import'], params: Api.AuthGrantImportParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantImportResponse: ...
+    async def call(self, method: Literal['credentials/grants/import'], params: Api.CredentialGrantImportParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantImportResponse: ...
     @overload
-    async def call(self, method: Literal['auth/grants/lease'], params: Api.AuthGrantLeaseParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantLeaseResponse: ...
+    async def call(self, method: Literal['credentials/grants/lease'], params: Api.CredentialGrantLeaseParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantLeaseResponse: ...
     @overload
-    async def call(self, method: Literal['auth/grants/read'], params: Api.AuthGrantReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantReadResponse: ...
+    async def call(self, method: Literal['credentials/grants/read'], params: Api.CredentialGrantReadParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantReadResponse: ...
     @overload
-    async def call(self, method: Literal['auth/grants/list'], params: Api.AuthGrantListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantListResponse: ...
+    async def call(self, method: Literal['credentials/grants/list'], params: Api.CredentialGrantListParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantListResponse: ...
     @overload
-    async def call(self, method: Literal['auth/grants/put'], params: Api.AuthGrantPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantPutResponse: ...
+    async def call(self, method: Literal['credentials/grants/put'], params: Api.CredentialGrantPutParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantPutResponse: ...
     @overload
-    async def call(self, method: Literal['auth/grants/revoke'], params: Api.AuthGrantRevokeParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGrantRevokeResponse: ...
+    async def call(self, method: Literal['credentials/grants/revoke'], params: Api.CredentialGrantRevokeParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantRevokeResponse: ...
     @overload
-    async def call(self, method: Literal['auth/clients/create'], params: Api.AuthClientCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthClientCreateResponse: ...
+    async def call(self, method: Literal['credentials/clients/create'], params: Api.CredentialClientCreateParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientCreateResponse: ...
     @overload
-    async def call(self, method: Literal['auth/clients/read'], params: Api.AuthClientReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthClientReadResponse: ...
+    async def call(self, method: Literal['credentials/clients/read'], params: Api.CredentialClientReadParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientReadResponse: ...
     @overload
-    async def call(self, method: Literal['auth/clients/list'], params: Api.AuthClientListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthClientListResponse: ...
+    async def call(self, method: Literal['credentials/clients/list'], params: Api.CredentialClientListParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientListResponse: ...
     @overload
-    async def call(self, method: Literal['auth/clients/delete'], params: Api.AuthClientDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthClientDeleteResponse: ...
+    async def call(self, method: Literal['credentials/clients/delete'], params: Api.CredentialClientDeleteParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientDeleteResponse: ...
     @overload
-    async def call(self, method: Literal['auth/flows/start'], params: Api.AuthFlowStartParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthFlowStartResponse: ...
+    async def call(self, method: Literal['credentials/flows/start'], params: Api.CredentialFlowStartParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialFlowStartResponse: ...
     @overload
-    async def call(self, method: Literal['auth/flows/read'], params: Api.AuthFlowStatusParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthFlowStatusResponse: ...
+    async def call(self, method: Literal['credentials/flows/read'], params: Api.CredentialFlowStatusParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialFlowStatusResponse: ...
     @overload
-    async def call(self, method: Literal['auth/providers/create'], params: Api.AuthProviderCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderCreateResponse: ...
+    async def call(self, method: Literal['credentials/providers/create'], params: Api.CredentialProviderCreateParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderCreateResponse: ...
     @overload
-    async def call(self, method: Literal['auth/providers/put'], params: Api.AuthProviderPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderPutResponse: ...
+    async def call(self, method: Literal['credentials/providers/put'], params: Api.CredentialProviderPutParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderPutResponse: ...
     @overload
-    async def call(self, method: Literal['auth/providers/read'], params: Api.AuthProviderReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderReadResponse: ...
+    async def call(self, method: Literal['credentials/providers/read'], params: Api.CredentialProviderReadParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderReadResponse: ...
     @overload
-    async def call(self, method: Literal['auth/providers/list'], params: Api.AuthProviderListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderListResponse: ...
+    async def call(self, method: Literal['credentials/providers/list'], params: Api.CredentialProviderListParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderListResponse: ...
     @overload
-    async def call(self, method: Literal['auth/providers/delete'], params: Api.AuthProviderDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthProviderDeleteResponse: ...
+    async def call(self, method: Literal['credentials/providers/delete'], params: Api.CredentialProviderDeleteParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderDeleteResponse: ...
     @overload
-    async def call(self, method: Literal['auth/github/installations/list'], params: Api.AuthGitHubInstallationListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGitHubInstallationListResponse: ...
+    async def call(self, method: Literal['credentials/github/installations/list'], params: Api.CredentialGitHubInstallationListParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGitHubInstallationListResponse: ...
     @overload
-    async def call(self, method: Literal['auth/github/installations/grant'], params: Api.AuthGitHubInstallationGrantParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfAuthGitHubInstallationGrantResponse: ...
+    async def call(self, method: Literal['credentials/github/installations/grant'], params: Api.CredentialGitHubInstallationGrantParams,
+                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse: ...
     @overload
     async def call(self, method: Literal['bots/create'], params: Api.BotCreateParams,
                    *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotCreateResponse: ...

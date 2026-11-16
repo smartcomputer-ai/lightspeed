@@ -456,100 +456,100 @@ pub trait AgentApiService: Send + Sync {
         params: McpServerDeleteParams,
     ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError>;
 
-    async fn import_auth_grant(
+    async fn import_credential_grant(
         &self,
-        params: AuthGrantImportParams,
-    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError>;
+        params: CredentialGrantImportParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantImportResponse>, AgentApiError>;
 
-    async fn lease_auth_grant(
+    async fn lease_credential_grant(
         &self,
-        params: AuthGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError>;
+        params: CredentialGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantLeaseResponse>, AgentApiError>;
 
-    async fn list_auth_grants(
+    async fn list_credential_grants(
         &self,
-        params: AuthGrantListParams,
-    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError>;
+        params: CredentialGrantListParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantListResponse>, AgentApiError>;
 
-    async fn read_auth_grant(
+    async fn read_credential_grant(
         &self,
-        params: AuthGrantReadParams,
-    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError>;
+        params: CredentialGrantReadParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantReadResponse>, AgentApiError>;
 
-    async fn put_auth_grant(
+    async fn put_credential_grant(
         &self,
-        params: AuthGrantPutParams,
-    ) -> Result<AgentApiOutcome<AuthGrantPutResponse>, AgentApiError>;
+        params: CredentialGrantPutParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantPutResponse>, AgentApiError>;
 
-    async fn revoke_auth_grant(
+    async fn revoke_credential_grant(
         &self,
-        params: AuthGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError>;
+        params: CredentialGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<CredentialGrantRevokeResponse>, AgentApiError>;
 
-    async fn create_auth_client(
+    async fn create_credential_client(
         &self,
-        params: AuthClientCreateParams,
-    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError>;
+        params: CredentialClientCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialClientCreateResponse>, AgentApiError>;
 
-    async fn list_auth_clients(
+    async fn list_credential_clients(
         &self,
-        params: AuthClientListParams,
-    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError>;
+        params: CredentialClientListParams,
+    ) -> Result<AgentApiOutcome<CredentialClientListResponse>, AgentApiError>;
 
-    async fn read_auth_client(
+    async fn read_credential_client(
         &self,
-        params: AuthClientReadParams,
-    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError>;
+        params: CredentialClientReadParams,
+    ) -> Result<AgentApiOutcome<CredentialClientReadResponse>, AgentApiError>;
 
-    async fn delete_auth_client(
+    async fn delete_credential_client(
         &self,
-        params: AuthClientDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError>;
+        params: CredentialClientDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialClientDeleteResponse>, AgentApiError>;
 
-    async fn start_auth_flow(
+    async fn start_credential_flow(
         &self,
-        params: AuthFlowStartParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError>;
+        params: CredentialFlowStartParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStartResponse>, AgentApiError>;
 
-    async fn read_auth_flow_status(
+    async fn read_credential_flow_status(
         &self,
-        params: AuthFlowStatusParams,
-    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError>;
+        params: CredentialFlowStatusParams,
+    ) -> Result<AgentApiOutcome<CredentialFlowStatusResponse>, AgentApiError>;
 
-    async fn create_auth_provider(
+    async fn create_credential_provider(
         &self,
-        params: AuthProviderCreateParams,
-    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError>;
+        params: CredentialProviderCreateParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderCreateResponse>, AgentApiError>;
 
-    async fn put_auth_provider(
+    async fn put_credential_provider(
         &self,
-        params: AuthProviderPutParams,
-    ) -> Result<AgentApiOutcome<AuthProviderPutResponse>, AgentApiError>;
+        params: CredentialProviderPutParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderPutResponse>, AgentApiError>;
 
-    async fn list_auth_providers(
+    async fn list_credential_providers(
         &self,
-        params: AuthProviderListParams,
-    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError>;
+        params: CredentialProviderListParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderListResponse>, AgentApiError>;
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        params: AuthProviderReadParams,
-    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError>;
+        params: CredentialProviderReadParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderReadResponse>, AgentApiError>;
 
-    async fn delete_auth_provider(
+    async fn delete_credential_provider(
         &self,
-        params: AuthProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError>;
+        params: CredentialProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<CredentialProviderDeleteResponse>, AgentApiError>;
 
     async fn list_github_installations(
         &self,
-        params: AuthGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError>;
+        params: CredentialGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationListResponse>, AgentApiError>;
 
     async fn grant_github_installation(
         &self,
-        params: AuthGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError>;
+        params: CredentialGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationGrantResponse>, AgentApiError>;
     // ── Bots ────────────────────────────────────────────────────────────────
 
     async fn create_bot(

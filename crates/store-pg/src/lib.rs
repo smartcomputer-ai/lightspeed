@@ -4,7 +4,6 @@
 //! CAS catalog; across universes, both metadata and object keys are isolated.
 
 mod access;
-mod auth;
 mod azure;
 mod blob;
 mod blob_cache;
@@ -12,6 +11,7 @@ mod bots;
 mod cas_sweep;
 pub mod changes;
 mod channels;
+mod credentials;
 mod deployment;
 mod environment;
 mod environment_registration;
@@ -58,7 +58,7 @@ pub struct SessionListPageWithAccess {
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
 pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
-pub const AUTH_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
+pub const CREDENTIALS_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/005_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/006_agent_profiles.sql");
 pub const BOTS_SCHEMA_SQL: &str = include_str!("../migrations/008_bots.sql");
@@ -396,12 +396,12 @@ pub async fn universe_exists(pool: &PgPool, universe_id: Uuid) -> Result<bool, P
 /// rows are universe-scoped, so this is the one query that intentionally
 /// searches across universes — `state_hash` values are high-entropy and
 /// unique per flow.
-pub async fn find_auth_flow_universe(
+pub async fn find_credential_flow_universe(
     pool: &PgPool,
     state_hash: &str,
 ) -> Result<Option<Uuid>, PgStoreError> {
     let row: Option<(Uuid,)> =
-        sqlx::query_as("SELECT universe_id FROM auth_flows WHERE state_hash = $1")
+        sqlx::query_as("SELECT universe_id FROM credentials_flows WHERE state_hash = $1")
             .bind(state_hash)
             .fetch_optional(pool)
             .await?;

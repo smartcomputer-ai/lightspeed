@@ -1,9 +1,9 @@
 mod administration_cli;
 mod api_client;
-mod auth_cli;
 mod chat;
 mod config;
 mod connection;
+mod credentials_cli;
 mod env_cli;
 mod key_secrets;
 mod mcp_cli;
@@ -68,7 +68,7 @@ enum Command {
     Mcp(mcp_cli::McpArgs),
     /// Manage reusable external credentials, OAuth clients and GitHub Apps.
     #[command(name = "credential", visible_alias = "credentials")]
-    Auth(auth_cli::AuthArgs),
+    Credentials(credentials_cli::CredentialArgs),
     /// Provision and manage independent universe environments.
     #[command(name = "environment", visible_aliases = ["environments", "env"])]
     Env(env_cli::EnvArgs),
@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
         Command::Chat(args) => chat::handle(args).await,
         Command::Workspace(args) => vfs_cli::workspace(args).await,
         Command::Mcp(args) => mcp_cli::handle(args).await,
-        Command::Auth(args) => auth_cli::handle(args).await,
+        Command::Credentials(args) => credentials_cli::handle(args).await,
         Command::Env(args) => env_cli::handle(args).await,
         Command::Profiles(args) => profile_cli::handle(args).await,
         Command::Session(args) => session_cli::handle(args).await,
@@ -815,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_client_add_parse_accepts_endpoints_and_secret_env() {
+    fn credential_client_add_parse_accepts_endpoints_and_secret_env() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -838,12 +838,12 @@ mod tests {
             "--audience",
             "https://crm.example.com/mcp",
         ])
-        .expect("parse auth client add");
-        assert!(matches!(cli.command, Command::Auth(_)));
+        .expect("parse credential client add");
+        assert!(matches!(cli.command, Command::Credentials(_)));
     }
 
     #[test]
-    fn auth_client_add_rejects_multiple_secret_sources() {
+    fn credential_client_add_rejects_multiple_secret_sources() {
         let result = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -890,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_github_app_add_parse_requires_a_key_source() {
+    fn credential_github_app_add_parse_requires_a_key_source() {
         let parsed = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -907,7 +907,7 @@ mod tests {
             "GH_APP_KEY",
         ])
         .expect("parse github app create");
-        assert!(matches!(parsed.command, Command::Auth(_)));
+        assert!(matches!(parsed.command, Command::Credentials(_)));
 
         let missing_key = Cli::try_parse_from([
             "lightspeed",
@@ -924,7 +924,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_github_installation_grant_parse_accepts_app_and_id() {
+    fn credential_github_installation_grant_parse_accepts_app_and_id() {
         let parsed = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -939,11 +939,11 @@ mod tests {
             "678",
         ])
         .expect("parse installation grant");
-        assert!(matches!(parsed.command, Command::Auth(_)));
+        assert!(matches!(parsed.command, Command::Credentials(_)));
     }
 
     #[test]
-    fn auth_login_parse_accepts_mcp_server_client_ids() {
+    fn credential_login_parse_accepts_mcp_server_client_ids() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -952,12 +952,12 @@ mod tests {
             "http://127.0.0.1:18080/rpc",
             "mcp:crm",
         ])
-        .expect("parse auth login mcp:");
-        assert!(matches!(cli.command, Command::Auth(_)));
+        .expect("parse credential login mcp:");
+        assert!(matches!(cli.command, Command::Credentials(_)));
     }
 
     #[test]
-    fn auth_login_parse_accepts_client_and_overrides() {
+    fn credential_login_parse_accepts_client_and_overrides() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "credential",
@@ -971,8 +971,8 @@ mod tests {
             "https://crm.example.com/mcp",
             "--no-wait",
         ])
-        .expect("parse auth login");
-        assert!(matches!(cli.command, Command::Auth(_)));
+        .expect("parse credential login");
+        assert!(matches!(cli.command, Command::Credentials(_)));
     }
 
     #[test]

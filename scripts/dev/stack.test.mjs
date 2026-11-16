@@ -52,22 +52,42 @@ test("unknown CLI arguments are explained before checking Docker", () => {
   assert.doesNotMatch(result.stderr, /Docker|at parseCli/);
 });
 
-test("an occupied port fails before infrastructure or migrations and releases supervisor state", { timeout: 5_000 }, async (t) => {
-  const directory = launcherFixture(t);
-  const server = createServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  t.after(() => server.close());
-  const port = server.address().port;
-  const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
-    cwd: directory, encoding: "utf8", env: { ...process.env, LIGHTSPEED_GATEWAY_BIND: `127.0.0.1:${port}`, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+for (const bindVariable of ["LIGHTSPEED_GATEWAY_BIND", "LIGHTSPEED_PUBLIC_BIND", "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND"]) {
+  test(`an occupied ${bindVariable} fails before infrastructure or migrations and releases supervisor state`, { timeout: 5_000 }, async (t) => {
+    const directory = launcherFixture(t);
+    const server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    t.after(() => server.close());
+    const port = server.address().port;
+    const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
+      cwd: directory, encoding: "utf8", env: { ...process.env, ...await availableListenerEnv(), [bindVariable]: `127.0.0.1:${port}`, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`Port ${port} .*already in use`));
+    assert.match(result.stderr, /lsof -nP/);
+    assert.doesNotMatch(result.stdout, /\[infra\]|\[runtime migration\]/);
+    assert.ok(!existsSync(path.join(directory, ".lightspeed/dev-supervisor.json")));
   });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, new RegExp(`Port ${port} .*already in use`));
-  assert.match(result.stderr, /lsof -nP/);
-  assert.doesNotMatch(result.stdout, /\[infra\]|\[runtime migration\]/);
-  assert.ok(!existsSync(path.join(directory, ".lightspeed/dev-supervisor.json")));
-});
+
+}
+
+async function availableListenerEnv() {
+  const env = {};
+  const reservations = [];
+  try {
+    for (const name of ["LIGHTSPEED_GATEWAY_BIND", "LIGHTSPEED_PUBLIC_BIND", "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND"]) {
+      const reservation = createServer();
+      reservation.listen(0, "127.0.0.1");
+      await once(reservation, "listening");
+      reservations.push(reservation);
+      env[name] = `127.0.0.1:${reservation.address().port}`;
+    }
+    return env;
+  } finally {
+    await Promise.all(reservations.map(reservation => new Promise(resolve => reservation.close(resolve))));
+  }
+}
 
 function launcherFixture(t) {
   const directory = mkdtempSync(path.join(tmpdir(), "lightspeed-launcher-"));
@@ -131,14 +151,10 @@ case "$*" in
   *) echo 'fixture runtime crashed' >&2; exit 9 ;;
 esac
 `, { mode: 0o755 });
-    const reservation = createServer();
-    reservation.listen(0, "127.0.0.1");
-    await once(reservation, "listening");
-    const port = reservation.address().port;
-    await new Promise((resolve) => reservation.close(resolve));
+    const listenerEnv = await availableListenerEnv();
     const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
       cwd: directory, encoding: "utf8", timeout: 5_000,
-      env: { ...process.env, PATH: `${directory}/bin:${process.env.PATH}`, LIGHTSPEED_GATEWAY_BIND: `127.0.0.1:${port}`, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+      env: { ...process.env, PATH: `${directory}/bin:${process.env.PATH}`, ...listenerEnv, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
     });
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.stderr.split("dev.sh: Failed").length - 1, 1);

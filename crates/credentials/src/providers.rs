@@ -1,11 +1,11 @@
-//! Generic auth provider configurations.
+//! Generic credential provider configurations.
 //!
 //! One record shape serves every provider kind: non-secret, provider-specific
-//! config is stored as JSON but decoded into the typed [`AuthProviderConfig`]
+//! config is stored as JSON but decoded into the typed [`CredentialProviderConfig`]
 //! enum at the store boundary, so consumers never touch raw JSON. The
 //! load-bearing credential reference (for GitHub Apps: the private key) is a
 //! typed field; `store-pg` backs it with a foreign key into
-//! `auth_secrets`. A model endpoint's extra request headers are the shared
+//! `credentials_secrets`. A model endpoint's extra request headers are the shared
 //! configured request headers of [`crate::headers`]: a header holds a plain
 //! value or names the credential whose token is sent, and `store-pg` keeps
 //! them in a child table so a credential in use by a header cannot be deleted.
@@ -17,14 +17,14 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthGrantId, AuthProviderId, AuthProviderKind, AuthRegistryError, RequestHeaderError,
-    RequestHeaderPolicy, RequestHeaders, SecretId, validate_audience_url,
+    CredentialGrantId, CredentialProviderId, CredentialProviderKind, CredentialRegistryError,
+    RequestHeaderError, RequestHeaderPolicy, RequestHeaders, SecretId, validate_audience_url,
     validate_nonempty_optional, validate_nonnegative_i64, validate_token_component,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AuthProviderStatus {
+pub enum CredentialProviderStatus {
     #[default]
     Active,
     NeedsConfiguration,
@@ -35,7 +35,7 @@ pub enum AuthProviderStatus {
 /// providers add a variant here, not a table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum AuthProviderConfig {
+pub enum CredentialProviderConfig {
     #[serde(rename = "github_app")]
     GitHubApp(GitHubAppConfig),
     #[serde(rename = "model_api_key")]
@@ -74,7 +74,7 @@ pub struct ModelApiKeyConfig {
 #[serde(rename_all = "snake_case")]
 pub struct ModelOAuthConfig {
     /// Grant whose access token authenticates calls to this provider.
-    pub grant_id: AuthGrantId,
+    pub grant_id: CredentialGrantId,
     /// Audience URL requested from the broker, typically the provider API
     /// base URL. When omitted, only audience-unrestricted grants resolve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,7 +117,7 @@ pub const MODEL_ENDPOINT_HEADER_POLICY: RequestHeaderPolicy = RequestHeaderPolic
     reserved_prefixes: &[],
 };
 
-impl From<RequestHeaderError> for AuthRegistryError {
+impl From<RequestHeaderError> for CredentialRegistryError {
     fn from(error: RequestHeaderError) -> Self {
         Self::InvalidInput {
             message: error.to_string(),
@@ -139,25 +139,25 @@ pub fn model_auth_provider_id(provider_id: &str) -> String {
     format!("model:{provider_id}")
 }
 
-impl AuthProviderConfig {
-    pub fn provider_kind(&self) -> AuthProviderKind {
+impl CredentialProviderConfig {
+    pub fn provider_kind(&self) -> CredentialProviderKind {
         match self {
-            Self::GitHubApp(_) => AuthProviderKind::GitHubApp,
-            Self::ModelApiKey(_) => AuthProviderKind::ModelApiKey,
-            Self::ModelOAuth(_) => AuthProviderKind::ModelOAuth,
-            Self::ModelEndpoint(_) => AuthProviderKind::ModelEndpoint,
+            Self::GitHubApp(_) => CredentialProviderKind::GitHubApp,
+            Self::ModelApiKey(_) => CredentialProviderKind::ModelApiKey,
+            Self::ModelOAuth(_) => CredentialProviderKind::ModelOAuth,
+            Self::ModelEndpoint(_) => CredentialProviderKind::ModelEndpoint,
         }
     }
 
-    pub fn to_json(&self) -> Result<serde_json::Value, AuthRegistryError> {
-        serde_json::to_value(self).map_err(|error| AuthRegistryError::Store {
-            message: format!("encode auth provider config: {error}"),
+    pub fn to_json(&self) -> Result<serde_json::Value, CredentialRegistryError> {
+        serde_json::to_value(self).map_err(|error| CredentialRegistryError::Store {
+            message: format!("encode credential provider config: {error}"),
         })
     }
 
-    pub fn from_json(value: &serde_json::Value) -> Result<Self, AuthRegistryError> {
-        serde_json::from_value(value.clone()).map_err(|error| AuthRegistryError::Store {
-            message: format!("decode auth provider config: {error}"),
+    pub fn from_json(value: &serde_json::Value) -> Result<Self, CredentialRegistryError> {
+        serde_json::from_value(value.clone()).map_err(|error| CredentialRegistryError::Store {
+            message: format!("decode credential provider config: {error}"),
         })
     }
 
@@ -180,18 +180,18 @@ impl AuthProviderConfig {
         }
     }
 
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         match self {
             Self::GitHubApp(config) => {
                 validate_token_component("github app id", &config.app_id)?;
                 if !config.app_id.chars().all(|ch| ch.is_ascii_digit()) {
-                    return Err(AuthRegistryError::InvalidInput {
+                    return Err(CredentialRegistryError::InvalidInput {
                         message: format!("github app id must be numeric, got {:?}", config.app_id),
                     });
                 }
                 validate_audience_url(&config.api_base_url).map_err(|error| match error {
-                    AuthRegistryError::InvalidInput { message } => {
-                        AuthRegistryError::InvalidInput {
+                    CredentialRegistryError::InvalidInput { message } => {
+                        CredentialRegistryError::InvalidInput {
                             message: format!("api base url: {message}"),
                         }
                     }
@@ -202,8 +202,8 @@ impl AuthProviderConfig {
             Self::ModelOAuth(config) => {
                 if let Some(audience) = &config.audience {
                     validate_audience_url(audience).map_err(|error| match error {
-                        AuthRegistryError::InvalidInput { message } => {
-                            AuthRegistryError::InvalidInput {
+                        CredentialRegistryError::InvalidInput { message } => {
+                            CredentialRegistryError::InvalidInput {
                                 message: format!("model oauth audience: {message}"),
                             }
                         }
@@ -219,27 +219,30 @@ impl AuthProviderConfig {
 
 fn validate_optional_model_endpoint(
     endpoint: Option<&ModelEndpointConfig>,
-) -> Result<(), AuthRegistryError> {
+) -> Result<(), CredentialRegistryError> {
     endpoint.map_or(Ok(()), validate_model_endpoint)
 }
 
-fn validate_model_endpoint(endpoint: &ModelEndpointConfig) -> Result<(), AuthRegistryError> {
+fn validate_model_endpoint(endpoint: &ModelEndpointConfig) -> Result<(), CredentialRegistryError> {
     validate_audience_url(&endpoint.base_url).map_err(|error| match error {
-        AuthRegistryError::InvalidInput { message } => AuthRegistryError::InvalidInput {
-            message: format!("model endpoint base URL: {message}"),
-        },
+        CredentialRegistryError::InvalidInput { message } => {
+            CredentialRegistryError::InvalidInput {
+                message: format!("model endpoint base URL: {message}"),
+            }
+        }
         other => other,
     })?;
-    let url = Url::parse(&endpoint.base_url).map_err(|error| AuthRegistryError::InvalidInput {
-        message: format!("model endpoint base URL is invalid: {error}"),
-    })?;
+    let url =
+        Url::parse(&endpoint.base_url).map_err(|error| CredentialRegistryError::InvalidInput {
+            message: format!("model endpoint base URL is invalid: {error}"),
+        })?;
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "model endpoint base URL must not include credentials".to_owned(),
         });
     }
     if url.fragment().is_some() || url.query().is_some() {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "model endpoint base URL must not include a query or fragment".to_owned(),
         });
     }
@@ -247,19 +250,19 @@ fn validate_model_endpoint(endpoint: &ModelEndpointConfig) -> Result<(), AuthReg
         "https" => {}
         "http" if is_loopback_host(url.host_str()) => {}
         "http" => {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "model endpoint base URL must use HTTPS; HTTP is allowed only for loopback hosts"
                     .to_owned(),
             });
         }
         scheme => {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!("model endpoint URL scheme {scheme:?} is not supported"),
             });
         }
     }
     if endpoint.api_kinds.is_empty() {
-        return Err(AuthRegistryError::InvalidInput {
+        return Err(CredentialRegistryError::InvalidInput {
             message: "model endpoint api_kinds must contain at least one API kind".to_owned(),
         });
     }
@@ -269,12 +272,12 @@ fn validate_model_endpoint(endpoint: &ModelEndpointConfig) -> Result<(), AuthReg
             kind.as_str(),
             "openai:responses" | "openai:completions" | "openai:audio-transcriptions"
         ) {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!("model endpoint API kind {kind:?} is not supported"),
             });
         }
         if !kinds.insert(kind) {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!("model endpoint API kind {kind:?} is duplicated"),
             });
         }
@@ -298,23 +301,23 @@ fn is_loopback_host(host: Option<&str>) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuthProviderRecord {
-    pub provider_id: AuthProviderId,
-    pub provider_kind: AuthProviderKind,
+pub struct CredentialProviderRecord {
+    pub provider_id: CredentialProviderId,
+    pub provider_kind: CredentialProviderKind,
     pub display_name: Option<String>,
-    pub config: AuthProviderConfig,
+    pub config: CredentialProviderConfig,
     /// The provider's long-lived credential (for GitHub Apps: the private
     /// key), referenced by id — never the value.
     pub credential_secret: Option<SecretId>,
-    pub status: AuthProviderStatus,
+    pub status: CredentialProviderStatus,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
-impl AuthProviderRecord {
-    pub fn validate(&self) -> Result<(), AuthRegistryError> {
+impl CredentialProviderRecord {
+    pub fn validate(&self) -> Result<(), CredentialRegistryError> {
         if self.provider_kind != self.config.provider_kind() {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: format!(
                     "provider kind {:?} does not match config kind {:?}",
                     self.provider_kind,
@@ -326,46 +329,46 @@ impl AuthProviderRecord {
         self.config.validate()?;
         if matches!(
             self.config,
-            AuthProviderConfig::ModelApiKey(_)
-                | AuthProviderConfig::ModelOAuth(_)
-                | AuthProviderConfig::ModelEndpoint(_)
+            CredentialProviderConfig::ModelApiKey(_)
+                | CredentialProviderConfig::ModelOAuth(_)
+                | CredentialProviderConfig::ModelEndpoint(_)
         ) && self
             .provider_id
             .as_str()
             .strip_prefix("model:")
             .is_none_or(str::is_empty)
         {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "model providers require a provider id of the form model:<provider_id>"
                     .to_owned(),
             });
         }
-        if matches!(self.config, AuthProviderConfig::GitHubApp(_))
+        if matches!(self.config, CredentialProviderConfig::GitHubApp(_))
             && self.credential_secret.is_none()
         {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "github_app providers require a private key credential".to_owned(),
             });
         }
-        if matches!(self.config, AuthProviderConfig::ModelApiKey(_))
+        if matches!(self.config, CredentialProviderConfig::ModelApiKey(_))
             && self.credential_secret.is_none()
         {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "model_api_key providers require the API key credential".to_owned(),
             });
         }
-        if matches!(self.config, AuthProviderConfig::ModelOAuth(_))
+        if matches!(self.config, CredentialProviderConfig::ModelOAuth(_))
             && self.credential_secret.is_some()
         {
-            return Err(AuthRegistryError::InvalidInput {
-                message: "model_oauth providers bind a grant and carry no credential secret"
+            return Err(CredentialRegistryError::InvalidInput {
+                message: "model_ocredential providers bind a grant and carry no credential secret"
                     .to_owned(),
             });
         }
-        if matches!(self.config, AuthProviderConfig::ModelEndpoint(_))
+        if matches!(self.config, CredentialProviderConfig::ModelEndpoint(_))
             && self.credential_secret.is_some()
         {
-            return Err(AuthRegistryError::InvalidInput {
+            return Err(CredentialRegistryError::InvalidInput {
                 message: "model_endpoint providers carry no credential secret".to_owned(),
             });
         }
@@ -376,18 +379,18 @@ impl AuthProviderRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CreateAuthProviderRecord {
-    pub provider_id: AuthProviderId,
+pub struct CreateCredentialProviderRecord {
+    pub provider_id: CredentialProviderId,
     pub display_name: Option<String>,
-    pub config: AuthProviderConfig,
+    pub config: CredentialProviderConfig,
     pub credential_secret: Option<SecretId>,
-    pub status: AuthProviderStatus,
+    pub status: CredentialProviderStatus,
     pub created_at_ms: i64,
 }
 
-impl CreateAuthProviderRecord {
-    pub fn into_record(self) -> AuthProviderRecord {
-        AuthProviderRecord {
+impl CreateCredentialProviderRecord {
+    pub fn into_record(self) -> CredentialProviderRecord {
+        CredentialProviderRecord {
             provider_id: self.provider_id,
             provider_kind: self.config.provider_kind(),
             display_name: self.display_name,
@@ -401,34 +404,36 @@ impl CreateAuthProviderRecord {
 }
 
 #[async_trait]
-pub trait AuthProviderStore: Send + Sync {
-    async fn create_auth_provider(
+pub trait CredentialProviderStore: Send + Sync {
+    async fn create_credential_provider(
         &self,
-        record: CreateAuthProviderRecord,
-    ) -> Result<AuthProviderRecord, AuthRegistryError>;
+        record: CreateCredentialProviderRecord,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError>;
 
-    async fn read_auth_provider(
+    async fn read_credential_provider(
         &self,
-        provider_id: &AuthProviderId,
-    ) -> Result<AuthProviderRecord, AuthRegistryError>;
+        provider_id: &CredentialProviderId,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError>;
 
-    async fn list_auth_providers(&self) -> Result<Vec<AuthProviderRecord>, AuthRegistryError>;
-
-    async fn delete_auth_provider(
+    async fn list_credential_providers(
         &self,
-        provider_id: &AuthProviderId,
-    ) -> Result<AuthProviderRecord, AuthRegistryError>;
+    ) -> Result<Vec<CredentialProviderRecord>, CredentialRegistryError>;
+
+    async fn delete_credential_provider(
+        &self,
+        provider_id: &CredentialProviderId,
+    ) -> Result<CredentialProviderRecord, CredentialRegistryError>;
 
     /// Rewrite an existing provider in place (kind, display name, config,
     /// credential secret, status, `updated_at_ms`; the id and `created_at_ms`
     /// stay), only if it still references `expected_credential`. `Ok(None)`
     /// means another writer changed it first; the caller still owns any secret
     /// it stored for the replacement.
-    async fn replace_auth_provider(
+    async fn replace_credential_provider(
         &self,
-        record: AuthProviderRecord,
+        record: CredentialProviderRecord,
         expected_credential: Option<&SecretId>,
-    ) -> Result<Option<AuthProviderRecord>, AuthRegistryError>;
+    ) -> Result<Option<CredentialProviderRecord>, CredentialRegistryError>;
 }
 
 #[cfg(test)]
@@ -439,20 +444,20 @@ mod tests {
         RequestHeaderValue,
     };
 
-    fn github_config() -> AuthProviderConfig {
-        AuthProviderConfig::GitHubApp(GitHubAppConfig {
+    fn github_config() -> CredentialProviderConfig {
+        CredentialProviderConfig::GitHubApp(GitHubAppConfig {
             app_id: "12345".to_owned(),
             api_base_url: DEFAULT_GITHUB_API_BASE_URL.to_owned(),
         })
     }
 
-    fn create_request() -> CreateAuthProviderRecord {
-        CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new("lightspeed-github"),
+    fn create_request() -> CreateCredentialProviderRecord {
+        CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new("lightspeed-github"),
             display_name: Some("Lightspeed GitHub App".to_owned()),
             config: github_config(),
             credential_secret: Some(SecretId::new("authsec_key")),
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         }
     }
@@ -462,7 +467,7 @@ mod tests {
         let record = create_request().into_record();
 
         record.validate().expect("valid provider record");
-        assert_eq!(record.provider_kind, AuthProviderKind::GitHubApp);
+        assert_eq!(record.provider_kind, CredentialProviderKind::GitHubApp);
     }
 
     #[test]
@@ -472,20 +477,20 @@ mod tests {
 
         assert!(matches!(
             request.into_record().validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
     #[test]
     fn github_app_ids_must_be_numeric() {
-        let config = AuthProviderConfig::GitHubApp(GitHubAppConfig {
+        let config = CredentialProviderConfig::GitHubApp(GitHubAppConfig {
             app_id: "Iv23abc".to_owned(),
             api_base_url: DEFAULT_GITHUB_API_BASE_URL.to_owned(),
         });
 
         assert!(matches!(
             config.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
@@ -497,59 +502,59 @@ mod tests {
         assert_eq!(json["type"], "github_app");
         assert_eq!(json["app_id"], "12345");
 
-        let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
+        let decoded = CredentialProviderConfig::from_json(&json).expect("decode config");
         assert_eq!(decoded, config);
     }
 
     #[test]
     fn model_api_key_records_validate_and_derive_kind() {
-        let record = CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new(model_auth_provider_id("openai")),
+        let record = CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new(model_auth_provider_id("openai")),
             display_name: None,
-            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            config: CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
             credential_secret: Some(SecretId::new("authsec_key")),
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         }
         .into_record();
 
         record.validate().expect("valid llm api key record");
-        assert_eq!(record.provider_kind, AuthProviderKind::ModelApiKey);
+        assert_eq!(record.provider_kind, CredentialProviderKind::ModelApiKey);
         assert_eq!(record.provider_id.as_str(), "model:openai");
     }
 
     #[test]
     fn model_api_key_providers_require_a_credential() {
-        let record = CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new("model:openai"),
+        let record = CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new("model:openai"),
             display_name: None,
-            config: AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            config: CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
             credential_secret: None,
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         }
         .into_record();
 
         assert!(matches!(
             record.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
     #[test]
     fn model_api_key_configs_round_trip_through_tagged_json() {
-        let config = AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default());
+        let config = CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default());
 
         let json = config.to_json().expect("encode config");
         assert_eq!(json["type"], "model_api_key");
 
-        let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
+        let decoded = CredentialProviderConfig::from_json(&json).expect("decode config");
         assert_eq!(decoded, config);
     }
 
-    fn model_oauth_config(audience: Option<&str>) -> AuthProviderConfig {
-        AuthProviderConfig::ModelOAuth(ModelOAuthConfig {
-            grant_id: AuthGrantId::new("authgrant_1"),
+    fn model_oauth_config(audience: Option<&str>) -> CredentialProviderConfig {
+        CredentialProviderConfig::ModelOAuth(ModelOAuthConfig {
+            grant_id: CredentialGrantId::new("authgrant_1"),
             audience: audience.map(str::to_owned),
             endpoint: None,
         })
@@ -557,39 +562,39 @@ mod tests {
 
     #[test]
     fn model_oauth_records_validate_and_derive_kind() {
-        let record = CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new(model_auth_provider_id("anthropic")),
+        let record = CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new(model_auth_provider_id("anthropic")),
             display_name: None,
             config: model_oauth_config(Some("https://api.anthropic.com")),
             credential_secret: None,
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         }
         .into_record();
 
         record.validate().expect("valid model oauth record");
-        assert_eq!(record.provider_kind, AuthProviderKind::ModelOAuth);
+        assert_eq!(record.provider_kind, CredentialProviderKind::ModelOAuth);
     }
 
     #[test]
     fn model_oauth_providers_reject_credential_secrets_and_bad_audiences() {
-        let with_credential = CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new("model:anthropic"),
+        let with_credential = CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new("model:anthropic"),
             display_name: None,
             config: model_oauth_config(None),
             credential_secret: Some(SecretId::new("authsec_key")),
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         }
         .into_record();
         assert!(matches!(
             with_credential.validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
 
         assert!(matches!(
             model_oauth_config(Some("not a url")).validate(),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
@@ -601,7 +606,7 @@ mod tests {
         assert_eq!(json["type"], "model_oauth");
         assert_eq!(json["grant_id"], "authgrant_1");
 
-        let decoded = AuthProviderConfig::from_json(&json).expect("decode config");
+        let decoded = CredentialProviderConfig::from_json(&json).expect("decode config");
         assert_eq!(decoded, config);
     }
 
@@ -613,7 +618,7 @@ mod tests {
 
     fn credential(grant_id: &str) -> RequestHeaderValue {
         RequestHeaderValue::Credential {
-            grant_id: AuthGrantId::new(grant_id),
+            grant_id: CredentialGrantId::new(grant_id),
         }
     }
 
@@ -649,7 +654,7 @@ mod tests {
             reserved.headers.insert("authorization".to_owned(), value);
             assert!(matches!(
                 validate_model_endpoint(&reserved),
-                Err(AuthRegistryError::InvalidInput { .. })
+                Err(CredentialRegistryError::InvalidInput { .. })
             ));
         }
     }
@@ -662,7 +667,7 @@ mod tests {
             assert!(
                 matches!(
                     validate_model_endpoint(&plain),
-                    Err(AuthRegistryError::InvalidInput { .. })
+                    Err(CredentialRegistryError::InvalidInput { .. })
                 ),
                 "{name} must not accept a literal"
             );
@@ -720,7 +725,7 @@ mod tests {
             .insert("X-Title".to_owned(), literal("Lightspeed"));
         assert!(matches!(
             validate_model_endpoint(&mixed_case),
-            Err(AuthRegistryError::InvalidInput { .. })
+            Err(CredentialRegistryError::InvalidInput { .. })
         ));
     }
 
@@ -775,15 +780,15 @@ mod tests {
     fn model_endpoint_accessors_reach_every_model_kind() {
         let endpoint = endpoint("https://router.example/v1");
         let mut configs = [
-            AuthProviderConfig::ModelApiKey(ModelApiKeyConfig {
+            CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig {
                 endpoint: Some(endpoint.clone()),
             }),
-            AuthProviderConfig::ModelOAuth(ModelOAuthConfig {
-                grant_id: AuthGrantId::new("authgrant_1"),
+            CredentialProviderConfig::ModelOAuth(ModelOAuthConfig {
+                grant_id: CredentialGrantId::new("authgrant_1"),
                 audience: None,
                 endpoint: Some(endpoint.clone()),
             }),
-            AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+            CredentialProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
                 endpoint: endpoint.clone(),
             }),
         ];
@@ -804,7 +809,7 @@ mod tests {
         }
         assert_eq!(github_config().model_endpoint(), None);
         assert_eq!(
-            AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()).model_endpoint(),
+            CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()).model_endpoint(),
             None
         );
     }
@@ -818,21 +823,22 @@ mod tests {
 
     #[test]
     fn credentialless_model_endpoint_validates_and_round_trips() {
-        let config = AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+        let config = CredentialProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
             endpoint: endpoint("http://localhost:11434/v1"),
         });
-        let record = CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new("model:ollama"),
+        let record = CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new("model:ollama"),
             display_name: Some("Local Ollama".to_owned()),
             config: config.clone(),
             credential_secret: None,
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         }
         .into_record();
         record.validate().expect("credentialless endpoint");
         assert_eq!(
-            AuthProviderConfig::from_json(&config.to_json().expect("encode")).expect("decode"),
+            CredentialProviderConfig::from_json(&config.to_json().expect("encode"))
+                .expect("decode"),
             config
         );
     }

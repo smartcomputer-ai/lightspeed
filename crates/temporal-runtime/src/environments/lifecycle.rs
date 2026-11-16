@@ -1593,11 +1593,11 @@ mod tests {
         fake_controller::{FAKE_TEMPLATE_ID, FakeController, FakeControllerOptions},
         provider_controllers::WebSocketProviderControllerConnector,
     };
+    use ::credentials::SecretValue;
     use ::environments::{
         EnvironmentProviderBindingStore, InMemoryEnvironmentRegistryStore, PowerState,
         ProviderCredentialChange, PutEnvironmentProvider, PutEnvironmentProviderBinding,
     };
-    use auth::SecretValue;
     use environment_protocol::ENVD_PROTOCOL_VERSION;
 
     #[test]

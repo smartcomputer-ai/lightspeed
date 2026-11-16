@@ -10,12 +10,12 @@
 
 use super::*;
 
+use ::credentials::SecretValue;
 use ::environments::{
     EnvironmentEndpoint, EnvironmentProviderId, EnvironmentProviderRecord,
     EnvironmentProviderStore, EnvironmentRegistryError,
 };
 use async_trait::async_trait;
-use auth::SecretValue;
 use environment_client::{ClientError, ConnectOptions, ControllerClient};
 use environment_protocol::{
     control::handshake::ControllerCapabilities, error::ProtocolErrorKind, routes::DataRouteBase,

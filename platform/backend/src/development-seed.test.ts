@@ -9,7 +9,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 const admin = { id: "admin-login", email: "admin@lightspeed.dev" };
 const env = {
   devSeed: true, adminEmail: "admin@lightspeed.dev", adminPassword: "shared-custom-password",
-  lightspeedApiUrl: "http://localhost/rpc", lightspeedRpcToken: "lsk_fixture",
+  lightspeedApiUrl: "http://localhost/rpc", lightspeedRpcToken: "lsr_fixture",
 } as ServerEnv;
 
 /// A database answering each read, in order, with the next of `reads`, and a
@@ -18,7 +18,7 @@ function setup(reads: unknown[][], runtimeHandle = "test") {
   const creations: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const headers = new Headers(init.headers);
-    expect(headers.get("authorization")).toBe("Bearer lsk_fixture");
+    expect(headers.get("authorization")).toBe("Bearer lsr_fixture");
     expect(headers.get("x-lightspeed-actor")).toBeNull();
     const rpc = JSON.parse(String(init.body));
     expect(rpc.method).toBe("deployment/universes/create");

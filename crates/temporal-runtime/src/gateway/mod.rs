@@ -14,8 +14,9 @@ mod watch;
 pub use crate::config::pg_store_from_env;
 pub use deployment::GatewayDeploymentApi;
 pub use http::{
-    ACTOR_HEADER, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayRoutes,
-    GatewayState, UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
+    ACTOR_HEADER, DEFAULT_ENVIRONMENT_GATEWAY_BIND, DEFAULT_GATEWAY_BIND,
+    DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_PUBLIC_BIND, GatewayRoutes, GatewayState,
+    UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
 };
 pub use service::{
     DEFAULT_PUBLIC_BASE_URL, GatewayAgentApi, GatewayAgentApiBuilder, OAuthCallbackOutcome,
