@@ -283,7 +283,7 @@ async fn a_declared_registration_key_admits_under_the_supplied_secret() -> anyho
             }),
         )
         .await?;
-        let state = runtime.state_for(universe_id, false).await?;
+        let state = runtime.state_for(universe_id).await?;
         let api = state.api.clone();
         let store = state.store.clone();
         let declare = |id: &str, name: &str, mode, max_active, secret: &str| {

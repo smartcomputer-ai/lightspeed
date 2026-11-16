@@ -50,6 +50,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "sessions",
     "universe_model_defaults",
     "universes",
+    "universes_deleted",
     "vfs_snapshots",
     "vfs_workspaces",
 ];
@@ -182,9 +183,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "environment_gateway_replicas",
         sql: include_str!("../migrations/024_environment_gateway_replicas.sql"),
     },
+    EmbeddedMigration {
+        version: 25,
+        name: "universe_deletion",
+        sql: include_str!("../migrations/025_universe_deletion.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 24;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 25;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

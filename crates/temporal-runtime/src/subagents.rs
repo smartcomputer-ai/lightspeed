@@ -461,7 +461,10 @@ impl SubagentService {
                 }],
                 submission_id,
                 vec![RunTerminalNotifyIntent {
-                    holder_workflow_id: start.execution_id.clone(),
+                    holder_workflow_id: temporal_workflow::compose_workflow_tool_execution_id(
+                        start.universe_id,
+                        &start.execution_id,
+                    ),
                     token: reply_promise_id.as_str().to_owned(),
                 }],
             )
@@ -1366,7 +1369,10 @@ mod tests {
         assert_eq!(
             runs[0].3,
             vec![RunTerminalNotifyIntent {
-                holder_workflow_id: "wte:a".to_owned(),
+                holder_workflow_id: temporal_workflow::compose_workflow_tool_execution_id(
+                    start.universe_id,
+                    "wte:a"
+                ),
                 token: reply_promise().as_str().to_owned(),
             }],
             "the child's terminal must be addressed to the execution with the reply promise as token"

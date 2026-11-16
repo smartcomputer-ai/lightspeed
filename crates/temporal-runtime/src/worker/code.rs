@@ -92,7 +92,7 @@ impl CodeWorkerActivities {
         ctx: ActivityContext,
         request: CodePrepareActivityRequest,
     ) -> Result<CodePrepareActivityResult, ActivityError> {
-        require_activity_owner(&ctx, &request.start.execution_id)?;
+        require_activity_owner(&ctx, request.start.universe_id, &request.start.execution_id)?;
         let work = async {
             let api = self.universes.api_for(request.start.universe_id).await?;
             let result = tokio::time::timeout(PREPARE_TIMEOUT, prepare(&api, &request.start))
@@ -131,10 +131,10 @@ impl CodeWorkerActivities {
         // configured caller supplies a retry policy.
         validate_attempt(ctx.info().attempt)?;
         descriptor.validate().map_err(non_retryable)?;
-        require_activity_owner(&ctx, &descriptor.execution_id)?;
         let (universe_id, _) =
             temporal_workflow::split_workflow_id(&descriptor.session_workflow_id)
                 .ok_or_else(|| non_retryable("invalid parent session identity"))?;
+        require_activity_owner(&ctx, universe_id, &descriptor.execution_id)?;
         let cancellation = Cancellation::default();
         let work = async {
             let api = self.universes.api_for(universe_id).await?;
@@ -174,7 +174,7 @@ impl CodeWorkerActivities {
         ctx: ActivityContext,
         request: CodeFinalizeActivityRequest,
     ) -> Result<PromiseResolution, ActivityError> {
-        require_activity_owner(&ctx, &request.start.execution_id)?;
+        require_activity_owner(&ctx, request.start.universe_id, &request.start.execution_id)?;
         let work = async {
             let api = self.universes.api_for(request.start.universe_id).await?;
             let runner = self.runner(&api);
@@ -819,8 +819,17 @@ fn model_report(report: &DetailedCodeReport, report_ref: &BlobRef) -> Value {
     })
 }
 
-fn require_activity_owner(ctx: &ActivityContext, execution_id: &str) -> Result<(), ActivityError> {
-    if ctx.info().workflow_id.as_deref() != Some(execution_id) {
+fn require_activity_owner(
+    ctx: &ActivityContext,
+    universe_id: uuid::Uuid,
+    execution_id: &str,
+) -> Result<(), ActivityError> {
+    if ctx.info().workflow_id.as_deref()
+        != Some(
+            temporal_workflow::compose_workflow_tool_execution_id(universe_id, execution_id)
+                .as_str(),
+        )
+    {
         return Err(non_retryable("code activity workflow identity mismatch"));
     }
     Ok(())

@@ -12,7 +12,21 @@ pub struct UniverseArgs {
 #[derive(Debug, Subcommand)]
 enum UniverseCommand {
     /// List universes; * marks the active universe for this invocation.
-    List,
+    List {
+        /// Show permanent records of deleted universes.
+        #[arg(long)]
+        deleted: bool,
+    },
+    /// Fence the universe immediately and remove its resources in the background.
+    Delete {
+        target: String,
+        /// Wait for completion, optionally up to a duration (default: 5m).
+        #[arg(long, num_args = 0..=1, default_missing_value = "5m", value_parser = crate::session_cli::parse_duration_ms)]
+        wait: Option<u64>,
+        /// Skip typing the universe handle to confirm deletion.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Show the active universe's UUID and current handle.
     Status,
     /// Persist this connection's universe selection.
@@ -53,7 +67,119 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 status.print("Universe");
             }
         }
-        UniverseCommand::List => {
+        UniverseCommand::List { deleted: true } => {
+            let mut after = None;
+            let mut universes = Vec::new();
+            loop {
+                let response: api::DeploymentDeletedUniversesListResponse = client
+                    .request(
+                        api::METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST,
+                        api::DeploymentDeletedUniversesListParams { after },
+                    )
+                    .await?
+                    .result;
+                universes.extend(response.universes);
+                after = response.next_after;
+                if after.is_none() {
+                    break;
+                }
+            }
+            if args.json {
+                print_json(&serde_json::json!({ "universes": universes }))?;
+            } else {
+                for universe in universes {
+                    println!(
+                        "{}  {}  deleted {}",
+                        universe.universe_id, universe.handle, universe.deleted_at_ms
+                    );
+                }
+            }
+        }
+        UniverseCommand::Delete { target, wait, yes } => {
+            let read = client
+                .request::<_, api::DeploymentUniverseReadResponse>(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+                    api::DeploymentUniverseReadParams {
+                        universe: target.clone(),
+                    },
+                )
+                .await;
+            let (id, handle) = match read {
+                Ok(response) => (
+                    response.result.universe.universe_id,
+                    response.result.universe.handle,
+                ),
+                Err(error) if error.kind == api::AgentApiErrorKind::Gone => {
+                    let record = error
+                        .deleted_universe
+                        .context("gone response lacks deleted universe record")?;
+                    let response = api::DeploymentUniverseDeleteResponse {
+                        universe_id: record.universe_id,
+                        state: api::UniverseDeletionState::Deleted,
+                    };
+                    crate::output::show(args.json, &response)?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if !yes {
+                use std::io::{IsTerminal as _, Write as _};
+                anyhow::ensure!(
+                    std::io::stdin().is_terminal(),
+                    "universe deletion requires --yes when stdin is not a terminal"
+                );
+                eprint!("Type {handle} to permanently delete this universe: ");
+                std::io::stderr().flush()?;
+                let mut confirmation = String::new();
+                std::io::stdin().read_line(&mut confirmation)?;
+                anyhow::ensure!(
+                    confirmation.trim() == handle,
+                    "universe deletion cancelled: handle did not match"
+                );
+            }
+            let mut response: api::DeploymentUniverseDeleteResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_DELETE,
+                    api::DeploymentUniverseDeleteParams {
+                        universe: id.clone(),
+                    },
+                )
+                .await?
+                .result;
+            if let Some(wait_ms) = wait {
+                let deadline =
+                    tokio::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+                while response.state != api::UniverseDeletionState::Deleted {
+                    match client
+                        .request::<_, api::DeploymentUniverseReadResponse>(
+                            api::METHOD_DEPLOYMENT_UNIVERSES_READ,
+                            api::DeploymentUniverseReadParams {
+                                universe: id.clone(),
+                            },
+                        )
+                        .await
+                    {
+                        Err(error) if error.kind == api::AgentApiErrorKind::Gone => {
+                            response.state = api::UniverseDeletionState::Deleted;
+                            break;
+                        }
+                        Err(error) => return Err(error.into()),
+                        Ok(_) => {}
+                    }
+                    anyhow::ensure!(
+                        tokio::time::Instant::now() < deadline,
+                        "universe {id} is still deleting; timed out waiting for completion"
+                    );
+                    tokio::time::sleep_until(
+                        deadline
+                            .min(tokio::time::Instant::now() + std::time::Duration::from_secs(1)),
+                    )
+                    .await;
+                }
+            }
+            crate::output::show(args.json, &response)?;
+        }
+        UniverseCommand::List { deleted: false } => {
             let response: api::DeploymentUniverseListResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
@@ -103,10 +229,15 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 }
                 for u in response.universes {
                     println!(
-                        "{} {}  {}",
+                        "{} {}  {}{}",
                         if is_active(&u) { "*" } else { " " },
                         u.universe_id,
-                        u.handle
+                        u.handle,
+                        if u.deletion.is_some() {
+                            "  (deleting)"
+                        } else {
+                            ""
+                        }
                     );
                 }
             }
@@ -498,4 +629,52 @@ pub async fn models(args: ModelsArgs) -> Result<()> {
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct CommandLine {
+        #[command(flatten)]
+        universe: UniverseArgs,
+    }
+
+    #[test]
+    fn universe_delete_wait_has_a_default_and_accepts_duration() {
+        let args =
+            CommandLine::try_parse_from(["universe", "delete", "demo", "--wait", "--yes"]).unwrap();
+        assert!(matches!(
+            args.universe.command,
+            UniverseCommand::Delete {
+                wait: Some(300_000),
+                yes: true,
+                ..
+            }
+        ));
+        let args =
+            CommandLine::try_parse_from(["universe", "delete", "demo", "--wait", "2m"]).unwrap();
+        assert!(matches!(
+            args.universe.command,
+            UniverseCommand::Delete {
+                wait: Some(120_000),
+                yes: false,
+                ..
+            }
+        ));
+        assert!(
+            CommandLine::try_parse_from(["universe", "delete", "demo", "--wait", "0"]).is_err()
+        );
+    }
+
+    #[test]
+    fn universe_list_selects_deleted_inventory() {
+        let args = CommandLine::try_parse_from(["universe", "list", "--deleted"]).unwrap();
+        assert!(matches!(
+            args.universe.command,
+            UniverseCommand::List { deleted: true }
+        ));
+    }
 }

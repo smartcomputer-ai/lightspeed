@@ -369,7 +369,8 @@
       "split": {
         "sessionId": "bot:v1:triage",
         "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f"
-      }
+      },
+      "workflowToolExecution": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/wte:vector"
     }
   },
   "workflowIds": {
@@ -378,7 +379,8 @@
     "chatConversation": "{universeId}/chat-{provider}-{sha256 of the conversation, 48 hex}",
     "environmentJob": "{universeId}/envjob-{environmentId}-{jobGroupId}",
     "separator": "/",
-    "session": "{universeId}/{sessionId}"
+    "session": "{universeId}/{sessionId}",
+    "workflowToolExecution": "{universeId}/{executionId}"
   },
   "workflowTools": {
     "executionKind": "workflow_tool.execution",

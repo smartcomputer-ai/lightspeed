@@ -12,7 +12,7 @@ impl ProfileStore for PgStore {
         profile: AgentProfileInput,
         created_at_ms: i64,
     ) -> Result<AgentProfile, ProfileError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| profile_store_error("ensure universe", error))?;
         let record = profile.into_record(created_at_ms);
@@ -130,7 +130,7 @@ impl ProfileStore for PgStore {
         expected_revision: Option<u64>,
         now_ms: i64,
     ) -> Result<AgentProfile, ProfileError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| profile_store_error("ensure universe", error))?;
         // A concurrent writer between the read and the write loses exactly one
@@ -181,7 +181,7 @@ impl ProfileStore for PgStore {
         &self,
         profile_id: &ProfileId,
     ) -> Result<AgentProfile, ProfileError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| profile_store_error("ensure universe", error))?;
         let row = sqlx::query(

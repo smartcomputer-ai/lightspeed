@@ -1,15 +1,6 @@
 //! Deployment-scoped (deployment-level) service: universe lifecycle over the
 //! shared deployment resources, above the universe-bound store boundary.
 //!
-//! Purge ordering (`deployment/universes/delete`): terminate live session
-//! workflows, sweep externally stored blob objects, delete the `universes`
-//! row (every universe-scoped table cascades from it), then evict the cached
-//! runtime state. Each step is idempotent and the row is deleted last, so a
-//! partial failure leaves the universe visible and a re-run resumes where it
-//! stopped. Callers stop routing traffic to the universe before purging (the
-//! platform archives first); a write racing the purge can lazily re-insert an
-//! empty universe row via `ensure_universe`, which a re-run removes.
-
 use std::sync::Arc;
 
 use api::AccessScope;
@@ -38,10 +29,6 @@ use environments::{
     PutEnvironmentProvider, PutEnvironmentProviderBinding,
 };
 use harness::SessionId;
-use object_store::ObjectStoreExt as _;
-use object_store::path::Path as ObjectPath;
-use temporal_workflow::{AgentSessionWorkflow, compose_workflow_id};
-use temporalio_client::{Client, WorkflowTerminateOptions, errors::WorkflowInteractionError};
 use uuid::Uuid;
 
 use crate::{
@@ -74,10 +61,6 @@ impl GatewayDeploymentApi {
     ) -> Result<T, AgentApiError> {
         admit(method)?;
         operation.await
-    }
-
-    fn temporal(&self) -> &Client {
-        self.runtime.client()
     }
 
     async fn read_universe_view(
@@ -139,41 +122,6 @@ impl GatewayDeploymentApi {
             Err(AgentApiError::not_found(format!(
                 "unknown universe: {universe_id}"
             )))
-        }
-    }
-
-    /// Terminate the session's live workflow. `NotFound` covers both "never
-    /// started" and "already closed" and counts as nothing-to-terminate; any
-    /// other failure aborts the purge before rows are touched (a purge that
-    /// leaves a live workflow writing into a half-deleted universe is worse
-    /// than a retryable error).
-    async fn terminate_session_workflow(
-        &self,
-        universe_id: Uuid,
-        session_id: &str,
-    ) -> Result<bool, AgentApiError> {
-        let session_id = SessionId::try_new(session_id).map_err(|error| {
-            AgentApiError::internal(format!("stored session id is invalid: {error}"))
-        })?;
-        let handle =
-            self.temporal()
-                .get_workflow_handle::<AgentSessionWorkflow>(compose_workflow_id(
-                    universe_id,
-                    &session_id,
-                ));
-        match handle
-            .terminate(
-                WorkflowTerminateOptions::builder()
-                    .reason("deployment universe purge")
-                    .build(),
-            )
-            .await
-        {
-            Ok(()) => Ok(true),
-            Err(WorkflowInteractionError::NotFound(_)) => Ok(false),
-            Err(error) => Err(AgentApiError::internal(format!(
-                "terminate session workflow {session_id}: {error}"
-            ))),
         }
     }
 }
@@ -586,10 +534,24 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentUniverseReadParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_READ, async {
-            let universe_id = self.resolve_universe(&params.universe).await?;
-            let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
-                AgentApiError::not_found(format!("unknown universe: {universe_id}"))
-            })?;
+            let universe_id = match Uuid::parse_str(params.universe.trim()) {
+                Ok(id) => id,
+                Err(_) => self.resolve_universe(&params.universe).await?,
+            };
+            let universe = match self.read_universe_view(universe_id).await? {
+                Some(view) => view,
+                None => {
+                    if let Some(record) = store_pg::read_deleted_universe(self.pool(), universe_id)
+                        .await
+                        .map_err(map_store_error)?
+                    {
+                        return Err(AgentApiError::gone(record));
+                    }
+                    return Err(AgentApiError::not_found(format!(
+                        "unknown universe: {universe_id}"
+                    )));
+                }
+            };
             Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
                 universe,
             }))
@@ -602,83 +564,58 @@ impl DeploymentApiService for GatewayDeploymentApi {
         params: DeploymentUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETE, async {
-        let universe_id = self.resolve_universe(&params.universe).await?;
-
-        let session_ids = store_pg::list_universe_session_ids(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?;
-        let mut workflows_terminated = 0u64;
-        for session_id in &session_ids {
-            if self
-                .terminate_session_workflow(universe_id, session_id)
-                .await?
-            {
-                workflows_terminated += 1;
-            }
-        }
-
-        let object_keys = store_pg::list_universe_object_keys(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?;
-        let mut blob_objects_deleted = 0u64;
-        if !object_keys.is_empty() {
-            let Some(object_store) = self.runtime.stores().object_store() else {
-                return Err(AgentApiError::internal(format!(
-                    "universe {universe_id} has externally stored blobs but no object store is configured"
-                )));
+            let universe_id = match Uuid::parse_str(params.universe.trim()) {
+                Ok(id) => id,
+                Err(_) => self.resolve_universe(&params.universe).await?,
             };
-            for key in &object_keys {
-                match object_store.delete(&ObjectPath::from(key.as_str())).await {
-                    Ok(()) => blob_objects_deleted += 1,
-                    // Already swept by an earlier partial purge.
-                    Err(object_store::Error::NotFound { .. }) => {}
-                    Err(error) => {
-                        return Err(AgentApiError::internal(format!(
-                            "delete blob object {key}: {error}"
-                        )));
-                    }
+            let requested_by = super::request_context::request_context()?.attribution();
+            let state = store_pg::begin_universe_deletion(
+                self.pool(),
+                universe_id,
+                &requested_by,
+                current_time_ms()? as i64,
+            )
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {universe_id}")))?;
+            self.runtime
+                .stores()
+                .changes()
+                .publish(store_pg::changes::Change::new(
+                    universe_id,
+                    store_pg::changes::ChangeKind::Universe,
+                    universe_id.to_string(),
+                ));
+            self.runtime.evict(universe_id).await;
+            Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
+                universe_id: universe_id.to_string(),
+                state,
+            }))
+        })
+        .await
+    }
+
+    async fn list_deleted_universes(
+        &self,
+        params: api::DeploymentDeletedUniversesListParams,
+    ) -> Result<AgentApiOutcome<api::DeploymentDeletedUniversesListResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST, async {
+            if let Some(cursor) = &params.after {
+                let valid = cursor.split_once(':').is_some_and(|(time, id)| {
+                    time.parse::<i64>().is_ok() && Uuid::parse_str(id).is_ok()
+                });
+                if !valid {
+                    return Err(AgentApiError::invalid_request(
+                        "invalid deleted universe cursor",
+                    ));
                 }
             }
-        }
-
-        store_pg::delete_universe(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?;
-        // Objects whose catalog rows were already swept, or whose deletion
-        // failed after the row went, are not in the listing above; clear the
-        // universe's whole CAS prefix so nothing outlives the row cascade.
-        if let Some(object_store) = self.runtime.stores().object_store() {
-            let prefix = store_pg::universe_cas_object_prefix(
-                self.runtime.stores().object_prefix(),
-                universe_id,
-            );
-            match store_pg::delete_objects_under_prefix(object_store.as_ref(), &prefix).await {
-                Ok(deleted) => blob_objects_deleted += deleted,
-                Err(error) => tracing::warn!(
-                    target: "temporal_runtime",
-                    universe_id = %universe_id,
-                    prefix,
-                    %error,
-                    "universe rows are deleted but clearing its object prefix failed"
-                ),
-            }
-        }
-        self.runtime.evict(universe_id).await;
-
-        tracing::info!(
-            target: "temporal_runtime",
-            universe_id = %universe_id,
-            sessions = session_ids.len(),
-            workflows_terminated,
-            blob_objects_deleted,
-            "universe purged"
-        );
-        Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
-            universe_id: universe_id.to_string(),
-            workflows_terminated,
-            blob_objects_deleted,
-        }))
-        }).await
+            store_pg::list_deleted_universes(self.pool(), params.after.as_deref())
+                .await
+                .map(AgentApiOutcome::new)
+                .map_err(map_store_error)
+        })
+        .await
     }
 
     async fn create_api_key(
@@ -815,6 +752,7 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
 
 fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     DeploymentUniverseView {
+        deletion: stats.deletion,
         configuration: stats.configuration,
         universe_id: stats.universe_id.to_string(),
         handle: stats.handle,
@@ -875,6 +813,9 @@ fn validate_universe_handle(handle: &str) -> Result<(), AgentApiError> {
 }
 
 fn map_universe_store_error(error: store_pg::PgStoreError) -> AgentApiError {
+    if matches!(error, store_pg::PgStoreError::UniverseDeleted { .. }) {
+        return AgentApiError::conflict(error.to_string());
+    }
     if let store_pg::PgStoreError::Postgres(sqlx::Error::Database(ref db)) = error
         && db.is_unique_violation()
     {

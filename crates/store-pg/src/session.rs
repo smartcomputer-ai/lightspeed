@@ -514,7 +514,7 @@ impl SessionStore for PgStore {
                 message: "deleteAfterCloseMs must be positive".to_owned(),
             });
         }
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
@@ -940,7 +940,7 @@ impl SessionStore for PgStore {
         &self,
         request: CreateClonedSession,
     ) -> Result<SessionRecord, SessionStoreError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
@@ -1011,7 +1011,7 @@ impl SessionStore for PgStore {
         &self,
         request: CreateForkedSession,
     ) -> Result<SessionRecord, SessionStoreError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let source_record = self

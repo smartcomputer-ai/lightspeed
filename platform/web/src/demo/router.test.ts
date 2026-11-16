@@ -459,6 +459,17 @@ describe("demo router", () => {
     expect(sessions.some((session) => (session.metadata?.workflowRunId?.length ?? 0) > 60)).toBe(true);
   });
 
+  it("deletes an active universe only with its exact handle and records the request", async () => {
+    const { store, call } = await boot();
+    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const path = `/api/v1/universes/${state.universe.id}`;
+    expect(state.universe.status).toBe("active");
+    expect((await call("DELETE", path, { handle: "wrong" })).status).toBe(400);
+    expect((await call("DELETE", path, { handle: state.universe.handle })).status).toBe(200);
+    expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)).toBeNull();
+    expect(store.auditEvents.at(-1)).toMatchObject({ action: "universe.delete", targetId: state.universe.lightspeedUniverseId });
+  });
+
   it("answers the admin pages", async () => {
     const { call } = await boot();
     for (const path of [

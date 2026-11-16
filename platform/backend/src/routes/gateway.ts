@@ -2685,7 +2685,7 @@ async function commitHead(
 /// typed errors carry their message; anything else (a database driver error
 /// includes its SQL and parameters) is logged here and answered generically.
 export async function withGateway(
-  c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 500 | 501 | 502) => Response },
+  c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 410 | 500 | 501 | 502) => Response },
   fn: () => Promise<Response>,
 ): Promise<Response> {
   try {
@@ -2711,6 +2711,7 @@ export async function withGateway(
       if (error.kind === "forbidden") return c.json({ error: "runtime refused the Platform" }, 500);
       if (error.kind === "rejected") return c.json({ error: error.message }, 409);
       if (error.kind === "sessionExecutionStopped") return c.json({ error: error.message, kind: error.kind }, 409);
+      if (error.kind === "gone") return c.json({ error: error.message, kind: error.kind }, 410);
       if (error.kind === "notFound") {
         return c.json({ error: "not found in engine" }, 404);
       }

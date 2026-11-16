@@ -2642,3 +2642,71 @@ fn a_stored_secret_is_not_a_credential_source() {
     }));
     assert!(error.is_err());
 }
+
+#[test]
+fn universe_deletion_takes_over_a_close_without_resetting_its_progress() {
+    let mut record = create("request", "environment", 1_000).record().unwrap();
+    let close = BeginCloseEnvironment {
+        environment_id: record.environment_id.clone(),
+        reason: EnvironmentCloseReason::Requested,
+        at_ms: 2_000,
+    };
+    assert!(close.apply(&mut record).unwrap());
+    record.provisioned_mut().unwrap().attempts = 2;
+    record.provisioned_mut().unwrap().next_attempt_at_ms = Some(4_000);
+    record.state_message = Some("provider is still closing".into());
+    record.updated_at_ms = 2_500;
+    let before = record.clone();
+    let deletion = BeginCloseEnvironment {
+        reason: EnvironmentCloseReason::UniverseDeleted,
+        at_ms: 3_000,
+        ..close
+    };
+    assert!(deletion.apply(&mut record).unwrap());
+    let mut expected = before;
+    expected.close_reason = Some(EnvironmentCloseReason::UniverseDeleted);
+    expected.updated_at_ms = 3_000;
+    assert_eq!(record, expected);
+    assert_eq!(record.state, EnvironmentState::Closing);
+    assert_eq!(record.provisioned().unwrap().attempts, 2);
+    assert!(
+        !BeginCloseEnvironment {
+            at_ms: 5_000,
+            ..deletion
+        }
+        .apply(&mut record)
+        .unwrap()
+    );
+    assert_eq!(record, expected);
+}
+
+#[test]
+fn deletion_close_preserves_newer_timestamps_and_never_changes_closed_rows() {
+    let mut record = create("request", "environment", 1_000).record().unwrap();
+    let close = BeginCloseEnvironment {
+        environment_id: record.environment_id.clone(),
+        reason: EnvironmentCloseReason::Requested,
+        at_ms: 2_000,
+    };
+    assert!(close.apply(&mut record).unwrap());
+    record.updated_at_ms = 4_000;
+    let mut already_closed = record.clone();
+    assert!(
+        FinishCloseEnvironment {
+            environment_id: record.environment_id.clone(),
+            at_ms: 5_000,
+        }
+        .apply(&mut already_closed)
+        .unwrap()
+    );
+    let closed_before = already_closed.clone();
+    let deletion = BeginCloseEnvironment {
+        reason: EnvironmentCloseReason::UniverseDeleted,
+        at_ms: 3_000,
+        ..close
+    };
+    assert!(deletion.apply(&mut record).unwrap());
+    assert_eq!(record.updated_at_ms, 4_000);
+    assert!(!deletion.apply(&mut already_closed).unwrap());
+    assert_eq!(already_closed, closed_before);
+}

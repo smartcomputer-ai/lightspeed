@@ -84,6 +84,16 @@
     },
     "AgentApiError": {
       "properties": {
+        "deletedUniverse": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DeletedUniverseView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "kind": {
           "$ref": "#/definitions/AgentApiErrorKind"
         },
@@ -125,6 +135,11 @@
             "audioBlobTooLarge",
             "internal"
           ],
+          "type": "string"
+        },
+        {
+          "const": "gone",
+          "description": "This universe was permanently deleted; the error carries its record.",
           "type": "string"
         },
         {
@@ -1170,6 +1185,23 @@
         },
         "result": {
           "$ref": "#/definitions/DeploymentDeletedSessionsListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentDeletedUniversesListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentDeletedUniversesListResponse"
         }
       },
       "required": [
@@ -9197,6 +9229,52 @@
       ],
       "type": "object"
     },
+    "DeletedUniverseView": {
+      "description": "Permanent resource inventory and attribution for a deleted universe.",
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deletedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deletingAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handle": {
+          "type": "string"
+        },
+        "requestedBy": {
+          "$ref": "#/definitions/Attribution"
+        },
+        "summary": true,
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "handle",
+        "createdAtMs",
+        "deletingAtMs",
+        "deletedAtMs",
+        "requestedBy",
+        "summary"
+      ],
+      "type": "object"
+    },
     "DeploymentApiKeyCreateParams": {
       "additionalProperties": false,
       "properties": {
@@ -9608,6 +9686,40 @@
       ],
       "type": "object"
     },
+    "DeploymentDeletedUniversesListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "default": null,
+          "description": "Opaque exclusive cursor; each page contains at most 100 entries.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DeploymentDeletedUniversesListResponse": {
+      "properties": {
+        "nextAfter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "universes": {
+          "items": {
+            "$ref": "#/definitions/DeletedUniverseView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "universes"
+      ],
+      "type": "object"
+    },
     "DeploymentEnvironmentProviderDeleteParams": {
       "properties": {
         "providerId": {
@@ -9950,28 +10062,17 @@
       "type": "object"
     },
     "DeploymentUniverseDeleteResponse": {
-      "description": "Purge report. The purge is idempotent: rerunning after a partial failure\nresumes where it stopped, and the universe row is deleted last so a\nhalf-purged universe is still visible to `deployment/universes/read`.",
       "properties": {
-        "blobObjectsDeleted": {
-          "description": "External object-store blobs deleted during the purge.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
+        "state": {
+          "$ref": "#/definitions/UniverseDeletionState"
         },
         "universeId": {
           "type": "string"
-        },
-        "workflowsTerminated": {
-          "description": "Live session workflows terminated during the purge.",
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
         }
       },
       "required": [
         "universeId",
-        "workflowsTerminated",
-        "blobObjectsDeleted"
+        "state"
       ],
       "type": "object"
     },
@@ -10043,6 +10144,16 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "deletion": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/UniverseDeletion"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "directoryGroupMappings": {
           "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
@@ -10171,6 +10282,11 @@
     "EnvironmentCloseReasonView": {
       "description": "Why an environment is closing or closed.",
       "oneOf": [
+        {
+          "const": "universeDeleted",
+          "description": "Its universe is being deleted.",
+          "type": "string"
+        },
         {
           "const": "requested",
           "description": "`environments/close`.",
@@ -19755,6 +19871,50 @@
           "type": "string"
         }
       ]
+    },
+    "UniverseDeletion": {
+      "properties": {
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestedBy": {
+          "$ref": "#/definitions/Attribution"
+        },
+        "startedAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "step": {
+          "$ref": "#/definitions/UniverseDeletionStep"
+        }
+      },
+      "required": [
+        "startedAtMs",
+        "requestedBy",
+        "step"
+      ],
+      "type": "object"
+    },
+    "UniverseDeletionState": {
+      "description": "Current state after the immediate deletion fence has been applied.",
+      "enum": [
+        "deleting",
+        "deleted"
+      ],
+      "type": "string"
+    },
+    "UniverseDeletionStep": {
+      "enum": [
+        "intake",
+        "workflows",
+        "environments",
+        "storage"
+      ],
+      "type": "string"
     },
     "UniverseDirectoryGroupMapping": {
       "additionalProperties": false,

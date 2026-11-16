@@ -72,7 +72,7 @@ impl OAuthClientStore for PgStore {
         &self,
         record: CreateOAuthClientRecord,
     ) -> Result<OAuthClientRecord, AuthRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| auth_store_error("ensure universe", error))?;
         let record = record.into_record();
@@ -210,7 +210,7 @@ impl AuthFlowStore for PgStore {
         &self,
         record: CreateAuthFlowRecord,
     ) -> Result<AuthFlowRecord, AuthRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| auth_store_error("ensure universe", error))?;
         let record = record.into_record();

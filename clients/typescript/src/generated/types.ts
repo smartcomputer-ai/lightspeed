@@ -57,8 +57,31 @@ export type ToolKindView =
 export type ProviderNativeToolExecutionView = "providerHosted" | "clientEffect";
 export type RemoteMcpApprovalPolicy = "never" | "always";
 export type ToolParallelismView = "exclusive" | "parallelSafe";
+/**
+ * Who created a resource or authored bytes. An actor is whatever a key
+ * allowed to assert one said; core compares it and never resolves it.
+ */
+export type Attribution =
+  | {
+      id: string;
+      kind: "actor";
+    }
+  | {
+      keyId: string;
+      kind: "key";
+      scopeKind: AccessScopeKind;
+    }
+  | {
+      kind: "local";
+    }
+  | {
+      cause: string;
+      component: string;
+      kind: "internal";
+    };
 export type AgentApiErrorKind =
   | ("invalidRequest" | "notFound" | "conflict" | "audioBlobTooLarge" | "internal")
+  | "gone"
   | "rejected"
   | "unauthenticated"
   | "forbidden"
@@ -160,28 +183,6 @@ export type AgentNotification =
       };
     };
 /**
- * Who created a resource or authored bytes. An actor is whatever a key
- * allowed to assert one said; core compares it and never resolves it.
- */
-export type Attribution =
-  | {
-      id: string;
-      kind: "actor";
-    }
-  | {
-      keyId: string;
-      kind: "key";
-      scopeKind: AccessScopeKind;
-    }
-  | {
-      kind: "local";
-    }
-  | {
-      cause: string;
-      component: string;
-      kind: "internal";
-    };
-/**
  * What a session is doing now. A queued run counts as idle until it starts;
  * a closed session is idle.
  */
@@ -232,7 +233,13 @@ export type BotListStatus =
  * Why an environment is closing or closed.
  */
 export type EnvironmentCloseReasonView =
-  "requested" | "keyRevoked" | "ephemeralGrace" | "departed" | "offlineTimeout" | "providerEnded";
+  | "universeDeleted"
+  | "requested"
+  | "keyRevoked"
+  | "ephemeralGrace"
+  | "departed"
+  | "offlineTimeout"
+  | "providerEnded";
 export type EnvironmentSourceView =
   | {
       /**
@@ -1281,7 +1288,12 @@ export type MethodGroup =
   | "auth/lease"
   | "deployment/environment-providers"
   | "deployment/channels";
+export type UniverseDeletionStep = "intake" | "workflows" | "environments" | "storage";
 export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
+/**
+ * Current state after the immediate deletion fence has been applied.
+ */
+export type UniverseDeletionState = "deleting" | "deleted";
 export type EnvironmentCredentialSourceView =
   | {
       grantId: string;
@@ -1642,6 +1654,7 @@ export interface ToolView {
   toolId: string;
 }
 export interface AgentApiError {
+  deletedUniverse?: DeletedUniverseView | null;
   kind: AgentApiErrorKind;
   message: string;
   /**
@@ -1653,6 +1666,19 @@ export interface AgentApiError {
    * one the server allocated. Retrying with it cannot land the same work twice.
    */
   submissionId?: string | null;
+}
+/**
+ * Permanent resource inventory and attribution for a deleted universe.
+ */
+export interface DeletedUniverseView {
+  createdAtMs: number;
+  deletedAtMs: number;
+  deletingAtMs: number;
+  displayName?: string | null;
+  handle: string;
+  requestedBy: Attribution;
+  summary: unknown;
+  universeId: string;
 }
 export interface AgentApiOutcomeOfAuthClientCreateResponse {
   notifications?: AgentNotification[];
@@ -3989,6 +4015,14 @@ export interface DeletedSessionView {
   displayName?: string | null;
   sessionId: string;
 }
+export interface AgentApiOutcomeOfDeploymentDeletedUniversesListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentDeletedUniversesListResponse;
+}
+export interface DeploymentDeletedUniversesListResponse {
+  nextAfter?: string | null;
+  universes: DeletedUniverseView[];
+}
 export interface AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse {
   notifications?: AgentNotification[];
   result: DeploymentEnvironmentProviderDeleteResponse;
@@ -4096,6 +4130,7 @@ export interface DeploymentUniverseCreateResponse {
 export interface DeploymentUniverseView {
   blobBytes: number;
   createdAtMs: number;
+  deletion?: UniverseDeletion | null;
   /**
    * Exact issuer-qualified directory groups. Omit to leave unchanged;
    * an empty list clears declared group grants.
@@ -4125,6 +4160,12 @@ export interface DeploymentUniverseView {
   universeId: string;
   workspaces: number;
 }
+export interface UniverseDeletion {
+  detail?: string | null;
+  requestedBy: Attribution;
+  startedAtMs: number;
+  step: UniverseDeletionStep;
+}
 export interface UniverseDirectoryGroupMapping {
   group: string;
   issuer: string;
@@ -4143,21 +4184,9 @@ export interface AgentApiOutcomeOfDeploymentUniverseDeleteResponse {
   notifications?: AgentNotification[];
   result: DeploymentUniverseDeleteResponse;
 }
-/**
- * Purge report. The purge is idempotent: rerunning after a partial failure
- * resumes where it stopped, and the universe row is deleted last so a
- * half-purged universe is still visible to `deployment/universes/read`.
- */
 export interface DeploymentUniverseDeleteResponse {
-  /**
-   * External object-store blobs deleted during the purge.
-   */
-  blobObjectsDeleted: number;
+  state: UniverseDeletionState;
   universeId: string;
-  /**
-   * Live session workflows terminated during the purge.
-   */
-  workflowsTerminated: number;
 }
 export interface AgentApiOutcomeOfDeploymentUniverseListResponse {
   notifications?: AgentNotification[];
@@ -5905,6 +5934,12 @@ export interface DeploymentDeletedSessionsListParams {
    * The universe's UUID or handle.
    */
   universe: string;
+}
+export interface DeploymentDeletedUniversesListParams {
+  /**
+   * Opaque exclusive cursor; each page contains at most 100 entries.
+   */
+  after?: string | null;
 }
 export interface DeploymentEnvironmentProviderDeleteParams {
   providerId: string;

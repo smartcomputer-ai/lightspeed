@@ -65,23 +65,35 @@ impl PgStore {
     /// sweep only considers blobs untouched for longer than its grace, so a
     /// ref handed out here has a fresh grace window for its holder to commit.
     async fn put_single_blob(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+        self.require_active_universe()
+            .await
+            .map_err(|error| blob_store_error("admit blob write", error))?;
+        let cache_entry = self
+            .blob_cache
+            .as_ref()
+            .filter(|cache| cache.accepts_entry(bytes.len()))
+            .map(|cache| (cache, bytes.clone()));
+        let reference = self.put_single_blob_uncached(bytes).await?;
+        // Populate only successful writes, and do not refill a cache evicted
+        // by a fence that arrived while an admitted write was completing.
+        if let Some((cache, bytes)) = cache_entry
+            && crate::universe_exists(&self.pool, self.config.universe_id)
+                .await
+                .unwrap_or(false)
+        {
+            cache.insert(self.config.universe_id, &reference, &bytes);
+        }
+        Ok(reference)
+    }
+
+    async fn put_single_blob_uncached(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
         let blob_ref = BlobRef::from_bytes(&bytes);
         let digest = sha256_hex(&blob_ref)?;
         let byte_len = usize_to_blob_i64(bytes.len(), "blob byte length")?;
         let now_ms = unix_now_ms();
-        // Write-through: the ref derives from these exact bytes, so the
-        // hash-verified invariant of the cache holds by construction.
-        if let Some(cache) = &self.blob_cache {
-            cache.insert(self.config.universe_id, &blob_ref, &bytes);
-        }
-
         if self.touch_blob(digest, now_ms).await?.is_some() {
             return Ok(blob_ref);
         }
-
-        self.ensure_universe()
-            .await
-            .map_err(|error| blob_store_error("ensure universe", error))?;
 
         if bytes.len() <= self.config.inline_threshold_bytes {
             for _ in 0..PUT_RACE_ATTEMPTS {
@@ -116,6 +128,10 @@ impl PgStore {
             return Err(put_race_exhausted(&blob_ref));
         }
 
+        let mut upload = self
+            .object_write_guard()
+            .await
+            .map_err(|error| blob_store_error("admit object upload", error))?;
         let object_key = direct_blob_key(&self.config, &blob_ref)?;
         let put_result = self.put_object(&object_key, bytes).await?;
         // Each upload has its own physical key. A delayed sweep can only
@@ -147,7 +163,7 @@ impl PgStore {
             .bind(put_result.e_tag.clone())
             .bind(put_result.version.clone())
             .bind(now_ms)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *upload)
             .await
             .map_err(|error| blob_sql_error("insert object blob", error))?;
             if inserted.is_some() {
@@ -155,7 +171,7 @@ impl PgStore {
                 break;
             }
             // Another writer's row: inline storage has no object key.
-            if let Some(existing) = self.touch_blob(digest, now_ms).await? {
+            if let Some(existing) = self.touch_blob_on(&mut upload, digest, now_ms).await? {
                 stored_key = Some(existing);
                 break;
             }
@@ -171,6 +187,10 @@ impl PgStore {
                 tracing::warn!(%key, %error, "could not delete unused CAS upload");
             }
         }
+        upload
+            .commit()
+            .await
+            .map_err(|error| blob_sql_error("commit object blob", error))?;
         Ok(blob_ref)
     }
 
@@ -178,6 +198,20 @@ impl PgStore {
     /// exists; otherwise the row's object key (`None` for inline storage).
     async fn touch_blob(
         &self,
+        digest: &str,
+        now_ms: i64,
+    ) -> Result<Option<Option<String>>, BlobStoreError> {
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|error| blob_sql_error("acquire blob connection", error))?;
+        self.touch_blob_on(&mut connection, digest, now_ms).await
+    }
+
+    async fn touch_blob_on(
+        &self,
+        connection: &mut sqlx::PgConnection,
         digest: &str,
         now_ms: i64,
     ) -> Result<Option<Option<String>>, BlobStoreError> {
@@ -192,7 +226,7 @@ impl PgStore {
         .bind(self.config.universe_id)
         .bind(digest)
         .bind(now_ms)
-        .fetch_optional(&self.pool)
+        .fetch_optional(connection)
         .await
         .map_err(|error| blob_sql_error("touch blob", error))
     }
@@ -321,6 +355,9 @@ impl BlobStore for PgStore {
         size: u64,
         source: &mut dyn harness::storage::BlobSource,
     ) -> Result<BlobRef, BlobStoreError> {
+        self.require_active_universe()
+            .await
+            .map_err(|error| blob_store_error("admit streamed blob write", error))?;
         let digest = sha256_hex(expected)?;
         // Admission renews existing content without downloading or re-uploading it.
         if self.has_blob(expected).await? {
@@ -358,9 +395,10 @@ impl BlobStore for PgStore {
                 message: "streamed blob exceeds one TiB limit".into(),
             });
         }
-        self.ensure_universe()
+        let mut upload = self
+            .object_write_guard()
             .await
-            .map_err(|e| blob_store_error("ensure universe", e))?;
+            .map_err(|error| blob_store_error("admit streamed object upload", error))?;
         let key = direct_blob_key(&self.config, expected)?;
         let store = self
             .object_store
@@ -390,12 +428,16 @@ impl BlobStore for PgStore {
         .bind(result.e_tag)
         .bind(result.version)
         .bind(unix_now_ms())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *upload)
         .await
         .map_err(|e| blob_sql_error("publish streamed blob", e))?;
         if stored.as_deref() != Some(key.as_str()) {
             let _ = self.delete_blob_objects(&[key]).await;
         }
+        upload
+            .commit()
+            .await
+            .map_err(|error| blob_sql_error("commit streamed blob", error))?;
         Ok(expected.clone())
     }
 

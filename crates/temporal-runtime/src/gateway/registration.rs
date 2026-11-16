@@ -2064,11 +2064,21 @@ impl ControlSession<'_> {
         let (closed, receiver) = oneshot::channel();
         let task = tokio::spawn(async move {
             loop {
-                if revoked.changed().await.is_err() {
+                if tokio::time::timeout(Duration::from_secs(30), revoked.changed())
+                    .await
+                    .is_ok_and(|result| result.is_err())
+                {
                     // The subscription ended without a revocation: take a
                     // new one, then read the row in case a close was missed.
                     tokio::time::sleep(RESUBSCRIBE_DELAY).await;
                     revoked = signals.watch(universe_id, environment_id.as_str());
+                }
+                if matches!(
+                    store_pg::universe_exists(store.pool(), universe_id).await,
+                    Ok(false)
+                ) {
+                    let _ = closed.send(EnvironmentGone::Closed);
+                    return;
                 }
                 match EnvironmentStore::read_environment(store.as_ref(), &environment_id).await {
                     Ok(current) if current.state == EnvironmentState::Closed => {
@@ -2084,6 +2094,10 @@ impl ControlSession<'_> {
                         return;
                     }
                     Ok(_) => {}
+                    Err(::environments::EnvironmentRegistryError::NotFound { .. }) => {
+                        let _ = closed.send(EnvironmentGone::Closed);
+                        return;
+                    }
                     Err(error) => {
                         tracing::warn!(target: "temporal_runtime", %error, environment = %environment_id, "registered control connection could not re-read its environment");
                     }

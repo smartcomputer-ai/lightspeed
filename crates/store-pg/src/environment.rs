@@ -555,7 +555,7 @@ impl EnvironmentStore for PgStore {
         request: CreateEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         let record = request.record()?;
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| store_error("ensure universe", error))?;
         if let Some(existing) = self
@@ -598,7 +598,7 @@ impl EnvironmentStore for PgStore {
         request: CreateExternalEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         let record = request.record()?;
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| store_error("ensure universe", error))?;
         if let Some(existing) = self
@@ -624,7 +624,7 @@ impl EnvironmentStore for PgStore {
             return invalid("created_at_ms must be nonnegative");
         }
         validate_daemon_public_key(&request.daemon_public_key)?;
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| store_error("ensure universe", error))?;
         // A known identity converges on its row, closed included: the
@@ -741,7 +741,7 @@ impl EnvironmentStore for PgStore {
         if request.declared_at_ms < 0 {
             return invalid("declared_at_ms must be nonnegative");
         }
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| store_error("ensure universe", error))?;
         let mut tx = self

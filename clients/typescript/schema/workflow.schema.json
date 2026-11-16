@@ -1810,6 +1810,7 @@
       "description": "Start arguments every start-on-call plugin workflow receives. The plugin\nresolves each keyed completion promise by emitting `SourceResolution`\nbodies to the holder workflow through the fixed `deliver_emission`\nsignal, using its own execution id as the producer workflow id.",
       "properties": {
         "execution_id": {
+          "description": "Logical execution id used as the emission producer. The Temporal workflow id\nis `{universe_id}/{execution_id}`.",
           "type": "string"
         },
         "holder_workflow_id": {

@@ -32,7 +32,7 @@ impl ChannelAccountStore for PgStore {
         document: ChannelAccountDocument,
         now_ms: i64,
     ) -> Result<ChannelAccountRecord, ChannelError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| channel_store_error("ensure universe", error))?;
         validate_account_document(&document)?;
@@ -70,7 +70,7 @@ impl ChannelAccountStore for PgStore {
         expected_revision: Option<u64>,
         now_ms: i64,
     ) -> Result<ChannelAccountRecord, ChannelError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| channel_store_error("ensure universe", error))?;
         validate_account_document(&document)?;

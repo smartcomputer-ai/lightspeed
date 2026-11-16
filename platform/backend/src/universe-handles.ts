@@ -20,19 +20,22 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
   })));
   const seen = new Set<string>();
   const changes: { organizationId: string; handle: string }[] = [];
+  const deletions: { id: string; configuration: Record<string, unknown> }[] = [];
   for (const row of rows) {
     const runtime = inventories.get(row.universe.gatewayUrl ?? ctx.env.lightspeedApiUrl)?.get(row.universe.lightspeedUniverseId);
     // Keep the last known cache for a universe the runtime no longer has, so
     // admins can still reach reconciliation and explicitly repair it.
     if (!runtime) skipped += 1;
-    const handle = runtime?.handle ?? row.handle;
+    if (runtime?.deletion) deletions.push({ id: row.universe.id, configuration: { ...row.universe.runtimeConfiguration, deletion: runtime.deletion, deletionHandle: runtime.handle } });
+    const handle = runtime?.deletion ? `_deleting-${runtime.universeId}` : runtime?.handle ?? row.handle;
     if (seen.has(handle)) throw new UniverseHandleCacheConflict("Linked runtime universes have conflicting handles; choose distinct handles in runtime before refreshing Platform.");
     seen.add(handle);
     if (handle !== row.handle) changes.push({ organizationId: row.universe.organizationId, handle });
   }
-  if (!changes.length) return { updated: 0, skipped };
+  if (!changes.length && !deletions.length) return { updated: 0, skipped };
   changes.sort((a, b) => a.organizationId.localeCompare(b.organizationId));
   await ctx.db.transaction(async tx => {
+    for (const deletion of deletions) await tx.update(schema.universes).set({ status: "deleting", runtimeConfiguration: deletion.configuration }).where(eq(schema.universes.id, deletion.id));
     // A sequence of runtime renames can swap two cached handles. Clear both
     // inside this transaction before installing the authoritative values.
     for (const change of changes) {

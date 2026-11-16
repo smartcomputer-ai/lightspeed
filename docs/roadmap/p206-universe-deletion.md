@@ -1,7 +1,7 @@
 # P206 — Universe deletion
 
-**Status:** Proposed, 2026-11-16. Nothing is implemented. The open choices are
-listed under [Decisions](#decisions).
+**Status:** Slices 1–5 implemented and validated, 2026-11-16.
+The optional provider-wide resource release remains deferred (slice 6).
 
 This comes before
 [self-service universes](p207-creators-and-self-service-universes.md)
@@ -32,15 +32,15 @@ Who may delete does not change here: a deployment key with
 
 ## Starting point
 
-`delete_universe` in `crates/temporal-runtime/src/gateway/deployment.rs` does
-three things in one request: it terminates the workflow of every session row,
-deletes the universe's objects from the object store, and deletes the
-`universes` row, from which every universe table cascades. It then drops the
+Before this work, `delete_universe` in
+`crates/temporal-runtime/src/gateway/deployment.rs` did three things in one request: it terminated the workflow of every session row,
+deleted the universe's objects from the object store, and deleted the
+`universes` row, from which every universe table cascaded. It then dropped the
 universe's cached state in the process that served the request.
 
-What that leaves behind or gets wrong:
+What that implementation left behind or got wrong:
 
-| Area | Today |
+| Area | Before implementation |
 | --- | --- |
 | Requests during deletion | Nothing refuses them. The Platform requires the universe to be archived first, but the runtime has no such state, so API clients, bots and daemons keep working until their rows disappear. |
 | Other processes | Only the serving process drops its cached state. Other gateway and worker processes keep serving the universe from cache until idle eviction, up to four hours. A cache hit never re-checks that the universe exists. |
@@ -114,7 +114,9 @@ moves on only when a step has nothing left to do. The step it is on, and what
 it is waiting for, are stored on the row and returned by `read`.
 
 **1. Intake.** Delete the Temporal Schedule of every bot trigger, using the
-ids derived from the trigger rows. Delete the universe's channel account rows,
+ids derived from the trigger rows. Schedule reconciliation and intake share
+a per-universe lock, so an upsert admitted before the fence cannot recreate a
+Schedule after intake removes it. Delete the universe's channel account rows,
 so connector hosts retire those accounts at their next discovery.
 
 **2. Workflows.** List the universe's open workflow executions in Temporal by
@@ -165,7 +167,10 @@ changed to treat a missing row as gone, so a daemon is disconnected even if
 its row disappears some other way.
 
 **4. Storage.** Delete the universe's objects by catalog, then clear its
-object prefix. Only when the prefix is empty, in one transaction: record the
+object prefix. Object uploads hold a shared per-universe database lock through catalog
+publication; storage takes its exclusive counterpart before sweeping. This
+waits for pre-fence uploads without delaying the deletion request. The pass
+verifies the prefix is empty before finalizing. Only then, in one transaction: record the
 UUID as deleted and delete the `universes` row. A failure to clear the prefix
 now keeps the universe in *deleting* and is retried, instead of being logged
 after the row is gone.
@@ -440,14 +445,14 @@ Decided, 2026-11-16:
   universe's prefix is left, so a server that lacks the operator fails there
   and not silently.
 
-Still to confirm:
+Implementation scope:
 
-1. **Workflow-tool executions in flight at the upgrade** keep their old ids
-   and cannot be cancelled through the new composition. Recommended: accept
-   it, as with other id changes so far.
-2. **Connector-local state.** Recommended: out of scope here. A connector
-   host could remove an account's local directory when the account is absent
-   from a listing that includes disabled accounts.
+1. **Workflow-tool executions in flight at the upgrade** keep their old ids.
+   The greenfield implementation uses the new composition without migration;
+   upgrades must follow the existing workflow-compatibility release procedure.
+2. **Connector-local state** remains outside this teardown. A connector host
+   could remove an account's local directory when the account is absent from
+   a listing that includes disabled accounts.
 
 ## Validation and progress
 
@@ -456,3 +461,37 @@ Still to confirm:
   day: environment teardown is best effort and bounded; the deleted
   universe's record is permanent and summarizes what the universe contained
   and what was removed. No code changed.
+
+- 2026-11-16: implemented schema revision 25, permanent deleted-universe
+  records, asynchronous admission fencing and resumable worker teardown;
+  universe-prefixed workflow-tool IDs and terminal unknown-universe behavior;
+  bounded environment closure; cross-process invalidation and worker cache
+  revalidation; CLI deletion/wait and deleted-record listing; Platform
+  reconciliation, progress display and handle confirmation. Regenerated public
+  API/workflow contracts and TypeScript/Python consumers. Added upload and
+  schedule guards for work admitted before the fence. The deployment guide
+  was updated with permission for review.
+- Rust validation passed: API unit and schema freshness tests; workflow units,
+  contract freshness and all workflow-ID composers; runtime units (659 passed,
+  one ignored); environments (44 passed); store units and the isolated live
+  deletion test; CLI units (235 passed). The exact workspace/all-targets Clippy
+  command passed with warnings denied. The live upload regression verifies that
+  storage waits for a pre-fence upload and cannot admit another afterward.
+- TypeScript type checks, production/demo builds, SDK tests (109), Python
+  generation freshness, mypy and tests (46 passed, one opt-in live test skipped),
+  documentation publication/link checks and release metadata verification
+  passed. Full Platform suites encountered timing failures under concurrent
+  builds; their isolated reruns passed.
+- Runtime live validation: the five new cases passed, including rich resource
+  inventory teardown across restarted runtimes, a second runtime's cache,
+  fifty universes with live workflow executions, provider closure and bounded
+  failure, connected/disconnected daemons, watch-stream closure, and real
+  workflow self-termination. The self-termination case exposed a local-activity
+  failure-wrapper difference; recognizing both wrapper forms fixed it, with
+  regression coverage. The final combined deletion suite passed all five cases.
+  Another 37 serialized live checks passed across deployment universes, tenancy,
+  provisioned and registered environments, workflow-tool plugins, subagents and
+  code-workflow start/cancellation. Live checks used local PostgreSQL, Temporal
+  and MinIO; no slow production-budget suite was run. Local migration from
+  revision 24 to 25 passed. Optional provider-wide auxiliary-resource release
+  and connector-local directory cleanup remain deferred as described above.

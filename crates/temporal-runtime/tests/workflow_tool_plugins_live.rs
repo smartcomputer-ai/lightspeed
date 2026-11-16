@@ -328,7 +328,12 @@ impl TestStartPluginWorkflow {
         ctx: &mut WorkflowContext<Self>,
         args: WorkflowToolStartArgs,
     ) -> WorkflowResult<()> {
-        if ctx.workflow_id() != args.execution_id {
+        if ctx.workflow_id()
+            != temporal_workflow::compose_workflow_tool_execution_id(
+                args.universe_id,
+                &args.execution_id,
+            )
+        {
             return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "started execution id mismatch: workflow_id={} execution_id={}",
                 ctx.workflow_id(),
@@ -2059,7 +2064,12 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             started.elapsed() < Duration::from_secs(45),
             "semantic reply must complete the Joined call before execution termination"
         );
-        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
+        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(
+            temporal_workflow::compose_workflow_tool_execution_id(
+                live_universe_id()?,
+                &execution_id,
+            ),
+        );
         let _ = handle.terminate(WorkflowTerminateOptions::default()).await;
         Ok(())
     })
@@ -2842,7 +2852,12 @@ async fn workflow_tool_start_goes_out_before_the_next_generation_finishes() -> a
                 .into_iter()
                 .next()
                 && client
-                    .get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id)
+                    .get_workflow_handle::<temporalio_client::UntypedWorkflow>(
+                        temporal_workflow::compose_workflow_tool_execution_id(
+                            live_universe_id()?,
+                            &execution_id,
+                        ),
+                    )
                     .describe(temporalio_client::WorkflowDescribeOptions::default())
                     .await
                     .is_ok()
@@ -3010,7 +3025,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
         // The run terminal auto-cancels the run-scoped keyed promise; with
         // its last key terminal, the owned execution must be cancelled.
         let handle = client
-            .get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id);
+            .get_workflow_handle::<temporalio_client::UntypedWorkflow>(temporal_workflow::compose_workflow_tool_execution_id(live_universe_id()?, &execution_id));
         let started = std::time::Instant::now();
         loop {
             if started.elapsed() > Duration::from_secs(60) {

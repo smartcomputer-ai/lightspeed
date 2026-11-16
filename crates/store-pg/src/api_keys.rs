@@ -217,7 +217,7 @@ impl PgApiKeyStore {
         observed_at_ms: u64,
     ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
         let Some(row) = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT {KEY_COLUMNS} FROM api_keys WHERE key_hash = $1 AND revoked_at_ms IS NULL"
+            "SELECT {KEY_COLUMNS} FROM api_keys WHERE key_hash = $1 AND revoked_at_ms IS NULL AND (universe_id IS NULL OR EXISTS (SELECT 1 FROM universes u WHERE u.universe_id = api_keys.universe_id AND u.deleting_at_ms IS NULL))"
         )))
         .bind(key_hash)
         .fetch_optional(&self.pool)

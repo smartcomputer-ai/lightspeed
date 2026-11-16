@@ -73,17 +73,20 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json(state.universe, 201);
   });
 
-  app.delete("/universes/engine/:lightspeedUniverseId", (c) => {
+  app.delete("/universes/engine/:lightspeedUniverseId", async (c) => {
     const engineId = c.req.param("lightspeedUniverseId");
     if ([...store.universes.values()].some((s) => s.universe.lightspeedUniverseId === engineId)) {
-      return conflict(c, "linked to a universe — archive and delete it instead");
+      return conflict(c, "linked to a universe — delete it through its Platform entry");
     }
     const index = store.orphanEngineUniverses.findIndex((o) => o.universeId === engineId);
     if (index < 0) return notFound(c);
-    const [orphan] = store.orphanEngineUniverses.splice(index, 1);
+    const body = await readBody<{ handle?: string }>(c);
+    if (body.handle !== store.orphanEngineUniverses[index]!.handle) return badRequest(c, "type the universe handle to confirm deletion");
+    store.auditEvents.push({ id: store.nextId("audit"), createdAt: nowIso(), actorId: store.currentUser.id, targetId: engineId, universeId: engineId, action: "universe.delete", outcome: "success", details: {} });
+    store.orphanEngineUniverses.splice(index, 1);
     return c.json({
       ok: true,
-      purge: { universeId: engineId, sessions: orphan?.sessions ?? 0, blobBytes: orphan?.blobBytes ?? 0 },
+      purge: { universeId: engineId, state: "deleted" },
     });
   });
 
@@ -131,14 +134,14 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json(state.universe);
   });
 
-  app.delete("/universes/:id", (c) => {
+  app.delete("/universes/:id", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    if (state.universe.status !== "archived") {
-      return conflict(c, "archive the universe before deleting it");
-    }
+    const body = await readBody<{ handle?: string }>(c);
+    if (body.handle !== state.universe.handle) return badRequest(c, "type the universe handle to confirm deletion");
+    store.auditEvents.push({ id: store.nextId("audit"), createdAt: nowIso(), actorId: store.currentUser.id, targetId: state.universe.lightspeedUniverseId, universeId: state.universe.id, action: "universe.delete", outcome: "success", details: {} });
     store.universes.delete(state.universe.id);
-    return c.json({ ok: true, purge: { universeId: state.universe.lightspeedUniverseId } });
+    return c.json({ ok: true, purge: { universeId: state.universe.lightspeedUniverseId, state: "deleted" } });
   });
 
   // --- membership ---------------------------------------------------------

@@ -318,7 +318,7 @@ where
     })
     .await?;
     let result = with_request_context(context, Box::pin(async {
-        let state = runtime.state_for(universe, false).await?;
+        let state = runtime.state_for(universe).await?;
         let store = state.store.clone();
         seed_agent_default(&store, &support::live::openai_live_model()).await?;
         let environment_id = if environment {
@@ -377,7 +377,7 @@ where
         }).await
     })).await;
     drop(tasks);
-    let store = runtime.state_for(universe, false).await?.store.clone();
+    let store = runtime.state_for(universe).await?.store.clone();
     runtime.evict(universe).await;
     // Only this freshly-created universe is removed. Delete its objects too.
     let objects = store_pg::list_universe_object_keys(store.pool(), universe).await?;

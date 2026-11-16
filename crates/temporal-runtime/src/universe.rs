@@ -137,18 +137,15 @@ pub struct UniverseState {
 struct UniverseEntry {
     state: Arc<UniverseState>,
     last_used_ms: u64,
+    validated_at_ms: u64,
 }
 
-/// Lazy universe registry. `state_for` returns the cached state or builds it,
-/// applying the caller's existence policy: the gateway may auto-create
-/// universes (`trusted-header` mode with auto-create, or `single` mode for its
-/// pinned universe); the worker never creates, because a workflow for a
-/// universe the gateway did not create is a routing error, not a provisioning
-/// request.
 /// How often bot trigger Schedules are re-converged in the background.
 pub const BOT_SCHEDULE_RECONCILE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(10 * 60);
 
+/// Lazy registry of existing active universes. Explicit deployment creation
+/// and single-universe startup own provisioning; cache construction never inserts rows.
 pub struct UniverseRuntime {
     client: Client,
     task_queues: TaskQueues,
@@ -236,15 +233,53 @@ impl UniverseRuntime {
     /// lost because states hold no durable data.
     pub async fn evict(&self, universe_id: Uuid) {
         self.states.lock().await.remove(&universe_id);
+        self.stores.evict_universe_blobs(universe_id);
+        self.environment_signals.revoke_universe(universe_id);
     }
 
-    pub async fn state_for(
-        &self,
-        universe_id: Uuid,
-        create_missing: bool,
-    ) -> Result<Arc<UniverseState>, UniverseError> {
+    /// Lossy change hints accelerate eviction; cache validation is the fallback.
+    pub async fn run_universe_invalidations(self: Arc<Self>) {
+        let mut changes = self.stores.changes().subscribe_all();
+        loop {
+            match changes.recv().await {
+                Ok(Some(change)) if change.kind == store_pg::changes::ChangeKind::Universe => {
+                    self.evict(change.universe).await
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    let ids: Vec<_> = self.states.lock().await.keys().copied().collect();
+                    for id in ids {
+                        if matches!(
+                            store_pg::universe_exists(self.stores.pool(), id).await,
+                            Ok(false)
+                        ) {
+                            self.evict(id).await;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }
+
+    pub async fn state_for(&self, universe_id: Uuid) -> Result<Arc<UniverseState>, UniverseError> {
         let now_ms = now_ms();
         let mut states = self.states.lock().await;
+        if states
+            .get(&universe_id)
+            .is_some_and(|entry| now_ms.saturating_sub(entry.validated_at_ms) >= 30_000)
+        {
+            if !store_pg::universe_exists(self.stores.pool(), universe_id)
+                .await
+                .map_err(|error| UniverseError::Runtime(error.into()))?
+            {
+                states.remove(&universe_id);
+                return Err(UniverseError::Unknown { universe_id });
+            }
+            if let Some(entry) = states.get_mut(&universe_id) {
+                entry.validated_at_ms = now_ms;
+            }
+        }
         if let Some(entry) = states.get_mut(&universe_id) {
             entry.last_used_ms = now_ms;
             let state = entry.state.clone();
@@ -254,7 +289,7 @@ impl UniverseRuntime {
         let exists = store_pg::universe_exists(self.stores.pool(), universe_id)
             .await
             .map_err(|error| UniverseError::Runtime(error.into()))?;
-        if !exists && !create_missing {
+        if !exists {
             return Err(UniverseError::Unknown { universe_id });
         }
         let state = Arc::new(self.build_state(universe_id).await?);
@@ -263,6 +298,7 @@ impl UniverseRuntime {
             UniverseEntry {
                 state: state.clone(),
                 last_used_ms: now_ms,
+                validated_at_ms: now_ms,
             },
         );
         evict_universe_states(&mut states, now_ms, universe_id);
@@ -321,7 +357,7 @@ impl UniverseRuntime {
                 }
             };
             for universe_id in universe_ids {
-                let state = match self.state_for(universe_id, false).await {
+                let state = match self.build_state(universe_id).await {
                     Ok(state) => state,
                     Err(error) => {
                         tracing::warn!(target: "temporal_runtime", %universe_id, %error, "environment reconciler could not resolve universe");
@@ -361,7 +397,7 @@ impl UniverseRuntime {
                         .map(|universe_id| {
                             let runtime = self.clone();
                             async move {
-                                let result = match runtime.state_for(universe_id, false).await {
+                                let result = match runtime.state_for(universe_id).await {
                                     Ok(state) => {
                                         state.api.environment_service().run_display_sweep(now).await
                                     }
@@ -408,7 +444,7 @@ impl UniverseRuntime {
                 }
             };
             for (universe_id, _handle) in universes {
-                let state = match self.state_for(universe_id, false).await {
+                let state = match self.state_for(universe_id).await {
                     Ok(state) => state,
                     Err(error) => {
                         tracing::warn!(target: "temporal_runtime", %universe_id, %error, "bot schedule reconciler could not resolve universe");
@@ -423,12 +459,11 @@ impl UniverseRuntime {
         }
     }
 
-    async fn build_state(&self, universe_id: Uuid) -> Result<UniverseState, UniverseError> {
+    pub(crate) async fn build_state(
+        &self,
+        universe_id: Uuid,
+    ) -> Result<UniverseState, UniverseError> {
         let store = self.stores.store_for(universe_id);
-        store
-            .ensure_universe()
-            .await
-            .map_err(|error| UniverseError::Runtime(error.into()))?;
         let mut api = GatewayAgentApi::builder(self.client.clone(), store.clone())
             .with_task_queue(self.task_queues.sessions.clone())
             .with_bot_task_queue(self.task_queues.bots.clone())

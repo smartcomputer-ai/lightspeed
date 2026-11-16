@@ -839,7 +839,9 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
             universes.clone(),
         )));
     }
+    background.push(tokio::spawn(universes.clone().run_universe_invalidations()));
     if roles.has(Role::Sessions) {
+        background.push(tokio::spawn(universes.clone().run_universe_deletion()));
         let activities = WorkerActivities::with_runtime(universes.clone());
         workers.push((
             Role::Sessions,

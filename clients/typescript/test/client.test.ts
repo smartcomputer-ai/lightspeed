@@ -40,6 +40,7 @@ describe("LightspeedClient", () => {
     expect(error.kind).toBe("modelDefaultUnset");
     expect(new LightspeedRpcError({ code: -32015, message: "still held" }).kind).toBe("operationPending");
     expect(new LightspeedRpcError({ code: -32016, message: "stopped" }).kind).toBe("sessionExecutionStopped");
+    expect(new LightspeedRpcError({ code: -32017, message: "deleted" }).kind).toBe("gone");
     expect(error.data?.modelDefaultSlot).toBe("agentRun");
   });
 

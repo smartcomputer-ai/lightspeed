@@ -53,6 +53,7 @@ export function AdminAuditPage() {
 
 function auditAction(action: string): string {
   const labels: Record<string, string> = {
+    "universe.delete": "Universe deletion requested",
     "session.purge": "Session permanently deleted",
     "company.access": "Company access updated", "company.sign_in": "Company sign-in",
     "emergency.sign_in": "Emergency sign-in", "password.sign_in": "Password sign-in",

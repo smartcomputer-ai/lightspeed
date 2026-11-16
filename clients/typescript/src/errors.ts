@@ -38,6 +38,8 @@ export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
       return "operationPending";
     case -32016:
       return "sessionExecutionStopped";
+    case -32017:
+      return "gone";
     default:
       return "unknown";
   }

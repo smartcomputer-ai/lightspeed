@@ -250,7 +250,7 @@ impl BotStore for PgStore {
         document: BotDocument,
         now_ms: i64,
     ) -> Result<BotRecord, BotError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| bot_store_error("ensure universe", error))?;
         validate_bot_document(&document)?;
@@ -287,7 +287,7 @@ impl BotStore for PgStore {
         expected_revision: Option<u64>,
         now_ms: i64,
     ) -> Result<BotRecord, BotError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| bot_store_error("ensure universe", error))?;
         validate_bot_document(&document)?;

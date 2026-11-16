@@ -152,12 +152,15 @@ impl WorkerActivities {
                 Ok(state.clone())
             }
             WorkerUniverses::Runtime(runtime) => runtime
-                .state_for(universe_id, false)
+                .state_for(universe_id)
                 .await
                 .map(|state| state.activities.clone())
                 .map_err(|error| match error {
                     UniverseError::Unknown { .. } => ActivityError::application(
-                        ApplicationFailure::non_retryable(anyhow::anyhow!("{error}")),
+                        ApplicationFailure::builder(anyhow::anyhow!("{error}"))
+                            .type_name(temporal_workflow::UNIVERSE_UNKNOWN_ERROR_TYPE.to_owned())
+                            .non_retryable(true)
+                            .build(),
                     ),
                     UniverseError::Runtime(_) => ActivityError::application(
                         ApplicationFailure::new(anyhow::anyhow!("{error}")),

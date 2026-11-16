@@ -279,6 +279,12 @@ impl DeploymentStores {
         self
     }
 
+    pub fn evict_universe_blobs(&self, universe_id: Uuid) {
+        if let Some(cache) = &self.blob_cache {
+            cache.evict_universe(universe_id);
+        }
+    }
+
     pub fn changes(&self) -> &Arc<store_pg::changes::ChangeBus> {
         &self.changes
     }

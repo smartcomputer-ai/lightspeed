@@ -107,7 +107,7 @@ impl SecretStore for PgStore {
         record: PutSecretRecord,
     ) -> Result<SecretRecordMeta, AuthRegistryError> {
         record.validate()?;
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| auth_store_error("ensure universe", error))?;
         let (cipher, key_id) = self.secrets_cipher()?;
@@ -242,7 +242,7 @@ impl AuthGrantStore for PgStore {
         &self,
         record: CreateAuthGrantRecord,
     ) -> Result<AuthGrantRecord, AuthRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| auth_store_error("ensure universe", error))?;
         let record = record.into_record();

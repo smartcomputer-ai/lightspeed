@@ -79,6 +79,7 @@ pub(crate) fn activity_error(context: &str, error: AgentApiError) -> ActivityErr
         error.kind,
         AgentApiErrorKind::InvalidRequest
             | AgentApiErrorKind::NotFound
+            | AgentApiErrorKind::Gone
             | AgentApiErrorKind::Forbidden
             | AgentApiErrorKind::SessionExecutionStopped
     ) {
@@ -202,6 +203,7 @@ fn start_run_failure(error: AgentApiError) -> Result<BotStartRunResult, Activity
     match error.kind {
         AgentApiErrorKind::InvalidRequest
         | AgentApiErrorKind::NotFound
+        | AgentApiErrorKind::Gone
         | AgentApiErrorKind::Forbidden
         | AgentApiErrorKind::Unauthenticated
         | AgentApiErrorKind::ModelDefaultUnset

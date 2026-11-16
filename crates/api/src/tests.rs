@@ -3907,6 +3907,7 @@ fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
         workspaces: 2,
         profiles: 1,
         blob_bytes: 4096,
+        deletion: None,
     }
 }
 
@@ -3998,8 +3999,7 @@ impl DeploymentApiService for TestDeploymentService {
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
         Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
             universe_id: params.universe,
-            workflows_terminated: 2,
-            blob_objects_deleted: 5,
+            state: UniverseDeletionState::Deleting,
         }))
     }
 
@@ -4265,8 +4265,7 @@ async fn dispatch_deployment_json_rpc_routes_universe_lifecycle() {
     )
     .await;
     let result = delete.result.expect("result");
-    assert_eq!(result["result"]["workflowsTerminated"], json!(2));
-    assert_eq!(result["result"]["blobObjectsDeleted"], json!(5));
+    assert_eq!(result["result"]["state"], json!("deleting"));
 
     // A rename addresses the universe by either form and names the new handle.
     let rename = dispatch_deployment_json_rpc(
@@ -4629,4 +4628,25 @@ fn an_environment_credential_source_is_a_grant_or_a_provider_credential() {
         .collect();
     types.sort_unstable();
     assert_eq!(types, ["authGrant", "authProviderCredential"]);
+}
+
+#[test]
+fn gone_error_carries_the_permanent_universe_record() {
+    let record = DeletedUniverseView {
+        universe_id: "universe".into(),
+        handle: "old".into(),
+        display_name: None,
+        created_at_ms: 1,
+        deleting_at_ms: 2,
+        deleted_at_ms: 3,
+        requested_by: Attribution::Local,
+        summary: json!({"contained":{"sessions":2},"removed":{"workflowsTerminated":1}}),
+    };
+    let error = AgentApiError::gone(record.clone());
+    assert_eq!(error.json_rpc_code(), -32017);
+    let value = serde_json::to_value(&error).unwrap();
+    assert_eq!(value["kind"], "gone");
+    assert_eq!(value["deletedUniverse"]["handle"], "old");
+    let decoded: AgentApiError = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded.deleted_universe.as_deref(), Some(&record));
 }

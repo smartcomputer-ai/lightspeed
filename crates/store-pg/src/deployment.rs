@@ -24,6 +24,7 @@ pub struct UniverseStats {
     pub workspaces: u64,
     pub profiles: u64,
     pub blob_bytes: u64,
+    pub deletion: Option<api::UniverseDeletion>,
 }
 
 const UNIVERSE_STATS_SELECT: &str = r#"
@@ -33,6 +34,7 @@ const UNIVERSE_STATS_SELECT: &str = r#"
         u.display_name,
         u.platform_access,
         u.created_at_ms,
+        u.deletion_json,
         (SELECT max(s.updated_at_ms) FROM sessions s
             WHERE s.universe_id = u.universe_id AND s.deleted_at_ms IS NULL) AS last_activity_at_ms,
         (SELECT count(*) FROM sessions s
@@ -84,17 +86,24 @@ pub async fn create_universe_with_handle(
     universe_id: Uuid,
     handle: Option<&str>,
 ) -> Result<bool, PgStoreError> {
+    let mut tx = pool.begin().await?;
+    // Serialize creation with finalization, including the gap after row deletion.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(universe_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    let unavailable: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM universes_deleted WHERE universe_id = $1) OR EXISTS(SELECT 1 FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NOT NULL)"
+    ).bind(universe_id).fetch_one(&mut *tx).await?;
+    if unavailable {
+        return Err(PgStoreError::UniverseDeleted { universe_id });
+    }
     let result = sqlx::query(
-        r#"
-        INSERT INTO universes (universe_id, handle)
-        VALUES ($1, $2)
-        ON CONFLICT (universe_id) DO NOTHING
-        "#,
-    )
-    .bind(universe_id)
-    .bind(handle.map_or_else(|| default_universe_handle(universe_id), str::to_owned))
-    .execute(pool)
-    .await?;
+        "INSERT INTO universes (universe_id, handle) VALUES ($1, $2) ON CONFLICT (universe_id) DO NOTHING"
+    ).bind(universe_id)
+        .bind(handle.map_or_else(|| default_universe_handle(universe_id), str::to_owned))
+        .execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -105,11 +114,13 @@ pub async fn put_universe_handle(
     universe_id: Uuid,
     handle: &str,
 ) -> Result<bool, PgStoreError> {
-    let result = sqlx::query("UPDATE universes SET handle = $2 WHERE universe_id = $1")
-        .bind(universe_id)
-        .bind(handle)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query(
+        "UPDATE universes SET handle = $2 WHERE universe_id = $1 AND deleting_at_ms IS NULL",
+    )
+    .bind(universe_id)
+    .bind(handle)
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -119,14 +130,14 @@ pub async fn resolve_universe_reference(
     reference: &str,
 ) -> Result<Option<Uuid>, PgStoreError> {
     let query = match Uuid::parse_str(reference) {
-        Ok(universe_id) => {
-            sqlx::query_scalar("SELECT universe_id FROM universes WHERE universe_id = $1")
-                .bind(universe_id)
-        }
-        Err(_) if is_valid_universe_handle(reference) => {
-            sqlx::query_scalar("SELECT universe_id FROM universes WHERE handle = $1")
-                .bind(reference)
-        }
+        Ok(universe_id) => sqlx::query_scalar(
+            "SELECT universe_id FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NULL",
+        )
+        .bind(universe_id),
+        Err(_) if is_valid_universe_handle(reference) => sqlx::query_scalar(
+            "SELECT universe_id FROM universes WHERE handle = $1 AND deleting_at_ms IS NULL",
+        )
+        .bind(reference),
         Err(_) => return Ok(None),
     };
     Ok(query.fetch_optional(pool).await?)
@@ -228,6 +239,14 @@ fn universe_stats_from_row(row: &sqlx::postgres::PgRow) -> Result<UniverseStats,
         workspaces: count_to_u64(row.try_get("workspaces")?),
         profiles: count_to_u64(row.try_get("profiles")?),
         blob_bytes: count_to_u64(row.try_get("blob_bytes")?),
+        deletion: row
+            .try_get::<Option<serde_json::Value>, _>("deletion_json")?
+            .map(|value| {
+                serde_json::from_value::<UniverseDeletionRecord>(value)
+                    .map(|record| record.deletion)
+            })
+            .transpose()
+            .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
     })
 }
 
@@ -249,7 +268,7 @@ pub async fn put_universe_configuration(
     if let Some(groups) = &config.directory_group_mappings {
         access.insert("directoryGroupMappings".into(), serde_json::json!(groups));
     }
-    let result = sqlx::query("UPDATE universes SET display_name = COALESCE($2, display_name), platform_access = platform_access || $3 WHERE universe_id = $1")
+    let result = sqlx::query("UPDATE universes SET display_name = COALESCE($2, display_name), platform_access = platform_access || $3 WHERE universe_id = $1 AND deleting_at_ms IS NULL")
         .bind(id).bind(&config.display_name).bind(serde_json::Value::Object(access)).execute(pool).await?;
     Ok(result.rows_affected() != 0)
 }
@@ -302,4 +321,200 @@ mod tests {
         assert!(is_valid_universe_handle(&handle));
         assert_eq!(default_universe_handle(id), handle);
     }
+}
+
+/// Durable teardown cursor. `progress` is internal retry bookkeeping, separate
+/// from the permanent, public inventory summary.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UniverseDeletionRecord {
+    pub universe_id: Uuid,
+    pub deletion: api::UniverseDeletion,
+    pub summary: serde_json::Value,
+    #[serde(default)]
+    pub progress: serde_json::Value,
+}
+
+/// Set the admission fence and capture the inventory in the same statement.
+/// The immutable snapshot is retained when a caller repeats the request.
+pub async fn begin_universe_deletion(
+    pool: &PgPool,
+    universe_id: Uuid,
+    requested_by: &api::Attribution,
+    now: i64,
+) -> Result<Option<api::UniverseDeletionState>, PgStoreError> {
+    let result = sqlx::query(r#"
+        UPDATE universes u SET deleting_at_ms = $2,
+        deletion_json = jsonb_build_object(
+            'universeId', u.universe_id,
+            'deletion', jsonb_build_object('startedAtMs', $2::bigint, 'requestedBy', $3::jsonb, 'step', 'intake'),
+            'progress', '{}'::jsonb,
+            'summary', jsonb_build_object(
+                'contained', jsonb_build_object(
+                    'sessions', (SELECT count(*) FROM sessions WHERE universe_id = u.universe_id),
+                    'bots', (SELECT count(*) FROM bots WHERE universe_id = u.universe_id),
+                    'workspaces', (SELECT count(*) FROM vfs_workspaces WHERE universe_id = u.universe_id),
+                    'profiles', (SELECT count(*) FROM agent_profiles WHERE universe_id = u.universe_id),
+                    'environments', jsonb_build_object(
+                        'provisioned', (SELECT count(*) FROM environments WHERE universe_id = u.universe_id AND source_kind = 'provisioned'),
+                        'registered', (SELECT count(*) FROM environments WHERE universe_id = u.universe_id AND source_kind = 'registered'),
+                        'external', (SELECT count(*) FROM environments WHERE universe_id = u.universe_id AND source_kind = 'external')),
+                    'mcpServers', (SELECT count(*) FROM mcp_servers WHERE universe_id = u.universe_id),
+                    'apiKeys', (SELECT count(*) FROM api_keys WHERE universe_id = u.universe_id),
+                    'channelAccounts', (SELECT count(*) FROM channel_accounts WHERE universe_id = u.universe_id),
+                    'blobBytes', COALESCE((SELECT sum(byte_len) FROM cas_blobs WHERE universe_id = u.universe_id), 0),
+                    'lastActivityAtMs', (SELECT max(updated_at_ms) FROM sessions WHERE universe_id = u.universe_id)),
+                'removed', jsonb_build_object('workflowsTerminated', 0, 'schedulesDeleted', 0,
+                    'objectsDeleted', 0, 'environmentsClosed', 0, 'environmentsUnconfirmed', '[]'::jsonb)))
+        WHERE u.universe_id = $1 AND u.deleting_at_ms IS NULL
+    "#).bind(universe_id).bind(now).bind(serde_json::json!(requested_by)).execute(pool).await?;
+    if result.rows_affected() > 0 {
+        return Ok(Some(api::UniverseDeletionState::Deleting));
+    }
+    // One snapshot avoids returning unknown during the final row/tombstone swap.
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT 'deleting' FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NOT NULL UNION ALL SELECT 'deleted' FROM universes_deleted WHERE universe_id = $1 LIMIT 1"
+    ).bind(universe_id).fetch_optional(pool).await?;
+    Ok(state.map(|state| {
+        if state == "deleted" {
+            api::UniverseDeletionState::Deleted
+        } else {
+            api::UniverseDeletionState::Deleting
+        }
+    }))
+}
+
+pub async fn list_deleting_universes(
+    pool: &PgPool,
+) -> Result<Vec<UniverseDeletionRecord>, PgStoreError> {
+    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT deletion_json FROM universes WHERE deleting_at_ms IS NOT NULL ORDER BY deleting_at_ms, universe_id"
+    ).fetch_all(pool).await?;
+    rows.into_iter()
+        .map(|value| {
+            serde_json::from_value(value)
+                .map_err(|error| sqlx::Error::Decode(Box::new(error)).into())
+        })
+        .collect()
+}
+
+pub async fn update_universe_deletion(
+    pool: &PgPool,
+    universe_id: Uuid,
+    record: &UniverseDeletionRecord,
+) -> Result<(), PgStoreError> {
+    sqlx::query("UPDATE universes SET deletion_json = $2 WHERE universe_id = $1 AND deleting_at_ms IS NOT NULL")
+        .bind(universe_id).bind(serde_json::json!(record)).execute(pool).await?;
+    Ok(())
+}
+
+/// Atomically retain the permanent record and cascade all universe-owned rows.
+/// Only the storage step may finalize; callers must first empty the object prefix.
+pub async fn finish_universe_deletion(
+    pool: &PgPool,
+    universe_id: Uuid,
+    now: i64,
+) -> Result<bool, PgStoreError> {
+    let mut tx = pool.begin().await?;
+    let removed = finish_universe_deletion_in_transaction(&mut tx, universe_id, now).await?;
+    tx.commit().await?;
+    Ok(removed)
+}
+
+/// Finalize while holding the caller's object-cleanup lock transaction.
+pub async fn finish_universe_deletion_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    universe_id: Uuid,
+    now: i64,
+) -> Result<bool, PgStoreError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(universe_id.to_string())
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("SET CONSTRAINTS ALL DEFERRED")
+        .execute(&mut **tx)
+        .await?;
+    let result = sqlx::query(r#"
+        INSERT INTO universes_deleted
+            (universe_id, handle, display_name, created_at_ms, deleting_at_ms, deleted_at_ms, requested_by, summary)
+        SELECT universe_id, handle, display_name, created_at_ms, deleting_at_ms, $2,
+            deletion_json->'deletion'->'requestedBy', deletion_json->'summary'
+        FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NOT NULL
+            AND deletion_json->'deletion'->>'step' = 'storage'
+        ON CONFLICT (universe_id) DO NOTHING
+    "#).bind(universe_id).bind(now).execute(&mut **tx).await?;
+    if result.rows_affected() > 0 {
+        sqlx::query("DELETE FROM universes WHERE universe_id = $1")
+            .bind(universe_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(result.rows_affected() > 0)
+}
+
+fn deleted_universe_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<api::DeletedUniverseView, PgStoreError> {
+    Ok(api::DeletedUniverseView {
+        universe_id: row.try_get::<Uuid, _>("universe_id")?.to_string(),
+        handle: row.try_get("handle")?,
+        display_name: row.try_get("display_name")?,
+        created_at_ms: count_to_u64(row.try_get("created_at_ms")?),
+        deleting_at_ms: count_to_u64(row.try_get("deleting_at_ms")?),
+        deleted_at_ms: count_to_u64(row.try_get("deleted_at_ms")?),
+        requested_by: serde_json::from_value(row.try_get("requested_by")?)
+            .map_err(|error| sqlx::Error::Decode(Box::new(error)))?,
+        summary: row.try_get("summary")?,
+    })
+}
+
+pub async fn read_deleted_universe(
+    pool: &PgPool,
+    universe_id: Uuid,
+) -> Result<Option<api::DeletedUniverseView>, PgStoreError> {
+    let row = sqlx::query("SELECT * FROM universes_deleted WHERE universe_id = $1")
+        .bind(universe_id)
+        .fetch_optional(pool)
+        .await?;
+    row.as_ref().map(deleted_universe_from_row).transpose()
+}
+
+pub async fn list_deleted_universes(
+    pool: &PgPool,
+    after: Option<&str>,
+) -> Result<api::DeploymentDeletedUniversesListResponse, PgStoreError> {
+    let cursor = after
+        .map(|value| {
+            let (time, id) = value.split_once(':').ok_or_else(|| PgStoreError::Store {
+                message: "invalid deleted universe cursor".into(),
+            })?;
+            Ok::<_, PgStoreError>((
+                time.parse::<i64>().map_err(|_| PgStoreError::Store {
+                    message: "invalid deleted universe cursor timestamp".into(),
+                })?,
+                Uuid::parse_str(id).map_err(|_| PgStoreError::Store {
+                    message: "invalid deleted universe cursor UUID".into(),
+                })?,
+            ))
+        })
+        .transpose()?;
+    let rows = sqlx::query("SELECT * FROM universes_deleted WHERE ($1::bigint IS NULL OR (deleted_at_ms, universe_id) < ($1, $2::uuid)) ORDER BY deleted_at_ms DESC, universe_id DESC LIMIT 101")
+        .bind(cursor.map(|(time, _)| time)).bind(cursor.map(|(_, id)| id)).fetch_all(pool).await?;
+    let has_more = rows.len() > 100;
+    let universes = rows
+        .iter()
+        .take(100)
+        .map(deleted_universe_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
+    let next_after = if has_more {
+        universes
+            .last()
+            .map(|u| format!("{}:{}", u.deleted_at_ms, u.universe_id))
+    } else {
+        None
+    };
+    Ok(api::DeploymentDeletedUniversesListResponse {
+        universes,
+        next_after,
+    })
 }

@@ -15,6 +15,7 @@ _RPC_KINDS = {
     -32014: "modelDefaultUnset",
     -32015: "operationPending",
     -32016: "sessionExecutionStopped",
+    -32017: "gone",
 }
 
 

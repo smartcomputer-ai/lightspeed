@@ -118,7 +118,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
     let result = temporal_runtime::gateway::request_context::with_request_context(
         context,
         Box::pin(async {
-            let state = runtime.state_for(universe_id, false).await?;
+            let state = runtime.state_for(universe_id).await?;
             let key = state
                 .api
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
@@ -332,7 +332,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
     )
     .await;
     drop(tasks);
-    let store = runtime.state_for(universe_id, false).await?.store.clone();
+    let store = runtime.state_for(universe_id).await?.store.clone();
     runtime.evict(universe_id).await;
     cleanup_fixture(&store).await?;
     result

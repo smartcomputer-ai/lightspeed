@@ -65,7 +65,8 @@ async fn temporal_live_anthropic_run_learns_capacity_and_switches_models() -> an
     let client_future = with_request_context(
         RequestContext::local(AccessScope::Universe { universe_id }),
         async {
-            let api = universes.state_for(universe_id, true).await?.api.clone();
+            store_pg::create_universe(universes.stores().pool(), universe_id).await?;
+            let api = universes.state_for(universe_id).await?.api.clone();
             api.start_session(SessionStartParams {
                 access: None,
                 metadata: Default::default(),

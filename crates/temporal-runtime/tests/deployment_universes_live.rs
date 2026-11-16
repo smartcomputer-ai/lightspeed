@@ -42,7 +42,7 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
         Some("http://127.0.0.1:18080".to_owned()),
         stores,
     )?);
-    let operator = GatewayDeploymentApi::new(runtime);
+    let operator = GatewayDeploymentApi::new(runtime.clone());
 
     let named = Uuid::new_v4();
     let derived = Uuid::new_v4();
@@ -141,6 +141,19 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
         .await?
         .result;
         assert_eq!(purged.universe_id, named.to_string());
+        assert_eq!(purged.state, api::UniverseDeletionState::Deleting);
+        assert!(
+            read(&named.to_string())
+                .await?
+                .result
+                .universe
+                .deletion
+                .is_some()
+        );
+        assert_eq!(
+            create(named, None).await.unwrap_err().kind,
+            AgentApiErrorKind::Conflict
+        );
         assert_eq!(
             read(&renamed).await.unwrap_err().kind,
             AgentApiErrorKind::NotFound

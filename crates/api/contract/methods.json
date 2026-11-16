@@ -3494,6 +3494,32 @@
       "access": {
         "kind": "deployment"
       },
+      "description": "Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.",
+      "group": "deployment/universes",
+      "method": "deployment/universes/deleted/list",
+      "notifications": [],
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentDeletedUniversesListParams"
+        },
+        "type": "DeploymentDeletedUniversesListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentDeletedUniversesListResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentDeletedUniversesListResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "streaming": false,
+      "summary": "List deleted universes",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
       "description": "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.",
       "group": "deployment/sessions",
       "method": "deployment/sessions/deleted/list",
@@ -3572,7 +3598,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
+      "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.",
       "group": "deployment/universes",
       "method": "deployment/universes/create",
       "notifications": [],
@@ -3598,7 +3624,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
+      "description": "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.",
       "group": "deployment/universes",
       "method": "deployment/universes/list",
       "notifications": [],
@@ -3624,7 +3650,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
+      "description": "Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound.",
       "group": "deployment/universes",
       "method": "deployment/universes/read",
       "notifications": [],
@@ -3702,7 +3728,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
+      "description": "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
       "group": "deployment/universes",
       "method": "deployment/universes/delete",
       "notifications": [],
@@ -3721,7 +3747,7 @@
       "role": null,
       "scope": "deployment",
       "streaming": false,
-      "summary": "Purge a universe",
+      "summary": "Request universe deletion",
       "target": null
     },
     {

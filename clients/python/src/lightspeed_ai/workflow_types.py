@@ -834,6 +834,10 @@ class WorkflowToolStartArgs(TypedDict):
     """
 
     execution_id: str
+    """
+    Logical execution id used as the emission producer. The Temporal workflow id
+    is `{universe_id}/{execution_id}`.
+    """
     holder_workflow_id: str
     invocation: WorkflowToolInvocation
     universe_id: str

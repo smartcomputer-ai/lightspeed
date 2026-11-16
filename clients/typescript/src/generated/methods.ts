@@ -134,6 +134,7 @@ export const METHODS = [
   "channels/pairings/list",
   "channels/pairings/delete",
   "channels/conversations/read",
+  "deployment/universes/deleted/list",
   "deployment/sessions/deleted/list",
   "deployment/sessions/purge",
   "deployment/environment-provider-bindings/list",
@@ -1190,6 +1191,14 @@ export const METHOD_INFO = {
     summary: "Read a conversation snapshot",
     description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
   },
+  "deployment/universes/deleted/list": {
+    scope: "deployment",
+    streaming: false,
+    notifications: [],
+    access: {"kind":"deployment"},
+    summary: "List deleted universes",
+    description: "Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.",
+  },
   "deployment/sessions/deleted/list": {
     scope: "deployment",
     streaming: false,
@@ -1220,7 +1229,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Create a universe",
-    description: "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.",
+    description: "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.",
   },
   "deployment/universes/list": {
     scope: "deployment",
@@ -1228,7 +1237,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "List universes",
-    description: "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.",
+    description: "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.",
   },
   "deployment/universes/read": {
     scope: "deployment",
@@ -1236,7 +1245,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Read a universe",
-    description: "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.",
+    description: "Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound.",
   },
   "deployment/universes/configuration/put": {
     scope: "deployment",
@@ -1259,8 +1268,8 @@ export const METHOD_INFO = {
     streaming: false,
     notifications: [],
     access: {"kind":"deployment"},
-    summary: "Purge a universe",
-    description: "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.",
+    summary: "Request universe deletion",
+    description: "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
   },
   "deployment/api-keys/create": {
     scope: "deployment",
@@ -2543,6 +2552,15 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfChannelConversationReadResponse;
   };
   /**
+   * List deleted universes
+   *
+   * Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.
+   */
+  "deployment/universes/deleted/list": {
+    params: Api.DeploymentDeletedUniversesListParams;
+    result: Api.AgentApiOutcomeOfDeploymentDeletedUniversesListResponse;
+  };
+  /**
    * List deleted sessions
    *
    * Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
@@ -2572,7 +2590,7 @@ export interface MethodMap {
   /**
    * Create a universe
    *
-   * Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
+   * Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.
    */
   "deployment/universes/create": {
     params: Api.DeploymentUniverseCreateParams;
@@ -2581,7 +2599,7 @@ export interface MethodMap {
   /**
    * List universes
    *
-   * Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
+   * Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.
    */
   "deployment/universes/list": {
     params: Api.DeploymentUniverseListParams;
@@ -2590,7 +2608,7 @@ export interface MethodMap {
   /**
    * Read a universe
    *
-   * Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
+   * Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound.
    */
   "deployment/universes/read": {
     params: Api.DeploymentUniverseReadParams;
@@ -2615,9 +2633,9 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
   };
   /**
-   * Purge a universe
+   * Request universe deletion
    *
-   * Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
+   * Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
    */
   "deployment/universes/delete": {
     params: Api.DeploymentUniverseDeleteParams;

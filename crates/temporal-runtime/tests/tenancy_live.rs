@@ -52,8 +52,10 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
     let session_id = SessionId::new(format!("session_shared_{}", uuid::Uuid::new_v4().simple()));
 
     let client_future = async {
-        let state_a = universes.state_for(universe_a, true).await?;
-        let state_b = universes.state_for(universe_b, true).await?;
+        store_pg::create_universe(universes.stores().pool(), universe_a).await?;
+        store_pg::create_universe(universes.stores().pool(), universe_b).await?;
+        let state_a = universes.state_for(universe_a).await?;
+        let state_b = universes.state_for(universe_b).await?;
         let api_a = state_a.api.clone();
         let api_b = state_b.api.clone();
         // A new universe has no model default, and these sessions omit the model.

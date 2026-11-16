@@ -15,6 +15,8 @@ pub mod roles;
 pub(crate) mod session_deletion;
 pub mod subagents;
 pub mod universe;
+mod universe_deletion;
+mod universe_workflows;
 pub mod worker;
 
 pub use config::{

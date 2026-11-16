@@ -102,7 +102,8 @@ export interface Universe {
   /// Cached runtime handle used as the Platform URL segment.
   handle: string;
   gatewayUrl: string | null;
-  status: "active" | "archived";
+  status: "active" | "archived" | "deleting";
+  deletion?: import("@lightspeed-ai/sdk").DeploymentUniverseView["deletion"];
   createdAt: string;
   /// Own membership role; null for platform admins browsing a universe
   /// they are not a member of.
@@ -134,7 +135,8 @@ export interface UniverseReconcile {
   platform: {
     id: string;
     lightspeedUniverseId: string;
-    engine: "ok" | "missing" | "unchecked";
+    engine: "ok" | "missing" | "unchecked" | "deleting";
+    deletion?: import("@lightspeed-ai/sdk").DeploymentUniverseView["deletion"];
   }[];
   orphans: EngineUniverse[];
 }

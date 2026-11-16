@@ -206,7 +206,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         "the environment-gateway process serves the connect route"
     );
     api_only.abort();
-    let api = runtime.state_for(universe_id, false).await?.api.clone();
+    let api = runtime.state_for(universe_id).await?.api.clone();
     let sandbox = tempfile::tempdir()?;
 
     let urls = Urls {
@@ -260,7 +260,7 @@ async fn ephemeral_scenario(
     urls: &Urls<'_>,
     sandbox: &Path,
 ) -> anyhow::Result<()> {
-    let store = runtime.state_for(universe_id, false).await?.store.clone();
+    let store = runtime.state_for(universe_id).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
             registration_key_id: None,
@@ -638,7 +638,7 @@ async fn persistent_scenario(
     urls: &Urls<'_>,
     sandbox: &Path,
 ) -> anyhow::Result<()> {
-    let store = runtime.state_for(universe_id, false).await?.store.clone();
+    let store = runtime.state_for(universe_id).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
             registration_key_id: None,

@@ -40,7 +40,8 @@ without the other.
 **Platform admin → Universes** reconciles the configured default runtime inventory.
 **Adopt** connects an existing runtime universe to the Platform without
 replacing its contents. **Create in engine** creates an empty missing runtime
-universe. It cannot restore deleted sessions or files. Universes using custom
+universe. It cannot restore deleted sessions or files, or recreate a universe whose
+UUID has been permanently deleted. Universes using custom
 gateway URLs can appear as `unchecked` in this inventory.
 
 Preserve runtime UUIDs and their Platform mappings during recovery. Secret
@@ -56,35 +57,58 @@ runtime has no corresponding archived state. Bots, schedules, channels, and
 previously admitted work can continue. Archiving is therefore an organization
 step, not an access-revocation or shutdown mechanism.
 
-Retire the tenant's running work before permanently deleting its records:
+Deletion does not require archiving, closing sessions, stopping bots, or closing
+environments first. Retain any content you need before proceeding. A Platform
+administrator selects **Delete** under **Platform admin → Universes** and types
+the universe's handle to confirm. Through the CLI:
 
-1. Stop new submissions, disable or remove triggers, and stop external clients
-   and connector ingress for the universe. Revoke runtime keys and remove
-   unwanted Platform access.
-2. Inspect active sessions, bot activity, channel deliveries, and environment
-   jobs. Let required work finish or cancel it, accounting for
-   effects it already performed. Close retired bots to disable their triggers,
-   remove their schedules, and request controller teardown.
-3. Close the universe's environments and confirm the intended machine cleanup.
-   Provider-owned VMs require provider destruction; bring-your-own machines
-   remain the operator's responsibility. Retain any files that must survive.
-4. Archive the universe in the Platform. A platform administrator can then
-   permanently delete it after the required data has been retained elsewhere.
-5. Verify remaining infrastructure artifacts, including Temporal schedules
-   and histories, provider inventory, connector-local state, and object storage.
+```bash
+lightspeed universe delete my-universe --wait
+```
 
-The runtime purge terminates the session workflows it enumerates, deletes
-catalogued external blobs, and removes runtime rows through database cascades.
-It also attempts a best-effort cleanup of the universe's CAS prefix and evicts
-the handling process's cached universe service. The Platform then removes its
-organization and associated records.
+Use `--yes` to omit the interactive handle confirmation. `--wait` polls until
+cleanup finishes; an optional duration bounds how long the CLI waits.
 
-That purge does not enumerate every bot, channel, or environment-job workflow
-or every schedule; it does not destroy provider VMs, erase retained Temporal
-histories, remove connector-local authentication files, or broadcast cache
-eviction to other runtime replicas. Use the cleanup and verification steps
-above to remove those remaining resources, and retain the records needed to
-investigate a partial failure.
+Deletion immediately refuses new requests, invalidates universe keys, and frees
+the handle for reuse. The universe then appears as **deleting** in the Platform
+admin inventory, with its current cleanup step and any waiting detail. It is
+hidden from ordinary members. Cleanup removes bot schedules, terminates the
+universe's open workflows, closes environments, clears object storage, and
+finally removes its database rows. Storage failures keep the universe in the
+storage step for retry.
+
+Environment cleanup is best effort. Connected registered daemons receive a
+closure notice; disconnected daemons cannot reconnect with their old registration
+key. Providers are asked to close provisioned machines. After bounded attempts
+or two minutes, deletion proceeds even if a provider has not confirmed cleanup.
+The permanent deletion record identifies any unconfirmed machines by provider
+and target ID for an operator to remove.
+
+API clients call `deployment/universes/delete` once, then poll
+`deployment/universes/read` by UUID. A deleting universe remains readable through
+that deployment method. Once deletion finishes, reading the UUID returns `gone`
+with its permanent record; a UUID that never existed returns `notFound`.
+Repeating deletion is safe, and a deleted UUID cannot be created again. Use
+`lightspeed universe list --deleted` or `deployment/universes/deleted/list` to
+inspect deletion records, including resource counts, attribution and cleanup
+results.
+
+The Platform periodically follows the runtime's inventory, including deletions
+requested directly through the API or CLI. It removes its organization,
+memberships and setups only after the runtime confirms `gone`. A universe
+missing from an empty or different runtime remains marked missing so that an
+accidental configuration change does not discard memberships.
+
+Deletion does not remove:
+
+- Temporal histories, which remain until the namespace retention period ends;
+- machines hosting registered daemons or external endpoints;
+- provider resources shared per universe, such as an Incus project, network,
+  ACL and profile;
+- connector-local authentication directories, including WhatsApp state;
+- third-party state, including OAuth-issued tokens, model-provider usage, and
+  effects agents already performed outside Lightspeed;
+- database and object-store backups.
 
 
 <a id="follow-a-request-into-its-universe"></a>

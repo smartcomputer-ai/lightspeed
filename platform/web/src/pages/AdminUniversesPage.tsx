@@ -67,6 +67,7 @@ export function AdminUniversesPage() {
   const reconcile = useQuery({
     queryKey: ["universes-reconcile"],
     queryFn: () => api<UniverseReconcile>("GET", "/api/v1/universes/reconcile"),
+    refetchInterval: 5000,
   });
   const engineStatus = new Map(
     (reconcile.data?.platform ?? []).map((row) => [row.id, row.engine]),
@@ -88,7 +89,7 @@ export function AdminUniversesPage() {
     onSuccess: refresh,
   });
   const purge = useMutation({
-    mutationFn: (id: string) => api("DELETE", `/api/v1/universes/${id}`),
+    mutationFn: (universe: Universe) => api("DELETE", `/api/v1/universes/${universe.id}`, { handle: universe.handle }),
     onSuccess: refresh,
   });
   const recreate = useMutation({
@@ -96,13 +97,16 @@ export function AdminUniversesPage() {
     onSuccess: refresh,
   });
   const deleteOrphan = useMutation({
-    mutationFn: (lightspeedUniverseId: string) =>
-      api("DELETE", `/api/v1/universes/engine/${lightspeedUniverseId}`),
+    mutationFn: (universe: EngineUniverse) =>
+      api("DELETE", `/api/v1/universes/engine/${universe.universeId}`, { handle: universe.handle }),
     onSuccess: refresh,
   });
 
   const rows = (universes.data ?? [])
-    .slice()
+    .map(universe => {
+      const deletion = reconcile.data?.platform.find(row => row.id === universe.id)?.deletion ?? universe.deletion;
+      return deletion ? { ...universe, deletion, status: "deleting" as const } : universe;
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
   const orphans = reconcile.data?.orphans ?? [];
 
@@ -110,7 +114,7 @@ export function AdminUniversesPage() {
     <>
       <PageHeader
         title="Universes"
-        description="Every universe on this deployment, including archived ones."
+        description="Every universe on this deployment, including archived universes and deletions in progress."
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
@@ -132,6 +136,7 @@ export function AdminUniversesPage() {
           {syncHandles.data.skipped > 0 && ` ${syncHandles.data.skipped} missing from the runtime and skipped; these require review.`}
         </p>
       )}
+      {(purge.error || deleteOrphan.error || recreate.error) && <p role="alert" className="mb-4 text-sm text-destructive">{(purge.error || deleteOrphan.error || recreate.error)?.message}</p>}
       {universes.isLoading && <LoadingNote />}
       {universes.error && (
         <ReadError error={universes.error} loading={!universes.data} />
@@ -162,6 +167,7 @@ export function AdminUniversesPage() {
                     >
                       {universe.status}
                     </Badge>
+                    {universe.deletion && <p className="mt-1 text-xs text-muted-foreground">{universe.deletion.step}{universe.deletion.detail ? `: ${universe.deletion.detail}` : ""}</p>}
                   </TableCell>
                   <TableCell>
                     <EngineBadge status={engineStatus.get(universe.id)} />
@@ -173,84 +179,52 @@ export function AdminUniversesPage() {
                     {new Date(universe.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableActionsCell>
-                    <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>
-                    {engineStatus.get(universe.id) === "missing" && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={recreate.isPending}
-                        onClick={() => recreate.mutate(universe.id)}
-                        title="Re-create the tenant on the engine (it starts empty)"
-                      >
-                        Recreate on engine
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => navigate(universeHome(universe))}
-                    >
-                      Open
-                    </Button>
-                    {universe.status === "active" ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() =>
-                          setStatus.mutate({ id: universe.id, status: "archived" })
-                        }
-                      >
-                        Archive
-                      </Button>
-                    ) : (
-                      <>
+                    {universe.status !== "deleting" && <>
+                      <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>
+                      {engineStatus.get(universe.id) === "missing" && (
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={recreate.isPending}
+                          onClick={() => recreate.mutate(universe.id)}
+                          title="Re-create the tenant on the engine (it starts empty)"
+                        >
+                          Recreate on engine
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate(universeHome(universe))}
+                      >
+                        Open
+                      </Button>
+                      {universe.status === "active" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
                           onClick={() =>
-                            setStatus.mutate({ id: universe.id, status: "active" })
+                            setStatus.mutate({ id: universe.id, status: "archived" })
                           }
                         >
-                          Restore
+                          Archive
                         </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive"
-                              />
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setStatus.mutate({ id: universe.id, status: "active" })
                             }
                           >
-                            Delete
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Permanently delete {universe.name}?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Purges everything engine-side (sessions, profiles,
-                                workspaces, blobs) and removes the universe, its
-                                members, and bots from the platform. This
-                                cannot be undone.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => purge.mutate(universe.id)}
-                              >
-                                Delete permanently
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </>
-                    )}
+                            Restore
+                          </Button>
+                        </>
+                      )}
+                      <DeleteUniverseDialog name={universe.name} handle={universe.handle} onDelete={() => purge.mutate(universe)} />
+                    </>}
                   </TableActionsCell>
                 </TableRow>
               ))}
@@ -296,41 +270,7 @@ export function AdminUniversesPage() {
                       >
                         Adopt
                       </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive"
-                            />
-                          }
-                        >
-                          Delete
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Delete this engine universe?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Purges {orphan.sessions ?? 0} session(s) and{" "}
-                              {formatBytes(orphan.blobBytes ?? 0)} of blobs from the
-                              engine. No platform state is involved. This cannot be
-                              undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-white hover:bg-destructive/90"
-                              onClick={() => deleteOrphan.mutate(orphan.universeId)}
-                            >
-                              Delete permanently
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <DeleteUniverseDialog name={orphan.handle} handle={orphan.handle} onDelete={() => deleteOrphan.mutate(orphan)} />
                     </TableActionsCell>
                   </TableRow>
                 ))}
@@ -353,10 +293,32 @@ export function AdminUniversesPage() {
   );
 }
 
-function EngineBadge({ status }: { status: "ok" | "missing" | "unchecked" | undefined }) {
+function DeleteUniverseDialog({ name, handle, onDelete }: { name: string; handle: string; onDelete: () => void }) {
+  const [confirmation, setConfirmation] = useState("");
+  return <AlertDialog onOpenChange={() => setConfirmation("")}>
+    <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>Delete</AlertDialogTrigger>
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Permanently delete {name}?</AlertDialogTitle>
+        <AlertDialogDescription>Stops this universe immediately and removes its resources, members and stored content in the background. This cannot be undone.</AlertDialogDescription>
+      </AlertDialogHeader>
+      <Field>
+        <FieldLabel htmlFor={`delete-${handle}`}>Type {handle} to confirm</FieldLabel>
+        <Input id={`delete-${handle}`} value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" />
+      </Field>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" disabled={confirmation !== handle} onClick={onDelete}>Delete permanently</AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>;
+}
+
+function EngineBadge({ status }: { status: "ok" | "missing" | "unchecked" | "deleting" | undefined }) {
   if (!status) {
     return <span className="text-muted-foreground">—</span>;
   }
+  if (status === "deleting") return <Badge variant="outline">deleting</Badge>;
   if (status === "ok") {
     return <Badge variant="secondary">ok</Badge>;
   }

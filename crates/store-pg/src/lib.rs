@@ -169,6 +169,8 @@ pub struct PgStore {
 
 #[derive(Debug, Error)]
 pub enum PgStoreError {
+    #[error("universe {universe_id} is deleting or was deleted")]
+    UniverseDeleted { universe_id: Uuid },
     #[error("postgres failure: {0}")]
     Postgres(#[from] sqlx::Error),
 
@@ -305,6 +307,17 @@ impl PgStore {
         Ok(())
     }
 
+    /// Ordinary store writes validate admission without ever creating a universe.
+    async fn require_active_universe(&self) -> Result<(), PgStoreError> {
+        if universe_exists(&self.pool, self.config.universe_id).await? {
+            Ok(())
+        } else {
+            Err(PgStoreError::Store {
+                message: format!("unknown universe: {}", self.config.universe_id),
+            })
+        }
+    }
+
     /// Create this store's universe when it does not exist yet, under the
     /// configured handle or the default one. An existing universe keeps its
     /// handle: provisioning never renames.
@@ -327,10 +340,13 @@ pub use cas_sweep::{
 };
 pub use channels::list_channel_accounts_all;
 pub use deployment::{
-    UNIVERSE_HANDLE_MAX_LEN, UniverseStats, create_universe, create_universe_with_handle,
-    default_universe_handle, delete_universe, is_valid_universe_handle, list_universe_object_keys,
+    UNIVERSE_HANDLE_MAX_LEN, UniverseDeletionRecord, UniverseStats, begin_universe_deletion,
+    create_universe, create_universe_with_handle, default_universe_handle, delete_universe,
+    finish_universe_deletion, finish_universe_deletion_in_transaction, is_valid_universe_handle,
+    list_deleted_universes, list_deleting_universes, list_universe_object_keys,
     list_universe_session_ids, list_universe_stats, put_universe_configuration,
-    put_universe_handle, read_universe_stats, resolve_universe_reference,
+    put_universe_handle, read_deleted_universe, read_universe_stats, resolve_universe_reference,
+    update_universe_deletion,
 };
 pub use environment::{
     list_revoked_environment_routes, list_universes_with_environment_work,
@@ -343,7 +359,9 @@ pub use environment_registration::{
 pub use migrations::{
     MIGRATIONS, REQUIRED_SCHEMA_REVISION, SchemaStatus, schema_status, verify_schema,
 };
-pub use object::{delete_objects_under_prefix, universe_cas_object_prefix};
+pub use object::{
+    delete_objects_under_prefix, lock_universe_objects_for_deletion, universe_cas_object_prefix,
+};
 pub use runtime_instances::{
     RegisteredConnectionOwner, RuntimeInstance, RuntimeLoop, RuntimeLoopLeader,
     delete_runtime_instance, disconnect_runtime_instance_connections, read_live_runtime_instance,
@@ -354,7 +372,7 @@ pub use runtime_instances::{
 /// Deployment-level universe listing for admin surfaces.
 pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, String)>, PgStoreError> {
     let rows: Vec<(Uuid, String)> =
-        sqlx::query_as("SELECT universe_id, handle FROM universes ORDER BY universe_id")
+        sqlx::query_as("SELECT universe_id, handle FROM universes WHERE deleting_at_ms IS NULL ORDER BY universe_id")
             .fetch_all(pool)
             .await?;
     Ok(rows)
@@ -364,11 +382,12 @@ pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, String)>, PgStor
 /// per-universe `PgStore` boundary: multi-universe deployments consult it
 /// before lazily constructing a universe's store.
 pub async fn universe_exists(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
-    let row: Option<(Uuid,)> =
-        sqlx::query_as("SELECT universe_id FROM universes WHERE universe_id = $1")
-            .bind(universe_id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT universe_id FROM universes WHERE universe_id = $1 AND deleting_at_ms IS NULL",
+    )
+    .bind(universe_id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.is_some())
 }
 

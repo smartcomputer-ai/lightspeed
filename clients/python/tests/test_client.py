@@ -470,3 +470,7 @@ async def test_watch_iterator_close_and_typed_refusal():
             await anext(client.watch(reconnect=False))
         assert caught.value.transient
     assert len(gateway.calls) == 3
+
+
+def test_deleted_universe_error_code_is_gone() -> None:
+    assert LightspeedRpcError({"code": -32017, "message": "deleted"}).kind == "gone"

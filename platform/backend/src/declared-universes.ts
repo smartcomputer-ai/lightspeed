@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { eq, or, isNull, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import type { DeploymentUniverseConfigurationPutParams } from "@lightspeed-ai/sdk";
+import { LightspeedRpcError, type DeploymentUniverseConfigurationPutParams } from "@lightspeed-ai/sdk";
 import { roleAtLeast, universeRoleSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { AppContext } from "./context.js";
 import { deploymentClient } from "./runtime-client.js";
@@ -52,21 +52,36 @@ export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted:
       .innerJoin(schema.organization, eq(schema.organization.id, schema.universes.organizationId))
       .where(or(isNull(schema.universes.gatewayUrl), eq(schema.universes.gatewayUrl, ctx.env.lightspeedApiUrl!)));
     const linked = new Map(rows.map(row => [row.universe.lightspeedUniverseId, { ...row.universe, handle: row.handle }]));
-    const selected = inventory.filter(u => u.displayName != null || linked.has(u.universeId));
+    // Absence alone can mean the Platform is pointed at an empty deployment.
+    // Only a permanent tombstone authorizes removing memberships and setups.
+    const inventoryIds = new Set(inventory.map(universe => universe.universeId));
+    for (const row of rows) {
+      if (inventoryIds.has(row.universe.lightspeedUniverseId)) continue;
+      try {
+        await deploymentClient(ctx.env).call("deployment/universes/read", { universe: row.universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(10000) });
+      } catch (error) {
+        if (!(error instanceof LightspeedRpcError)) throw error;
+        if (error.kind === "gone") await tx.delete(schema.organization).where(eq(schema.organization.id, row.universe.organizationId));
+        else if (error.kind !== "notFound") throw error;
+      }
+    }
+    const selected = inventory.filter(u => linked.has(u.universeId) || (!u.deletion && u.displayName != null));
+    const cachedHandle = (universe: typeof inventory[number]) => universe.deletion ? `_deleting-${universe.universeId}` : universe.handle;
     const handles = new Set<string>();
     for (const universe of selected) {
-      if (handles.has(universe.handle)) throw new Error("Runtime inventory contains conflicting universe handles");
-      handles.add(universe.handle);
+      if (handles.has(cachedHandle(universe))) throw new Error("Runtime inventory contains conflicting universe handles");
+      handles.add(cachedHandle(universe));
     }
     // Clear managed handles inside the transaction to permit handle swaps.
     for (const universe of selected) {
       const row = linked.get(universe.universeId);
-      if (row && row.handle !== universe.handle) await tx.update(schema.organization).set({ slug: `runtime-sync-${crypto.randomUUID()}` }).where(eq(schema.organization.id, row.organizationId));
+      if (row && row.handle !== cachedHandle(universe)) await tx.update(schema.organization).set({ slug: `runtime-sync-${crypto.randomUUID()}` }).where(eq(schema.organization.id, row.organizationId));
     }
     let adopted = 0;
     let updated = 0;
     for (const universe of selected) {
-      const configuration: UniverseConfiguration = {
+      const configuration = {
+        ...(universe.deletion ? { deletion: universe.deletion, deletionHandle: universe.handle } : {}),
         ...(universe.displayName != null ? { displayName: universe.displayName } : {}),
         ...(universe.members != null ? { members: universe.members } : {}),
         ...(universe.directoryGroupMappings != null ? { directoryGroupMappings: universe.directoryGroupMappings } : {}),
@@ -74,16 +89,16 @@ export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted:
       const row = linked.get(universe.universeId);
       if (row) {
         const name = universe.displayName ?? row.name;
-        if (name !== row.name || universe.handle !== row.handle) {
-          await tx.update(schema.organization).set({ name, slug: universe.handle }).where(eq(schema.organization.id, row.organizationId));
+        if (name !== row.name || cachedHandle(universe) !== row.handle) {
+          await tx.update(schema.organization).set({ name, slug: cachedHandle(universe) }).where(eq(schema.organization.id, row.organizationId));
         }
-        if (name !== row.name || !isDeepStrictEqual(row.runtimeConfiguration, configuration)) {
-          await tx.update(schema.universes).set({ name, runtimeConfiguration: configuration }).where(eq(schema.universes.id, row.id));
+        if (name !== row.name || (universe.deletion && row.status !== "deleting") || !isDeepStrictEqual(row.runtimeConfiguration, configuration)) {
+          await tx.update(schema.universes).set({ name, runtimeConfiguration: configuration, ...(universe.deletion ? { status: "deleting" as const } : {}) }).where(eq(schema.universes.id, row.id));
           updated++;
         }
       } else if (universe.displayName) {
         const organizationId = crypto.randomUUID();
-        await tx.insert(schema.organization).values({ id: organizationId, name: universe.displayName, slug: universe.handle, createdAt: new Date() });
+        await tx.insert(schema.organization).values({ id: organizationId, name: universe.displayName, slug: cachedHandle(universe), createdAt: new Date() });
         await tx.insert(schema.universes).values({ organizationId, lightspeedUniverseId: universe.universeId, name: universe.displayName, runtimeConfiguration: configuration });
         adopted++;
       }

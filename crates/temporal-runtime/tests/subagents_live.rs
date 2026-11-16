@@ -1961,7 +1961,12 @@ async fn run_agent_spawn_cancel_live_client(
             _ => None,
         })
         .expect("spawned child execution");
-    let execution = client.get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id);
+    let execution = client.get_workflow_handle::<temporalio_client::UntypedWorkflow>(
+        temporal_workflow::compose_workflow_tool_execution_id(
+            support::live::live_universe_id()?,
+            &execution_id,
+        ),
+    );
     wait_until(
         "cancelled child supervisor to finish",
         Duration::from_secs(30),

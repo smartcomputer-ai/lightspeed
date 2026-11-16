@@ -329,11 +329,19 @@ impl GatewayState {
         };
         match &self.resolution {
             UniverseResolution::FixedApi { api } => Ok(api.clone()),
-            UniverseResolution::Multi { runtime, .. } => runtime
-                .state_for(universe_id, false)
-                .await
-                .map(|state| state.api.clone())
-                .map_err(map_universe_error),
+            UniverseResolution::Multi { runtime, .. } => {
+                if !store_pg::universe_exists(runtime.stores().pool(), universe_id)
+                    .await
+                    .map_err(|error| AgentApiError::internal(error.to_string()))?
+                {
+                    return Err(AgentApiError::not_found("unknown universe"));
+                }
+                runtime
+                    .state_for(universe_id)
+                    .await
+                    .map(|state| state.api.clone())
+                    .map_err(map_universe_error)
+            }
         }
     }
 
@@ -348,11 +356,19 @@ impl GatewayState {
                 }
                 Ok(api.clone())
             }
-            UniverseResolution::Multi { runtime, .. } => runtime
-                .state_for(universe_id, false)
-                .await
-                .map(|state| state.api.clone())
-                .map_err(map_universe_error),
+            UniverseResolution::Multi { runtime, .. } => {
+                if !store_pg::universe_exists(runtime.stores().pool(), universe_id)
+                    .await
+                    .map_err(|error| AgentApiError::internal(error.to_string()))?
+                {
+                    return Err(AgentApiError::not_found("unknown universe"));
+                }
+                runtime
+                    .state_for(universe_id)
+                    .await
+                    .map(|state| state.api.clone())
+                    .map_err(map_universe_error)
+            }
         }
     }
 
@@ -479,7 +495,12 @@ pub async fn prewarm_single_universe(
     runtime: &Arc<UniverseRuntime>,
 ) -> anyhow::Result<()> {
     if let GatewayAuthMode::Single { universe_id } = mode {
-        runtime.state_for(*universe_id, true).await?;
+        runtime
+            .stores()
+            .store_for(*universe_id)
+            .ensure_universe()
+            .await?;
+        runtime.state_for(*universe_id).await?;
     }
     Ok(())
 }
@@ -1431,7 +1452,7 @@ async fn oauth_callback(
         UniverseResolution::Multi { runtime, .. } => {
             let state_hash = auth::state_hash(&callback.state);
             match store_pg::find_auth_flow_universe(runtime.stores().pool(), &state_hash).await {
-                Ok(Some(universe_id)) => match runtime.state_for(universe_id, false).await {
+                Ok(Some(universe_id)) => match runtime.state_for(universe_id).await {
                     Ok(universe) => universe.api.clone(),
                     Err(error) => {
                         tracing::error!(target: "temporal_runtime", %error, "oauth callback universe resolution failed");

@@ -840,6 +840,8 @@ impl fmt::Display for EnvironmentState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentCloseReason {
+    /// The owning universe is being deleted.
+    UniverseDeleted,
     /// A caller closed it.
     Requested,
     /// Its registration key was revoked with its environments.
@@ -858,6 +860,7 @@ pub enum EnvironmentCloseReason {
 impl EnvironmentCloseReason {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::UniverseDeleted => "universe_deleted",
             Self::Requested => "requested",
             Self::KeyRevoked => "key_revoked",
             Self::EphemeralGrace => "ephemeral_grace",
@@ -869,6 +872,7 @@ impl EnvironmentCloseReason {
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
+            "universe_deleted" => Some(Self::UniverseDeleted),
             "requested" => Some(Self::Requested),
             "key_revoked" => Some(Self::KeyRevoked),
             "ephemeral_grace" => Some(Self::EphemeralGrace),
@@ -997,7 +1001,9 @@ pub struct ProvisionedSource {
     pub public_endpoint: Option<String>,
     /// Work schedule; `Some` exactly while `provisioning` or `closing`.
     pub next_attempt_at_ms: Option<i64>,
-    /// Consecutive failed attempts of the current work; drives backoff.
+    /// Consecutive failures of the current work normally drive backoff. While
+    /// closing for universe deletion, successful close polls also count toward
+    /// the bounded teardown budget.
     pub attempts: u32,
 }
 
@@ -2280,7 +2286,8 @@ impl FailEnvironment {
 
 /// Begin closing. A provisioned row moves from provisioning, open or failed
 /// to `closing`, due at once; an external or registered row moves from open
-/// straight to `closed`. A closing or closed row is left as it is.
+/// straight to `closed`. Universe deletion may take over an existing close
+/// reason without resetting its progress. Other repeated closes are unchanged.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BeginCloseEnvironment {
     pub environment_id: EnvironmentId,
@@ -2291,10 +2298,17 @@ pub struct BeginCloseEnvironment {
 impl BeginCloseEnvironment {
     pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<bool, EnvironmentRegistryError> {
         validate_nonnegative_i64(self.at_ms, "at_ms")?;
-        if matches!(
-            record.state,
-            EnvironmentState::Closing | EnvironmentState::Closed
-        ) {
+        if record.state == EnvironmentState::Closed {
+            return Ok(false);
+        }
+        if record.state == EnvironmentState::Closing {
+            if self.reason == EnvironmentCloseReason::UniverseDeleted
+                && record.close_reason != Some(EnvironmentCloseReason::UniverseDeleted)
+            {
+                record.close_reason = Some(self.reason);
+                record.touch(self.at_ms);
+                return Ok(true);
+            }
             return Ok(false);
         }
         if record.provisioned().is_some() {

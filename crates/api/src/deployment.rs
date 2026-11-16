@@ -20,6 +20,7 @@ pub const METHOD_DEPLOYMENT_UNIVERSES_READ: &str = "deployment/universes/read";
 pub const METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT: &str = "deployment/universes/handle/put";
 pub const METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT: &str =
     "deployment/universes/configuration/put";
+pub const METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST: &str = "deployment/universes/deleted/list";
 pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delete";
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
     "deployment/environment-provider-bindings/list";
@@ -111,6 +112,8 @@ pub struct DeploymentUniverseView {
     pub workspaces: u64,
     pub profiles: u64,
     pub blob_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion: Option<UniverseDeletion>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -186,17 +189,67 @@ pub struct DeploymentUniverseDeleteParams {
     pub universe: String,
 }
 
-/// Purge report. The purge is idempotent: rerunning after a partial failure
-/// resumes where it stopped, and the universe row is deleted last so a
-/// half-purged universe is still visible to `deployment/universes/read`.
+/// Current state after the immediate deletion fence has been applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum UniverseDeletionState {
+    Deleting,
+    Deleted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum UniverseDeletionStep {
+    Intake,
+    Workflows,
+    Environments,
+    Storage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UniverseDeletion {
+    pub started_at_ms: u64,
+    pub requested_by: Attribution,
+    pub step: UniverseDeletionStep,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentUniverseDeleteResponse {
     pub universe_id: String,
-    /// Live session workflows terminated during the purge.
-    pub workflows_terminated: u64,
-    /// External object-store blobs deleted during the purge.
-    pub blob_objects_deleted: u64,
+    pub state: UniverseDeletionState,
+}
+
+/// Permanent resource inventory and attribution for a deleted universe.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedUniverseView {
+    pub universe_id: String,
+    pub handle: String,
+    pub display_name: Option<String>,
+    pub created_at_ms: u64,
+    pub deleting_at_ms: u64,
+    pub deleted_at_ms: u64,
+    pub requested_by: Attribution,
+    pub summary: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentDeletedUniversesListParams {
+    /// Opaque exclusive cursor; each page contains at most 100 entries.
+    #[serde(default)]
+    pub after: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentDeletedUniversesListResponse {
+    pub universes: Vec<DeletedUniverseView>,
+    pub next_after: Option<String>,
 }
 
 /// Non-secret key metadata: what the key is called, reaches and may call,
@@ -624,6 +677,15 @@ pub struct DeploymentChannelAccountListResponse {
 
 #[async_trait]
 pub trait DeploymentApiService: Send + Sync {
+    async fn list_deleted_universes(
+        &self,
+        _params: DeploymentDeletedUniversesListParams,
+    ) -> Result<AgentApiOutcome<DeploymentDeletedUniversesListResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "deleted universe administration is unavailable",
+        ))
+    }
+
     async fn list_deleted_sessions(
         &self,
         _params: DeploymentDeletedSessionsListParams,
@@ -820,6 +882,9 @@ macro_rules! deployment_api_methods {
 }
 
 deployment_api_methods! {
+    METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST => list_deleted_universes(DeploymentDeletedUniversesListParams) -> DeploymentDeletedUniversesListResponse =>
+        ["List deleted universes", "Permanent deletion records, newest first, with resource counts and unconfirmed provider targets."], access: MethodAccess::Deployment,
+
     METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST => list_deleted_sessions(DeploymentDeletedSessionsListParams) -> DeploymentDeletedSessionsListResponse =>
         ["List deleted sessions", "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_SESSIONS_PURGE => purge_session(DeploymentSessionPurgeParams) -> DeploymentSessionPurgeResponse =>
@@ -829,17 +894,17 @@ deployment_api_methods! {
         ["List a universe's deployment provider bindings", "Deployment configuration inventory of one universe's provider bindings."], access: MethodAccess::Deployment,
 
     METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe(DeploymentUniverseCreateParams) -> DeploymentUniverseCreateResponse =>
-        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict."], access: MethodAccess::Deployment,
+        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_LIST => list_universes(DeploymentUniverseListParams) -> DeploymentUniverseListResponse =>
-        ["List universes", "Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity."], access: MethodAccess::Deployment,
+        ["List universes", "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
-        ["Read a universe", "Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage."], access: MethodAccess::Deployment,
+        ["Read a universe", "Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT => put_universe_configuration(DeploymentUniverseConfigurationPutParams) -> DeploymentUniverseReadResponse =>
         ["Declare universe presentation and access", "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT => put_universe_handle(DeploymentUniverseHandlePutParams) -> DeploymentUniverseReadResponse =>
         ["Rename a universe", "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
-        ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::Deployment,
+        ["Request universe deletion", "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
         ["Create a scoped API key", "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_PUT => put_api_key(DeploymentApiKeyPutParams) -> DeploymentApiKeyPutResponse =>

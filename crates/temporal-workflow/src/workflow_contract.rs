@@ -167,6 +167,7 @@ fn manifest() -> Value {
             "separator": "/",
             "session": "{universeId}/{sessionId}",
             "environmentJob": "{universeId}/envjob-{environmentId}-{jobGroupId}",
+            "workflowToolExecution": "{universeId}/{executionId}",
             "botController": "{universeId}/bot-{botId}",
             "botTriggerFire": "{universeId}/botfire-{botId}-{triggerId}",
             "chatConversation": "{universeId}/chat-{provider}-{sha256 of the conversation, 48 hex}",
@@ -315,6 +316,7 @@ fn vectors() -> Value {
         "workflowIds": {
             "session": session_workflow_id,
             "environmentJob": job_workflow_id,
+            "workflowToolExecution": crate::compose_workflow_tool_execution_id(universe, &start_args.execution_id),
             "split": { "universeId": split_universe.to_string(), "sessionId": split_session.as_str() },
         },
         "recipeFingerprint": workflow_tool_recipe_fingerprint(recipe_json.as_bytes()),

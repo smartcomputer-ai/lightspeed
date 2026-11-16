@@ -682,6 +682,10 @@ export interface WorkflowToolRecoveryResult {
  * signal, using its own execution id as the producer workflow id.
  */
 export interface WorkflowToolStartArgs {
+  /**
+   * Logical execution id used as the emission producer. The Temporal workflow id
+   * is `{universe_id}/{execution_id}`.
+   */
   execution_id: string;
   holder_workflow_id: string;
   invocation: WorkflowToolInvocation;

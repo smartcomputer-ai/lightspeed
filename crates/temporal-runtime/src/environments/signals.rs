@@ -60,6 +60,17 @@ impl EnvironmentSignals {
         sender.send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
+    pub fn revoke_universe(&self, universe_id: Uuid) {
+        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+        routes.retain(|(id, _), sender| {
+            if *id != universe_id {
+                return true;
+            }
+            sender.send_modify(|revision| *revision = revision.wrapping_add(1));
+            false
+        });
+    }
+
     /// Keys with live subscribers; prunes senders without receivers.
     pub fn watched(&self) -> Vec<(Uuid, String)> {
         let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
@@ -104,6 +115,22 @@ mod tests {
         signals.revoke(universe, "environment_missing");
         signals.revoke(Uuid::new_v4(), "environment_b");
         assert!(!other.has_changed().unwrap());
+    }
+
+    #[test]
+    fn universe_revocation_wakes_and_releases_only_its_routes() {
+        let signals = EnvironmentSignals::default();
+        let removed = Uuid::from_u128(1);
+        let retained = Uuid::from_u128(2);
+        let mut first = signals.watch(removed, "one");
+        let mut second = signals.watch(removed, "two");
+        let other = signals.watch(retained, "one");
+        signals.revoke_universe(removed);
+        assert_eq!(*first.borrow_and_update(), 1);
+        assert_eq!(*second.borrow_and_update(), 1);
+        assert!(first.has_changed().is_err());
+        assert!(!other.has_changed().unwrap());
+        assert_eq!(signals.watched(), vec![(retained, "one".into())]);
     }
 
     #[test]

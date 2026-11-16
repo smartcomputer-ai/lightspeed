@@ -34,7 +34,7 @@ impl WorkerUniverses {
                 Ok(api.clone())
             }
             Self::Runtime(runtime) => runtime
-                .state_for(universe_id, false)
+                .state_for(universe_id)
                 .await
                 .map(|state| state.api.clone())
                 .map_err(map_universe_error),
@@ -55,9 +55,10 @@ fn require_matching_universe(served: Uuid, requested: Uuid) -> Result<(), Activi
 
 fn map_universe_error(error: UniverseError) -> ActivityError {
     ActivityError::application(match error {
-        UniverseError::Unknown { .. } => {
-            ApplicationFailure::non_retryable(anyhow::anyhow!("{error}"))
-        }
+        UniverseError::Unknown { .. } => ApplicationFailure::builder(anyhow::anyhow!("{error}"))
+            .type_name(temporal_workflow::UNIVERSE_UNKNOWN_ERROR_TYPE.to_owned())
+            .non_retryable(true)
+            .build(),
         UniverseError::Runtime(_) => ApplicationFailure::new(anyhow::anyhow!("{error}")),
     })
 }
@@ -96,6 +97,10 @@ mod tests {
                 panic!("expected application failure");
             };
             assert_eq!(error.is_non_retryable(), non_retryable);
+            assert_eq!(
+                error.type_name(),
+                non_retryable.then_some(temporal_workflow::UNIVERSE_UNKNOWN_ERROR_TYPE)
+            );
         }
     }
 }

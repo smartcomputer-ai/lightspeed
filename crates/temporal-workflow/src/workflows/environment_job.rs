@@ -39,7 +39,11 @@ impl EnvironmentJobWorkflow {
         let mut args = match input {
             EnvironmentJobWorkflowInput::Job(args) => args,
             EnvironmentJobWorkflowInput::WorkflowTool(start) => {
-                if ctx.workflow_id() != start.execution_id
+                if ctx.workflow_id()
+                    != crate::compose_workflow_tool_execution_id(
+                        start.universe_id,
+                        &start.execution_id,
+                    )
                     || start.universe_id != start.invocation.session_universe_id
                 {
                     return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
@@ -63,7 +67,9 @@ impl EnvironmentJobWorkflow {
         let expected_workflow_id = args
             .workflow_tool
             .as_ref()
-            .map(|tool| tool.execution_id.clone())
+            .map(|tool| {
+                crate::compose_workflow_tool_execution_id(args.universe_id, &tool.execution_id)
+            })
             .unwrap_or_else(|| {
                 compose_environment_job_workflow_id(
                     args.universe_id,
@@ -148,6 +154,13 @@ impl EnvironmentJobWorkflow {
                     }),
                     Err(error) => {
                         ctx.state_mut(|state| state.snapshot.last_error = Some(error.to_string()));
+                        if environment_poll_is_terminal(&error) {
+                            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                                "environment job stopped: {}",
+                                crate::workflows::session::activity_failure_message(&error)
+                            ))
+                            .into());
+                        }
                     }
                 }
             }
@@ -175,6 +188,13 @@ impl EnvironmentJobWorkflow {
                     }
                     Err(error) => {
                         ctx.state_mut(|state| state.snapshot.last_error = Some(error.to_string()));
+                        if environment_poll_is_terminal(&error) {
+                            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                                "environment job stopped: {}",
+                                crate::workflows::session::activity_failure_message(&error)
+                            ))
+                            .into());
+                        }
                     }
                 }
             }
@@ -261,6 +281,15 @@ impl EnvironmentJobWorkflow {
     pub fn workflow_tool_recovery(&self, _ctx: &WorkflowContextView) -> WorkflowToolRecoveryResult {
         workflow_tool_recovery(self)
     }
+}
+
+fn environment_poll_is_terminal(error: &temporalio_sdk::ActivityExecutionError) -> bool {
+    [
+        crate::UNIVERSE_UNKNOWN_ERROR_TYPE,
+        crate::ENVIRONMENT_GONE_ERROR_TYPE,
+    ]
+    .iter()
+    .any(|kind| crate::workflows::session::activity_failure_has_type(error, kind))
 }
 
 async fn cancel_workflow_jobs(
@@ -442,7 +471,14 @@ async fn flush_terminal_emissions(
     ctx: &mut WorkflowContext<EnvironmentJobWorkflow>,
     universe_id: uuid::Uuid,
 ) {
-    let workflow_id = ctx.workflow_id().to_owned();
+    let workflow_id = ctx
+        .state(|state| {
+            state
+                .workflow_tool
+                .as_ref()
+                .map(|tool| tool.execution_id.clone())
+        })
+        .unwrap_or_else(|| ctx.workflow_id().to_owned());
     let emissions =
         ctx.state_mut(|state| collect_terminal_emissions(state, universe_id, &workflow_id));
     for (receiver_workflow_id, envelope) in emissions {

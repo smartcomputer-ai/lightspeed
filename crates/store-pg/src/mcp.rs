@@ -16,7 +16,7 @@ impl McpRegistryStore for PgStore {
         record: PutMcpServerRecord,
         expected_revision: Option<u64>,
     ) -> Result<McpServerRecord, McpRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
         // A concurrent writer between the read and the write loses exactly one
@@ -101,7 +101,7 @@ impl McpRegistryStore for PgStore {
         &self,
         server_id: &McpServerId,
     ) -> Result<McpServerRecord, McpRegistryError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| mcp_store_error("ensure universe", error))?;
         let mut tx = self

@@ -38,7 +38,7 @@ export const universes = pgTable("universes", {
   iconColor: text("icon_color").default("default").notNull(),
   /// Gateway RPC endpoint; null = the deployment default from env.
   gatewayUrl: text("gateway_url"),
-  status: text("status", { enum: ["active", "archived"] })
+  status: text("status", { enum: ["active", "archived", "deleting"] })
     .default("active")
     .notNull(),
   /// Feature switches set away from their default (see the shared feature

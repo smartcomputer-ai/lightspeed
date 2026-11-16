@@ -1091,7 +1091,13 @@ impl Reconciler<'_> {
                     self.schedule(
                         row,
                         now_ms + POLL_MS,
-                        0,
+                        if row.close_reason == Some(EnvironmentCloseReason::UniverseDeleted) {
+                            row.provisioned()
+                                .map_or(0, |source| source.attempts)
+                                .saturating_add(1)
+                        } else {
+                            0
+                        },
                         Some("waiting for the provider to close the target".to_owned()),
                         now_ms,
                     )

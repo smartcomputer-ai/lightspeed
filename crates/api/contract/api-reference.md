@@ -1707,6 +1707,19 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 
 ## Deployment methods
 
+### `deployment/universes/deleted/list`
+
+**List deleted universes**
+
+Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentDeletedUniversesListParams`
+- Result: `AgentApiOutcome<DeploymentDeletedUniversesListResponse>`
+
 ### `deployment/sessions/deleted/list`
 
 **List deleted sessions**
@@ -1750,7 +1763,7 @@ Deployment configuration inventory of one universe's provider bindings.
 
 **Create a universe**
 
-Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
+Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1763,7 +1776,7 @@ Creates the deployment tenant boundary for an explicit UUID, under the given han
 
 **List universes**
 
-Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
+Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1776,7 +1789,7 @@ Returns deployment-wide universe summaries with approximate live aggregate count
 
 **Read a universe**
 
-Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
+Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -1813,9 +1826,9 @@ Changes the deployment-unique handle without changing the universe UUID or resou
 
 ### `deployment/universes/delete`
 
-**Purge a universe**
+**Request universe deletion**
 
-Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
+Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`

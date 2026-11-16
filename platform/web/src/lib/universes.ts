@@ -10,6 +10,7 @@ export function useUniverses() {
   return useQuery({
     queryKey: ["universes"],
     queryFn: () => api<Universe[]>("GET", "/api/v1/universes"),
+    refetchInterval: 30000,
   });
 }
 
@@ -27,7 +28,7 @@ export function useActiveUniverse(): {
   const handle = useMatch("/u/:handle/*")?.params.handle;
   const universes = useUniverses();
   return {
-    universe: handle ? universes.data?.find((u) => u.handle === handle) : undefined,
+    universe: handle ? universes.data?.find((u) => u.status !== "deleting" && u.handle === handle) : undefined,
     handle,
     isLoading: universes.isLoading,
   };

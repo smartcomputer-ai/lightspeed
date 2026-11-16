@@ -48,6 +48,7 @@ key of that universe from a deployment key.
 
 AgentApiErrorKind: TypeAlias = (
     Literal['invalidRequest', 'notFound', 'conflict', 'audioBlobTooLarge', 'internal']
+    | Literal['gone']
     | Literal['rejected']
     | Literal['unauthenticated']
     | Literal['forbidden']
@@ -1145,6 +1146,21 @@ class DeletedSessionView(TypedDict):
     sessionId: str
 
 
+class DeletedUniverseView(TypedDict):
+    """
+    Permanent resource inventory and attribution for a deleted universe.
+    """
+
+    createdAtMs: int
+    deletedAtMs: int
+    deletingAtMs: int
+    displayName: NotRequired[str | None]
+    handle: str
+    requestedBy: Attribution
+    summary: Any
+    universeId: str
+
+
 class DeploymentApiKeyListParams(TypedDict):
     scope: NotRequired[AccessScope | None]
     """
@@ -1219,6 +1235,18 @@ class DeploymentDeletedSessionsListParams(TypedDict):
 class DeploymentDeletedSessionsListResponse(TypedDict):
     nextAfter: NotRequired[str | None]
     sessions: list[DeletedSessionView]
+
+
+class DeploymentDeletedUniversesListParams(TypedDict):
+    after: NotRequired[str | None]
+    """
+    Opaque exclusive cursor; each page contains at most 100 entries.
+    """
+
+
+class DeploymentDeletedUniversesListResponse(TypedDict):
+    nextAfter: NotRequired[str | None]
+    universes: list[DeletedUniverseView]
 
 
 class DeploymentEnvironmentProviderDeleteParams(TypedDict):
@@ -1349,24 +1377,6 @@ class DeploymentUniverseDeleteParams(TypedDict):
     """
 
 
-class DeploymentUniverseDeleteResponse(TypedDict):
-    """
-    Purge report. The purge is idempotent: rerunning after a partial failure
-    resumes where it stopped, and the universe row is deleted last so a
-    half-purged universe is still visible to `deployment/universes/read`.
-    """
-
-    blobObjectsDeleted: int
-    """
-    External object-store blobs deleted during the purge.
-    """
-    universeId: str
-    workflowsTerminated: int
-    """
-    Live session workflows terminated during the purge.
-    """
-
-
 class DeploymentUniverseHandlePutParams(TypedDict):
     """
     Rename a universe. The UUID and resources remain unchanged; the previous
@@ -1438,6 +1448,7 @@ class EnvironmentCloseParams(TypedDict):
 
 
 EnvironmentCloseReasonView: TypeAlias = Literal[
+    'universeDeleted',
     'requested',
     'keyRevoked',
     'ephemeralGrace',
@@ -3871,6 +3882,17 @@ may do and which role a gate built on the contract should require.
 """
 
 
+UniverseDeletionState: TypeAlias = Literal['deleting', 'deleted']
+"""
+Current state after the immediate deletion fence has been applied.
+"""
+
+
+UniverseDeletionStep: TypeAlias = Literal[
+    'intake', 'workflows', 'environments', 'storage'
+]
+
+
 UniverseMemberRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
 
 
@@ -4225,6 +4247,7 @@ class ActiveToolsView(TypedDict):
 
 
 class AgentApiError(TypedDict):
+    deletedUniverse: NotRequired[DeletedUniverseView | None]
     kind: AgentApiErrorKind
     message: str
     modelDefaultSlot: NotRequired[ModelDefaultSlot | None]
@@ -5327,6 +5350,11 @@ class DeploymentProviderBindingPutResponse(TypedDict):
     binding: EnvironmentProviderBindingView
 
 
+class DeploymentUniverseDeleteResponse(TypedDict):
+    state: UniverseDeletionState
+    universeId: str
+
+
 class EnvironmentCreateParams(TypedDict):
     displayName: NotRequired[str | None]
     environmentId: NotRequired[str | None]
@@ -6323,6 +6351,13 @@ class TranscriptionView(TypedDict):
     transcriptionId: str
 
 
+class UniverseDeletion(TypedDict):
+    detail: NotRequired[str | None]
+    requestedBy: Attribution
+    startedAtMs: int
+    step: UniverseDeletionStep
+
+
 class UniverseDirectoryGroupMapping(TypedDict):
     group: str
     issuer: str
@@ -7222,6 +7257,7 @@ class DeploymentUniverseView(TypedDict):
 
     blobBytes: int
     createdAtMs: int
+    deletion: NotRequired[UniverseDeletion | None]
     directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
     """
     Exact issuer-qualified directory groups. Omit to leave unchanged;
@@ -8380,6 +8416,11 @@ class AgentApiOutcomeOfDeploymentChannelAccountListResponse(TypedDict):
 class AgentApiOutcomeOfDeploymentDeletedSessionsListResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: DeploymentDeletedSessionsListResponse
+
+
+class AgentApiOutcomeOfDeploymentDeletedUniversesListResponse(TypedDict):
+    notifications: NotRequired[list[AgentNotification]]
+    result: DeploymentDeletedUniversesListResponse
 
 
 class AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse(TypedDict):

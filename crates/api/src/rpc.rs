@@ -5,6 +5,8 @@ use super::*;
 pub enum AgentApiErrorKind {
     InvalidRequest,
     NotFound,
+    /// This universe was permanently deleted; the error carries its record.
+    Gone,
     Conflict,
     /// The request was understood and the caller may make it, but current
     /// state or policy refuses it. Never an authorization decision.
@@ -57,6 +59,8 @@ pub struct AgentApiError {
     /// one the server allocated. Retrying with it cannot land the same work twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_universe: Option<Box<DeletedUniverseView>>,
 }
 
 impl AgentApiError {
@@ -66,6 +70,7 @@ impl AgentApiError {
             message: message.into(),
             model_default_slot: None,
             submission_id: None,
+            deleted_universe: None,
         }
     }
 
@@ -78,6 +83,7 @@ impl AgentApiError {
             ),
             model_default_slot: Some(slot),
             submission_id: None,
+            deleted_universe: None,
         }
     }
 
@@ -87,6 +93,12 @@ impl AgentApiError {
 
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::NotFound, message)
+    }
+
+    pub fn gone(record: DeletedUniverseView) -> Self {
+        let mut error = Self::new(AgentApiErrorKind::Gone, "universe was permanently deleted");
+        error.deleted_universe = Some(Box::new(record));
+        error
     }
 
     pub fn conflict(message: impl Into<String>) -> Self {
@@ -142,6 +154,7 @@ impl AgentApiError {
             AgentApiErrorKind::Unauthenticated => -32001,
             AgentApiErrorKind::Forbidden => -32003,
             AgentApiErrorKind::NotFound => -32004,
+            AgentApiErrorKind::Gone => -32017,
             AgentApiErrorKind::Conflict => -32009,
             AgentApiErrorKind::Rejected => -32010,
             AgentApiErrorKind::SessionBootstrapFailed => -32011,

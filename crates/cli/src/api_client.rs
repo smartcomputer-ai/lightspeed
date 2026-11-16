@@ -731,6 +731,7 @@ fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
     let kind = match error.code {
         -32602 => AgentApiErrorKind::InvalidRequest,
         -32004 => AgentApiErrorKind::NotFound,
+        -32017 => AgentApiErrorKind::Gone,
         -32009 => AgentApiErrorKind::Conflict,
         -32010 => AgentApiErrorKind::Rejected,
         -32015 => AgentApiErrorKind::OperationPending,

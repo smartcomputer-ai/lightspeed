@@ -354,6 +354,7 @@ pub(crate) fn status_view(value: EnvironmentDisplayStatus) -> EnvironmentStatusV
 
 fn close_reason_view(value: EnvironmentCloseReason) -> EnvironmentCloseReasonView {
     match value {
+        EnvironmentCloseReason::UniverseDeleted => EnvironmentCloseReasonView::UniverseDeleted,
         EnvironmentCloseReason::Requested => EnvironmentCloseReasonView::Requested,
         EnvironmentCloseReason::KeyRevoked => EnvironmentCloseReasonView::KeyRevoked,
         EnvironmentCloseReason::EphemeralGrace => EnvironmentCloseReasonView::EphemeralGrace,

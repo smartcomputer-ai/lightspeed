@@ -92,12 +92,12 @@ it("lists every universe by name with its status, engine link, and role", async 
   ]);
 });
 
-it("offers recreate only where the engine tenant is missing, and restore and delete only once archived", async () => {
+it("offers deletion for active and archived universes, and repair only for missing universes", async () => {
   await show();
   expect(buttonIn(row("Mid"), "Recreate on engine")).toBeDefined();
   expect(buttonIn(row("Zeta"), "Recreate on engine")).toBeUndefined();
   expect(buttonIn(row("Zeta"), "Archive")).toBeDefined();
-  expect(buttonIn(row("Zeta"), "Delete")).toBeUndefined();
+  expect(buttonIn(row("Zeta"), "Delete")).toBeDefined();
   expect(buttonIn(row("Alpha"), "Archive")).toBeUndefined();
   expect(buttonIn(row("Alpha"), "Restore")).toBeDefined();
   expect(buttonIn(row("Alpha"), "Delete")).toBeDefined();
@@ -110,13 +110,17 @@ it("offers recreate only where the engine tenant is missing, and restore and del
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/alpha", { status: "active" }));
 });
 
-it("purges an archived universe only after confirmation", async () => {
+it("deletes an active universe only after typing its exact handle", async () => {
   await show();
-  await act(async () => buttonIn(row("Alpha"), "Delete")!.click());
-  await waitForUi(() => expect(alertDialog()?.textContent).toContain("Permanently delete Alpha?"));
+  await act(async () => buttonIn(row("Zeta"), "Delete")!.click());
+  await waitForUi(() => expect(alertDialog()?.textContent).toContain("Permanently delete Zeta?"));
   expect(writes()).toHaveLength(0);
+  expect(buttonIn(alertDialog()!, "Delete permanently")!.disabled).toBe(true);
+  await type("#delete-zeta", "wrong");
+  expect(buttonIn(alertDialog()!, "Delete permanently")!.disabled).toBe(true);
+  await type("#delete-zeta", "zeta");
   await act(async () => buttonIn(alertDialog()!, "Delete permanently")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/alpha"));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/zeta", { handle: "zeta" }));
 });
 
 it("opens a universe at its landing page", async () => {
@@ -140,9 +144,10 @@ it("lists engine-only universes with their size, and deletes one after confirmat
     ["core-bare", "3", "1", "2", "5.0 MB", "AdoptDelete"],
   ]);
   await act(async () => buttonIn(rows(tables()[1])[1]!, "Delete")!.click());
-  await waitForUi(() => expect(alertDialog()?.textContent).toContain("Purges 3 session(s) and 5.0 MB of blobs"));
+  await waitForUi(() => expect(alertDialog()?.textContent).toContain("Permanently delete u-core-bare?"));
+  await type("#delete-u-core-bare", "u-core-bare");
   await act(async () => buttonIn(alertDialog()!, "Delete permanently")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/engine/core-bare"));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/engine/core-bare", { handle: "u-core-bare" }));
 });
 
 it("requires a display name before adopting", async () => {
@@ -181,3 +186,12 @@ async function type(selector: string, value: string) {
     node.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+
+it("shows deletion progress without offering actions against the deleting universe", async () => {
+  universes[0] = { ...universes[0]!, status: "deleting", deletion: { startedAtMs: 1, requestedBy: { kind: "local" }, step: "environments", detail: "Waiting for provider" } };
+  await show();
+  expect(row("Zeta").textContent).toContain("environments: Waiting for provider");
+  expect(buttonIn(row("Zeta"), "Open")).toBeUndefined();
+  expect(buttonIn(row("Zeta"), "Restore")).toBeUndefined();
+  expect(buttonIn(row("Zeta"), "Delete")).toBeUndefined();
+});

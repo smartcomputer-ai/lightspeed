@@ -252,7 +252,7 @@ async fn killed_code_worker_recovers_on_another_process_without_replaying_javasc
                         anyhow::ensure!(!matches!(status, api::RunStatus::Failed | api::RunStatus::Cancelled), "parent run unexpectedly {status:?}");
                         Ok(status == api::RunStatus::Completed)
                     }).await?;
-                    let handle = client.get_workflow_handle::<CodeExecutionWorkflow>(execution_id);
+                    let handle = client.get_workflow_handle::<CodeExecutionWorkflow>(temporal_workflow::compose_workflow_tool_execution_id(store.config().universe_id, &execution_id));
                     let snapshot = handle.query(CodeExecutionWorkflow::snapshot, (), WorkflowQueryOptions::default()).await?;
                     let Some(PromiseResolution::Resolved { payload_ref: Some(reference) }) = snapshot.resolution else {
                         anyhow::bail!("replacement worker did not publish a recovery report")

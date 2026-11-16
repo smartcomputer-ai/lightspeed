@@ -198,6 +198,14 @@ impl Hub {
         state.closed
     }
 
+    fn close(&self) {
+        let mut state = lock(&self.subscribers);
+        state.closed = true;
+        for subscriber in state.items.values() {
+            subscriber.queue.reset();
+        }
+    }
+
     fn reset(&self) {
         for subscriber in lock(&self.subscribers).items.values() {
             subscriber.queue.reset();
@@ -303,10 +311,13 @@ impl Drop for Subscription {
 }
 
 impl Subscription {
-    async fn next(&mut self) -> Arc<str> {
+    async fn next(&mut self) -> Option<Arc<str>> {
         loop {
+            if lock(&self.hub.subscribers).closed {
+                return None;
+            }
             if let Some(data) = self.queue.take() {
-                return data;
+                return Some(data);
             }
             let _ = self.receiver.changed().await;
         }
@@ -328,6 +339,7 @@ impl Subscription {
                     tokio::time::timeout_at(deadline, subscription.next())
                         .await
                         .ok()
+                        .flatten()
                 };
                 let (data, next) = match next_message {
                     Some(data) => (data.to_string(), Some(subscription)),
@@ -358,6 +370,7 @@ impl Subscription {
 
 fn row_key(change: Change) -> Option<RowKey> {
     let kind = match change.kind {
+        ChangeKind::Universe => return None,
         ChangeKind::Session if change.rev.is_none() => return None,
         ChangeKind::Session => WatchKind::Session,
         ChangeKind::Bot => WatchKind::Bot,
@@ -372,14 +385,21 @@ async fn run_hub(hub: Arc<Hub>, mut changes: broadcast::Receiver<Option<Change>>
     let mut tick = tokio::time::interval(BATCH_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tick.tick().await;
+    let mut validate = tokio::time::interval(Duration::from_secs(30));
     loop {
         if hub.close_if_empty() {
             break;
         }
         tokio::select! {
             _ = hub.wake.notified() => {},
+            _ = validate.tick() => {
+                if matches!(store_pg::universe_exists(hub.store.pool(), hub.store.config().universe_id).await, Ok(false)) {
+                    hub.close(); break;
+                }
+            },
             change = changes.recv() => match change {
                 Ok(Some(change)) if change.universe == hub.store.config().universe_id => {
+                    if change.kind == ChangeKind::Universe { hub.close(); break; }
                     if let Some(key) = row_key(change) { pending.insert(key); }
                     if pending.len() > MAX_PENDING_IDS { pending.clear(); hub.reset(); }
                 }

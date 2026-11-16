@@ -135,6 +135,14 @@ pub async fn resolve_caller(
     let universe = match universe {
         None => SelectedUniverse::None,
         Some(reference) => match Uuid::parse_str(reference) {
+            Ok(_) if key.scope == AccessScope::Deployment => keys
+                .resolve_universe_handle(reference)
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?
+                .map_or_else(
+                    || SelectedUniverse::UnknownHandle(reference.to_owned()),
+                    SelectedUniverse::Universe,
+                ),
             Ok(universe_id) => SelectedUniverse::Universe(universe_id),
             Err(_) if key.scope == AccessScope::Deployment => keys
                 .resolve_universe_handle(reference)

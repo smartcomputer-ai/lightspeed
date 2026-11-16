@@ -82,6 +82,7 @@ const CLOSE_REASONS: Record<EnvironmentCloseReasonView, string> = {
   departed: "Closed when its ephemeral daemon said goodbye",
   offlineTimeout: "Closed after its daemon stayed offline past the key's limit",
   providerEnded: "Ended by the provider",
+  universeDeleted: "Closed when its universe was deleted",
 };
 
 export function closeReasonLabel(reason: EnvironmentCloseReasonView | null | undefined): string | null {

@@ -271,8 +271,8 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
         .expect_err("credential and clearCredential exclude each other");
         assert_eq!(exclusive.kind, api::AgentApiErrorKind::InvalidRequest);
 
-        let state_a = runtime.state_for(universe_a, false).await?;
-        let state_b = runtime.state_for(universe_b, false).await?;
+        let state_a = runtime.state_for(universe_a).await?;
+        let state_b = runtime.state_for(universe_b).await?;
         let caller_a = universe_caller(universe_a);
         let caller_b = universe_caller(universe_b);
         let api_a = state_a.api.as_ref();
@@ -569,7 +569,7 @@ async fn environment_provider_outage_backs_off_per_row() -> anyhow::Result<()> {
 
     let result = async {
         provider_universe(&operator, universe_id, &provider_id, &controller).await?;
-        let state = runtime.state_for(universe_id, false).await?;
+        let state = runtime.state_for(universe_id).await?;
         let caller = universe_caller(universe_id);
         let api = state.api.as_ref();
         controller.set_reachable(false);

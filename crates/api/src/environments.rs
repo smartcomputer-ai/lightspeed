@@ -311,6 +311,8 @@ pub enum EnvironmentStatusView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnvironmentCloseReasonView {
+    /// Its universe is being deleted.
+    UniverseDeleted,
     /// `environments/close`.
     Requested,
     /// Its registration key was revoked with `closeEnvironments`.
