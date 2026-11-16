@@ -1,7 +1,9 @@
 # P208 — Runtime access simplification
 
-**Status:** In progress, 2026-11-16. All implementation slices are in place;
-final integration validation is running. Decisions are listed under
+**Status:** In progress, 2026-11-16. All implementation slices are in place.
+Scoped checks, live integration checks and the runtime smoke test passed;
+the final broad Rust rerun was interrupted when `target/` was cleared.
+Decisions are listed under
 [Decisions](#decisions).
 
 This is the first of two documents. It takes the permission model for
@@ -9,6 +11,13 @@ callers out of the runtime.
 [Platform authentication and authorization](p209-platform-authentication-and-authorization.md)
 builds the replacement, in one place.
 [Universe deletion](p206-universe-deletion.md) is unaffected.
+
+The companion [resource HTTP API design](p208b-resource-http-api.md) specifies
+the agreed replacement of the client JSON-RPC transport before the general
+Platform API is built. Its HTTP implementation has not started.
+It also specifies the subsequent `/ingress` grouping and `/environments`
+machine-route prefix. The paths described below record the implementation
+before that cutover.
 
 ## Problem
 

@@ -9,6 +9,11 @@ the permission model for callers out of the runtime. This one builds the
 single place that replaces it: the Platform backend as the door for every
 person and every program.
 
+The companion [resource HTTP API design](p208b-resource-http-api.md) replaces
+the original JSON-RPC transport assumption: the shared API uses generated
+HTTP resource routes, with an authorized Platform proxy and explicit native
+handlers. Authentication and authorization decisions remain in this document.
+
 ## Goal
 
 One access system, built once:
@@ -181,16 +186,18 @@ actor at all.
 
 ## The door
 
-### One endpoint for the runtime's contract
+### One HTTP contract through the Platform
 
-The Platform backend gets an RPC endpoint that speaks the runtime's
-contract: the same methods, parameters and results, the same universe
-header, the watch stream and blob transfer. A client that works against the
-runtime works against the door by changing the address and the credential.
+The Platform backend exposes the runtime's resource-oriented HTTP contract:
+the same operation bindings and DTOs, universe-qualified paths, watch streams
+and blob transfers. A client using shared operations works against the
+runtime or the door by changing the address and credential. Platform-owned
+operations are an explicit extension, described in P208b.
 
-Today the Platform has 95 hand-written routes for the web app and no general
-endpoint. The web app keeps its routes. They and the endpoint pass through
-the same gate.
+Today the Platform has hand-written routes for the web app and no general
+HTTP gateway. The web app keeps frontend adapters under `/api/ui`; the shared
+API uses `/api/v1`. Both use the same gate and application services. Runtime
+routes and types are generated into Platform rather than declared again.
 
 ### The gate
 
@@ -220,10 +227,10 @@ The door alone sets the universe and the actor on what it forwards.
 ### The door's own methods
 
 Tokens, service accounts, members, roles and ownership are operations of the
-door, not of the runtime. They are exposed on the same endpoint under their
-own prefix, so the CLI and configuration documents manage them like
-everything else. Through the door, `initialize` reports the principal and
-its roles.
+door, not of the runtime. They are exposed under `/api/v1/platform`, so the
+CLI and configuration documents manage them like everything else. Through
+the door, connection discovery reports the principal and its roles using
+the typed Platform variant described in P208b.
 
 ## Clients
 
@@ -324,7 +331,7 @@ migration and `release/metadata.env` aligned.
 
 ## Slices
 
-1. **The endpoint and personal tokens.** The RPC endpoint with streams, the
+1. **The API and personal tokens.** The HTTP API with streams, the
    gate generalized to principals, deployment roles for Platform admin,
    personal access tokens, the CLI and SDKs through the door.
 2. **Service accounts.** Memberships, narrowed tokens, declared tokens, the
@@ -418,7 +425,7 @@ Still to confirm:
 ## Not doing
 
 - A permission model in the runtime, of any size.
-- A second door. The web app's routes and the RPC endpoint share one gate.
+- A second door. The web app's routes and the shared HTTP API use one gate.
 - Several owners on one universe.
 - Rules driven by universe metadata.
 - Splitting what a Platform admin can see or do.
