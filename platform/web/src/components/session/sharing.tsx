@@ -59,7 +59,7 @@ export function SharingMark({
 export function useSessionOwner(universeId: string, access: ResourceAccessSummary | undefined): boolean {
   const userId = usePermissionIdentity();
   const role = useUniverseRole(universeId);
-  if (role === "admin") return true;
+  if (role === "owner") return true;
   return access?.createdBy?.kind === "actor" && access.createdBy.id === userId;
 }
 

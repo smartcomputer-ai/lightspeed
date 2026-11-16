@@ -1,3 +1,4 @@
+import { AccountsPage } from "@/pages/AccountsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { lazy, Suspense, useEffect } from "react";
@@ -22,6 +23,8 @@ import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
 import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { LoginPage } from "@/pages/LoginPage";
+import { DevicePage } from "@/pages/DevicePage";
+import { deviceLoginPath, loginReturnPath } from "@/lib/login-return";
 import { McpServersPage } from "@/pages/McpServersPage";
 import { MembersPage } from "@/pages/MembersPage";
 import { ModelsPage } from "@/pages/ModelsPage";
@@ -49,6 +52,7 @@ function UniverseIndexRedirect() {
 }
 
 export function App() {
+  const location = useLocation();
   const session = authClient.useSession();
   const loginConfig = useLoginConfig();
   const automaticSignIn = loginConfig.data?.sso === true && loginConfig.data.autoSignIn;
@@ -58,11 +62,12 @@ export function App() {
   useEffect(() => {
     const expiresAt = session.data?.session.expiresAt;
     if (!expiresAt) return;
-    const timer = setTimeout(() => window.location.assign(`${import.meta.env.BASE_URL}login?expired=1`),
+    const timer = setTimeout(() => window.location.assign(location.pathname === "/device"
+      ? `${import.meta.env.BASE_URL.replace(/\/$/, "")}${deviceLoginPath(location.search)}&expired=1`
+      : `${import.meta.env.BASE_URL}login?expired=1`),
       Math.min(Math.max(new Date(expiresAt).getTime() - Date.now(), 0), 2_147_483_647));
     return () => clearTimeout(timer);
-  }, [session.data?.session.expiresAt]);
-  const location = useLocation();
+  }, [session.data?.session.expiresAt, location.pathname, location.search]);
   const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
     queryFn: () => api<{ user: SessionUser }>("GET", "/api/ui/me"), retry: false,
   });
@@ -93,8 +98,12 @@ export function App() {
   }
 
   if (!session.data) {
+    if (location.pathname === "/device") return <Navigate to={deviceLoginPath(location.search, automaticSignIn)} replace />;
     return <Navigate to={automaticSignIn ? "/login?auto=1" : "/login"} replace />;
   }
+
+  if (location.pathname === "/login") return <Navigate to={loginReturnPath(location.search)} replace />;
+  if (location.pathname === "/device") return <DevicePage key={location.search} user={session.data.user} />;
 
   if (!me.data) return <div className="p-8">{me.error ? me.error.message : "Loading permissions…"}</div>;
   const user = me.data.user;
@@ -110,6 +119,7 @@ export function App() {
         </UserPreferencesProvider>
       }>
         <Route index element={<HomeRedirect admin={admin} />} />
+        <Route path="accounts" element={<AccountsPage />} />
         <Route path="u/:handle" element={<UniverseIndexRedirect />} />
         <Route path="u/:handle/sessions" element={<SessionsPage admin={admin} />} />
         <Route

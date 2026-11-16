@@ -19,7 +19,7 @@ roles when you need to scale or operate them independently.
 | Platform backend and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
 | Platform PostgreSQL database | Accounts, memberships, roles, and universe display/routing records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
-| Configurator MCP | Management tool package; setup and startup are disabled until narrowed Platform tokens are available | Not part of the active stack |
+| Configurator MCP | Configuration tools using a restricted Platform application key | Optional; started by the full/platform development profiles |
 | Connector host | Telegram and WhatsApp transport package; startup is disabled | Not part of the active stack |
 | Environment daemon and providers | Filesystem/process access and, with a provider, machine lifecycle | Agent tasks requiring compute |
 

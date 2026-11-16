@@ -47,7 +47,9 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                                                  'type': 'object'}},
                                'resumable': False,
                                'terminalEvent': 'watch/end',
-                               'terminalSchema': {'$ref': '#/schemas/UniverseWatchResponse'}},
+                               'terminalSchema': {'additionalProperties': False,
+                                                  'properties': {},
+                                                  'type': 'object'}},
                     'group': None,
                     'method': 'GET',
                     'operationId': 'universe/watch',
@@ -100,8 +102,6 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                     'path': '/api/v1/universes/{universe}/events',
                     'pathFields': [],
                     'queryFields': ['kinds', 'visibleTo'],
-                    'result': {'schema': {'$ref': 'api.schema.json#/definitions/UniverseWatchResponse'},
-                               'type': 'UniverseWatchResponse'},
                     'role': 'viewer',
                     'scope': 'universe',
                     'success': 'ok',
@@ -171,7 +171,7 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                 'role': None,
                 'scope': 'connection',
                 'success': 'ok',
-                'summary': 'Inspect the Lightspeed protocol',
+                'summary': 'Inspect the runtime connection',
                 'target': None,
                 'transfer': 'json'},
  'session/start': {'access': {'action': 'createSession', 'kind': 'universe'},
@@ -578,7 +578,7 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                            'queryFields': [],
                            'result': {'schema': {'$ref': 'api.schema.json#/definitions/SessionRetentionPutResponse'},
                                       'type': 'SessionRetentionPutResponse'},
-                           'role': 'admin',
+                           'role': 'owner',
                            'scope': 'universe',
                            'success': 'ok',
                            'summary': 'Replace session retention',
@@ -5781,20 +5781,16 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                                    'target': None,
                                                    'transfer': 'json'},
  'deployment/universes/create': {'access': {'kind': 'deployment'},
-                                 'description': 'Creates the deployment tenant '
-                                                'boundary for an explicit '
-                                                'UUID, under the given handle '
-                                                'or one derived from the UUID. '
-                                                'The operation is idempotent '
-                                                'and reports whether a new '
-                                                'universe was created; an '
-                                                'existing universe keeps its '
-                                                'handle. A handle another '
-                                                'active universe holds is a '
-                                                'conflict. A deleting or '
-                                                'permanently deleted UUID is a '
-                                                'conflict and cannot be '
-                                                'reused.',
+                                 'description': 'Creates a universe for an '
+                                                'explicit UUID with optional '
+                                                'handle, metadata, protection '
+                                                'and future expiry. Protection '
+                                                'and expiry are mutually '
+                                                'exclusive. Idempotent: '
+                                                'existing universes retain all '
+                                                'settings. A claimed handle or '
+                                                'deleting/deleted UUID returns '
+                                                'conflict.',
                                  'events': None,
                                  'group': 'deployment/universes',
                                  'method': 'POST',
@@ -5815,21 +5811,36 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                  'transfer': 'json'},
  'deployment/universes/list': {'access': {'kind': 'deployment'},
                                'description': 'Returns deployment-wide '
-                                              'universe summaries, including '
-                                              'deleting universes and their '
-                                              'teardown step, with approximate '
-                                              'live aggregate counts and last '
-                                              'session activity.',
+                                              'summaries, including metadata, '
+                                              'protection, expiry and deleting '
+                                              'universes. The metadata filter '
+                                              'requires every supplied '
+                                              'key/value pair. Aggregate '
+                                              'counts and last session '
+                                              'activity are approximate.',
                                'events': None,
                                'group': 'deployment/universes',
                                'method': 'GET',
                                'operationId': 'deployment/universes/list',
-                               'parameters': [],
+                               'parameters': [{'content': {'application/json': {'schema': {'additionalProperties': {'type': 'string'},
+                                                                                           'default': {},
+                                                                                           'description': 'Return '
+                                                                                                          'universes '
+                                                                                                          'containing '
+                                                                                                          'every '
+                                                                                                          'supplied '
+                                                                                                          'key/value '
+                                                                                                          'pair.',
+                                                                                           'type': 'object'}}},
+                                               'in': 'query',
+                                               'name': 'metadata',
+                                               'required': False,
+                                               'x-lightspeed-encoding': 'json'}],
                                'params': {'schema': {'$ref': 'api.schema.json#/definitions/DeploymentUniverseListParams'},
                                           'type': 'DeploymentUniverseListParams'},
                                'path': '/api/v1/universes',
                                'pathFields': [],
-                               'queryFields': [],
+                               'queryFields': ['metadata'],
                                'result': {'schema': {'$ref': 'api.schema.json#/definitions/DeploymentUniverseListResponse'},
                                           'type': 'DeploymentUniverseListResponse'},
                                'role': None,
@@ -5879,24 +5890,21 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
  'deployment/universes/configuration/put': {'access': {'kind': 'deployment'},
                                             'description': 'Updates supplied '
                                                            'displayName, '
-                                                           'members and '
-                                                           'directoryGroupMappings. '
-                                                           'Omitted fields '
-                                                           'remain unchanged; '
-                                                           'empty lists clear '
-                                                           'declared grants. '
-                                                           'Platform '
-                                                           'automatically '
-                                                           'adopts named '
-                                                           'universes and '
-                                                           'enforces declared '
-                                                           'access '
-                                                           'independently of '
-                                                           'manual '
-                                                           'memberships. '
-                                                           'Runtime tokens '
-                                                           'retain full '
-                                                           'authority.',
+                                                           'metadata and '
+                                                           'protected. Omitted '
+                                                           'fields retain '
+                                                           'their values; '
+                                                           'metadata replaces '
+                                                           'the complete map. '
+                                                           'Protection refuses '
+                                                           'deletion and '
+                                                           'cannot coexist '
+                                                           'with an expiry. '
+                                                           'Clearing '
+                                                           'protection is '
+                                                           'explicit and never '
+                                                           'implied by '
+                                                           'deletion.',
                                             'events': None,
                                             'group': 'deployment/universes',
                                             'method': 'PUT',
@@ -5916,11 +5924,43 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                             'role': None,
                                             'scope': 'deployment',
                                             'success': 'ok',
-                                            'summary': 'Declare universe '
-                                                       'presentation and '
-                                                       'access',
+                                            'summary': 'Update universe '
+                                                       'configuration',
                                             'target': None,
                                             'transfer': 'json'},
+ 'deployment/universes/expiry/put': {'access': {'kind': 'deployment'},
+                                     'description': 'Sets a future Unix '
+                                                    'timestamp or clears '
+                                                    'expiry with explicit '
+                                                    'null. Protected universes '
+                                                    'cannot have an expiry. '
+                                                    'Expiry starts the normal '
+                                                    'deletion process, '
+                                                    'attributed to the '
+                                                    'runtime; activity does '
+                                                    'not extend it.',
+                                     'events': None,
+                                     'group': 'deployment/universes',
+                                     'method': 'PUT',
+                                     'operationId': 'deployment/universes/expiry/put',
+                                     'parameters': [{'in': 'path',
+                                                     'name': 'universe',
+                                                     'required': True,
+                                                     'schema': {'type': 'string'}}],
+                                     'params': {'schema': {'$ref': 'api.schema.json#/definitions/DeploymentUniverseExpiryPutParams'},
+                                                'type': 'DeploymentUniverseExpiryPutParams'},
+                                     'path': '/api/v1/universes/{universe}/expiry',
+                                     'pathFields': [{'field': 'universe',
+                                                     'parameter': 'universe'}],
+                                     'queryFields': [],
+                                     'result': {'schema': {'$ref': 'api.schema.json#/definitions/DeploymentUniverseReadResponse'},
+                                                'type': 'DeploymentUniverseReadResponse'},
+                                     'role': None,
+                                     'scope': 'deployment',
+                                     'success': 'ok',
+                                     'summary': 'Set or clear universe expiry',
+                                     'target': None,
+                                     'transfer': 'json'},
  'deployment/universes/handle/put': {'access': {'kind': 'deployment'},
                                      'description': 'Changes the '
                                                     'deployment-unique handle '
@@ -5965,8 +6005,10 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                      'target': None,
                                      'transfer': 'json'},
  'deployment/universes/delete': {'access': {'kind': 'deployment'},
-                                 'description': 'Immediately fences a universe '
-                                                'and releases its handle. A '
+                                 'description': 'Refuses protected universes. '
+                                                'Immediately fences an '
+                                                'unprotected universe and '
+                                                'releases its handle. A '
                                                 'background worker removes '
                                                 'schedules, workflows, '
                                                 'environments, objects and '

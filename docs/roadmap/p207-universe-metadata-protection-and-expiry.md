@@ -1,8 +1,7 @@
 # P207 — Universe metadata, protection and expiry
 
-**Status:** Resource mechanism and Platform protection policy agreed,
-2026-11-16. Nothing is implemented. The current universe DTOs and storage do
-not yet contain these fields.
+**Status:** Runtime mechanism and Platform protection policy implemented,
+2026-11-16. Compilation is passing; behavioral and live tests remain on hold.
 
 This document began as the design for creators and self-service universes,
 with a creator level built into the runtime as a third kind of API key. That
@@ -200,3 +199,13 @@ Decided, 2026-11-16:
   Owners. Retained the runtime boolean and document-creation default; added
   the Platform administrative restriction on unprotection and account policy.
   Documentation only; implementation and tests remain pending.
+
+- 2026-11-16: implemented metadata, protection and expiry in runtime DTOs,
+  storage, HTTP bindings, generated clients and CLI commands. Runtime migration
+  028 and release schema revision 28 add the fields and constraints. Protection,
+  expiry extension and deletion admission share a row lock. Automatic expiry
+  uses standard deletion and retains metadata with internal expiry attribution.
+  Configuration apply protects new universes by default and preserves an
+  existing setting when omitted. Platform enforces Account Admin unprotection
+  and mandatory account policy. Unit and live scenarios were authored; none
+  were executed. `cargo check --workspace --all-targets --locked` passed.

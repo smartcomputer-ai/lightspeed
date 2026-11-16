@@ -54,7 +54,6 @@ const universeReads = [
   "models",
   "models/defaults",
   "setups",
-  "members",
   "bots",
   "channel-accounts",
   "channel-pairings",
@@ -484,38 +483,20 @@ describe("demo router", () => {
     }
   });
 
-  it("edits member roles and preserves the final administrator on a rejected edit", async () => {
+  it("edits native grants and preserves the final Owner", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const admin = state.members.find((member) => member.role === "admin")!;
-    state.members = [admin];
-    const path = `/api/ui/universes/${state.universe.id}/members/${admin.id}`;
-    expect((await call("PATCH", path, { role: "viewer" })).status).toBe(409);
-    expect(admin.role).toBe("admin");
-    state.members.push({ ...admin, id: "other-admin", userId: "other-user" });
-    expect((await call("PATCH", path, { role: "operator" })).status).toBe(200);
-    expect(admin.role).toBe("operator");
-    expect((await call("PATCH", path, { role: "deployment_admin" })).status).toBe(400);
-  });
-
-  it("lists members to every member, with emails for Admins only", async () => {
-    const { store, call } = await boot();
-    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const path = `/api/ui/universes/${state.universe.id}/members`;
-    const admin = (await call("GET", path)).json as Record<string, unknown>[];
-    expect(admin.every((member) => typeof member.email === "string")).toBe(true);
-    for (const role of ["viewer", "contributor", "operator"] as const) {
-      state.universe.role = role;
-      const response = await call("GET", path);
-      expect(response.status).toBe(200);
-      const members = response.json as Record<string, unknown>[];
-      expect(members.map((member) => member.name)).toEqual(admin.map((member) => member.name));
-      for (const member of members) {
-        expect(Object.keys(member).sort()).toEqual(["createdAt", "id", "name", "role", "userId"]);
-      }
-    }
-    state.universe.role = null;
-    expect((await call("GET", path)).status).toBe(404);
+    const owner = state.members.find(member => member.role === "owner")!;
+    state.members = [owner];
+    const path = `/api/v1/platform/universes/${state.universe.lightspeedUniverseId}/grants`;
+    const principal = { kind: "user", id: owner.userId };
+    expect((await call("PUT", path, { principal, role: "viewer" })).status).toBe(409);
+    expect(owner.role).toBe("owner");
+    state.members.push({ ...owner, id: "other-owner", userId: "other-user" });
+    expect((await call("PUT", path, { principal, role: "operator" })).status).toBe(200);
+    const listed = (await call("GET", path)).json as { grants: { principal: { id: string }; role: string }[] };
+    expect(listed.grants.find(g => g.principal.id === owner.userId)?.role).toBe("operator");
+    expect((await call("PUT", path, { principal, role: "deployment_admin" })).status).toBe(400);
   });
 
   it("shows the unavailable setup without allowing installation", async () => {
@@ -529,7 +510,7 @@ describe("demo router", () => {
     state.universe.role = "operator";
     expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
-    state.universe.role = "admin";
+    state.universe.role = "owner";
     expect((await call("POST", `${base}/configurator/install`, {})).status).toBe(503);
     expect((await call("POST", `${base}/configurator/install`, { key: { kind: "current" } })).json)
       .toMatchObject({ error: "Configurator setup is temporarily unavailable" });
@@ -1066,4 +1047,32 @@ describe("demo router", () => {
     expect(result.status).toBe(404);
     expect((result.json as { error: string }).error).toMatch(/demo: no stub/);
   });
+});
+
+
+it("supports application lifecycle and grants in the account demo", async () => {
+  const { store, call } = await boot();
+  const path = "/api/v1/platform/accounts/demo-account/applications";
+  const created = await call("POST", path, { name: "CI robot", role: "creator" });
+  expect(created.status).toBe(201);
+  const application = (created.json as { application: { id: string } }).application;
+  const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.universe;
+  const grants = `/api/v1/platform/universes/${universe.lightspeedUniverseId}/grants`;
+  expect((await call("PUT", grants, { principal: { kind: "application", id: application.id }, role: "operator" })).status).toBe(200);
+  expect((await call("GET", grants)).json).toMatchObject({ grants: expect.arrayContaining([expect.objectContaining({ principal: { kind: "application", id: application.id }, role: "operator" })]) });
+  expect((await call("PATCH", `${path}/${application.id}`, { enabled: false })).status).toBe(200);
+  expect((await call("PUT", grants, { principal: { kind: "application", id: application.id }, role: "owner" })).status).toBe(400);
+  expect((await call("GET", `${path}/${application.id}/credentials`)).json).toEqual({ credentials: [] });
+  expect((await call("POST", `${path}/${application.id}/credentials`, { name: "automation" })).status).toBe(400);
+});
+
+it("clears expiry explicitly before enabling protection in the demo", async () => {
+  const { store, call } = await boot();
+  const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.universe;
+  const path = `/api/v1/platform/universes/${universe.lightspeedUniverseId}`;
+  universe.expiresAtMs = Date.now() + 60_000;
+  expect((await call("PATCH", path, { protected: true })).status).toBe(409);
+  expect((await call("PATCH", path, { expiresAtMs: null })).status).toBe(200);
+  expect((await call("PATCH", path, { protected: true })).status).toBe(200);
+  expect((await call("DELETE", `/api/ui/universes/${universe.id}`, { handle: universe.handle })).status).toBe(409);
 });

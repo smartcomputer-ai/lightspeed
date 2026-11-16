@@ -49,6 +49,12 @@ impl UniverseRuntime {
 
     /// One durable step per universe. Public for deployment maintenance and live tests.
     pub async fn delete_universes_once(&self) -> anyhow::Result<()> {
+        for id in store_pg::expire_universes(self.stores().pool(), clock_ms() as i64).await? {
+            self.stores()
+                .changes()
+                .publish(Change::new(id, ChangeKind::Universe, id.to_string()));
+            self.evict(id).await;
+        }
         for mut record in store_pg::list_deleting_universes(self.stores().pool()).await? {
             if let Err(error) = self.delete_universe_step(&mut record).await {
                 record.deletion.detail = Some(error.to_string());

@@ -8,7 +8,7 @@ import { useActiveUniverse, useFeature } from "@/lib/universes";
 
 /**
  * A page that belongs to a feature: shown while it is on, and in its place a
- * note while it is off, for anyone following a link. Admins are pointed to
+ * note while it is off, for anyone following a link. Owners are pointed to
  * where it is switched on. The page's requests would be refused anyway; the
  * note says why instead of showing their errors.
  */
@@ -32,7 +32,7 @@ export function FeatureGate({ feature, children }: { feature: FeatureKey; childr
             .
           </>
         ) : (
-          "A universe admin can turn them on."
+          "A universe Owner can turn them on."
         )}
       </EmptyState>
     </div>

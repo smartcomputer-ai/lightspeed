@@ -9,9 +9,9 @@ run Node commands from there.
 - `backend/` — Hono API, better-auth integration, universe-scoped gateway
   passthrough, database migration startup, and static SPA hosting.
 - `web/` — Vite/React management UI served under `/app`.
-- `cli/` — `lightspeed-platform`, the platform administration CLI.
 - `shared/` — Zod input schemas and deterministic helpers shared by the server,
-  web UI, and CLI.
+  web UI, and generated clients. The Rust `lightspeed` CLI consumes the native
+  Platform route catalog alongside the runtime contract.
 - `db/` — Drizzle schemas, migrations, and the platform database adapter.
 - `connectors/` — the connector host: one process serving every enabled
   Telegram and WhatsApp account across universes, discovered through the core
@@ -20,7 +20,8 @@ run Node commands from there.
   remain in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
   universe-scoped Lightspeed API. The Platform setup and development process
-  are disabled until restricted Platform tokens are available.
+  use restricted Platform application keys, with the development process
+  targeting the Platform shared API.
 - `scripts/` — product-identity check and the generated profile configuration
   reference.
 - `web/src/demo/` — the in-browser demo backend: an in-memory stand-in for
@@ -99,7 +100,7 @@ still offer every grant, except that the environment picker offers only
 retrievable ones. Credentials, Channels and Templates are for Operators
 and Admins; General is for Admins.
 
-**Features.** A universe admin switches parts of the product on or off under
+**Features.** A universe Owner switches parts of the product on or off under
 General → Features; today Bots and Channels, where Channels need Bots. Both
 start off. The registry is `FEATURES` in `platform/shared`, and a universe
 stores only the switches set away from their default (`universes.features`).
@@ -144,21 +145,25 @@ changes apply on the next request; provider login preserves them. Configured
 runtime tokens and already admitted work remain independent: rotate operator
 credentials and cancel work separately when needed.
 
-**Universes and roles.** A universe is an organization. Its members hold one of
-four roles, least to most:
+**Accounts and roles.** Better Auth organizations represent accounts. An account
+contains many universes, members, and applications. Personal accounts are
+provisioned for admitted users by default; shared and development accounts use
+the same permission model. Account roles are Admin, Creator, and Member.
+Creators create universes and become Owners without gaining access to other
+universes. Account Admins administer every universe in their account.
 
-| Role | May |
-| --- | --- |
-| viewer | read shared work and their own private sessions |
-| contributor | also create sessions from defaults or an existing profile, continue runs, invoke bots, share their own sessions |
-| operator | also customize sessions and run options, and configure profiles, bots, environments, MCP servers, credentials and channels |
-| admin | also manage members, read and share any session, soft-delete closed sessions and set deletion retention |
+Universe roles are Viewer, Contributor, Operator, and Owner. Multiple Owners
+are supported; ordinary grant changes cannot remove the last explicit Owner.
+Owners manage universe grants and may delete unprotected universes. Only
+Account Admins and Platform Admins can clear protection. The runtime enforces
+protection for every deletion path, including automatic expiry.
 
-A universe's creator is its admin, and a universe always keeps one. A platform
-admin acts as an admin in every universe. Universe admins manage members on
-**Members**; every member sees names and roles, and admins also see emails.
-The organization plugin's own endpoints are not served: membership changes only
-through the universe routes.
+Personal and application API keys use Better Auth's API Key plugin. A protected
+server association binds each key to its principal. API admission intersects
+current roles with credential restrictions; application keys never become
+human sessions. Native account/application/grant/key routes share descriptors
+in `shared/src/platform-api.ts`, exported to TypeScript and Python clients.
+The raw organization and API-key plugin management endpoints are not public.
 
 **The gate.** The server decides before a request reaches core. Every core call
 a route makes for a member goes through one client
@@ -171,15 +176,15 @@ a route makes for a member goes through one client
 - limits contributor creation to ordinary sessions with universe defaults or a
   named profile, without setup overrides; integrated creation and run configuration
   overrides require an operator;
-- for a method that names a session, unless the member is an admin, requires the
+- for a method that names a session, unless the member is an owner, requires the
   session to be shared with the universe or created by the member; sharing
   requires its creator;
 - limits closing to contributors' own unshared sessions, operators' own or
-  shared sessions, or any session for admins; soft deletion requires a closed
-  session and an admin, or an operator for shared sessions;
+  shared sessions, or any session for owners; soft deletion requires a closed
+  session and an owner, or an operator for shared sessions;
 - narrows a member's session list to shared work and their own;
 - permits transcription reads and cancellation only for their creator, including
-  when the caller is an admin; and
+  when the caller is an owner; and
 - calls core with the Platform's runtime token, naming the universe and the
   member as the actor.
 
@@ -212,12 +217,11 @@ API-key pages have been removed. Follow
 [Runtime service access](../docs/documentation/access-and-security/api-keys-and-service-access.md)
 for configuration and rotation.
 
-The development launcher does not start the connector host or Configurator.
-The connector can run manually as a trusted runtime service with an explicit
-`LIGHTSPEED_CONNECTOR_API_TOKEN`. The Configurator setup remains unavailable. Configurator must not
-receive a runtime token for use by an agent. Its replacement will use a
-restricted Platform token. Operators and Admins see the unavailable template;
-installation performs no credential or resource writes.
+The development launcher starts Configurator against Platform without runtime
+or database credentials. Account Admins install its universe-scoped application
+key, brokered by the runtime into a configuration-only MCP connection. The
+connector host remains disabled; it can run manually as a trusted runtime
+service with an explicit `LIGHTSPEED_CONNECTOR_API_TOKEN`.
 
 ## HTTP surfaces
 

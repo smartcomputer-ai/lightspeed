@@ -1633,8 +1633,4 @@ mod tests {
         });
         assert_eq!(error.kind, AgentApiErrorKind::NotFound);
     }
-
-    const LOCAL_UNIVERSE: Uuid = Uuid::from_u128(7);
-    const CONFIGURED_TOKEN: &str = "Bearer test-token-0123456789abcdef0123456789abcdef";
-    const SESSION_READ: &str = r#"{"id":7,"method":"session/read","params":{}}"#;
 }

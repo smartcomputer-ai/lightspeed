@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { Hono } from "hono";
 import { expect, it } from "vitest";
 import { effectiveFeatures, featureOfMethod, mergeFeatureOverrides } from "@lightspeed-ai/platform-shared";
@@ -8,7 +9,7 @@ import { universeRoutes } from "./universes.js";
 /// universe (with what it stored), then the caller's membership, then
 /// whatever an update returns. Every `set` payload is recorded.
 function setup(role: string, stored: Record<string, boolean>) {
-  const universe = {
+  const universe = { handle: "test", status: "active", runtimeConfiguration: {}, accessPolicy: {},
     id: "platform-universe",
     organizationId: "org",
     lightspeedUniverseId: "33333333-3333-4333-8333-333333333333",
@@ -16,7 +17,7 @@ function setup(role: string, stored: Record<string, boolean>) {
     features: stored,
   };
   const sets: Record<string, unknown>[] = [];
-  const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role }]];
+  const queue: unknown[][] = [[universe], [{ id: "org", enabled: true, membershipPolicy: {} }], [{ role: "member" }], [{ role }]];
   const next = async () => {
     const rows = queue.shift();
     if (!rows) throw new Error("unexpected database read");
@@ -40,6 +41,7 @@ function setup(role: string, stored: Record<string, boolean>) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "caller" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "owner"));
     await next();
   });
   app.route("/", universeRoutes({ db, env: {} } as unknown as AppContext));
@@ -102,7 +104,7 @@ it.each(["viewer", "contributor", "operator"])("keeps switching features with ad
 });
 
 it("lets an admin switch a feature on, merged into what was stored", async () => {
-  const { request, sets } = setup("admin", { bots: true });
+  const { request, sets } = setup("owner", { bots: true });
   const response = await request("PATCH", { features: { channels: true } });
   expect(response.status).toBe(200);
   expect(sets).toEqual([{ features: { bots: true, channels: true } }]);
@@ -110,7 +112,7 @@ it("lets an admin switch a feature on, merged into what was stored", async () =>
 });
 
 it("stores nothing for a switch an admin turns back off", async () => {
-  const { request, sets } = setup("admin", { bots: true, channels: true });
+  const { request, sets } = setup("owner", { bots: true, channels: true });
   const response = await request("PATCH", { features: { bots: false } });
   expect(response.status).toBe(200);
   expect(sets).toEqual([{ features: { channels: true } }]);
@@ -118,7 +120,7 @@ it("stores nothing for a switch an admin turns back off", async () => {
 });
 
 it("refuses a feature it does not know", async () => {
-  const { request, sets } = setup("admin", {});
+  const { request, sets } = setup("owner", {});
   expect((await request("PATCH", { features: { telepathy: true } })).status).toBe(400);
   expect(sets).toEqual([]);
 });

@@ -55,7 +55,7 @@ describe("method roles", () => {
 
   it("never call a deployment method on a member's behalf", async () => {
     const calls = core();
-    const error = await refusal(as("admin").call("deployment/universes/list", {}));
+    const error = await refusal(as("owner").call("deployment/universes/list", {}));
     expect((error as GateRefusal).status).toBe(403);
     expect(calls).toHaveLength(0);
   });
@@ -68,7 +68,7 @@ describe("method roles", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it.each(["operator", "admin"] as const)("allows workspace creation by %s", async (role) => {
+  it.each(["operator", "owner"] as const)("allows workspace creation by %s", async (role) => {
     const calls = core();
     await expect(as(role).call("vfs/workspaces/create", {})).resolves.toBeDefined();
     expect(calls.map((call) => call.method)).toEqual(["vfs/workspaces/create"]);
@@ -96,7 +96,7 @@ describe("session targets", () => {
     await as("contributor").call("session/events/read", { sessionId: "draft" });
     expect(calls.map((call) => call.method)).toEqual(["session/read", "session/events/read"]);
     calls.length = 0;
-    await as("admin", "carol").call("session/events/read", { sessionId: "draft" });
+    await as("owner", "carol").call("session/events/read", { sessionId: "draft" });
     expect(calls.map((call) => call.method)).toEqual(["session/events/read"]);
   });
 
@@ -123,7 +123,7 @@ describe("lists and transport", () => {
   it("narrow a member's session list to shared work and their own", async () => {
     const calls = core();
     await as("viewer").call("session/list", { limit: 10 });
-    await as("admin").call("session/list", { limit: 10 });
+    await as("owner").call("session/list", { limit: 10 });
     expect(calls[0]!.params).toEqual({ limit: 10, visibleTo: "alice" });
     expect(calls[1]!.params).toEqual({ limit: 10 });
   });
@@ -142,7 +142,7 @@ describe("lists and transport", () => {
 
   it("keep the key on the configured runtime", () => {
     for (const gatewayUrl of ["https://other.example/api/v1", "https://core.example/other", "https://user:password@core.example/api/v1"]) {
-      expect(() => memberClient(env, { ...universe, gatewayUrl }, { userId: "alice", role: "admin" })).toThrow("runtime endpoint");
+      expect(() => memberClient(env, { ...universe, gatewayUrl }, { userId: "alice", role: "owner" })).toThrow("runtime endpoint");
       expect(() => deploymentClient(env, gatewayUrl)).toThrow("runtime endpoint");
     }
     expect(() => deploymentClient({ ...env, lightspeedApiToken: null })).toThrow("runtime endpoint");
@@ -217,7 +217,7 @@ describe("prepared contributor sessions", () => {
     expect(calls.map((call) => call.method)).toEqual(["session/read", "session/runs/start"]);
   });
 
-  it.each(["operator", "admin"] as const)("preserves custom creation and configuration for %s", async (role) => {
+  it.each(["operator", "owner"] as const)("preserves custom creation and configuration for %s", async (role) => {
     const calls = core({ own: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
     await as(role).call("session/start", { profile: { kind: "inline", profile: { config: {} } } } as never);
     await as(role).call("session/config/put", { sessionId: "own", config: {} } as never);
@@ -227,11 +227,11 @@ describe("prepared contributor sessions", () => {
 
 
 describe("session lifecycle permissions", () => {
-  for (const role of ["viewer", "contributor", "operator", "admin"] as const) {
+  for (const role of ["viewer", "contributor", "operator", "owner"] as const) {
     for (const creator of [true, false]) for (const shared of [true, false]) {
       it(`${role} closes creator=${creator} shared=${shared} only when permitted`, async () => {
         core({ s: { visibility: shared ? "universe" : "restricted", createdBy: { kind: "actor", id: creator ? "alice" : "bob" } } });
-        const allowed = role === "admin" || (role === "operator" && (creator || shared)) || (role === "contributor" && creator && !shared);
+        const allowed = role === "owner" || (role === "operator" && (creator || shared)) || (role === "contributor" && creator && !shared);
         for (const force of [false, true]) {
           const error = await refusal(as(role).call("session/close", { sessionId: "s", force }));
           expect(error === null).toBe(allowed);
@@ -241,7 +241,7 @@ describe("session lifecycle permissions", () => {
     for (const shared of [true, false]) it(`${role} soft deletes shared=${shared} only when permitted`, async () => {
       const calls = core({ s: { visibility: shared ? "universe" : "restricted", createdBy: { kind: "actor", id: "alice" } } });
       const error = await refusal(as(role).call("session/delete", { sessionId: "s", sharedOnly: false, softDelete: false }));
-      expect(error === null).toBe(role === "admin" || (role === "operator" && shared));
+      expect(error === null).toBe(role === "owner" || (role === "operator" && shared));
       if (error === null) expect(calls.at(-1)?.params.softDelete).toBe(true);
       if (role === "operator" && shared) expect(calls.at(-1)?.params.sharedOnly).toBe(true);
     });
@@ -249,9 +249,9 @@ describe("session lifecycle permissions", () => {
       const calls = core({ s: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
       for (const method of ["session/delete", "session/retention/put"] as const) {
         const error = await refusal(as(role).call(method, { sessionId: "s", deleteAfterCloseMs: 1 } as never));
-        expect(error === null).toBe(role === "admin");
+        expect(error === null).toBe(role === "owner");
       }
-      if (role !== "admin") expect(calls.every((call) => call.method === "session/read")).toBe(true);
+      if (role !== "owner") expect(calls.every((call) => call.method === "session/read")).toBe(true);
     });
   }
   it("contributors still cancel shared runs", async () => {
@@ -269,7 +269,7 @@ describe("session lifecycle permissions", () => {
 });
 
 describe("feature switches", () => {
-  const within = (features: unknown, role: UniverseRole = "admin") =>
+  const within = (features: unknown, role: UniverseRole = "owner") =>
     memberClient(env, { ...universe, features }, { userId: "alice", role });
   const featureMethods = (prefix: string) =>
     (Object.keys(METHOD_ROLES) as (typeof OPERATIONS)[number][]).filter((method) => method.startsWith(prefix));
@@ -278,7 +278,7 @@ describe("feature switches", () => {
     const calls = core();
     expect(featureMethods("bots/").length).toBeGreaterThan(0);
     expect(featureMethods("channels/").length).toBeGreaterThan(0);
-    for (const client of [as("admin"), within({}), within(null)]) {
+    for (const client of [as("owner"), within({}), within(null)]) {
       for (const method of [...featureMethods("bots/"), ...featureMethods("channels/")]) {
         const error = await refusal(client.call(method, {} as never));
         expect(error, method).toBeInstanceOf(GateRefusal);
@@ -356,7 +356,7 @@ describe("trigger secrets", () => {
       expect((error as GateRefusal).message, role).toBe("operator role required");
     }
     expect(calls.map((call) => call.method)).not.toContain("bots/triggers/secrets/read");
-    for (const role of ["operator", "admin"] as const) {
+    for (const role of ["operator", "owner"] as const) {
       await within(role).call("bots/triggers/secrets/read", target);
     }
     expect(calls.filter((call) => call.method === "bots/triggers/secrets/read")).toHaveLength(2);
@@ -380,7 +380,7 @@ it("gates watch collections and forces the member's session visibility", async (
   }));
   const viewer = memberClient(env, { ...universe, features: { bots: false } }, { userId: "alice", role: "viewer" });
   await (await viewer.openWatch({ visibleTo: "bob" })).body!.cancel();
-  await (await memberClient(env, { ...universe, features: { bots: true } }, { userId: "carol", role: "admin" }).openWatch()).body!.cancel();
+  await (await memberClient(env, { ...universe, features: { bots: true } }, { userId: "carol", role: "owner" }).openWatch()).body!.cancel();
   expect(calls[0]!.params).toEqual({ kinds: ["session", "environment", "workspace"], visibleTo: "alice" });
   expect(calls[1]!.params).toEqual({ kinds: ["session", "bot", "environment", "workspace"] });
   expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");
@@ -389,7 +389,7 @@ it("gates watch collections and forces the member's session visibility", async (
 });
 
 describe("transcription ownership", () => {
-  it.each(["viewer", "contributor", "operator", "admin"] as const)("does not expose another actor's draft to %s", async (role) => {
+  it.each(["viewer", "contributor", "operator", "owner"] as const)("does not expose another actor's draft to %s", async (role) => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init: RequestInit) => {
       const request = decodeHttpRequest(_input as string | Request | URL, init); calls.push(request.method);

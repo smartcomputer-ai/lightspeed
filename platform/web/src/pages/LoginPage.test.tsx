@@ -116,3 +116,14 @@ it.each(["auto=1", "expired=1"])("waits for a click when automatic sign-in is di
   expect(mocks.social).toHaveBeenCalledTimes(1);
   expect(mocks.social).toHaveBeenCalledWith(expect.objectContaining({ provider: "company-test" }));
 });
+
+it("preserves the device code through company success and error callbacks", async () => {
+  const returnTo = "/device?user_code=ABCD-EFGH";
+  window.history.replaceState({}, "", `/app/login?${new URLSearchParams({ returnTo })}`);
+  await render();
+  await act(async () => button("Sign in with your company account").click());
+  const request = mocks.social.mock.calls[0]![0] as { callbackURL: string; errorCallbackURL: string };
+  expect(new URL(request.callbackURL).pathname).toBe("/app/device");
+  expect(new URL(request.callbackURL).searchParams.get("user_code")).toBe("ABCD-EFGH");
+  expect(new URL(request.errorCallbackURL).searchParams.get("returnTo")).toBe(returnTo);
+});

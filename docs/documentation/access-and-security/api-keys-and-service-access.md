@@ -1,14 +1,47 @@
-# Runtime tokens and service access
+# API keys and runtime tokens
 
 The runtime authenticates trusted components with tokens from configuration.
 Every runtime token has full authority over every universe and method. People
 use the Platform, which checks membership, roles and resource visibility. A
 standalone runtime needs its own trusted gateway or a trusted network.
 
-Runtime API keys, key-management methods, method-group permissions and key
-pages have been removed. Personal and service-account tokens through the
-Platform are separate work; runtime tokens are not their replacement for
-untrusted applications or agents.
+## Platform API keys
+
+Create personal keys under **Your profile → API keys** and application keys
+under **Accounts → Applications → API keys**. Better Auth stores hashed keys,
+checks expiry and revocation, and maintains usage counters. The Platform
+binds each key to its user or application and applies current permissions.
+Application keys use Better Auth organization ownership, but the application
+association is server-controlled: an organization key alone grants no access.
+
+Keys expire after 365 days by default, with a deployment-configurable maximum.
+Copy a new secret when it is shown; it is never returned again. For rotation,
+create a replacement, move consumers, and explicitly revoke the previous key.
+Keys cannot mint other keys. Human browser and CLI sessions manage credentials.
+
+Send `Authorization: Bearer <key>` to the Platform `/api/v1` base URL. Runtime
+resource routes are shared with the direct runtime API; native account,
+application, grant, and credential operations are under `/api/v1/platform`.
+The TypeScript client's `callPlatform` and Python client's `call_platform`
+consume the native generated contract. Regular `call` uses runtime operations
+with the same Platform credentials. `lightspeed connect login --url DEPLOYMENT_URL`
+uses browser-approved device authorization for a human CLI session;
+`lightspeed connect add` accepts API keys. See [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
+
+Optional account IDs, universe UUIDs, operation IDs, and read-only restrictions
+narrow a key's authority. They never grant permissions its principal lacks.
+Universe creation also requires an account Creator or Admin role and the key's
+creation permission. A key restricted to existing universes cannot create one.
+Application keys belong to one account and use that application's grants,
+independently of their human creator's continued access.
+
+Local personal keys and application keys do not depend on a browser session.
+Company users require admission refreshed within the configured company
+window until an authoritative background directory source is available.
+Suspension and application disabling are checked on subsequent requests.
+
+The following sections describe **runtime infrastructure tokens**, which have
+full deployment authority and must remain with trusted infrastructure.
 
 ## Gateway modes
 
@@ -108,7 +141,8 @@ universe. This grants full deployment authority. See
 [Use Lightspeed from the terminal](../using-lightspeed/cli.md) and the
 [TypeScript API client](../integrating-and-extending/api-and-typescript.md).
 
-Channel connector startup and Platform Configurator setup are disabled during
-this transition. Neither receives a runtime token. Environment daemons,
+Channel connector startup remains disabled during the transition. Configurator
+uses a restricted Platform application key; the development launcher starts it
+against Platform without a runtime infrastructure token. Environment daemons,
 environment providers and worker-to-environment-gateway credentials are
 unchanged; these are separate machine protocols.

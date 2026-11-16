@@ -7,6 +7,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HomeRedirect } from "./HomeRedirect";
 import { waitForUi } from "@/test/wait-for-ui";
 
+vi.mock("@/components/universe-switcher", () => ({ NewUniverseDialog: ({ open }: { open: boolean }) => open ? <div role="dialog">New universe</div> : null }));
+
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
@@ -23,6 +25,8 @@ beforeEach(() => {
   localStorage.clear();
   mocks.api.mockReset();
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  client.setQueryData(["accounts"], { accounts: [] });
+  client.setQueryDefaults(["accounts"], { staleTime: Infinity });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -83,7 +87,7 @@ it("offers an admin a first universe when there is none", async () => {
 it("tells a member who to ask, without a create action", async () => {
   mocks.api.mockResolvedValue([]);
   await show(false);
-  await waitForUi(() => expect(container.textContent).toContain("Ask a platform or universe admin"));
+  await waitForUi(() => expect(container.textContent).toContain("Ask an account admin or universe owner"));
   expect([...container.querySelectorAll("button")].some((node) => node.textContent?.includes("New universe"))).toBe(false);
 });
 

@@ -37,6 +37,14 @@ export interface ServerEnv {
   adminPassword: string | null;
   /// Explicit local launcher fixtures; disabled in ordinary server startup.
   devSeed?: boolean;
+  browserSessionIdleDays?: number;
+  browserSessionMaxDays?: number;
+  personalAccounts?: boolean;
+  allowSharedAccountCreation?: boolean;
+  personalAccountUniverseQuota?: number;
+  sharedAccountUniverseQuota?: number;
+  apiKeyDefaultExpiryDays?: number;
+  apiKeyMaxExpiryDays?: number;
   github: { clientId: string; clientSecret: string } | null;
   oidc?: OidcConfig | null;
   passwordSignIn?: "local" | "break-glass" | "off";
@@ -109,6 +117,14 @@ export function loadEnv(): ServerEnv {
     adminEmail: process.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ?? null,
     adminPassword: process.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ?? null,
     devSeed: booleanEnv("LIGHTSPEED_PLATFORM_DEV_SEED", false),
+    browserSessionIdleDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS", 30, 1, 365),
+    browserSessionMaxDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS", 90, 1, 3650),
+    personalAccounts: booleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ACCOUNTS", true),
+    allowSharedAccountCreation: booleanEnv("LIGHTSPEED_PLATFORM_SHARED_ACCOUNT_CREATION", false),
+    personalAccountUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 25, 0, 1000000),
+    sharedAccountUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 100, 0, 1000000),
+    apiKeyDefaultExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS", 365, 1, 3650),
+    apiKeyMaxExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 365, 1, 3650),
     github,
     oidc,
     passwordSignIn: passwordSignIn as ServerEnv["passwordSignIn"],

@@ -1,3 +1,4 @@
+import { PLATFORM_OPERATIONS, type PlatformOperationId, type PlatformOperationParams, type PlatformOperationResult } from "./generated/platform.js";
 import { readEventStream } from "./event-stream.js";
 import type { AgentNotification, UniverseWatchParams } from "./generated/types.js";
 import type {
@@ -212,6 +213,26 @@ export class LightspeedClient extends LightspeedHelpers {
     return await this.readBody(response, options.signal) as OperationResult<M>;
   }
 
+  /** Native account, application, credential, and universe management on Platform. */
+  async callPlatform<K extends PlatformOperationId>(operation: K, params: PlatformOperationParams<K>, options: Pick<CallOptions, "headers" | "signal"> = {}): Promise<PlatformOperationResult<K>> {
+    const spec = PLATFORM_OPERATIONS[operation];
+    const body = { ...params } as Record<string, unknown>;
+    const path = spec.path.replace(/\{([^}]+)\}/g, (_, field: string) => {
+      const value = body[field];
+      delete body[field];
+      if (typeof value !== "string" || !value || value === "." || value === "..") throw new TypeError(`Invalid path parameter ${field}`);
+      return encodeURIComponent(value);
+    });
+    if (spec.method === "GET" && Object.keys(body).length) throw new TypeError("Unexpected query parameters");
+    const headers = await this.buildHeaders(options.headers);
+    headers.set("content-type", "application/json");
+    const response = await this.send(this.endpoint + path.slice("/api/v1".length), {
+      method: spec.method, headers, ...(options.signal ? { signal: options.signal } : {}),
+      ...(spec.method === "GET" || !Object.keys(body).length ? {} : { body: JSON.stringify(body) }),
+    }, options.signal);
+    return await this.readBody(response, options.signal) as PlatformOperationResult<K>;
+  }
+
   /** Open a download without buffering it. The caller consumes or cancels its body. */
   openDownload<M extends "blobs/read" | "vfs/workspaces/files/read">(
     operation: M, params: OperationParams<M>, options: CallOptions = {},
@@ -246,15 +267,19 @@ export class LightspeedClient extends LightspeedHelpers {
       headers.set("content-type", "application/json");
         init.body = JSON.stringify(request.body);
     }
+    return this.send(request.url, init, options.signal);
+  }
+
+  private async send(url: string | URL, init: RequestInit, signal?: AbortSignal): Promise<Response> {
     let response: Response;
     try {
       const { fetchImpl } = this;
-      response = await fetchImpl(request.url, init);
+      response = await fetchImpl(url, init);
     } catch (cause) {
-      options.signal?.throwIfAborted();
+      signal?.throwIfAborted();
       throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(cause)}`, { cause });
     }
-    if (!response.ok) await this.readBody(response, options.signal);
+    if (!response.ok) await this.readBody(response, signal);
     return response;
   }
 

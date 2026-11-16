@@ -65,8 +65,7 @@ For a specific setting or failure, use the
 [API and TypeScript](integrating-and-extending/api-and-typescript.md) walks
 through submitting a task and retrieving its result.
 [Configurator MCP](integrating-and-extending/configurator-mcp.md) describes the
-management tool package; agent setup is disabled until narrowed Platform tokens
-are available. To add capabilities, start with
+management tool package and its restricted Platform application credentials. To add capabilities, start with
 [Custom tools and model providers](integrating-and-extending/custom-tools-and-model-providers.md)
 and follow the guide for your extension.
 

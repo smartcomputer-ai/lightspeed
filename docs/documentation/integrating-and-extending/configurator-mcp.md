@@ -1,41 +1,54 @@
 # Manage Lightspeed through Configurator MCP
 
-The Platform Configurator setup is temporarily unavailable while scoped
-Platform tokens are introduced. The development launcher does not start its
-process, and the setup installation endpoint refuses requests without creating
-a credential, MCP connection, or profile.
+The Platform Configurator setup installs a configuration-only MCP connection.
+An Account Admin who owns the universe installs it from **Settings → Templates**.
+Platform creates an account application with an explicit Operator grant in that
+universe and a restricted API key. The key permits only the reviewed
+configuration operations, cannot create universes, and cannot manage accounts,
+credentials, or sessions.
 
-A runtime token has full authority over every universe and may name any actor.
-It must never be handed to an agent or installed as the credential of an MCP
-connection an agent can use. The replacement setup will use a restricted token
-issued by the Platform. A Platform browser session cannot currently be exchanged
-for such a credential.
+The runtime stores that key as a brokered credential and uses it for the
+`configurator` MCP server. Tool calls go from the runtime to Configurator, then
+to Platform's shared API. Platform checks the application and key on each
+request before forwarding an admitted call to the runtime. The MCP connection
+also limits advertised tools to the configuration allowlist and requires
+approval. No human session is synthesized, and no runtime infrastructure token
+is passed to Configurator or the agent.
 
-The Configurator package remains available for development and trusted operator
-use. It translates MCP tool calls into public runtime API requests. This is the
-management direction of MCP; an agent using an external server during a task is
-covered by [Tools and MCP](../using-lightspeed/tools-and-mcp.md).
+The installation creates an MCP connection, not a profile. Add that server to
+a profile or session configuration as appropriate. Reinstalling rotates the
+managed application credential, retaining the previous credential until the
+replacement is ready. A failed replacement keeps the working installation. Expired keys or disabled applications are
+reported as unavailable and need reinstallation.
+
+For agents using other external MCP servers, see
+[Tools and MCP](../using-lightspeed/tools-and-mcp.md).
 
 <a id="connect-the-three-boundaries"></a>
 
 ## Connect the client, Configurator, and runtime
 
-Configurator connects to one configured runtime HTTP API endpoint. Its authentication
-mode must match that runtime:
+Configurator connects to one configured HTTP API base URL. For managed agent
+use, configure the **Platform** `/api/v1` endpoint and authenticated mode.
+Every request authenticates through discovery first, including MCP protocol
+requests. A key restricted to exactly one accessible universe receives that
+UUID as `defaultUniverse`; Configurator uses it for resource calls.
 
-| Mode | Trusted operator supplies | Runtime connection |
-| --- | --- | --- |
-| `authenticated` | A configured runtime bearer token and a universe selector for tool calls | Every token reaches every method and universe. An optional actor supplies attribution only. |
-| `single` | No identity headers | Private development runtime uses its configured universe. |
-
-Each MCP request authenticates against the runtime before it is handled,
-including protocol-only requests. Discovery through `initialize` omits the
-universe selector; tool calls carry it. Configurator does not mint tokens or
-exchange browser cookies for credentials.
+For trusted operator use, Configurator can instead address a direct runtime
+with a runtime token and an explicit universe. That token grants full runtime
+authority and must never be installed for an agent. `single` mode is available
+only for private development against a matching unauthenticated runtime.
+Configurator does not mint tokens or exchange browser cookies.
 
 ## Run the service for development
 
-Use an artifact from the same release as the runtime. From the repository root:
+The supported `./dev.sh platform` and `./dev.sh full` profiles start Configurator
+on `127.0.0.1:18081`, pointing to Platform at port 3000 by default. They give
+Configurator an explicit environment without database, auth-server, or runtime
+infrastructure secrets.
+
+For standalone single-mode development, use an artifact from the same release
+as the runtime. From the repository root:
 
 ```bash
 npm install
@@ -71,8 +84,9 @@ the methods that declare and release registered environments, the `integration`
 parameter of `session/start`, and the redundant runtime handshake. Change the
 filter and regenerate to customize a build; never edit generated tools by hand.
 
-Every authenticated request sees that generated set. Runtime tokens have no
-method-group restrictions, and the published API-family classification is
+The managed setup narrows advertised tools and API operations to its explicit
+configuration allowlist. Standalone trusted operator clients see the generated
+set. Runtime tokens have no method-group restrictions, and the API-family classification is
 metadata. A generated tool filter does not narrow the authority of the token
 itself.
 
@@ -106,7 +120,7 @@ stop authenticating after the runtime restarts with that configuration.
 
 | Symptom | What to check |
 | --- | --- |
-| The Platform setup is unavailable | Expected until restricted Platform tokens are implemented. Do not substitute a runtime token. |
+| The Platform setup is unavailable | Configure `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL`, install as an Account Admin, and check the application/key status. Reinstall to replace expired credentials. |
 | Health succeeds but tool discovery fails | Upstream reachability, matching authentication mode, and configured token. |
 | HTTP 403 before reaching the runtime | Request Host and Origin against the allowlists. |
 | A tool call lacks a universe | Send `x-lightspeed-universe` with the target universe. |

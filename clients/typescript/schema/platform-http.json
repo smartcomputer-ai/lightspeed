@@ -1,0 +1,186 @@
+{
+  "operations": [
+    {
+      "operationId": "platform/session/read",
+      "method": "GET",
+      "path": "/api/v1/platform/session",
+      "params": "PlatformSessionReadParams",
+      "result": "PlatformSessionReadResult"
+    },
+    {
+      "operationId": "platform/session/revoke",
+      "method": "DELETE",
+      "path": "/api/v1/platform/session",
+      "params": "PlatformSessionRevokeParams",
+      "result": "PlatformSessionRevokeResult"
+    },
+    {
+      "operationId": "platform/credentials/list",
+      "method": "GET",
+      "path": "/api/v1/platform/credentials",
+      "params": "PlatformCredentialsListParams",
+      "result": "PlatformCredentialsListResult"
+    },
+    {
+      "operationId": "platform/credentials/create",
+      "method": "POST",
+      "path": "/api/v1/platform/credentials",
+      "params": "PlatformCredentialsCreateParams",
+      "result": "PlatformCredentialsCreateResult"
+    },
+    {
+      "operationId": "platform/credentials/revoke",
+      "method": "DELETE",
+      "path": "/api/v1/platform/credentials/{keyId}",
+      "params": "PlatformCredentialsRevokeParams",
+      "result": "PlatformCredentialsRevokeResult"
+    },
+    {
+      "operationId": "platform/applications/credentials/list",
+      "method": "GET",
+      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials",
+      "params": "PlatformApplicationsCredentialsListParams",
+      "result": "PlatformApplicationsCredentialsListResult"
+    },
+    {
+      "operationId": "platform/applications/credentials/create",
+      "method": "POST",
+      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials",
+      "params": "PlatformApplicationsCredentialsCreateParams",
+      "result": "PlatformApplicationsCredentialsCreateResult"
+    },
+    {
+      "operationId": "platform/applications/credentials/revoke",
+      "method": "DELETE",
+      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}",
+      "params": "PlatformApplicationsCredentialsRevokeParams",
+      "result": "PlatformApplicationsCredentialsRevokeResult"
+    },
+    {
+      "operationId": "platform/accounts/list",
+      "method": "GET",
+      "path": "/api/v1/platform/accounts",
+      "params": "PlatformAccountsListParams",
+      "result": "PlatformAccountsListResult"
+    },
+    {
+      "operationId": "platform/accounts/create",
+      "method": "POST",
+      "path": "/api/v1/platform/accounts",
+      "params": "PlatformAccountsCreateParams",
+      "result": "PlatformAccountsCreateResult"
+    },
+    {
+      "operationId": "platform/accounts/read",
+      "method": "GET",
+      "path": "/api/v1/platform/accounts/{accountId}",
+      "params": "PlatformAccountsReadParams",
+      "result": "PlatformAccountsReadResult"
+    },
+    {
+      "operationId": "platform/accounts/update",
+      "method": "PATCH",
+      "path": "/api/v1/platform/accounts/{accountId}",
+      "params": "PlatformAccountsUpdateParams",
+      "result": "PlatformAccountsUpdateResult"
+    },
+    {
+      "operationId": "platform/accounts/members/list",
+      "method": "GET",
+      "path": "/api/v1/platform/accounts/{accountId}/members",
+      "params": "PlatformAccountsMembersListParams",
+      "result": "PlatformAccountsMembersListResult"
+    },
+    {
+      "operationId": "platform/accounts/members/put",
+      "method": "PUT",
+      "path": "/api/v1/platform/accounts/{accountId}/members/{userId}",
+      "params": "PlatformAccountsMembersPutParams",
+      "result": "PlatformAccountsMembersPutResult"
+    },
+    {
+      "operationId": "platform/accounts/members/delete",
+      "method": "DELETE",
+      "path": "/api/v1/platform/accounts/{accountId}/members/{userId}",
+      "params": "PlatformAccountsMembersDeleteParams",
+      "result": "PlatformAccountsMembersDeleteResult"
+    },
+    {
+      "operationId": "platform/accounts/applications/list",
+      "method": "GET",
+      "path": "/api/v1/platform/accounts/{accountId}/applications",
+      "params": "PlatformAccountsApplicationsListParams",
+      "result": "PlatformAccountsApplicationsListResult"
+    },
+    {
+      "operationId": "platform/accounts/applications/create",
+      "method": "POST",
+      "path": "/api/v1/platform/accounts/{accountId}/applications",
+      "params": "PlatformAccountsApplicationsCreateParams",
+      "result": "PlatformAccountsApplicationsCreateResult"
+    },
+    {
+      "operationId": "platform/accounts/applications/update",
+      "method": "PATCH",
+      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}",
+      "params": "PlatformAccountsApplicationsUpdateParams",
+      "result": "PlatformAccountsApplicationsUpdateResult"
+    },
+    {
+      "operationId": "platform/accounts/applications/delete",
+      "method": "DELETE",
+      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}",
+      "params": "PlatformAccountsApplicationsDeleteParams",
+      "result": "PlatformAccountsApplicationsDeleteResult"
+    },
+    {
+      "operationId": "platform/universes/adopt",
+      "method": "POST",
+      "path": "/api/v1/platform/accounts/{accountId}/universes/adopt",
+      "params": "PlatformUniversesAdoptParams",
+      "result": "PlatformUniversesAdoptResult"
+    },
+    {
+      "operationId": "platform/universes/create",
+      "method": "POST",
+      "path": "/api/v1/platform/accounts/{accountId}/universes",
+      "params": "PlatformUniversesCreateParams",
+      "result": "PlatformUniversesCreateResult"
+    },
+    {
+      "operationId": "platform/universes/update",
+      "method": "PATCH",
+      "path": "/api/v1/platform/universes/{universe}",
+      "params": "PlatformUniversesUpdateParams",
+      "result": "PlatformUniversesUpdateResult"
+    },
+    {
+      "operationId": "platform/universes/grants/list",
+      "method": "GET",
+      "path": "/api/v1/platform/universes/{universe}/grants",
+      "params": "PlatformUniversesGrantsListParams",
+      "result": "PlatformUniversesGrantsListResult"
+    },
+    {
+      "operationId": "platform/universes/grants/put",
+      "method": "PUT",
+      "path": "/api/v1/platform/universes/{universe}/grants",
+      "params": "PlatformUniversesGrantsPutParams",
+      "result": "PlatformUniversesGrantsPutResult"
+    },
+    {
+      "operationId": "platform/universes/grants/delete",
+      "method": "DELETE",
+      "path": "/api/v1/platform/universes/{universe}/grants/{grantId}",
+      "params": "PlatformUniversesGrantsDeleteParams",
+      "result": "PlatformUniversesGrantsDeleteResult"
+    },
+    {
+      "operationId": "platform/universes/access-policy/put",
+      "method": "PUT",
+      "path": "/api/v1/platform/universes/{universe}/access-policy",
+      "params": "PlatformUniversesAccessPolicyPutParams",
+      "result": "PlatformUniversesAccessPolicyPutResult"
+    }
+  ]
+}

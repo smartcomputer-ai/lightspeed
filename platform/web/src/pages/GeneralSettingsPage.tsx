@@ -1,4 +1,5 @@
-import { useActionPermissions } from "@/lib/permissions";
+import { platformApi } from "@/lib/platform-api";
+import { useActionPermissions, usePlatformAdmin } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -55,6 +56,7 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
         <FeaturesCard universe={universe} />
         <UniverseAppearanceCard key={`${universe.id}/${universe.icon}/${universe.iconColor}`} universe={universe} />
         <IdentifiersCard universe={universe} />
+        <ProtectionCard key={`${universe.id}/${universe.expiresAtMs}`} universe={universe} />
         <DangerZone universe={universe} />
       </div>
     </>
@@ -152,7 +154,6 @@ export function HandleCard({ universe }: { universe: Universe }) {
 function RenameCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(universe.name);
-  const managed = universe.runtimeConfiguration?.displayName !== undefined;
 
   const rename = useMutation({
     mutationFn: () =>
@@ -162,7 +163,7 @@ function RenameCard({ universe }: { universe: Universe }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!managed) rename.mutate();
+    rename.mutate();
   };
 
   return (
@@ -170,7 +171,7 @@ function RenameCard({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle>Name</CardTitle>
         <CardDescription>
-          {managed ? "Managed by the universe configuration. Update displayName in its document to rename it." : "The display name shown in the switcher. Changing it does not change the handle."}
+          The display name shown in the switcher. Changing it does not change the handle.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -179,7 +180,6 @@ function RenameCard({ universe }: { universe: Universe }) {
             <FieldLabel htmlFor="universe-name">Display name</FieldLabel>
             <Input
               id="universe-name"
-              disabled={managed}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -187,7 +187,7 @@ function RenameCard({ universe }: { universe: Universe }) {
           </Field>
           <Button
             type="submit"
-            disabled={managed || rename.isPending || name.trim() === universe.name || !name.trim()}
+            disabled={rename.isPending || name.trim() === universe.name || !name.trim()}
           >
             {rename.isPending ? "Saving…" : "Save"}
           </Button>
@@ -285,4 +285,24 @@ function DangerZone({ universe }: { universe: Universe }) {
       </CardFooter>
     </Card>
   );
+}
+
+function ProtectionCard({ universe }: { universe: Universe }) {
+  const platformAdmin = usePlatformAdmin();
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const [expiry, setExpiry] = useState(universe.expiresAtMs ? new Date(universe.expiresAtMs).toISOString() : "");
+  const mayUnprotect = platformAdmin || universe.accountRole === "admin";
+  const update = useMutation({ mutationFn: (input: { protected?: boolean; expiresAtMs?: number | null }) => platformApi("platform/universes/update", { universe: universe.lightspeedUniverseId, ...input }), onSuccess: () => client.invalidateQueries({ queryKey: ["universes"] }) });
+  const remove = useMutation({ mutationFn: () => api("DELETE", `/api/ui/universes/${universe.id}`, { handle: universe.handle }), onSuccess: async () => { await client.invalidateQueries({ queryKey: ["universes"] }); navigate("/"); } });
+  return <Card><CardHeader><CardTitle>Deletion protection and expiry</CardTitle><CardDescription>Protected universes cannot be deleted. Clearing protection requires an Account Admin or Platform Admin and must be a separate action before deletion.</CardDescription></CardHeader><CardContent className="grid gap-4">
+    <label className="flex items-center gap-2"><Switch aria-label="Deletion protection" checked={!!universe.protected} disabled={update.isPending || (!universe.protected && universe.expiresAtMs != null) || (!!universe.protected && !mayUnprotect)} onCheckedChange={value => update.mutate({ protected: value })} />Protected</label>
+    {universe.expiresAtMs != null && <p className="text-sm text-muted-foreground">Clear the expiry before enabling protection.</p>}
+    <form className="grid max-w-xl gap-2" onSubmit={e => { e.preventDefault(); const value = expiry.trim() ? Date.parse(expiry) : null; if (value !== null && (!Number.isFinite(value) || value <= Date.now())) return; update.mutate({ expiresAtMs: value }); }}>
+      <Field><FieldLabel>Automatic deletion time (ISO timestamp; blank means no expiry)</FieldLabel><Input aria-label="Universe expiry" value={expiry} disabled={!!universe.protected} onChange={e => setExpiry(e.target.value)} placeholder="2027-01-15T12:00:00Z" /></Field>
+      <Button type="submit" className="w-fit" variant="outline" disabled={!!universe.protected || update.isPending || (!!expiry.trim() && (!Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now()))}>Save expiry</Button>
+    </form>
+    <Button className="w-fit" variant="destructive" disabled={!!universe.protected || remove.isPending} onClick={() => { if (window.prompt(`Permanently delete this universe and its data? Type ${universe.handle} to confirm.`) === universe.handle) remove.mutate(); }}>Delete universe</Button>
+    {[update.error, remove.error].filter(Boolean).map((error, i) => <p role="alert" className="text-destructive" key={i}>{error?.message}</p>)}
+  </CardContent></Card>;
 }

@@ -35,8 +35,8 @@ impl Runtime {
         let done = stop.clone();
         let worker = thread::spawn(move || {
             let mut universes = json!([
-                {"universeId":"00000000-0000-0000-0000-000000000001","handle":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},
-                {"universeId":"00000000-0000-0000-0000-000000000002","handle":"u-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}
+                {"universeId":"00000000-0000-0000-0000-000000000001","handle":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0,"metadata":{},"protected":false},
+                {"universeId":"00000000-0000-0000-0000-000000000002","handle":"u-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0,"metadata":{},"protected":false}
             ]);
             let mut statuses = statuses.into_iter();
             while !done.load(Ordering::Relaxed) {
@@ -87,6 +87,12 @@ impl Runtime {
                     "initialize" => {
                         json!({"runtime":"runtime","contractRevision":"1","defaultUniverse":if single {json!("00000000-0000-0000-0000-000000000001")} else {Value::Null},"serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "caller":{"single":single,"tokenName":if single {Value::Null} else {json!("fixture")}}})
                     }
+                    "deployment/universes/create" => {
+                        let input = &body["params"];
+                        let universe = json!({"universeId":input["universeId"],"handle":input["handle"],"createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0,"metadata":input.get("metadata").cloned().unwrap_or_else(|| json!({})),"protected":input["protected"]});
+                        universes.as_array_mut().unwrap().push(universe.clone());
+                        json!({"universe":universe,"created":true})
+                    }
                     "deployment/universes/list" => {
                         json!({"universes":universes})
                     }
@@ -114,7 +120,7 @@ impl Runtime {
                             .iter_mut()
                             .find(|u| u["universeId"] == *named || u["handle"] == *named)
                             .unwrap();
-                        for field in ["displayName", "members", "directoryGroupMappings"] {
+                        for field in ["displayName", "metadata", "protected"] {
                             if let Some(value) = body["params"].get(field) {
                                 universe[field] = value.clone();
                             }
@@ -235,6 +241,29 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_tokens() {
             .1
             .contains("authorization: Bearer lsr_original")
     );
+    // An explicit named endpoint override never borrows an ambient credential.
+    let before = other.requests.lock().unwrap().len();
+    let refused = cli_env(
+        dir,
+        &[
+            "--connection",
+            "saved",
+            "--api-url",
+            &other.endpoint,
+            "connect",
+            "status",
+        ],
+        None,
+        &overrides,
+    );
+    assert!(!refused.status.success());
+    let requests = other.requests.lock().unwrap();
+    assert!(
+        requests[before..]
+            .iter()
+            .all(|(_, headers)| !headers.contains("authorization:"))
+    );
+    drop(requests);
     success(cli_env(dir, &["connect", "status"], None, &overrides));
     assert!(
         other
@@ -378,7 +407,9 @@ fn named_connections_universe_selection_and_per_command_override() {
         "renamed"
     );
     let status = success(cli(dir, &["connect", "status"], None));
-    assert!(status.contains("  Token: fixture\n  Authority: full runtime access"));
+    assert!(status.contains("  Server: Runtime"));
+    assert!(status.contains("  Authentication: RuntimeToken"));
+    assert!(status.contains("  Runtime token: fixture"));
     assert!(status.ends_with(
         "\n\nSelected universe:\n  Handle: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
     ));
@@ -498,7 +529,7 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
 fn config_wait_retries_startup_and_applies_declarations_idempotently() {
     let runtime = Runtime::with_startup_statuses(false, vec![503]);
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("universe.yaml"), "schemaVersion: 1\nkind: universe\nhandle: one\ndisplayName: Research\nmembers: []\ndirectoryGroupMappings:\n  - issuer: https://id.example\n    group: readers\n    role: viewer\n").unwrap();
+    std::fs::write(dir.path().join("universe.yaml"), "schemaVersion: 1\nkind: universe\nhandle: one\ndisplayName: Research\nmetadata: { purpose: research }\nprotected: true\n").unwrap();
     let env = [
         ("LIGHTSPEED_API_URL", runtime.endpoint.as_str()),
         ("LIGHTSPEED_API_TOKEN", "lsr_fixture"),
@@ -548,8 +579,8 @@ fn config_wait_retries_startup_and_applies_declarations_idempotently() {
     );
     let exported: Value = serde_json::from_slice(&exported.stdout).unwrap();
     assert_eq!(exported["displayName"], "Research");
-    assert_eq!(exported["members"], json!([]));
-    assert_eq!(exported["directoryGroupMappings"][0]["group"], "readers");
+    assert_eq!(exported["metadata"], json!({"purpose":"research"}));
+    assert_eq!(exported["protected"], true);
     std::fs::write(
         dir.path().join("exported.json"),
         serde_json::to_vec(&exported).unwrap(),
@@ -639,4 +670,39 @@ fn config_wait_has_a_bounded_deadline() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("within 1 seconds"));
     assert!(start.elapsed() < Duration::from_secs(4));
+}
+
+#[test]
+fn configuration_protection_defaults_only_when_the_document_creates_a_universe() {
+    let runtime = Runtime::with_startup_statuses(false, vec![]);
+    let directory = tempfile::tempdir().unwrap();
+    let env = [
+        ("LIGHTSPEED_API_URL", runtime.endpoint.as_str()),
+        ("LIGHTSPEED_API_TOKEN", "lsr_fixture"),
+    ];
+    for (handle, setting, expected) in [
+        ("one", "", false),
+        ("new-protected", "", true),
+        ("new-disposable", "protected: false\n", false),
+    ] {
+        std::fs::write(
+            directory.path().join("universe.yaml"),
+            format!("schemaVersion: 1\nkind: universe\nhandle: {handle}\n{setting}"),
+        )
+        .unwrap();
+        success(cli_env(
+            directory.path(),
+            &["config", "apply", "-f", "universe.yaml"],
+            None,
+            &env,
+        ));
+        let read = success(cli_env(
+            directory.path(),
+            &["universe", "read", handle, "--json"],
+            None,
+            &env,
+        ));
+        let read: Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(read["protected"], expected, "{handle}");
+    }
 }

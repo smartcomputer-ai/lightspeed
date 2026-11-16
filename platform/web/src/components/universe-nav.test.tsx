@@ -19,13 +19,13 @@ const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
   viewer: ["read"],
   contributor: ["read", "createSession", "useResource"],
   operator: ["read", "createSession", "useResource", "configureResource"],
-  admin: ["read", "createSession", "useResource", "configureResource", "manageAccess"],
+  owner: ["read", "createSession", "useResource", "configureResource", "manageAccess"],
 };
 const DESTINATIONS: [string, string][] = [
   ["viewer", "/u/test/bots"],
   ["contributor", "/u/test/bots"],
   ["operator", "/u/test/settings/channels"],
-  ["admin", "/u/test/settings/general"],
+  ["owner", "/u/test/settings/general"],
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {

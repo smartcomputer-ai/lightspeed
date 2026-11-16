@@ -21,7 +21,14 @@ let container: HTMLDivElement;
 let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  api.mockReset().mockResolvedValue({ handle: "chosen", features: {} });
+  api.mockReset().mockImplementation(async (method: string, path: string) => {
+    if (path === "/api/v1/platform/accounts") return { accounts: [{ id: "account", name: "Personal", enabled: true, role: "creator" }] };
+    if (path === "/api/ui/me") return { user: { id: "user" } };
+    if (path === "/api/v1/platform/accounts/account/members") return { members: [{ userId: "user", name: "User" }] };
+    if (method === "POST" && path === "/api/v1/platform/accounts/account/universes") return { universe: { handle: "chosen", features: {} } };
+    if (method === "POST" && path === "/api/ui/universes/adopt") return { handle: "chosen", features: {} };
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   container = document.createElement("div");
   document.body.append(container);
@@ -60,22 +67,25 @@ it("accepts the handles the runtime accepts and suggests only those", () => {
 });
 it("submits a requested handle independently from the display name", async () => {
   await render(<NewUniverseDialog open onOpenChange={() => {}} />);
+  await vi.waitFor(() => expect(container.textContent).toContain("Personal"));
   await input("new-universe-name", "Display Name");
   expect(container.querySelector<HTMLInputElement>("#new-universe-handle")!.value).toBe("display-name");
   await input("new-universe-handle", "chosen");
   await input("new-universe-name", "Different Name");
   await submit();
-  expect(api).toHaveBeenCalledWith("POST", "/api/ui/universes", { name: "Different Name", handle: "chosen" });
+  expect(api).toHaveBeenCalledWith("POST", "/api/v1/platform/accounts/account/universes", { name: "Different Name", handle: "chosen", universeId: expect.any(String), initialOwner: { kind: "user", id: "user" } });
+  expect(api.mock.calls.some(([, path]) => path.endsWith("/members"))).toBe(false);
 });
 it("adopts under the runtime handle, which the dialog shows but cannot change", async () => {
   const orphan = { universeId: "id", handle: "runtime-handle", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
   await render(<AdoptDialog orphan={orphan} onOpenChange={() => {}} onAdopted={() => {}} />);
+  await vi.waitFor(() => expect(container.querySelector<HTMLSelectElement>("#adopt-owner")?.value).toBe("user"));
   await input("adopt-name", "My display name");
   const field = container.querySelector<HTMLInputElement>("#adopt-handle")!;
   expect(field.readOnly).toBe(true);
   expect(field.value).toBe("runtime-handle");
   await submit();
-  expect(api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "id", name: "My display name" });
+  expect(api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "id", name: "My display name", accountId: "account", initialOwner: { kind: "user", id: "user" } });
 });
 
 it("suggests a valid handle for a name that ends on a separator at the length limit", async () => {

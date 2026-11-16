@@ -1,106 +1,139 @@
-import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
-import { Hono } from "hono";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import type { ApiVariables, AppContext } from "../context.js";
-import { universeRoutes } from "./universes.js";
+import { accountFixture } from "../../test/account-fixture.js";
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 
-afterEach(() => vi.unstubAllGlobals());
-const id = "11111111-1111-4111-8111-111111111111";
-function fixture({ role = "admin", exists = true, handle = "runtime-handle", conflict = false, cached = false, returnedHandle }: {
-  role?: string; exists?: boolean; handle?: string; conflict?: boolean; cached?: boolean; returnedHandle?: string;
-} = {}) {
-  const calls: { method: string; params: Record<string, unknown> }[] = [];
-  const writes: { table: unknown; values: Record<string, unknown> }[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const request = decodeHttpRequest(_url as string | Request | URL, init);
-    calls.push({ method: request.method, params: request.params });
-    const error = !exists ? { type: "about:blank", title: "not found", detail: "not found", status: 404, kind: "notFound" }
-      : conflict && request.method !== "deployment/universes/read" ? { type: "about:blank", title: "handle conflict", detail: "handle conflict", status: 409, kind: "conflict" } : null;
-    if (error) return problemResponse(error);
-    return Response.json({ universe: {
-      universeId: request.params.universeId ?? request.params.universe,
-      handle: returnedHandle ?? (request.method === "deployment/universes/read" ? handle : request.params.handle),
-    } });
+let fixture: Awaited<ReturnType<typeof accountFixture>>;
+let inventory: Map<string, Record<string, unknown>>;
+let failConfiguration = false;
+let requests: Array<ReturnType<typeof decodeHttpRequest>>;
+const newId = "22222222-2222-4222-8222-222222222222";
+beforeEach(async () => {
+  fixture = await accountFixture(); failConfiguration = false; requests = [];
+  inventory = new Map([[fixture.universe.lightspeedUniverseId, runtimeView(fixture.universe.lightspeedUniverseId, "work")]]);
+  vi.stubGlobal("fetch", vi.fn(async (url: string | Request | URL, init?: RequestInit) => {
+    const request = decodeHttpRequest(url, init); requests.push(request);
+    if (request.operation === "initialize") return Response.json({ runtime: "runtime", contractRevision: "1", caller: { single: false }, serverInfo: { name: "Runtime", version: "1" } });
+    const id = String(request.params.universeId ?? request.params.universe);
+    if (request.operation === "deployment/universes/create") {
+      const prior = inventory.get(id);
+      const universe = prior ?? { ...runtimeView(id, String(request.params.handle)), metadata: request.params.metadata ?? {}, protected: request.params.protected ?? false, expiresAtMs: request.params.expiresAtMs ?? null };
+      inventory.set(id, universe); return Response.json({ created: !prior, universe });
+    }
+    if (request.operation === "deployment/universes/list") return Response.json({ universes: [...inventory.values()] });
+    const current = inventory.get(id);
+    if (!current) return problemResponse({ type: "about:blank", title: "Not found", detail: "universe not found", status: 404, kind: "notFound" });
+    if (request.operation === "deployment/universes/configuration/put") {
+      if (failConfiguration) throw new Error("interrupted");
+      const { universe: _, ...changes } = request.params; Object.assign(current, changes);
+    }
+    if (request.operation === "deployment/universes/expiry/put") current.expiresAtMs = request.params.expiresAtMs;
+    return Response.json({ universe: current });
   }));
-  // The first read finds no linked universe; `cached` makes the handle cache
-  // lookup that follows find another organization.
-  const reads: unknown[][] = cached ? [[], [{ id: "other-org" }]] : [];
-  const next = async () => reads.shift() ?? [];
-  const chain = { from: () => chain, innerJoin: () => chain, where: () => chain, limit: next, then: (resolve: (value: unknown[]) => unknown) => next().then(resolve) };
-  const db = {
-    select: () => chain,
-    insert: (table: unknown) => ({ values: (values: Record<string, unknown>) => {
-      writes.push({ table, values });
-      return { then: (resolve: () => unknown) => Promise.resolve().then(resolve), returning: async () => [values] };
-    } }),
-  };
-  const app = new Hono<{ Variables: ApiVariables }>();
-  app.use("*", async (c, next) => {
-    c.set("session", { user: { id: "operator", role } } as ApiVariables["session"]);
-    await next();
-  });
-  app.route("/", universeRoutes({
-    db: { ...db, transaction: async (work: (tx: typeof db) => unknown) => work(db) },
-    env: { lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_platform" },
-  } as unknown as AppContext));
-  const request = (body: object = {}, path = "/adopt") => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Display name", lightspeedUniverseId: id, ...body }) });
-  return { request, writes, calls };
-}
+}, 30000);
+afterEach(async () => { vi.unstubAllGlobals(); await fixture?.postgres.close(); });
+function runtimeView(id: string, handle: string) { return { universeId: id, handle, metadata: {}, protected: false, expiresAtMs: null, createdAtMs: 1, sessions: 0, profiles: 0, workspaces: 0, blobBytes: 0 }; }
 
-it("adopts under the existing runtime handle, preserving the UUID and resources", async () => {
-  const f = fixture();
-  const response = await f.request();
-  expect(response.status).toBe(201);
-  expect((await response.json() as { handle: string }).handle).toBe("runtime-handle");
-  expect(f.calls).toEqual([expect.objectContaining({ method: "deployment/universes/read", params: { universe: id } })]);
-  expect(f.writes.find(w => w.table === schema.organization)?.values.slug).toBe("runtime-handle");
-  expect(f.writes.find(w => w.table === schema.universes)?.values).toMatchObject({ lightspeedUniverseId: id });
-  expect(f.writes.find(w => w.table === schema.member)?.values).toMatchObject({ userId: "operator", role: "admin" });
+it("creates into an explicit account, reserves its quota and grants the current Creator initial ownership", async () => {
+  await fixture.asUser("creator");
+  const response = await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "New" });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ universe: { accountId: "account-a", role: "owner", createdBy: "creator", lightspeedUniverseId: newId } });
+  const [created] = await fixture.db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, newId));
+  expect(await fixture.db.select().from(schema.universeGrants).where(eq(schema.universeGrants.universeId, created!.id))).toMatchObject([{ userId: "creator", role: "owner" }]);
+  expect((await fixture.request("/accounts/account-a/universes", "POST", { name: "Over quota" })).status).toBe(409);
+});
+it("does not let an Owner who is only an account Member create another universe", async () => {
+  expect((await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "No" })).status).toBe(403);
+  expect(requests).toHaveLength(0);
+});
+it("uses atomic runtime lifecycle settings and keeps a durable reservation on interruption", async () => {
+  await fixture.asUser("creator");
+  await fixture.db.update(schema.organization).set({ defaultProtected: true }).where(eq(schema.organization.id, "account-a"));
+  failConfiguration = true;
+  expect((await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "Protected", metadata: { team: "research" } })).status).toBe(500);
+  expect(inventory.get(newId)?.protected).toBe(true);
+  expect(inventory.get(newId)?.metadata).toEqual({ team: "research" });
+  expect((await fixture.db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, newId)))[0]?.status).toBe("provisioning");
+  failConfiguration = false;
+  expect((await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "Protected" })).status).toBe(200);
+  expect(await fixture.db.select().from(schema.universes)).toHaveLength(2);
+  expect(inventory.get(newId)?.metadata).toEqual({ team: "research" });
+});
+it("revalidates mandatory protection when retrying a reserved creation", async () => {
+  await fixture.asUser("creator"); failConfiguration = true;
+  await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "Pending" });
+  await fixture.db.update(schema.organization).set({ requireProtected: true }).where(eq(schema.organization.id, "account-a"));
+  failConfiguration = false;
+  expect((await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "Pending" })).status).toBe(200);
+  expect(inventory.get(newId)?.protected).toBe(true);
+});
+it("requires an explicit account-member Owner for administrative adoption", async () => {
+  inventory.set(newId, runtimeView(newId, "orphan"));
+  await fixture.asUser("owner", true);
+  expect((await fixture.request("/accounts/account-a/universes/adopt", "POST", { lightspeedUniverseId: newId, name: "Adopted" })).status).toBe(400);
+  const response = await fixture.request("/accounts/account-a/universes/adopt", "POST", { lightspeedUniverseId: newId, name: "Adopted", initialOwner: { kind: "user", id: "creator" } });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ universe: { accountId: "account-a", handle: "orphan", lightspeedUniverseId: newId } });
+});
+it("prevents Owners from clearing protection through both native and runtime-shaped configuration", async () => {
+  expect((await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}`, "PATCH", { protected: false })).status).toBe(403);
+  expect((await fixture.request(`/api/v1/universes/${fixture.universe.lightspeedUniverseId}/configuration`, "PUT", { protected: false })).status).toBe(403);
+  expect(requests.some(request => request.operation === "deployment/universes/configuration/put")).toBe(false);
+});
+it("requires existing universes to be protected without expiry before making account protection mandatory", async () => {
+  await fixture.asUser("account-admin");
+  expect((await fixture.request("/accounts/account-a", "PATCH", { requireProtected: true })).status).toBe(409);
+  inventory.get(fixture.universe.lightspeedUniverseId)!.protected = true;
+  expect((await fixture.request("/accounts/account-a", "PATCH", { requireProtected: true })).status).toBe(200);
+  expect((await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}`, "PATCH", { protected: false })).status).toBe(403);
 });
 
-it("never renames during adoption: a handle in the request is refused", async () => {
-  const f = fixture();
-  expect((await f.request({ handle: "different" })).status).toBe(400);
-  expect(f.writes).toEqual([]);
-  expect(f.calls).toEqual([]);
+it("cancels an absent provisioning reservation even when its account requires protection", async () => {
+  await fixture.asUser("creator"); failConfiguration = true;
+  await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "Cancelled" });
+  inventory.delete(newId);
+  await fixture.db.update(schema.organization).set({ requireProtected: true }).where(eq(schema.organization.id, "account-a"));
+  const response = await fixture.request(`/api/v1/universes/${newId}`, "DELETE");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ universeId: newId, state: "deleted" });
+  expect(await fixture.db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, newId))).toHaveLength(0);
+  expect(await fixture.db.select().from(schema.organization).where(eq(schema.organization.id, "account-a"))).toHaveLength(1);
+  expect(requests.some(request => request.operation === "deployment/universes/delete")).toBe(false);
+});
+it("keeps real runtime protection intact when a provisioning reservation exists", async () => {
+  await fixture.asUser("creator"); failConfiguration = true;
+  await fixture.request("/accounts/account-a/universes", "POST", { universeId: newId, name: "Protected pending" });
+  await fixture.db.update(schema.organization).set({ requireProtected: true }).where(eq(schema.organization.id, "account-a"));
+  const response = await fixture.request(`/api/v1/universes/${newId}`, "DELETE");
+  expect(response.status).toBe(409);
+  expect(await fixture.db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, newId))).toHaveLength(1);
+  expect(requests.some(request => request.operation === "deployment/universes/delete")).toBe(false);
+});
+it("repairs a missing runtime with mandatory protection applied atomically", async () => {
+  await fixture.asUser("owner", true);
+  await fixture.db.update(schema.organization).set({ requireProtected: true }).where(eq(schema.organization.id, "account-a"));
+  inventory.delete(fixture.universe.lightspeedUniverseId);
+  const response = await fixture.request(`/api/ui/universes/${fixture.universe.id}/engine`, "POST");
+  expect(response.status).toBe(200);
+  expect(requests.find(request => request.operation === "deployment/universes/create")?.params).toMatchObject({ protected: true, expiresAtMs: null });
+  expect(inventory.get(fixture.universe.lightspeedUniverseId)?.protected).toBe(true);
 });
 
-it("refuses to adopt a universe whose handle another Platform universe already uses", async () => {
-  const f = fixture({ cached: true });
-  expect((await f.request()).status).toBe(409);
-  expect(f.writes).toEqual([]);
-  expect(f.calls.map(c => c.method)).toEqual(["deployment/universes/read"]);
-});
 
-it("carries creation input to runtime and caches only the runtime response", async () => {
-  const f = fixture({ returnedHandle: "authoritative" });
-  const response = await f.request({ handle: "requested" }, "/");
-  expect(response.status).toBe(201);
-  expect(f.calls[0]).toMatchObject({ method: "deployment/universes/create", params: { handle: "requested" } });
-  expect((await response.json() as { handle: string }).handle).toBe("authoritative");
-  expect(f.writes.find(w => w.table === schema.organization)?.values.slug).toBe("authoritative");
-});
-
-it("derives the handle from the display name when creation names none", async () => {
-  const f = fixture();
-  expect((await f.request({ name: "Display Name" }, "/")).status).toBe(201);
-  expect(f.calls[0]).toMatchObject({ method: "deployment/universes/create", params: { handle: "display-name" } });
-});
-
-it("rejects a creation collision without a suffix or Platform records", async () => {
-  const f = fixture({ conflict: true });
-  expect((await f.request({ handle: "taken" }, "/")).status).toBe(409);
-  expect(f.writes).toEqual([]);
-  expect(f.calls.at(-1)?.params.handle).toBe("taken");
-});
-
-it("refuses adoption without Platform administration or an existing runtime universe", async () => {
-  const forbidden = fixture({ role: "user" });
-  expect((await forbidden.request()).status).toBe(403);
-  expect(forbidden.calls).toEqual([]);
-  expect(forbidden.writes).toEqual([]);
-  const missing = fixture({ exists: false });
-  expect((await missing.request()).status).toBe(404);
-  expect(missing.writes).toEqual([]);
+it("archives and restores the Platform presentation without deleting runtime data or grants", async () => {
+  const id = fixture.universe.lightspeedUniverseId;
+  inventory.get(id)!.protected = true;
+  const grants = await fixture.db.select().from(schema.universeGrants);
+  for (const status of ["archived", "active"]) {
+    const response = await fixture.request(`/universes/${id}`, "PATCH", { status });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ universe: { status } });
+    expect(inventory.get(id)?.protected).toBe(true);
+    expect(await fixture.db.select().from(schema.universeGrants)).toEqual(grants);
+  }
+  expect(requests.some(request => request.operation === "deployment/universes/delete")).toBe(false);
+  await fixture.asUser("creator");
+  expect((await fixture.request(`/universes/${id}`, "PATCH", { status: "archived" })).status).toBe(404);
 });

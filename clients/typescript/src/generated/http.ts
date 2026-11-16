@@ -116,7 +116,9 @@ export const HTTP_OPERATIONS = {
       "resumable": false,
       "terminalEvent": "watch/end",
       "terminalSchema": {
-        "$ref": "#/schemas/UniverseWatchResponse"
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
       }
     },
     "group": null,
@@ -180,12 +182,6 @@ export const HTTP_OPERATIONS = {
       "kinds",
       "visibleTo"
     ],
-    "result": {
-      "schema": {
-        "$ref": "api.schema.json#/definitions/UniverseWatchResponse"
-      },
-      "type": "UniverseWatchResponse"
-    },
     "role": "viewer",
     "scope": "universe",
     "success": "ok",
@@ -435,7 +431,7 @@ export const HTTP_OPERATIONS = {
     "role": null,
     "scope": "connection",
     "success": "ok",
-    "summary": "Inspect the Lightspeed protocol",
+    "summary": "Inspect the runtime connection",
     "target": null,
     "transfer": "json",
     "operationId": "initialize",
@@ -1469,7 +1465,7 @@ export const HTTP_OPERATIONS = {
       },
       "type": "SessionRetentionPutResponse"
     },
-    "role": "admin",
+    "role": "owner",
     "scope": "universe",
     "success": "ok",
     "summary": "Replace session retention",
@@ -17634,7 +17630,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.",
+    "description": "Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.",
     "events": null,
     "group": "deployment/universes",
     "method": "POST",
@@ -17743,11 +17739,30 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.",
+    "description": "Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.",
     "events": null,
     "group": "deployment/universes",
     "method": "GET",
-    "parameters": [],
+    "parameters": [
+      {
+        "content": {
+          "application/json": {
+            "schema": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Return universes containing every supplied key/value pair.",
+              "type": "object"
+            }
+          }
+        },
+        "in": "query",
+        "name": "metadata",
+        "required": false,
+        "x-lightspeed-encoding": "json"
+      }
+    ],
     "params": {
       "schema": {
         "$ref": "api.schema.json#/definitions/DeploymentUniverseListParams"
@@ -17756,7 +17771,9 @@ export const HTTP_OPERATIONS = {
     },
     "path": "/api/v1/universes",
     "pathFields": [],
-    "queryFields": [],
+    "queryFields": [
+      "metadata"
+    ],
     "result": {
       "schema": {
         "$ref": "api.schema.json#/definitions/DeploymentUniverseListResponse"
@@ -17966,7 +17983,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.",
+    "description": "Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.",
     "events": null,
     "group": "deployment/universes",
     "method": "PUT",
@@ -18003,10 +18020,128 @@ export const HTTP_OPERATIONS = {
     "role": null,
     "scope": "deployment",
     "success": "ok",
-    "summary": "Declare universe presentation and access",
+    "summary": "Update universe configuration",
     "target": null,
     "transfer": "json",
     "operationId": "deployment/universes/configuration/put",
+    "responses": {
+      "200": {
+        "contentTypes": [
+          "application/json"
+        ]
+      },
+      "400": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "401": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "403": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "404": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "405": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "409": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "410": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "413": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "415": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "422": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "500": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "503": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      },
+      "504": {
+        "contentTypes": [
+          "application/problem+json"
+        ]
+      }
+    }
+  },
+  "deployment/universes/expiry/put": {
+    "access": {
+      "kind": "deployment"
+    },
+    "description": "Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.",
+    "events": null,
+    "group": "deployment/universes",
+    "method": "PUT",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "universe",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    ],
+    "params": {
+      "schema": {
+        "$ref": "api.schema.json#/definitions/DeploymentUniverseExpiryPutParams"
+      },
+      "type": "DeploymentUniverseExpiryPutParams"
+    },
+    "path": "/api/v1/universes/{universe}/expiry",
+    "pathFields": [
+      {
+        "field": "universe",
+        "parameter": "universe"
+      }
+    ],
+    "queryFields": [],
+    "result": {
+      "schema": {
+        "$ref": "api.schema.json#/definitions/DeploymentUniverseReadResponse"
+      },
+      "type": "DeploymentUniverseReadResponse"
+    },
+    "role": null,
+    "scope": "deployment",
+    "success": "ok",
+    "summary": "Set or clear universe expiry",
+    "target": null,
+    "transfer": "json",
+    "operationId": "deployment/universes/expiry/put",
     "responses": {
       "200": {
         "contentTypes": [
@@ -18203,7 +18338,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
+    "description": "Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
     "events": null,
     "group": "deployment/universes",
     "method": "DELETE",

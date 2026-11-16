@@ -79,7 +79,7 @@ export abstract class LightspeedHelpers {
   }
 
   /**
-   * Inspect the Lightspeed protocol
+   * Inspect the runtime connection
    *
    * Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.
    */

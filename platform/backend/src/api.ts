@@ -1,10 +1,14 @@
 import { runtimeHttpRoutes, problem } from "./runtime-http.js";
 import type { MiddlewareHandler } from "hono";
-import { declaredRole } from "./declared-universes.js";
+import { authenticateRequest, CredentialRateLimit } from "./authentication.js";
+import { platformRoutes } from "./routes/platform.js";
+import { credentialRoutes } from "./credential-routes.js";
+import { sessionRoutes } from "./session-routes.js";
+import { HTTPException } from "hono/http-exception";
 import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withGateway } from "./routes/gateway.js";
 import { Hono } from "hono";
-import { and, desc, eq, or } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { botRoutes } from "./routes/bots.js";
@@ -17,40 +21,49 @@ import { registerWebApp } from "./static.js";
 import { isPlatformAdmin } from "./context.js";
 import { readChannelsStatus } from "./channels-status.js";
 import { publicAuthConfig } from "./auth.js";
-import { sessionAllowed } from "./auth-access.js";
+
 
 export function buildApp(ctx: AppContext) {
   const app = new Hono();
-  app.onError((error, c) => withGateway(c, async () => { throw error; }));
+  app.onError((error, c) => {
+    if (error instanceof CredentialRateLimit) return error.response();
+    if (error instanceof HTTPException) return c.req.path.startsWith("/api/v1/") ? problem(c, error.status, error.status === 401 ? "unauthenticated" : "forbidden", error.message) : c.json({ error: error.message }, error.status);
+    return withGateway(c, async () => { throw error; });
+  });
 
   app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/device", c => c.redirect(`/app/device${new URL(c.req.url).search}`));
   app.get("/api/login-config", (c) => c.json(publicAuthConfig(ctx.env)));
 
-  // Organization membership changes only through the universe routes, which
-  // keep the last admin and the four roles; the plugin's endpoints are not
-  // served.
+  // Account membership, applications and credential association go through
+  // reviewed Platform services; raw plugin management endpoints are not served.
+  app.all("/api/auth/api-key/*", c => c.json({ error: "not found" }, 404));
   app.all("/api/auth/organization/*", (c) => c.json({ error: "not found" }, 404));
   // better-auth owns the rest of /api/auth (sign-in, admin user management,
   // bearer tokens).
   app.on(["GET", "POST"], "/api/auth/*", (c) => ctx.auth.handler(c.req.raw));
 
   const authenticated: MiddlewareHandler<{ Variables: ApiVariables }> = async (c, next) => {
-    const session = await ctx.auth.api.getSession({
-      headers: c.req.raw.headers,
-    });
-    if (!session || !sessionAllowed(session, ctx.env)) {
+    const admission = await authenticateRequest(ctx, c.req.raw);
+    const browserOnly = c.req.path.startsWith("/api/ui/");
+    if (!admission || (browserOnly && (!admission.session || admission.auth.credential.kind !== "session"))) {
       return c.req.path.startsWith("/api/v1/") ? problem(c, 401, "unauthenticated", "authentication required") : c.json({ error: "unauthorized" }, 401);
     }
-    if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
+    if (admission.auth.credential.kind === "session" && !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
       const origin = c.req.header("origin");
       const site = c.req.header("sec-fetch-site");
       if ((origin && ![ctx.env.baseUrl, ...ctx.env.trustedOrigins].includes(origin)) || site === "cross-site" || (!origin && c.req.header("cookie") && site !== "same-origin" && site !== "same-site")) return c.req.path.startsWith("/api/v1/") ? problem(c, 403, "forbidden", "untrusted origin") : c.json({ error: "untrusted origin" }, 403);
     }
-    c.set("session", session);
+    c.set("auth", admission.auth);
+    if (admission.session) c.set("session", admission.session);
     await next();
+    if (admission.renewedToken) c.header("set-auth-token", admission.renewedToken);
   };
   const shared = new Hono<{ Variables: ApiVariables }>();
   shared.use("*", authenticated);
+  shared.route("/platform", sessionRoutes(ctx));
+  shared.route("/platform", credentialRoutes(ctx));
+  shared.route("/platform", platformRoutes(ctx));
   shared.route("/", runtimeHttpRoutes(ctx));
   app.route("/api/v1", shared);
 
@@ -60,33 +73,6 @@ export function buildApp(ctx: AppContext) {
   api.get("/me", async (c) => {
     const session = c.get("session");
     return c.json({ user: session.user });
-  });
-
-  /// Platform user directory (id, name, email) for member pickers: platform
-  /// admins and the admins of some universe, who add members.
-  api.get("/users", async (c) => {
-    const session = c.get("session");
-    if (!isPlatformAdmin(session)) {
-      const [adminOf] = await ctx.db
-        .select({ id: schema.member.id })
-        .from(schema.member)
-        .where(and(eq(schema.member.userId, session.user.id), eq(schema.member.role, "admin")))
-        .limit(1);
-      if (!adminOf) {
-        const universes = await ctx.db.select().from(schema.universes);
-        const roles = await Promise.all(universes.map(u => declaredRole(ctx, session.user.id, u.runtimeConfiguration)));
-        if (!roles.includes("admin")) return c.json({ error: "universe admin required" }, 403);
-      }
-    }
-    const rows = await ctx.db
-      .select({
-        id: schema.user.id,
-        name: schema.user.name,
-        email: schema.user.email,
-      })
-      .from(schema.user)
-      .where(ctx.env.oidc ? or(eq(schema.user.identitySource, "company"), eq(schema.user.emergencyAdmin, true)) : undefined);
-    return c.json(rows);
   });
 
   api.get("/status/channels", async (c) => {

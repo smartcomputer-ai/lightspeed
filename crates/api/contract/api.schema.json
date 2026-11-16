@@ -6480,37 +6480,6 @@
       ],
       "type": "object"
     },
-    "DeclaredUniverseMember": {
-      "additionalProperties": false,
-      "properties": {
-        "email": {
-          "description": "Select by verified email, or by issuer and subject, never both.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "issuer": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "role": {
-          "$ref": "#/definitions/UniverseMemberRole"
-        },
-        "subject": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "role"
-      ],
-      "type": "object"
-    },
     "DeletedSessionView": {
       "properties": {
         "deletedAtMs": {
@@ -6559,6 +6528,13 @@
         },
         "handle": {
           "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
         },
         "requestedBy": {
           "$ref": "#/definitions/Attribution"
@@ -7007,32 +6983,28 @@
       "type": "object"
     },
     "DeploymentUniverseConfigurationPutParams": {
-      "description": "Patch desired Platform configuration. Absent fields retain their values.",
+      "description": "Patch universe settings. Absent fields retain their values.",
       "properties": {
-        "directoryGroupMappings": {
-          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-          "items": {
-            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
         "displayName": {
-          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
           "type": [
             "string",
             "null"
           ]
         },
-        "members": {
-          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-          "items": {
-            "$ref": "#/definitions/DeclaredUniverseMember"
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
           },
+          "description": "Replaces the complete metadata map; omission leaves it unchanged.",
           "type": [
-            "array",
+            "object",
+            "null"
+          ]
+        },
+        "protected": {
+          "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+          "type": [
+            "boolean",
             "null"
           ]
         },
@@ -7047,12 +7019,33 @@
     },
     "DeploymentUniverseCreateParams": {
       "properties": {
+        "expiresAtMs": {
+          "description": "Future Unix time in milliseconds. Incompatible with protection.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "handle": {
           "description": "The new universe's handle: 1-63 lowercase letters, digits and\nhyphens, starting and ending with a letter or digit, and not in the\nform of a UUID. Omit it to have one derived from the UUID. Ignored\nwhen the universe already exists.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "At most 32 string entries; keys up to 64 bytes, values up to 256 bytes.\nCaller keys cannot start with lightspeed.",
+          "type": "object"
+        },
+        "protected": {
+          "default": false,
+          "type": "boolean"
         },
         "universeId": {
           "type": "string"
@@ -7106,6 +7099,29 @@
       ],
       "type": "object"
     },
+    "DeploymentUniverseExpiryPutParams": {
+      "additionalProperties": false,
+      "description": "Replace or clear expiry. Explicit null clears it; omission is refused.",
+      "properties": {
+        "expiresAtMs": {
+          "format": "uint64",
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "universe": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universe",
+        "expiresAtMs"
+      ],
+      "type": "object"
+    },
     "DeploymentUniverseHandlePutParams": {
       "description": "Rename a universe. The UUID and resources remain unchanged; the previous\nhandle is released, so requests and URLs using it stop reaching this\nuniverse.",
       "properties": {
@@ -7125,6 +7141,16 @@
       "type": "object"
     },
     "DeploymentUniverseListParams": {
+      "properties": {
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Return universes containing every supplied key/value pair.",
+          "type": "object"
+        }
+      },
       "type": "object"
     },
     "DeploymentUniverseListResponse": {
@@ -7185,20 +7211,17 @@
             }
           ]
         },
-        "directoryGroupMappings": {
-          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-          "items": {
-            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
-          },
+        "displayName": {
           "type": [
-            "array",
+            "string",
             "null"
           ]
         },
-        "displayName": {
-          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+        "expiresAtMs": {
+          "format": "uint64",
+          "minimum": 0,
           "type": [
-            "string",
+            "integer",
             "null"
           ]
         },
@@ -7215,13 +7238,13 @@
             "null"
           ]
         },
-        "members": {
-          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-          "items": {
-            "$ref": "#/definitions/DeclaredUniverseMember"
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
           },
+          "description": "Replaces the complete metadata map; omission leaves it unchanged.",
           "type": [
-            "array",
+            "object",
             "null"
           ]
         },
@@ -7229,6 +7252,13 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "protected": {
+          "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "sessions": {
           "format": "uint64",
@@ -11657,7 +11687,7 @@
         "viewer",
         "contributor",
         "operator",
-        "admin"
+        "owner"
       ],
       "type": "string"
     },
@@ -16909,35 +16939,6 @@
         "workflows",
         "environments",
         "storage"
-      ],
-      "type": "string"
-    },
-    "UniverseDirectoryGroupMapping": {
-      "additionalProperties": false,
-      "properties": {
-        "group": {
-          "type": "string"
-        },
-        "issuer": {
-          "type": "string"
-        },
-        "role": {
-          "$ref": "#/definitions/UniverseMemberRole"
-        }
-      },
-      "required": [
-        "issuer",
-        "group",
-        "role"
-      ],
-      "type": "object"
-    },
-    "UniverseMemberRole": {
-      "enum": [
-        "viewer",
-        "contributor",
-        "operator",
-        "admin"
       ],
       "type": "string"
     },

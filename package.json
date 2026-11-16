@@ -5,7 +5,6 @@
   "workspaces": [
     "clients/typescript",
     "docs/site",
-    "platform/cli",
     "platform/configurator-mcp",
     "platform/connectors",
     "platform/db",
@@ -28,7 +27,7 @@
     "check:dev": "bash -n dev.sh scripts/dev/env.sh scripts/dev/lib/common.sh scripts/dev/infra/*.sh && node --check scripts/dev/stack.mjs && node --test scripts/dev/*.test.mjs && ./dev.sh --help >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan infra >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan runtime >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan platform >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan demo >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan full >/dev/null",
     "check:package-age": "node scripts/ci/check-package-age.mjs",
     "check:identity": "node platform/scripts/check-product-identity.mjs",
-    "check:generated": "npm run check:generated --workspace @lightspeed-ai/sdk && npm run check:generated --workspace @lightspeed-ai/configurator-mcp && node platform/scripts/generate-config-reference.mjs && node platform/scripts/generate-method-roles.mjs && git diff --exit-code -- platform/web/src/lib/profile-config-reference.ts platform/backend/src/routes/method-roles.ts",
+    "check:generated": "npm run generate:platform-contract && npm run check:generated --workspace @lightspeed-ai/sdk && npm run check:generated --workspace @lightspeed-ai/configurator-mcp && node platform/scripts/generate-config-reference.mjs && node platform/scripts/generate-method-roles.mjs && git diff --exit-code -- platform/web/src/lib/profile-config-reference.ts platform/backend/src/routes/method-roles.ts && git diff --exit-code -- platform/shared/contract",
     "dev": "./dev.sh",
     "generate": "npm run generate --workspace @lightspeed-ai/platform-db",
     "test": "npm run test --workspaces --if-present",
@@ -40,7 +39,8 @@
     "build:demo": "npm run build:demo --workspace @lightspeed-ai/platform-web",
     "demo": "npm run dev:demo --workspace @lightspeed-ai/platform-web",
     "screenshots:demo": "npm run screenshots:demo --workspace @lightspeed-ai/platform-web --",
-    "screendiff:demo": "npm run screendiff:demo --workspace @lightspeed-ai/platform-web --"
+    "screendiff:demo": "npm run screendiff:demo --workspace @lightspeed-ai/platform-web --",
+    "generate:platform-contract": "tsx platform/scripts/export-platform-contract.ts"
   },
   "devDependencies": {
     "@redocly/cli": "2.76.0",
@@ -56,7 +56,8 @@
     "semver@^7": "7.8.5",
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
-    }
+    },
+    "@better-auth/core": "1.7.7"
   },
   "allowScripts": {
     "esbuild@0.25.12": true,

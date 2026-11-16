@@ -48,18 +48,18 @@ const universes = (role: string | null) => mocks.api.mockReset().mockResolvedVal
 
 it("gives each role what the one below has, plus its own", () => {
   const offered = (action: PermissionAction) => UNIVERSE_ROLES.filter((role) => allowsAction(role, action));
-  expect(offered("read")).toEqual(["viewer", "contributor", "operator", "admin"]);
-  expect(offered("controlSession")).toEqual(["contributor", "operator", "admin"]);
-  expect(offered("configureSession")).toEqual(["operator", "admin"]);
-  expect(offered("deleteSession")).toEqual(["operator", "admin"]);
-  expect(offered("setSessionRetention")).toEqual(["admin"]);
-  expect(offered("closeSession")).toEqual(["contributor", "operator", "admin"]);
-  expect(offered("shareSession")).toEqual(["contributor", "operator", "admin"]);
-  expect(offered("configureResource")).toEqual(["operator", "admin"]);
-  expect(offered("createWorkspace")).toEqual(["operator", "admin"]);
-  expect(offered("useResource")).toEqual(["contributor", "operator", "admin"]);
-  expect(offered("createProfile")).toEqual(["operator", "admin"]);
-  expect(offered("manageAccess")).toEqual(["admin"]);
+  expect(offered("read")).toEqual(["viewer", "contributor", "operator", "owner"]);
+  expect(offered("controlSession")).toEqual(["contributor", "operator", "owner"]);
+  expect(offered("configureSession")).toEqual(["operator", "owner"]);
+  expect(offered("deleteSession")).toEqual(["operator", "owner"]);
+  expect(offered("setSessionRetention")).toEqual(["owner"]);
+  expect(offered("closeSession")).toEqual(["contributor", "operator", "owner"]);
+  expect(offered("shareSession")).toEqual(["contributor", "operator", "owner"]);
+  expect(offered("configureResource")).toEqual(["operator", "owner"]);
+  expect(offered("createWorkspace")).toEqual(["operator", "owner"]);
+  expect(offered("useResource")).toEqual(["contributor", "operator", "owner"]);
+  expect(offered("createProfile")).toEqual(["operator", "owner"]);
+  expect(offered("manageAccess")).toEqual(["owner"]);
   expect(allowsAction(null, "read")).toBe(false);
 });
 
@@ -74,7 +74,7 @@ it("reads the member's role in the universe on screen", async () => {
 it("treats a platform admin as an admin of every universe", async () => {
   universes(null);
   await show(true);
-  expect(current.role).toBe("admin");
+  expect(current.role).toBe("owner");
   expect(current.can("manageAccess")).toBe(true);
 });
 
@@ -83,7 +83,7 @@ it("offers nothing for another universe or before the universe loads", async () 
   await show();
   expect(current.isLoading).toBe(true);
   expect(current.can("read")).toBe(false);
-  universes("admin");
+  universes("owner");
   client.clear();
   await show(false, "elsewhere");
   expect(current.role).toBeNull();

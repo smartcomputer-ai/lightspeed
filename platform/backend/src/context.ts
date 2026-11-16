@@ -1,5 +1,6 @@
 import type { Db, DbHandle } from "@lightspeed-ai/platform-db";
 import type { Auth, Session } from "./auth.js";
+import type { AuthContext } from "./auth-context.js";
 import type { ServerEnv } from "./env.js";
 
 export interface AppContext {
@@ -11,6 +12,8 @@ export interface AppContext {
 
 /// Hono context variables set by the session middleware.
 export type ApiVariables = {
+  auth: AuthContext;
+  /** Set only by browser session admission; API-key requests never synthesize it. */
   session: Session;
 };
 

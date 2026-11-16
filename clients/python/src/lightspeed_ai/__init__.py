@@ -5,7 +5,8 @@
 `lightspeed_ai.workflow` has helpers for Temporal workflow code.
 """
 
-from . import types
+from . import types, platform_types
+from ._platform import PLATFORM_OPERATIONS
 from ._generated import CLIENT_HELPERS, OPERATION_INFO, OPERATIONS, NOTIFICATIONS
 from .client import TERMINAL_STATUSES, AsyncLightspeedClient, AwaitRunResult, generate_submission_id
 from .errors import LightspeedApiError, LightspeedTransportError
@@ -25,4 +26,6 @@ __all__ = [
     "generate_submission_id",
     "run_timeline",
     "types",
+    "platform_types",
+    "PLATFORM_OPERATIONS",
 ]

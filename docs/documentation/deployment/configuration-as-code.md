@@ -299,10 +299,24 @@ renames a universe. Both stay explicit commands:
 `handle` before the next `apply`, or it creates a new universe under the old
 handle.
 
-A document does not carry the name people see. That name belongs to the
-Platform organization. A universe created by `apply` has no Platform
-organization until an administrator adopts it in the web app, and names it
-there; see [Managing universes](multi-tenancy.md).
+A universe document can carry `displayName`, bounded `metadata`, and
+`protected`. Metadata allows 32 entries, keys up to 64 bytes and values up to
+256 bytes; keys starting with `lightspeed.` are reserved. A supplied map
+replaces the existing map.
+
+New universes created by `apply` are protected when `protected` is omitted.
+For an existing universe, omission preserves the current protection. An
+explicit `false` requests clearing protection. Through Platform, only the
+containing Account Admin or a Platform Admin can do this, and mandatory
+account protection must first be removed. Runtime tokens remain full-authority
+infrastructure credentials; the runtime still refuses deletion until
+protection has been explicitly cleared.
+
+Account members, directory-group mappings, and universe access policies are
+Platform-native configuration, not runtime universe configuration. A universe
+created directly with a runtime token has no Platform account association
+until an administrator adopts it into an account with an initial Owner.
+See [Managing universes](multi-tenancy.md).
 
 ## Export a universe
 

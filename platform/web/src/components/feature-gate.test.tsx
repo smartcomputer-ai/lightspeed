@@ -21,7 +21,7 @@ vi.mock("@/lib/permissions", async (original) => ({
 }));
 vi.mock("@/lib/universes", async (original) => {
   const universe = () => ({
-    id: "universe", handle: "test", name: "Test", status: "active", lightspeedUniverseId: "engine", role: "admin", features: mocks.features,
+    id: "universe", handle: "test", name: "Test", status: "active", lightspeedUniverseId: "engine", role: "owner", features: mocks.features,
   });
   return {
     ...await original<typeof import("@/lib/universes")>(),
@@ -79,7 +79,7 @@ it("tells a member an admin can turn it on", async () => {
   mocks.features = { bots: true, channels: false };
   await render(<FeatureGate feature="channels"><p>Accounts</p></FeatureGate>);
   expect(container.textContent).toContain("Channels are turned off in this universe");
-  expect(container.textContent).toContain("A universe admin can turn them on.");
+  expect(container.textContent).toContain("A universe Owner can turn them on.");
   expect(container.querySelector("a")).toBeNull();
 });
 

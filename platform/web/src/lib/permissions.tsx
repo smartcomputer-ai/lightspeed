@@ -13,7 +13,7 @@ export function PermissionIdentityProvider({ userId, platformAdmin, children }: 
   return <IdentityContext.Provider value={{ userId, platformAdmin }}>{children}</IdentityContext.Provider>;
 }
 
-/** What the UI offers; `manageAccess` is managing members and keys. */
+/** What the UI offers; `manageAccess` is managing universe grants and lifecycle. */
 export type PermissionAction = UniverseAction | "manageAccess";
 
 /** The least role each action needs, as the core manifest recommends it. */
@@ -25,7 +25,7 @@ const ACTION_ROLES: Record<PermissionAction, UniverseRole> = {
   stopSession: "contributor",
   closeSession: "contributor",
   deleteSession: "operator",
-  setSessionRetention: "admin",
+  setSessionRetention: "owner",
   shareSession: "contributor",
   invokeBot: "contributor",
   useResource: "contributor",
@@ -35,7 +35,7 @@ const ACTION_ROLES: Record<PermissionAction, UniverseRole> = {
   createBot: "operator",
   manageBot: "operator",
   configureResource: "operator",
-  manageAccess: "admin",
+  manageAccess: "owner",
 };
 
 /** Whether `role` may take `action`. */
@@ -43,7 +43,7 @@ export function allowsAction(role: UniverseRole | null | undefined, action: Perm
   return !!role && roleAtLeast(role, ACTION_ROLES[action]);
 }
 
-/** The signed-in user's role in a universe: their membership, or admin for a platform admin. */
+/** The signed-in user's role in a universe: their membership, or Owner for a platform admin. */
 export function useUniverseRole(universeId: string | undefined): UniverseRole | null {
   return useRole(universeId).role;
 }
@@ -54,7 +54,7 @@ function useRole(universeId: string | undefined): { role: UniverseRole | null; i
   const active = useActiveUniverse();
   const universe = active.universe?.id === universeId ? active.universe : undefined;
   if (!identity || !universe) return { role: null, isLoading: active.isLoading };
-  if (identity.platformAdmin) return { role: "admin", isLoading: false };
+  if (identity.platformAdmin) return { role: "owner", isLoading: false };
   return { role: universeRoleSchema.safeParse(universe.role).data ?? null, isLoading: false };
 }
 

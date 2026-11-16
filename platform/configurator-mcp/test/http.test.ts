@@ -56,6 +56,19 @@ describe("Streamable HTTP configurator", () => {
     await client.close();
   });
 
+  it("uses a single scoped Platform universe discovered by a bearer without a universe header", async () => {
+    const upstream: UpstreamRequest[] = [];
+    const server = await start("authenticated", fakeUpstream(upstream));
+    const client = new Client({ name: "scoped-configurator", version: "1" }, { versionNegotiation: { mode: "auto" } });
+    const transport = new StreamableHTTPClientTransport(new URL(`${server.url}/mcp`), {
+      requestInit: { headers: { authorization: "Bearer lsa_scoped" } },
+    });
+    await client.connect(transport as Parameters<typeof client.connect>[0]);
+    await client.callTool({ name: "lightspeed_models_list", arguments: {} });
+    expect(upstream.find(request => request.method === "models/list")?.universe).toBe(universeA);
+    await client.close();
+  });
+
   it("offers generated tools after authenticating the runtime token", async () => {
     const upstream: UpstreamRequest[] = [];
     const server = await start("authenticated", fakeUpstream(upstream));

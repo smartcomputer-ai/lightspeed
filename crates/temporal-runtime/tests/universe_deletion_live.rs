@@ -59,6 +59,9 @@ async fn create(
             api::DeploymentUniverseCreateParams {
                 universe_id: id.to_string(),
                 handle,
+                metadata: Default::default(),
+                protected: false,
+                expires_at_ms: None,
             },
         ),
     )
@@ -461,7 +464,10 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
             GatewayDeploymentApi::new(runtime.clone()).create_universe(
                 api::DeploymentUniverseCreateParams {
                     universe_id: id.to_string(),
-                    handle: None
+                    handle: None,
+                    metadata: Default::default(),
+                    protected: false,
+                    expires_at_ms: None,
                 }
             )
         )
@@ -547,7 +553,10 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
             GatewayDeploymentApi::new(runtime.clone()).create_universe(
                 api::DeploymentUniverseCreateParams {
                     universe_id: id.to_string(),
-                    handle: None
+                    handle: None,
+                    metadata: Default::default(),
+                    protected: false,
+                    expires_at_ms: None,
                 }
             )
         )

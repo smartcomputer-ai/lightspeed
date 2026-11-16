@@ -255,10 +255,8 @@ schemaVersion: 1
 kind: universe
 handle: research
 displayName: Research
-members:
-  - { issuer: https://identity.example.com, subject: owner, role: admin }
-directoryGroupMappings:
-  - { issuer: https://identity.example.com, group: readers, role: viewer }
+metadata: { purpose: research }
+protected: true
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker

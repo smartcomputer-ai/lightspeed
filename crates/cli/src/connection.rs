@@ -1,4 +1,4 @@
-//! Local runtime connections. Server authority is always discovered, never inferred from a key.
+//! Local deployment connections. Server authority is always discovered, never inferred from a key.
 use crate::api_client::HttpAgentApi;
 use anyhow::{Context, Result, bail};
 use api::CallerAccess;
@@ -14,11 +14,63 @@ use uuid::Uuid;
 
 pub static ACTIVE: OnceLock<ResolvedConnection> = OnceLock::new();
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialKind {
+    #[default]
+    None,
+    RuntimeToken,
+    PlatformApiKey,
+    PlatformSession,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServerKind {
+    Runtime,
+    Platform,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformPrincipal {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Discovery {
+    runtime: api::RuntimeKind,
+    contract_revision: String,
+    caller: CallerAccess,
+    default_universe: Option<String>,
+    platform: Option<PlatformDiscovery>,
+}
+#[derive(Deserialize)]
+struct PlatformDiscovery {
+    principal: PlatformPrincipal,
+    credential: PlatformCredential,
+}
+#[derive(Deserialize)]
+struct PlatformCredential {
+    kind: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedConnection {
     pub endpoint: String,
     pub single: bool,
+    #[serde(default)]
+    pub credential_kind: CredentialKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_kind: Option<ServerKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub allow_insecure_http: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_file: Option<PathBuf>,
     #[serde(default)]
@@ -34,11 +86,18 @@ pub struct Connections {
 }
 
 // Deliberately no Debug: holds plaintext only for the life of the client.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ResolvedConnection {
     pub name: Option<String>,
     pub endpoint: String,
     pub secret: Option<String>,
+    pub credential_kind: CredentialKind,
+    pub credential_file: Option<PathBuf>,
+    pub owned_credential: bool,
+    pub server_kind: Option<ServerKind>,
+    pub principal: Option<PlatformPrincipal>,
+    pub account_id: Option<String>,
+    pub allow_insecure_http: bool,
     /// The universe a runtime request addresses, as its UUID or its handle.
     /// A saved selection is always the UUID; a handle here was named for
     /// this invocation and is sent as given, for the runtime to resolve.
@@ -47,6 +106,72 @@ pub struct ResolvedConnection {
 }
 
 impl ResolvedConnection {
+    pub fn is_platform(&self) -> bool {
+        self.server_kind == Some(ServerKind::Platform)
+    }
+    pub fn selected_account(&self) -> Option<&str> {
+        self.account_id.as_deref()
+    }
+
+    /// Authentication is shared by runtime resources and native Platform operations.
+    pub fn auth_headers(&self) -> Result<reqwest::header::HeaderMap> {
+        use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        let secret = if self.credential_kind == CredentialKind::PlatformSession {
+            self.credential_file
+                .as_deref()
+                .map(read_secret)
+                .transpose()?
+                .or_else(|| self.secret.clone())
+        } else {
+            self.secret.clone()
+        };
+        if let Some(secret) = secret {
+            let mut value = HeaderValue::from_str(&format!("Bearer {secret}"))
+                .map_err(|_| anyhow::anyhow!("invalid credential header"))?;
+            value.set_sensitive(true);
+            headers.insert(AUTHORIZATION, value);
+        }
+        Ok(headers)
+    }
+
+    pub fn accept_session_rotation(&self, headers: &reqwest::header::HeaderMap) -> Result<()> {
+        if self.credential_kind != CredentialKind::PlatformSession
+            || !self.owned_credential
+            || !headers.contains_key("set-auth-token")
+        {
+            return Ok(());
+        }
+        self.accept_session_rotation_at(headers, &config_dir()?)
+    }
+
+    fn accept_session_rotation_at(
+        &self,
+        headers: &reqwest::header::HeaderMap,
+        dir: &Path,
+    ) -> Result<()> {
+        if self.credential_kind != CredentialKind::PlatformSession || !self.owned_credential {
+            return Ok(());
+        }
+        let Some(value) = headers.get("set-auth-token") else {
+            return Ok(());
+        };
+        let secret = value
+            .to_str()
+            .map_err(|_| anyhow::anyhow!("invalid renewed session credential"))?;
+        if secret.is_empty() || secret.chars().any(char::is_whitespace) || secret.len() > 4096 {
+            bail!("invalid renewed session credential");
+        }
+        let path = self
+            .credential_file
+            .as_deref()
+            .context("CLI session has no owned credential file")?;
+        if path.parent() != Some(dir.join("credentials").as_path()) {
+            bail!("refusing to replace a credential outside the CLI credential directory");
+        }
+        private_write(path, secret.as_bytes())
+    }
+
     /// The universe requests actually address, as a UUID or a handle,
     /// including server-bound keys and single mode even when no local
     /// selection was saved.
@@ -54,15 +179,23 @@ impl ResolvedConnection {
         self.universe.clone()
     }
 
-    pub fn headers(&self, method: &str) -> Result<reqwest::header::HeaderMap> {
-        use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-        let mut headers = HeaderMap::new();
-        if let Some(secret) = &self.secret {
-            let mut value = HeaderValue::from_str(&format!("Bearer {secret}"))
-                .context("invalid runtime token header")?;
-            value.set_sensitive(true);
-            headers.insert(AUTHORIZATION, value);
+    pub(crate) fn redact_error(&self, mut detail: String) -> String {
+        if let Some(secret) = &self.secret
+            && !secret.is_empty()
+        {
+            detail = detail.replace(secret, "[credential redacted]");
         }
+        if self.credential_kind == CredentialKind::PlatformSession
+            && let Some(path) = &self.credential_file
+            && let Ok(secret) = read_secret(path)
+        {
+            detail = detail.replace(&secret, "[credential redacted]");
+        }
+        detail
+    }
+
+    pub fn headers(&self, method: &str) -> Result<reqwest::header::HeaderMap> {
+        let headers = self.auth_headers()?;
         let scope = api::method_access(method)
             .context("unknown runtime method")?
             .scope();
@@ -219,7 +352,7 @@ pub fn read_secret(path: &Path) -> Result<String> {
 fn nonempty_secret(secret: String) -> Result<String> {
     let secret = secret.trim();
     if secret.is_empty() {
-        bail!("runtime token is empty");
+        bail!("credential is empty");
     }
     Ok(secret.to_owned())
 }
@@ -231,15 +364,19 @@ pub fn load_at(dir: &Path) -> Result<Connections> {
         Err(error) => Err(error.into()),
     }
 }
-fn save_at(dir: &Path, config: &Connections) -> Result<()> {
+pub(crate) fn save_at(dir: &Path, config: &Connections) -> Result<()> {
     private_write(
         &dir.join("connections.json"),
         &serde_json::to_vec_pretty(config)?,
     )
 }
 
-fn endpoint(url: &str) -> Result<String> {
-    let parsed = reqwest::Url::parse(url).context("invalid runtime URL")?;
+pub fn endpoint(url: &str) -> Result<String> {
+    endpoint_with_policy(url, false)
+}
+
+pub fn endpoint_with_policy(url: &str, allow_insecure_http: bool) -> Result<String> {
+    let mut parsed = reqwest::Url::parse(url).context("invalid deployment URL")?;
     let local = parsed.host_str().is_some_and(|h| {
         h == "localhost"
             || h == "[::1]"
@@ -247,23 +384,36 @@ fn endpoint(url: &str) -> Result<String> {
             || h.parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
     });
-    if !(parsed.scheme() == "https" || (parsed.scheme() == "http" && local)) {
-        bail!("runtime URL requires HTTPS, except on loopback");
+    if !(parsed.scheme() == "https"
+        || (parsed.scheme() == "http" && (local || allow_insecure_http)))
+    {
+        bail!(
+            "deployment URL requires HTTPS except on loopback; use --allow-insecure-http only for a trusted development network"
+        );
     }
     if !parsed.username().is_empty()
         || parsed.password().is_some()
         || parsed.query().is_some()
         || parsed.fragment().is_some()
     {
-        bail!("runtime URL must not contain credentials, query parameters or a fragment");
+        bail!("deployment URL must not contain credentials, query parameters or a fragment");
     }
-    if !parsed.path().trim_end_matches('/').ends_with("/api/v1") {
-        bail!("runtime URL must end in /api/v1");
+    let path = parsed.path().trim_end_matches('/');
+    if !path.ends_with("/api/v1") {
+        parsed.set_path(&format!("{path}/api/v1"));
     }
     Ok(parsed.to_string().trim_end_matches('/').to_owned())
 }
 
-fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnection> {
+/// Auth endpoints live next to the shared API, including deployments under a base path.
+pub fn auth_url(endpoint: &str, suffix: &str) -> Result<reqwest::Url> {
+    let base = endpoint
+        .strip_suffix("/api/v1")
+        .context("invalid deployment API base")?;
+    reqwest::Url::parse(&format!("{base}/api/auth/{suffix}")).context("invalid deployment auth URL")
+}
+
+pub(crate) fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnection> {
     if saved.single && saved.credential_file.is_some() {
         bail!("single-mode connection must not contain a runtime token");
     }
@@ -272,7 +422,18 @@ fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnect
     }
     Ok(ResolvedConnection {
         name: Some(name.to_owned()),
-        endpoint: endpoint(&saved.endpoint)?,
+        endpoint: endpoint_with_policy(&saved.endpoint, saved.allow_insecure_http)?,
+        credential_kind: if saved.credential_kind == CredentialKind::None && !saved.single {
+            CredentialKind::RuntimeToken
+        } else {
+            saved.credential_kind
+        },
+        credential_file: saved.credential_file.clone(),
+        owned_credential: saved.owned_credential,
+        account_id: saved.account_id.clone(),
+        server_kind: saved.server_kind,
+        principal: None,
+        allow_insecure_http: saved.allow_insecure_http,
         secret: saved
             .credential_file
             .as_deref()
@@ -285,16 +446,64 @@ fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnect
 
 pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnection> {
     let client = HttpAgentApi::with_connection(connection.clone());
-    let response: api::ConnectionResponse = client
+    let response: Discovery = client
         .request_connection(api::METHOD_INITIALIZE, serde_json::json!({}))
         .await?;
     if response.contract_revision != api::HTTP_CONTRACT_REVISION {
-        bail!("runtime HTTP contract revision is incompatible with this CLI");
+        bail!("deployment HTTP contract revision is incompatible with this CLI");
     }
+    connection.server_kind = Some(match response.runtime {
+        api::RuntimeKind::Runtime => {
+            if connection.credential_kind == CredentialKind::PlatformSession {
+                bail!("a Platform session cannot authenticate to a direct runtime");
+            }
+            connection.credential_kind = if connection.secret.is_some() {
+                CredentialKind::RuntimeToken
+            } else {
+                CredentialKind::None
+            };
+            if connection.account_id.is_some() {
+                bail!("a direct runtime connection cannot select a Platform account");
+            }
+            ServerKind::Runtime
+        }
+        api::RuntimeKind::Platform => {
+            if connection.secret.is_none() {
+                bail!(
+                    "Platform authentication is required; use `lightspeed connect login` or add an API-key connection"
+                );
+            }
+            let platform = response
+                .platform
+                .context("Platform discovery omitted its principal")?;
+            match (
+                connection.credential_kind,
+                platform.credential.kind.as_str(),
+            ) {
+                (CredentialKind::PlatformSession, "cliSession") => {}
+                (CredentialKind::PlatformSession, _) => {
+                    bail!("the approved credential is not a CLI login session")
+                }
+                (_, "personalKey" | "applicationKey") => {
+                    connection.credential_kind = CredentialKind::PlatformApiKey
+                }
+                (_, "cliSession" | "session") => bail!(
+                    "use `lightspeed connect login` for managed CLI sessions; connect add accepts a Platform API key"
+                ),
+                _ => bail!("unsupported Platform credential kind"),
+            }
+            connection.principal = Some(platform.principal);
+            ServerKind::Platform
+        }
+    });
     if response.caller.single != connection.secret.is_none() {
-        bail!("runtime authentication does not match the configured connection");
+        bail!("deployment authentication does not match the configured connection");
     }
-    if connection.universe.is_none() {
+    // A deployment-wide suggestion cannot undo an explicit account selection:
+    // discovery does not identify the suggested universe's containing account.
+    if connection.universe.is_none()
+        && (!connection.is_platform() || connection.account_id.is_none())
+    {
         connection.universe = response.default_universe;
     }
     connection.caller = Some(response.caller);
@@ -321,7 +530,7 @@ pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -
     .await
     .with_context(|| {
         format!(
-            "cannot resolve universe {selected} to save it; use its UUID, or pass --universe {selected} on each command if the runtime is unavailable"
+            "cannot resolve universe {selected} to save it; use its UUID, or pass --universe {selected} on each command if the deployment is unavailable"
         )
     })?;
     Ok(response.universe.universe_id)
@@ -356,7 +565,7 @@ pub async fn resolve(
         None
     };
     let target = url.or(env_url.as_deref()).filter(|s| !s.is_empty());
-    let explicit_secret = if name.is_none() || url.is_some() {
+    let explicit_secret = if name.is_none() {
         std::env::var("LIGHTSPEED_API_TOKEN")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -366,27 +575,31 @@ pub async fn resolve(
         None
     };
     let mut connection = if let Some(saved) = saved {
-        let saved_endpoint = endpoint(&saved.endpoint)?;
+        let saved_endpoint = endpoint_with_policy(&saved.endpoint, saved.allow_insecure_http)?;
         let effective_endpoint = target
-            .map(endpoint)
+            .map(|url| endpoint_with_policy(url, saved.allow_insecure_http))
             .transpose()?
             .unwrap_or(saved_endpoint.clone());
         if effective_endpoint != saved_endpoint {
             // Never read or forward a saved credential to an overridden endpoint.
             ResolvedConnection {
                 name: None,
-                endpoint: effective_endpoint,
+                endpoint: endpoint(&effective_endpoint)?,
                 secret: None,
                 universe: None,
                 caller: None,
+                ..Default::default()
             }
         } else if explicit_secret.is_some() {
             ResolvedConnection {
                 name: selected.map(str::to_owned),
                 endpoint: saved_endpoint,
+                account_id: saved.account_id.clone(),
+                allow_insecure_http: saved.allow_insecure_http,
                 secret: None,
                 universe: saved.universe.clone(),
                 caller: None,
+                ..Default::default()
             }
         } else {
             saved_resolved(selected.unwrap(), saved)?
@@ -395,15 +608,17 @@ pub async fn resolve(
         ResolvedConnection {
             name: None,
             endpoint: endpoint(target.context(
-                "no runtime connection; use `lightspeed connect dev` or `lightspeed connect add`",
+                "no deployment connection; use `lightspeed connect dev` or `lightspeed connect add`",
             )?)?,
             secret: None,
             universe: None,
             caller: None,
+            ..Default::default()
         }
     };
     if let Some(secret) = explicit_secret {
         connection.secret = Some(secret);
+        connection.credential_kind = CredentialKind::RuntimeToken;
     }
     let env_universe = if name.is_none() {
         std::env::var("LIGHTSPEED_UNIVERSE").ok()
@@ -428,6 +643,10 @@ pub struct ConnectArgs {
 }
 #[derive(Debug, Subcommand)]
 enum ConnectCommand {
+    /// Sign in to a Platform deployment through your browser.
+    Login(crate::device_login::LoginArgs),
+    /// Revoke this CLI session and remove its local credential.
+    Logout(crate::device_login::LogoutArgs),
     /// Verify and save a connection without selecting it.
     Add {
         name: String,
@@ -441,6 +660,9 @@ enum ConnectCommand {
         token_env: Option<String>,
         #[arg(long)]
         token_stdin: bool,
+        /// Permit credentials over plain HTTP on a trusted development network.
+        #[arg(long)]
+        allow_insecure_http: bool,
     },
     /// Verify and select a saved connection.
     Use { name: String },
@@ -448,7 +670,7 @@ enum ConnectCommand {
     List,
     /// Inspect the effective connection and current server authority.
     Status,
-    /// Forget a local connection; does not revoke the runtime key.
+    /// Forget a local connection; does not revoke the remote credential.
     Remove { name: String },
     /// Import and select this checkout's development connection.
     Dev,
@@ -458,7 +680,7 @@ fn prompt_secret() -> Result<String> {
     if !std::io::stdin().is_terminal() {
         bail!("use --token-stdin, --token-file or --token-env for noninteractive access");
     }
-    eprint!("Lightspeed runtime token: ");
+    eprint!("Lightspeed runtime token or Platform API key: ");
     std::io::stderr().flush()?;
     crossterm::terminal::enable_raw_mode()?;
     struct Restore;
@@ -494,11 +716,19 @@ pub async fn handle(
     selected: Option<&str>,
     universe: Option<&str>,
     api_url: Option<&str>,
+    account: Option<&str>,
 ) -> Result<()> {
+    if let ConnectCommand::Login(args) = args.command {
+        return crate::device_login::login(args, selected, api_url).await;
+    }
+    if let ConnectCommand::Logout(args) = args.command {
+        return crate::device_login::logout(args, selected).await;
+    }
     let dir = config_dir()?;
     let mut config = load_at(&dir)?;
     let json = args.json;
     match args.command {
+        ConnectCommand::Login(_) | ConnectCommand::Logout(_) => unreachable!(),
         ConnectCommand::Add {
             name,
             url,
@@ -506,6 +736,7 @@ pub async fn handle(
             token_file,
             token_env,
             token_stdin,
+            allow_insecure_http,
         } => {
             if name.trim().is_empty() || config.connections.contains_key(&name) {
                 bail!("connection name is empty or already exists; remove it before replacing");
@@ -527,10 +758,12 @@ pub async fn handle(
             };
             let verified = verify(ResolvedConnection {
                 name: Some(name.clone()),
-                endpoint: endpoint(&url)?,
+                endpoint: endpoint_with_policy(&url, allow_insecure_http)?,
+                allow_insecure_http,
                 secret,
                 universe: universe.map(str::to_owned),
                 caller: None,
+                ..Default::default()
             })
             .await?;
             let universe = match &verified.universe {
@@ -549,6 +782,10 @@ pub async fn handle(
                 SavedConnection {
                     endpoint: verified.endpoint,
                     single,
+                    credential_kind: verified.credential_kind,
+                    server_kind: verified.server_kind,
+                    account_id: verified.account_id,
+                    allow_insecure_http,
                     credential_file: file,
                     owned_credential: owned,
                     universe,
@@ -582,14 +819,14 @@ pub async fn handle(
             }
         }
         ConnectCommand::List => {
-            let rows: Vec<_> = config.connections.iter().map(|(name, c)| serde_json::json!({"name": name, "endpoint": c.endpoint, "selected": config.selected.as_ref() == Some(name), "universe": c.universe, "single": c.single})).collect();
+            let rows: Vec<_> = config.connections.iter().map(|(name, c)| serde_json::json!({"name": name, "endpoint": c.endpoint, "selected": config.selected.as_ref() == Some(name), "universe": c.universe, "accountId":c.account_id, "single": c.single, "serverKind":c.server_kind,"authentication":c.credential_kind})).collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
                 if rows.is_empty() {
                     println!("No saved connections. Use connect add or connect dev.");
                 } else {
-                    println!("  NAME  RUNTIME");
+                    println!("  NAME  DEPLOYMENT");
                 }
                 for row in rows {
                     println!(
@@ -602,24 +839,32 @@ pub async fn handle(
             }
         }
         ConnectCommand::Status => {
-            let c = resolve(selected, api_url, universe).await?;
+            let mut c = resolve(selected, api_url, universe).await?;
+            apply_account_override(&mut c, account, universe)?;
             let caller = c.caller.as_ref().unwrap();
             let status = universe_status(&c).await?;
-            let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "activeUniverse": status, "caller": caller});
+            let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "activeUniverse": status, "caller": caller,"serverKind":c.server_kind,"principal":c.principal,"authentication":c.credential_kind,"accountId":c.account_id});
             if json {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n  Token: {}\n  Authority: full runtime access\n",
+                    "Connection: {}\n  Deployment: {}\n  Server: {:?}\n  Authentication: {:?}\n  Account: {}",
                     c.name.as_deref().unwrap_or("environment"),
                     c.endpoint,
-                    if caller.single {
-                        "single"
-                    } else {
-                        "authenticated"
-                    },
-                    caller.token_name.as_deref().unwrap_or("none"),
+                    c.server_kind.unwrap(),
+                    c.credential_kind,
+                    c.account_id.as_deref().unwrap_or("none selected")
                 );
+                if let Some(principal) = &c.principal {
+                    println!(
+                        "  Principal: {} ({}, {})",
+                        principal.name, principal.kind, principal.id
+                    );
+                }
+                if let Some(name) = &caller.token_name {
+                    println!("  Runtime token: {name}");
+                }
+                println!();
                 status.print("Selected universe");
             }
         }
@@ -646,7 +891,7 @@ pub async fn handle(
                     &serde_json::json!({"removed":name,"keyRevoked":false}),
                 )?;
             } else {
-                println!("Forgot {name}; runtime key was not revoked.");
+                println!("Forgot {name}; remote credential was not revoked.");
             }
         }
         ConnectCommand::Dev => {
@@ -699,6 +944,66 @@ pub fn select_universe(connection: &ResolvedConnection, id: String) -> Result<()
     Ok(())
 }
 
+/// An invocation account override never persists or reuses another account's universe.
+pub fn apply_account_override(
+    connection: &mut ResolvedConnection,
+    account: Option<&str>,
+    explicit_universe: Option<&str>,
+) -> Result<()> {
+    let Some(account) = account else {
+        return Ok(());
+    };
+    if !connection.is_platform() {
+        bail!("--account requires a Platform deployment");
+    }
+    if account.trim().is_empty() {
+        bail!("account must not be empty");
+    }
+    if connection.account_id.as_deref() != Some(account) {
+        connection.universe = explicit_universe.map(str::to_owned);
+        connection.account_id = Some(account.to_owned());
+    }
+    Ok(())
+}
+
+pub fn save_account(connection: &ResolvedConnection, account_id: &str) -> Result<()> {
+    if !connection.is_platform() {
+        bail!("accounts require a Platform deployment");
+    }
+    let name = connection.name.as_ref().context(
+        "save a connection before using `platform account use`; use --account for this invocation",
+    )?;
+    let dir = config_dir()?;
+    let mut config = load_at(&dir)?;
+    let saved = config
+        .connections
+        .get_mut(name)
+        .context("connection was removed")?;
+    if saved.endpoint != connection.endpoint {
+        bail!("saved connection endpoint changed");
+    }
+    if saved.account_id.as_deref() != Some(account_id) {
+        saved.universe = None;
+        saved.account_id = Some(account_id.to_owned());
+    }
+    save_at(&dir, &config)
+}
+
+/// Delete only a secret owned by this CLI, never an imported credential file.
+pub(crate) fn remove_owned_secret(dir: &Path, saved: &SavedConnection) -> Result<()> {
+    if saved.owned_credential
+        && let Some(file) = &saved.credential_file
+        && file.parent() == Some(dir.join("credentials").as_path())
+    {
+        match std::fs::remove_file(file) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 /// Retry discovery only. The deadline also bounds an in-flight HTTP request.
 pub async fn resolve_wait(
     name: Option<&str>,
@@ -712,17 +1017,17 @@ pub async fn resolve_wait(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
     loop {
         if tokio::time::Instant::now() >= deadline {
-            bail!("Runtime did not become available within {seconds} seconds");
+            bail!("Deployment did not become available within {seconds} seconds");
         }
         match tokio::time::timeout_at(deadline, resolve(name, url, universe)).await {
             Ok(Ok(connection)) => return Ok(connection),
             Ok(Err(error)) if error.is::<crate::api_client::StartupUnavailable>() => {}
             Ok(Err(error)) => return Err(error),
-            Err(_) => bail!("Runtime did not become available within {seconds} seconds"),
+            Err(_) => bail!("Deployment did not become available within {seconds} seconds"),
         }
         let now = tokio::time::Instant::now();
         if now >= deadline {
-            bail!("Runtime did not become available within {seconds} seconds");
+            bail!("Deployment did not become available within {seconds} seconds");
         }
         tokio::time::sleep_until(std::cmp::min(
             deadline,
@@ -752,6 +1057,7 @@ mod tests {
                     credential_file: Some(file),
                     owned_credential: true,
                     universe: None,
+                    ..Default::default()
                 },
             )]),
         };
@@ -795,6 +1101,7 @@ mod tests {
                 single: false,
                 token_name: Some("operator".into()),
             }),
+            ..Default::default()
         };
         let headers = connection.headers("session/list").unwrap();
         assert!(!headers.contains_key("x-lightspeed-universe"));
@@ -817,5 +1124,98 @@ mod tests {
         assert!(connection.headers("session/list").is_err());
         connection.universe = Some("local".into());
         assert!(connection.headers("session/list").unwrap().is_empty());
+    }
+
+    #[test]
+    fn deployment_origins_and_base_paths_normalize_without_losing_the_auth_base() {
+        for (input, expected) in [
+            ("https://example.test", "https://example.test/api/v1"),
+            (
+                "https://example.test/team/",
+                "https://example.test/team/api/v1",
+            ),
+            (
+                "https://example.test/team/api/v1/",
+                "https://example.test/team/api/v1",
+            ),
+        ] {
+            assert_eq!(endpoint(input).unwrap(), expected);
+        }
+        assert_eq!(
+            auth_url("https://example.test/team/api/v1", "device/code")
+                .unwrap()
+                .as_str(),
+            "https://example.test/team/api/auth/device/code"
+        );
+        assert!(endpoint("http://remote.example").is_err());
+        assert_eq!(
+            endpoint_with_policy("http://remote.example", true).unwrap(),
+            "http://remote.example/api/v1"
+        );
+    }
+
+    #[test]
+    fn an_account_override_clears_only_the_previous_accounts_universe_selection() {
+        let mut connection = ResolvedConnection {
+            server_kind: Some(ServerKind::Platform),
+            account_id: Some("first".into()),
+            universe: Some("old-universe".into()),
+            ..Default::default()
+        };
+        apply_account_override(&mut connection, Some("first"), None).unwrap();
+        assert_eq!(connection.universe.as_deref(), Some("old-universe"));
+        apply_account_override(&mut connection, Some("second"), None).unwrap();
+        assert_eq!(connection.account_id.as_deref(), Some("second"));
+        assert!(connection.universe.is_none());
+        apply_account_override(&mut connection, Some("third"), Some("explicit-universe")).unwrap();
+        assert_eq!(connection.universe.as_deref(), Some("explicit-universe"));
+        connection.server_kind = Some(ServerKind::Runtime);
+        assert!(apply_account_override(&mut connection, Some("team"), None).is_err());
+    }
+
+    #[test]
+    fn session_rotation_updates_only_owned_files_and_is_used_by_subsequent_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("credentials/session");
+        private_write(&file, b"old-session").unwrap();
+        let mut connection = ResolvedConnection {
+            secret: Some("old-session".into()),
+            credential_kind: CredentialKind::PlatformSession,
+            credential_file: Some(file.clone()),
+            owned_credential: true,
+            ..Default::default()
+        };
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("set-auth-token", "new-session".parse().unwrap());
+        connection
+            .accept_session_rotation_at(&headers, dir.path())
+            .unwrap();
+        assert_eq!(
+            connection.auth_headers().unwrap()["authorization"],
+            "Bearer new-session"
+        );
+        assert_eq!(
+            connection.redact_error("old-session / new-session".into()),
+            "[credential redacted] / [credential redacted]"
+        );
+        headers.insert("set-auth-token", "third-session".parse().unwrap());
+        connection.owned_credential = false;
+        connection
+            .accept_session_rotation_at(&headers, dir.path())
+            .unwrap();
+        assert_eq!(read_secret(&file).unwrap(), "new-session");
+        connection.owned_credential = true;
+        connection.credential_kind = CredentialKind::PlatformApiKey;
+        connection
+            .accept_session_rotation_at(&headers, dir.path())
+            .unwrap();
+        assert_eq!(read_secret(&file).unwrap(), "new-session");
+        connection.credential_kind = CredentialKind::PlatformSession;
+        assert!(
+            connection
+                .accept_session_rotation_at(&headers, &dir.path().join("different-root"))
+                .is_err()
+        );
+        assert_eq!(read_secret(&file).unwrap(), "new-session");
     }
 }

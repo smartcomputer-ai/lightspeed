@@ -13,6 +13,23 @@ changes do not become dependencies of your application. A
 [Python client](../../../clients/python/README.md) covers the same API; what this
 page says about identifiers, events, and lifecycle applies to it too.
 
+## Platform access
+
+Use a personal or application API key against the Platform `/api/v1` base URL
+for scoped access. Runtime resource routes use the same generated catalog as
+direct runtime access. Platform resolves the principal, checks current account
+and universe roles, and intersects those roles with credential restrictions.
+It forwards admitted requests with its own infrastructure token and trusted
+actor attribution. Clients must not supply actor headers to impersonate users.
+
+Platform-native account, application, grant, and credential routes live under
+`/api/v1/platform`. Their schemas and route descriptors are authored once in
+`platform/shared/src/platform-api.ts` and generated into both SDKs. Use
+TypeScript `client.callPlatform(...)` or Python `client.call_platform(...)`.
+Personal and application keys are managed from the web UI or
+`lightspeed platform api-key`. Use `lightspeed connect login --url DEPLOYMENT_URL`
+for browser-approved CLI access. See [People and roles](../access-and-security/people-and-roles.md).
+
 ## Resource HTTP API
 
 The private runtime listener serves the resource API under `/api/v1`.

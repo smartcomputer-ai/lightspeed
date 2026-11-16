@@ -135,11 +135,13 @@ test("readiness distinguishes a refused connection from an HTTP failure", { time
 });
 
 
-test("full profile never launches Configurator or connectors with runtime authority", () => {
+test("full profile routes Configurator through Platform and leaves connectors disabled", () => {
   const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
     cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "" },
   });
-  assert.doesNotMatch(output, /^process: (configurator|connectors) ->/m);
+  assert.match(output, /^process: configurator ->/m);
+  assert.doesNotMatch(output, /^process: connectors ->/m);
+  assert.match(output, /^configurator upstream: http:\/\/127\.0\.0\.1:3000\/api\/v1$/m);
   assert.throws(() => execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
     cwd: repoRoot, encoding: "utf8", stdio: "pipe", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "telegram" },
   }), /Channel connectors are disabled/);

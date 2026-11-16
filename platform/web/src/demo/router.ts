@@ -1,3 +1,4 @@
+import { accountRoutes } from "./routes/accounts";
 import { watchRoutes } from "./routes/watch";
 /// The in-browser stand-in for the platform backend: one Hono app the fetch
 /// shim hands every same-origin `/api/*` request to.
@@ -73,6 +74,7 @@ export function createDemoRouter(store: DemoStore): Hono {
     api.route("/universes", routes(store));
   }
   app.route("/api/ui", api);
+  app.route("/api/v1/platform", accountRoutes(store));
   app.route("/api/v1/universes", watchRoutes(store));
 
   // A missing stub surfaces as an ordinary API error in the UI instead of a

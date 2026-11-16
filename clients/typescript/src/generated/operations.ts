@@ -142,6 +142,7 @@ export const OPERATIONS = [
   "deployment/universes/list",
   "deployment/universes/read",
   "deployment/universes/configuration/put",
+  "deployment/universes/expiry/put",
   "deployment/universes/handle/put",
   "deployment/universes/delete",
   "deployment/environment-providers/put",
@@ -176,7 +177,7 @@ export const OPERATION_INFO = {
     streaming: false,
     notifications: [],
     access: {"kind":"connection"},
-    summary: "Inspect the Lightspeed protocol",
+    summary: "Inspect the runtime connection",
     description: "Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.",
   },
   "session/start": {
@@ -1225,7 +1226,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Create a universe",
-    description: "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.",
+    description: "Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.",
   },
   "deployment/universes/list": {
     scope: "deployment",
@@ -1233,7 +1234,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "List universes",
-    description: "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.",
+    description: "Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.",
   },
   "deployment/universes/read": {
     scope: "deployment",
@@ -1248,8 +1249,16 @@ export const OPERATION_INFO = {
     streaming: false,
     notifications: [],
     access: {"kind":"deployment"},
-    summary: "Declare universe presentation and access",
-    description: "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.",
+    summary: "Update universe configuration",
+    description: "Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.",
+  },
+  "deployment/universes/expiry/put": {
+    scope: "deployment",
+    streaming: false,
+    notifications: [],
+    access: {"kind":"deployment"},
+    summary: "Set or clear universe expiry",
+    description: "Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.",
   },
   "deployment/universes/handle/put": {
     scope: "deployment",
@@ -1265,7 +1274,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Request universe deletion",
-    description: "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
+    description: "Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
   },
   "deployment/environment-providers/put": {
     scope: "deployment",
@@ -1356,7 +1365,7 @@ export interface OperationMap {
    */
   "universe/watch": {
     params: Api.UniverseWatchParams;
-    result: Api.UniverseWatchResponse;
+    result: never;
   };
   /**
    * Read a workspace file
@@ -1368,7 +1377,7 @@ export interface OperationMap {
     result: Uint8Array;
   };
   /**
-   * Inspect the Lightspeed protocol
+   * Inspect the runtime connection
    *
    * Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.
    */
@@ -2549,7 +2558,7 @@ export interface OperationMap {
   /**
    * Create a universe
    *
-   * Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.
+   * Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.
    */
   "deployment/universes/create": {
     params: Api.DeploymentUniverseCreateParams;
@@ -2558,7 +2567,7 @@ export interface OperationMap {
   /**
    * List universes
    *
-   * Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.
+   * Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.
    */
   "deployment/universes/list": {
     params: Api.DeploymentUniverseListParams;
@@ -2574,12 +2583,21 @@ export interface OperationMap {
     result: Api.DeploymentUniverseReadResponse;
   };
   /**
-   * Declare universe presentation and access
+   * Update universe configuration
    *
-   * Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.
+   * Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.
    */
   "deployment/universes/configuration/put": {
     params: Api.DeploymentUniverseConfigurationPutParams;
+    result: Api.DeploymentUniverseReadResponse;
+  };
+  /**
+   * Set or clear universe expiry
+   *
+   * Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.
+   */
+  "deployment/universes/expiry/put": {
+    params: Api.DeploymentUniverseExpiryPutParams;
     result: Api.DeploymentUniverseReadResponse;
   };
   /**
@@ -2594,7 +2612,7 @@ export interface OperationMap {
   /**
    * Request universe deletion
    *
-   * Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
+   * Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
    */
   "deployment/universes/delete": {
     params: Api.DeploymentUniverseDeleteParams;

@@ -27,7 +27,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   universes = [
-    universe("zeta", { name: "Zeta", role: "admin" }),
+    universe("zeta", { name: "Zeta", role: "owner" }),
     universe("alpha", { name: "Alpha", status: "archived" }),
     universe("mid", { name: "Mid", features: { bots: false, channels: false } }),
   ];
@@ -40,6 +40,8 @@ beforeEach(() => {
     orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
+    if (path === "/api/v1/platform/accounts") return { accounts: [{ id: "account", name: "Team", enabled: true, role: "admin" }] };
+    if (path === "/api/v1/platform/accounts/account/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "GET" && path === "/api/ui/universes") return universes;
     if (method === "GET" && path === "/api/ui/universes/reconcile") {
       if (reconcile instanceof Error) throw reconcile;
@@ -88,7 +90,7 @@ it("lists every universe by name with its status, engine link, and role", async 
   expect(rows().map((node) => cells(node).slice(0, 4))).toEqual([
     ["Alphaalpha", "archived", "unchecked", "—"],
     ["Midmid", "active", "missing", "—"],
-    ["Zetazeta", "active", "ok", "admin"],
+    ["Zetazeta", "active", "ok", "owner"],
   ]);
 });
 
@@ -167,7 +169,7 @@ it("adopts an orphan under the runtime handle it already has", async () => {
   expect(document.querySelector<HTMLInputElement>("#adopt-handle")!.value).toBe("kept");
   await type("#adopt-name", "Kept");
   await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept", accountId: "account", initialOwner: { kind: "user", id: "user" } }));
 });
 
 it("keeps the inventory when engine reconciliation is unavailable", async () => {
@@ -194,4 +196,11 @@ it("shows deletion progress without offering actions against the deleting univer
   expect(buttonIn(row("Zeta"), "Open")).toBeUndefined();
   expect(buttonIn(row("Zeta"), "Restore")).toBeUndefined();
   expect(buttonIn(row("Zeta"), "Delete")).toBeUndefined();
+});
+
+
+it("keeps protected universes unavailable for direct administrative deletion", async () => {
+  universes[0]!.protected = true;
+  await show();
+  expect(buttonIn(row("Zeta"), "Delete")?.disabled).toBe(true);
 });

@@ -12,6 +12,34 @@ so either one can continue a session or a run the other started.
 A runtime token can call every method in every universe, including reading private
 sessions, so keep it on your server.
 
+## Connect through Platform
+
+Pass a personal or application key to the Platform `/api/v1` endpoint. Runtime
+operations use the principal's current permissions intersected with key
+restrictions. Omit `actor`; Platform derives attribution. Direct runtime tokens
+remain full-authority infrastructure credentials.
+
+```python
+from uuid import uuid4
+
+async with AsyncLightspeedClient(
+    "https://lightspeed.example/api/v1", token=platform_key
+) as client:
+    accounts = await client.call_platform("platform/accounts/list", {})
+    created = await client.call_platform("platform/universes/create", {
+        "accountId": accounts["accounts"][0]["id"],
+        "universeId": str(uuid4()),  # Keep this ID if retrying creation.
+        "name": "Experiment",
+        "handle": "experiment",
+    })
+```
+
+Creation requires Creator or Admin access and a credential that permits it.
+`call_platform` has generated operation-specific parameter and result types in
+`lightspeed_ai.platform_types`. It shares credentials and transport with
+`call`. Key management requires an authenticated browser session; API keys
+cannot mint other keys.
+
 ## Install
 
 Requires Python 3.12 or newer. [HTTPX](https://www.python-httpx.org/) is the only

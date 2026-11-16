@@ -1,10 +1,12 @@
 # P209 — Platform accounts, authentication and authorization
 
-**Status:** Account and role model agreed, 2026-11-16. Not implemented.
-The shared HTTP adapter foundation exists from P208b; the current database
-still maps one Better Auth organization to one universe, and authentication
-still centers on browser users. Final HTTP-cutover validation is on hold at
-the user's request. This document records the target, not current behavior.
+**Status:** First-release account, grant and credential model implemented,
+2026-11-16. CLI consolidation and browser-approved device sign-in are implemented;
+compilation and build verification pass. Test execution remains on hold.
+Existing-installation migration and authoritative background company refresh
+remain follow-ups. Platform uses Better Auth organizations as accounts, each
+containing multiple universes, and shares one authorization gate across browser
+sessions, CLI sessions, and personal/application API keys.
 
 [Runtime access simplification](p208-runtime-access-simplification.md) leaves
 trusted component authentication in the runtime and puts caller authorization
@@ -142,7 +144,7 @@ per-principal ownership count and its proposed default of 25 are superseded.
 
 Reuse the runtime `protected` flag designed in
 [universe metadata, protection and expiry](p207-universe-metadata-protection-and-expiry.md).
-The mechanism is not implemented yet.
+The runtime mechanism and Platform administrative protection gate are implemented.
 
 - The runtime refuses deletion while `protected` is true, including expiry.
   Even administrative deletion must first clear the flag explicitly.
@@ -224,8 +226,7 @@ Authorization Bearer header). It may be long-lived but still expires and is
 revocable. It is not an OAuth access token that an integration must first
 obtain from a token endpoint. OAuth client-credentials authentication is not
 required in the first release; it may be added later for integrations that
-want it. Browser-approved CLI sign-in is a separate future authentication
-method for the same user and authorization gate.
+want it. Browser-approved CLI sign-in uses the same user and authorization gate.
 
 References checked 2026-11-16:
 
@@ -233,7 +234,7 @@ References checked 2026-11-16:
 - [API Key ownership, schema and configuration](https://better-auth.com/docs/plugins/api-key/reference).
 - [API Key sessions and organization-owned keys](https://better-auth.com/docs/plugins/api-key/advanced).
 - [Device authorization](https://better-auth.com/docs/plugins/device-authorization)
-  for the later CLI sign-in flow. OAuth clients and token exchange are not a
+  for CLI sign-in. OAuth clients and token exchange are not a
   prerequisite for API-key authentication.
 
 ### Personal tokens and narrowing
@@ -271,14 +272,40 @@ credential system and must not be handed to users, browsers or agents.
 
 ### CLI sign-in and external actors
 
-The desired CLI experience is identity-preserving: sign in, create universes
-where permitted, list accessible universes, and use SDK/API operations with
-the same permissions as the web app. Personal tokens can provide this first.
-Browser-approved CLI login follows this implementation and supports the same
-user permissions alongside API-key connections. Prefer Better Auth's device
-authorization flow, which can work over SSH; settle the detailed session/token
-refresh behavior in that slice. CLI repair and compatibility are not blockers
-for the account and API-key implementation.
+The `lightspeed` CLI supports direct single-mode runtimes without credentials,
+authenticated runtimes with infrastructure tokens, and Platform with API keys
+or browser-approved user sessions. Named connections pin deployment URLs and
+credentials together; explicit endpoint overrides do not reuse saved secrets.
+Deployment origins and `/api/v1` base URLs are accepted, including base paths.
+
+`connect login --url URL` uses Better Auth device authorization with the fixed
+client ID `lightspeed-cli`. It prints a verification URL and code, optionally opens the
+browser, and polls with the plugin's pending/slow-down/expiry rules. The browser
+claims the code, shows the current identity, and requires explicit approval.
+Password and company sign-in preserve the pending code. No separate OAuth server,
+custom refresh token, or fake application user is introduced.
+
+The plugin issues an opaque Better Auth session token. A server-controlled
+session provenance field distinguishes CLI from browser sessions. Only CLI
+bearer sessions enter the shared API; browser-only UI/auth routes reject them.
+API keys remain separate and cannot manage credentials. Human CLI sessions can
+manage credentials just like browser users. Fresh admission and access-version
+checks apply at approval, redemption, and subsequent requests. Local CLI
+sessions renew through Better Auth within the 30-day inactivity and 90-day
+absolute limits; company sessions retain their configured absolute limit.
+`connect logout` revokes only the current CLI session and removes its private file.
+
+Connection login and logout live under `lightspeed connect`. Account/member,
+application, and API-key administration live under `lightspeed platform`.
+Universe grants and declared policy live under `lightspeed universe access`;
+universe creation and archive/restore stay under `lightspeed universe`.
+The generic `lightspeed api` command remains at the root. `--account`
+overrides the selected account; saving a different account clears the previous
+universe. The generic `api` command uses generated operation catalogs, with
+explicit private-file or stdout handling for newly issued secrets. Platform
+native DTOs remain TypeScript-owned. The obsolete `lightspeed-platform` workspace
+is removed; deployment-user suspension and company identity administration remain
+web features rather than exposing browser-private endpoints to CLI credentials.
 
 An application's own end-user attribution is optional future behavior. If
 introduced, it must be explicitly authorized, namespaced under the verified
@@ -331,8 +358,7 @@ authority and does not implement account authorization.
 Account selection is explicit or resolved from an unambiguous saved context.
 Runtime universe paths continue to identify a universe; Platform verifies its
 containing account. SDK helpers and CLI commands share the same HTTP contract.
-The planned consolidation of the separate `lightspeed-platform` CLI remains;
-necessary functionality moves into `lightspeed`.
+The separate `lightspeed-platform` CLI is consolidated into `lightspeed`.
 
 Declared members and company-group mappings belong in Platform. Remove the
 runtime's temporary storage of that access policy as declarations move to
@@ -354,7 +380,7 @@ this account model and must not silently determine application permissions.
 
 ## Storage and rollout
 
-The current unique organization-to-universe mapping is replaced with one
+The former unique organization-to-universe mapping is replaced with one
 account-to-many-universes. Better Auth organization membership stores the
 account relationship; explicit universe grants store universe roles. Reuse
 library identity records where appropriate, with application storage chosen
@@ -439,7 +465,7 @@ hard-coded role distinctions.
 | Document-created protection | On when omitted; existing universes retain their current value when omitted, as specified in P207. |
 | Personal and application API-key expiry | 365 days by default and as the default maximum; deployments can choose a different maximum. Shorter expiry is selectable; keys are revocable at any time. |
 | API-key rotation | Issue another key for the same principal, move consumers, then revoke the old key. Overlap is explicit; do not silently invalidate a working key on new-key creation. |
-| Browser and future CLI login | Target a 30-day inactivity window with a 90-day absolute login lifetime and renewal during use. Provider/deployment policy may require earlier authentication. CLI mechanics are deferred. |
+| Browser and CLI login | A 30-day inactivity window with a 90-day absolute login lifetime and renewal during use. Provider/deployment policy may require earlier authentication; company sessions retain their bounded absolute lifetime. |
 | Local access changes | Check local revocation, suspension and effective grants on admission; no artificial delay is required. |
 | Company access refresh | Target a background refresh at least hourly, independent of API-key or login lifetime. See the integration requirement below. |
 
@@ -473,24 +499,24 @@ the freshness integration is ready. A successful routine refresh must not
 require another interactive login. Disabling an application is local Platform
 state and does not depend on company identity refresh.
 
-## Remaining implementation choices
+## Remaining follow-ups
 
-The principal, API-key and role model is settled. These are implementation
-choices to resolve within the work, not further architecture approvals:
+The first release uses separate Better Auth API Key configurations for user
+and organization ownership, with a protected key-to-application association.
+Generic plugin management endpoints are hidden. Native account selection is
+explicit, universe handles remain globally unique, and resource paths resolve
+to UUIDs before credential restrictions are applied. Keys support exact
+operation IDs, account/universe lists, read-only restrictions, and a universe
+creation ceiling. Capability bundles can be added without changing this model.
 
-- Confirm the API Key plugin's Drizzle schema and protected management paths,
-  including organization ownership checks, limits and failure recovery.
-- Define native account selection and handle addressing. Keep existing
-  universe UUIDs; do not introduce arbitrary runtime account identity fields.
-- Select the supported background identity-freshness mechanism for each
-  configured company provider, and the bounded outage/fallback behavior.
-- Complete capability grouping for key restrictions and ensure every shared
-  operation is admitted deliberately.
-
-CLI browser-login implementation comes later. Existing-installation migration
-is separate and will be performed with an agent. External application-user
-attribution, supplied-secret key declarations and broader request auditing
-remain follow-up work, not prerequisites for the fixed-role account model.
+CLI browser login and account-aware command consolidation are implemented.
+The command hierarchy separates `connect` login/session management, `platform`
+account/application/key administration, and `universe access` grants/policy.
+Existing-installation data mapping is separate and will be performed with an agent. Background company identity refresh still
+needs an authoritative source; the implementation retains the existing bounded
+company admission window and does not promise hourly provider polling.
+External application-user attribution, supplied-secret key declarations and
+broader request auditing remain follow-up work.
 
 ## Outside the first version
 
@@ -521,3 +547,61 @@ remain follow-up work, not prerequisites for the fixed-role account model.
   lifetimes, hourly company-access freshness target and configurable product
   defaults. Existing-installation migration and CLI work are deferred by user
   instruction. Documentation only; tests remain on hold.
+
+- 2026-11-16: implemented accounts with one-to-many universes, personal and
+  development provisioning, account roles, user/application universe grants,
+  multiple Owners, quota reservations and administrative protection. Native
+  access-policy declarations now belong to Platform; runtime declaration-role
+  DTOs were removed. Platform migration 0005 and schema revision 6 add the
+  account/grant/application/key associations without guessing existing data
+  ownership.
+- Added Better Auth API Key 1.7.7 with user and organization configurations.
+  A protected association resolves applications; no fake users or sessions.
+  Current principal authority intersects key restrictions on every admission.
+  Browser-only key management, hashed secrets, expiry, revocation, bounded
+  company admission and overlapping managed rotation are implemented. Watch
+  connections reconnect after at most one minute for fresh admission.
+- Added native account, application, grant and credential routes from shared
+  Zod descriptors, exported JSON Schema/HTTP catalogs, TypeScript
+  `callPlatform` and Python `call_platform`. Web account management, key
+  management, account-qualified creation, grants, protection and expiry use
+  the same services. Admin adoption and repair retain explicit account/Owner
+  assignment. Configurator uses a scoped application key and brokered runtime
+  storage; its process has no runtime infrastructure credentials.
+- Validation: workspace Rust compilation and TypeScript/Python type checks
+  passed. Auth, grant, lifecycle, SDK and UI tests were authored or updated,
+  but tests and Clippy were not run at the user's request. Database migrations
+  were generated, not applied to existing installations. Broad behavioral
+  validation remains required before treating this as a validated deployment.
+
+- Final implementation review added bounded-query account/universe inventory,
+  recovery of failed provisioning reservations without consuming quota forever,
+  atomic protection on administrative runtime repair, serialized mandatory
+  protection changes, and credential replacement that preserves a working
+  Configurator installation on failure. SDK, Configurator, web and demo builds
+  passed; behavioral validation and migration execution remain deferred.
+
+- 2026-11-16: implemented unified CLI connections, deployment URL normalization,
+  explicit account selection, native account/member/application/grant/policy/key
+  commands, and account-qualified universe/config provisioning. Configuration
+  plans expose provisioning UUIDs for explicit retries. Removed the obsolete
+  TypeScript Platform CLI workspace and packaging references.
+- Added Better Auth device authorization for the fixed first-party CLI client,
+  explicit browser code approval, password/SSO return handling, CLI-only session
+  provenance, renewal, identity reporting, and current-session revocation. Keys
+  cannot manage credentials; human CLI sessions can. Approval and redemption
+  recheck company admission/access versions. Migration 0006 adds device codes
+  and session provenance; Platform schema revision is 7. Migrations are not
+  applied by this work.
+- Verification: CLI all-target compilation and help rendering, full TypeScript
+  checks, Python generation/type checks, SDK/Configurator/web/demo builds,
+  release metadata verification, and whitespace checks pass. Auth, device flow,
+  CLI, lifecycle, UI, and release regression tests were authored or updated but
+  not executed. Tests and Clippy remain on hold; end-to-end behavioral validation
+  is still outstanding.
+
+- 2026-11-16: regrouped CLI commands as `connect login/logout`,
+  `platform account/application/api-key`, and `universe access`. The generic
+  `api` command stays at the root. Updated current CLI examples and access
+  guides. Tests remain on hold; this documentation revision does not claim
+  additional behavioral validation.

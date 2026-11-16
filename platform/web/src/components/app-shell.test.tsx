@@ -72,7 +72,6 @@ it.each(["viewer", "contributor"])("shows a %s the work, the setup and readable 
   expect(await sidebarFor(role)).toEqual({
     "": WORK,
     Setup: SETUP,
-    Access: ["Members"],
   });
 });
 
@@ -80,13 +79,13 @@ it("adds credentials, channels and templates for an Operator", async () => {
   expect(await sidebarFor("operator")).toEqual({
     "": WORK,
     Setup: SETUP,
-    Access: ["Credentials", "Members"],
+    Access: ["Credentials"],
     Settings: ["Channels", "Templates"],
   });
 });
 
 it("adds general settings for an Admin", async () => {
-  expect(await sidebarFor("admin")).toEqual({
+  expect(await sidebarFor("owner")).toEqual({
     "": WORK,
     Setup: SETUP,
     Access: ["Credentials", "Members"],
@@ -95,21 +94,21 @@ it("adds general settings for an Admin", async () => {
 });
 
 it("leaves switched-off channels out of the menu", async () => {
-  expect(await sidebarFor("admin", { bots: true, channels: false })).toMatchObject({
+  expect(await sidebarFor("owner", { bots: true, channels: false })).toMatchObject({
     "": WORK,
     Settings: ["General", "Templates"],
   });
 });
 
 it("leaves bots, and the channels they need, out of the menu", async () => {
-  expect(await sidebarFor("admin", { bots: false, channels: false })).toMatchObject({
+  expect(await sidebarFor("owner", { bots: false, channels: false })).toMatchObject({
     "": ["Sessions", "Workspaces"],
     Settings: ["General", "Templates"],
   });
 });
 
 it("titles the tab with the page and its universe, read backwards", async () => {
-  await sidebarFor("admin");
+  await sidebarFor("owner");
   expect(document.title).toBe(documentTitle(["Bots", "Test"]));
 });
 
@@ -122,7 +121,8 @@ it.each([
   ["/u/test/blobs/abc", ["Test"]],
   ["/admin/audit", ["Audit log", "Platform admin"]],
   ["/admin/environment-providers", ["Environment providers", "Platform admin"]],
-  ["/account", ["Your account"]],
+  ["/account", ["Your profile"]],
+  ["/accounts", ["Accounts"]],
   ["/preferences", ["Preferences"]],
   ["/accounts-elsewhere", []],
   ["/", []],
@@ -135,7 +135,7 @@ it("leaves the universe out until it has loaded", () => {
 });
 
 it("links each page at its flat route", async () => {
-  await sidebarFor("admin");
+  await sidebarFor("owner");
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
     "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
     "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
@@ -173,7 +173,7 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
 });
 
 it("offers Audit log in Platform admin navigation", async () => {
-  const groups = await sidebarFor("admin", { bots: true, channels: true }, true);
+  const groups = await sidebarFor("owner", { bots: true, channels: true }, true);
   expect(groups["Platform admin"]).toContain("Audit log");
   expect(container.querySelector('a[href="/admin/audit"]')?.getAttribute("aria-current")).toBe("page");
 });

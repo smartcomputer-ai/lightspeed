@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -38,7 +39,7 @@ function fixture(steeringError?: { type: string; title: string; status: number; 
   });
   vi.stubGlobal("fetch", fetch);
   const app = new Hono<{ Variables: ApiVariables }>();
-  app.use("*", async (c, next) => { c.set("session", { user: { id: "member" } } as ApiVariables["session"]); await next(); });
+  app.use("*", async (c, next) => { c.set("session", { user: { id: "member" } } as ApiVariables["session"]); c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin")); await next(); });
   app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   const call = (path: string, body: unknown) => app.request(`/universe${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),

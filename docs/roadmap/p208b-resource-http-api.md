@@ -3,7 +3,8 @@
 **Status:** HTTP cutover implemented; final integration validation on hold,
 2026-11-16, at the user’s request. Runtime, SDKs, CLI and Platform now use the resource contract.
 Application JSON-RPC transport and generated artifacts are removed. Platform
-account hierarchy and personal/application credentials remain in P209.
+account hierarchy and personal/application credentials are implemented in P209;
+its behavioral validation remains on hold.
 
 This accompanies [runtime access simplification](p208-runtime-access-simplification.md)
 and changes the transport assumed by
@@ -776,9 +777,10 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   checks/build pass. Full workspace, Platform and local runtime integration
   results will be recorded after the final run.
 
-- Remaining outside this transport cutover: P209 account hierarchy and
-  personal/application authentication, its Platform-owned resource API, range support and composed
-  SDK work. Browser sessions use the shared API with existing Platform policy.
+- The account hierarchy, personal/application authentication, Platform-owned
+  resource catalog, and unified CLI with browser-approved sessions are now
+  implemented in P209. Range support and a single composed SDK surface remain
+  separate work; native calls use generated `callPlatform` / `call_platform`.
 
 - 2026-11-16: core implementation started after `cargo test --workspace
   --locked` passed on the simplification baseline (3,378 passed, 366 ignored).
@@ -810,3 +812,17 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   and administrative unprotection. These are native Platform policies, not
   additional runtime identity fields or duplicated shared route definitions.
   Tests and final cutover validation remain on hold.
+
+- 2026-11-16: Platform's shared HTTP gate now admits browser sessions,
+  personal API keys and application API keys through one authorization context.
+  Native account, application, grant and key descriptors generate TypeScript
+  and Python SDK surfaces without reauthoring runtime routes. Core universe
+  metadata/protection/expiry are also generated. Workspace compilation passes;
+  test execution remains on hold.
+
+- 2026-11-16: consolidated the Platform CLI into `lightspeed`, with direct runtime,
+  Platform API-key, and browser-approved user-session connections. Native Platform
+  commands consume its generated route catalog. Release metadata and manifest
+  verification now use the HTTP contract revision instead of the retired RPC
+  protocol label. CLI compilation, help rendering, TypeScript/Python checks and
+  production web builds pass; no test suites were run in this slice.

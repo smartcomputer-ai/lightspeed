@@ -229,32 +229,34 @@ it("validates JWT access-token entitlements against their own audience and the I
   } finally { await target.postgres.close(); }
 }, 30000);
 
-it("keeps universe roles local, enforces their edits on existing sessions, and retains durable audit records", async () => {
+it("keeps account membership and universe grants distinct on existing sessions", async () => {
   const adminCookie = await emergency();
   const { cookie } = await login();
   const company = await companyUser();
   const org = crypto.randomUUID();
   await fixture.db.insert(schema.organization).values({ id: org, name: "Local roles", slug: org, createdAt: new Date() });
-  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: org, name: "Local roles", lightspeedUniverseId: crypto.randomUUID() }).returning();
-  const base = `/api/ui/universes/${universe!.id}`;
-  const added = await fixture.request(`${base}/members`, { userId: company.id, role: "viewer" }, adminCookie);
-  expect(added.status).toBe(201);
-  const member = await added.json() as { id: string };
+  await fixture.db.insert(schema.member).values({ id: crypto.randomUUID(), organizationId: org, userId: company.id, role: "member", createdAt: new Date() });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: org, name: "Local roles", handle: org, lightspeedUniverseId: crypto.randomUUID() }).returning();
+  const base = `/api/v1/platform/universes/${universe!.id}/grants`;
+  const grant = { principal: { kind: "user", id: company.id }, role: "viewer" };
+  const added = await fixture.request(base, grant, adminCookie, "PUT");
+  expect(added.status).toBe(200);
+  const { grant: granted } = await added.json() as { grant: { id: string } };
   const renewed = await login();
-  expect((await fixture.db.select().from(schema.member).where(eq(schema.member.id, member.id)))[0]?.role).toBe("viewer");
-  expect((await fixture.request(`${base}/members`, { userId: company.id, role: "admin" }, cookie)).status).toBe(403);
-  expect((await fixture.request(`${base}/members/${member.id}`, { role: "operator" }, adminCookie, "PATCH")).status).toBe(200);
-  for (const session of [cookie, renewed.cookie]) {
-    const listed = await (await fixture.request("/api/ui/universes", undefined, session)).json() as Array<{ role: string }>;
-    expect(listed[0]?.role).toBe("operator");
+  expect((await fixture.db.select().from(schema.member).where(eq(schema.member.organizationId, org)))[0]?.role).toBe("member");
+  expect((await fixture.request(base, { ...grant, role: "owner" }, cookie, "PUT")).status).toBe(403);
+  expect((await fixture.request(base, { ...grant, role: "operator" }, adminCookie, "PUT")).status).toBe(200);
+  for (const activeCookie of [cookie, renewed.cookie]) {
+    const listed = await (await fixture.request("/api/ui/universes", undefined, activeCookie)).json() as Array<{ role: string }>;
+    expect(listed.find(item => item.role === "operator")).toBeDefined();
   }
-  expect((await fixture.request(`${base}/members/${member.id}`, undefined, adminCookie, "DELETE")).status).toBe(200);
-  expect(await (await fixture.request("/api/ui/universes", undefined, (await login()).cookie)).json()).toEqual([]);
+  expect((await fixture.request(`${base}/${granted.id}`, undefined, adminCookie, "DELETE")).status).toBe(200);
+  expect(await (await fixture.request("/api/ui/universes", undefined, cookie)).json()).toEqual([]);
   expect((await fixture.request("/api/ui/admin/audit", undefined, cookie)).status).toBe(403);
-  expect((await fixture.request("/api/ui/admin/universes/u/sessions/s/purge", {}, cookie, "POST")).status).toBe(403);
   await fixture.db.delete(schema.user).where(eq(schema.user.id, company.id));
   const events = await (await fixture.request("/api/ui/admin/audit", undefined, adminCookie)).json() as Array<{ targetId: string; action: string }>;
-  expect(events.filter((event) => event.targetId === company.id).map((event) => event.action)).toEqual(expect.arrayContaining(["member.add", "member.role", "member.remove"]));
+  expect(events.filter(event => event.targetId === company.id).map(event => event.action)).toContain("universe.grant.put");
+  expect((await fixture.db.select().from(schema.universes).where(eq(schema.universes.id, universe!.id)))[0]?.organizationId).toBe(org);
   await fixture.db.delete(schema.organization).where(eq(schema.organization.id, org));
 });
 
@@ -294,23 +296,43 @@ it("keeps emergency access working during provider failure and can turn password
   expect(response.status).toBe(401);
 });
 
-it("applies declared directory roles from verified login claims and removes them on the next login", async () => {
+it("applies scoped directory roles from verified claims and removes them on the next login", async () => {
   const orgId = crypto.randomUUID();
-  await fixture.db.insert(schema.organization).values({ id: orgId, name: "Declared", slug: "declared-access", createdAt: new Date() });
-  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: orgId, lightspeedUniverseId: crypto.randomUUID(), name: "Declared", runtimeConfiguration: {
-    displayName: "Declared", directoryGroupMappings: [{ issuer, group: "research-admins", role: "admin" }],
+  await fixture.db.insert(schema.organization).values({ id: orgId, name: "Declared", slug: "declared-access", createdAt: new Date(), membershipPolicy: {
+    directoryGroupMappings: [{ issuer, group: "research-owners", role: "member" }],
+  } });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: orgId, lightspeedUniverseId: crypto.randomUUID(), name: "Declared", handle: "declared-access", accessPolicy: {
+    directoryGroupMappings: [{ issuer, group: "research-owners", role: "owner" }],
   } }).returning();
   try {
-    const { cookie } = await login({ groups: ["lightspeed-users", "research-admins"] });
+    const { cookie } = await login({ groups: ["lightspeed-users", "research-owners"] });
     const list = await fixture.request("/api/ui/universes", undefined, cookie);
-    expect(await list.json()).toEqual([expect.objectContaining({ id: universe!.id, role: "admin" })]);
-    expect((await fixture.request(`/api/ui/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(200);
+    expect(await list.json()).toEqual([expect.objectContaining({ id: universe!.id, role: "owner" })]);
+    expect((await fixture.request(`/api/v1/platform/universes/${universe!.id}/grants`, undefined, cookie)).status).toBe(200);
     expect(await fixture.db.select().from(schema.member).where(eq(schema.member.organizationId, orgId))).toEqual([]);
-    expect((await fixture.request(`/api/ui/universes/${universe!.id}`, { name: "Local edit" }, cookie, "PATCH")).status).toBe(409);
     await login({ groups: ["lightspeed-users"] });
     expect(await (await fixture.request("/api/ui/universes", undefined, cookie)).json()).toEqual([]);
-    expect((await fixture.request(`/api/ui/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(404);
+    expect((await fixture.request(`/api/v1/platform/universes/${universe!.id}/grants`, undefined, cookie)).status).toBe(404);
   } finally {
     await fixture.db.delete(schema.organization).where(eq(schema.organization.id, orgId));
   }
+});
+
+it("issues device sessions from fresh company approval without extending the SSO admission window", async () => {
+  const browser = await login();
+  const start = await fixture.request("/api/auth/device/code", { client_id: "lightspeed-cli" });
+  expect(start.status).toBe(200);
+  const code = await start.json() as { user_code: string; device_code: string };
+  expect((await fixture.request(`/api/auth/device?user_code=${code.user_code}`, undefined, browser.cookie)).status).toBe(200);
+  expect((await fixture.request("/api/auth/device/approve", { userCode: code.user_code }, browser.cookie)).status).toBe(200);
+  const token = await fixture.request("/api/auth/device/token", { client_id: "lightspeed-cli", device_code: code.device_code, grant_type: "urn:ietf:params:oauth:grant-type:device_code" });
+  expect(token.status).toBe(200);
+  const issued = await token.json() as { access_token: string; expires_in: number };
+  expect(issued.expires_in).toBeGreaterThan(0);
+  expect(issued.expires_in).toBeLessThanOrEqual(identityEnv.oidc!.sessionMaxAgeSeconds);
+  const request = () => fixture.app.request(new Request(`${fixture.env.baseUrl}/api/v1/platform/session`, { headers: { authorization: `Bearer ${issued.access_token}` } }));
+  expect((await request()).status).toBe(200);
+  const user = await companyUser();
+  await fixture.db.update(schema.user).set({ providerCheckedAt: new Date(Date.now() - (identityEnv.oidc!.sessionMaxAgeSeconds + 1) * 1000) }).where(eq(schema.user.id, user.id));
+  expect((await request()).status).toBe(401);
 });

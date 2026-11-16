@@ -69,8 +69,9 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
             </DropdownMenuGroup>
             <DropdownMenuItem onClick={() => navigate("/account")}>
               <UserIcon />
-              Account
+              Your profile
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/accounts")}><UserIcon />Accounts</DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate("/preferences")}>
               <SettingsIcon />
               Preferences

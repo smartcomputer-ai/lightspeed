@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -21,9 +22,10 @@ beforeAll(async () => {
       ('contributor', 'Contributor', 'contributor@example.test'), ('operator', 'Operator', 'operator@example.test');
     INSERT INTO organization (id, name, slug, created_at) VALUES ('org', 'Test', 'test', now());
     INSERT INTO member (id, organization_id, user_id, role, created_at)
-      SELECT id, 'org', id, id, now() FROM "user";
-    INSERT INTO universes (id, organization_id, lightspeed_universe_id, name)
-      VALUES ('${id}', 'org', '${id}', 'Test');
+      SELECT id, 'org', id, 'member', now() FROM "user";
+    INSERT INTO universes (id, organization_id, lightspeed_universe_id, name, handle)
+      VALUES ('${id}', 'org', '${id}', 'Test', 'test');
+    INSERT INTO universe_grants (universe_id,user_id,role) SELECT '${id}',id,CASE WHEN id='admin' THEN 'owner' ELSE id END FROM "user";
   `);
   for (const entry of journal.entries.slice(1)) {
     await database.exec(await readFile(new URL(`${entry.tag}.sql`, migrations), "utf8"));
@@ -35,9 +37,10 @@ function request(userId: string, method = "GET", body?: unknown, platformAdmin =
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: userId, role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
-  app.route("/", universeRoutes({ db: drizzle(database) } as unknown as AppContext));
+  app.route("/", universeRoutes({ db: drizzle(database), env: {} } as unknown as AppContext));
   return app.request(path, { method, headers: { "content-type": "application/json" },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
@@ -47,8 +50,8 @@ it("gives retained and newly created universes the default appearance", async ()
   expect(await (await request("viewer")).json()).toMatchObject({ icon: "orbit", iconColor: "default" });
   await database.exec(`
     INSERT INTO organization (id, name, slug, created_at) VALUES ('new-org', 'New', 'new', now());
-    INSERT INTO universes (organization_id, lightspeed_universe_id, name)
-      VALUES ('new-org', '44444444-4444-4444-8444-444444444444', 'New');
+    INSERT INTO universes (organization_id, lightspeed_universe_id, name, handle)
+      VALUES ('new-org', '44444444-4444-4444-8444-444444444444', 'New', 'new');
   `);
   const { rows } = await database.query("SELECT icon, icon_color FROM universes WHERE organization_id = 'new-org'");
   expect(rows).toEqual([{ icon: "orbit", icon_color: "default" }]);
@@ -71,8 +74,8 @@ it("persists an admin's selection for every member and list read", async () => {
 
 it("allows a platform admin without membership and preserves omitted appearance fields", async () => {
   expect((await request("platform-admin", "PATCH", { iconColor: "violet" }, true)).status).toBe(200);
-  expect((await request("admin", "PATCH", { name: "Renamed" })).status).toBe(200);
-  expect(await (await request("viewer")).json()).toMatchObject({ name: "Renamed", icon: "rocket", iconColor: "violet" });
+  expect((await request("admin", "PATCH", { status: "archived" })).status).toBe(200);
+  expect(await (await request("viewer")).json()).toMatchObject({ name: "Test", status: "archived", icon: "rocket", iconColor: "violet" });
 });
 
 it.each([{ icon: "unknown" }, { iconColor: "#ffffff" }, { icon: null }, { iconColor: null }])("rejects unsupported appearance values (%j)", async body => {

@@ -290,8 +290,8 @@ function SessionList({
   const mayClose = useSessionClosePermission(universeId);
   const mayDelete = useSessionDeletePermission(universeId);
   const canCreate = permissions.can("createSession");
-  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.lifecycleControlled || permissions.role === "admin") && mayClose(session.access));
-  const selectedOpen = selectedSessions.filter((session) => (!session.lifecycleControlled || permissions.role === "admin") && session.lifecycleStatus !== "closed" && mayClose(session.access));
+  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.lifecycleControlled || permissions.role === "owner") && mayClose(session.access));
+  const selectedOpen = selectedSessions.filter((session) => (!session.lifecycleControlled || permissions.role === "owner") && session.lifecycleStatus !== "closed" && mayClose(session.access));
   const selectedClosed = selectedSessions.filter((session) => session.lifecycleStatus === "closed" && mayDelete(session.access));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   // Only metadata filters count; which sessions the list includes is its scope.
@@ -1240,7 +1240,7 @@ function NewSessionDialog({
                 {inlineProfile ? "Edit customized setup" : "Customize setup…"}
               </Button>}
               <p className="text-xs text-muted-foreground">
-                A new session is private: you and the universe admins see it until you share it.
+                A new session is private: you and the universe Owners see it until you share it.
               </p>
               {selectedProfile.error && (
                 <p className="text-sm text-destructive">{selectedProfile.error.message}</p>
@@ -2128,7 +2128,7 @@ export function SessionDetail({
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
               compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
-              lifecycle={((!controlled || permissions.role === "admin") && canClose && !closed) || (canDelete && closed) ? (
+              lifecycle={((!controlled || permissions.role === "owner") && canClose && !closed) || (canDelete && closed) ? (
                 closed ? (
                   <DropdownMenuItem
                     variant="destructive"

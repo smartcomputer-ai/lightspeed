@@ -4,6 +4,7 @@ import asyncio
 import base64
 import inspect
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -14,6 +15,7 @@ from uuid import uuid4
 
 import httpx
 
+from ._platform import GeneratedPlatformClient, PLATFORM_OPERATIONS
 from ._generated import OPERATION_INFO, GeneratedClient
 from ._http import HTTP_OPERATIONS
 from ._options import UNSET, HeaderProvider, HeadersInput, Unset
@@ -133,7 +135,7 @@ async def _notify[**P](callback: Callback[P] | None, *args: P.args, **kwargs: P.
             await result
 
 
-class AsyncLightspeedClient(GeneratedClient):
+class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
     """A client for the Lightspeed API.
 
     `call` and named helpers return direct response DTOs. Helpers take
@@ -263,6 +265,27 @@ class AsyncLightspeedClient(GeneratedClient):
             raise LightspeedTransportError(f"Lightspeed API request failed: {error}", transient=True) from error
         if response.is_success and HTTP_OPERATIONS[method]["transfer"] == "binaryDownload":
             return response.content
+        return self._response_json(response)
+
+    async def _invoke_platform(self, operation: str, params: dict[str, Any], headers: HeadersInput | None = None) -> Any:
+        if operation not in PLATFORM_OPERATIONS:
+            raise ValueError(f"Unknown Platform operation {operation!r}")
+        spec = PLATFORM_OPERATIONS[operation]
+        body = dict(params)
+        def segment(match: re.Match[str]) -> str:
+            value = body.pop(match.group(1), None)
+            if not isinstance(value, str) or not value or value in (".", ".."):
+                raise ValueError(f"Invalid path parameter {match.group(1)}")
+            return quote(value, safe="")
+        path = re.sub(r"\{([^}]+)\}", segment, spec["path"])
+        if spec["method"] == "GET" and body:
+            raise ValueError("Unexpected query parameters")
+        url = str(self._endpoint).rstrip("/") + path.removeprefix("/api/v1")
+        try:
+            request = self._http_client.build_request(spec["method"], url, headers=await self._request_headers(headers), json=body if body else None)
+            response = await self._http_client.send(request)
+        except httpx.RequestError as error:
+            raise LightspeedTransportError(f"Platform API request failed: {error}", transient=True) from error
         return self._response_json(response)
 
     @asynccontextmanager

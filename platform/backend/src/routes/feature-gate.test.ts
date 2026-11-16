@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
@@ -16,7 +17,7 @@ function setup(features: Record<string, boolean>) {
     organizationId: "org",
     lightspeedUniverseId: "33333333-3333-4333-8333-333333333333",
     gatewayUrl: null,
-    features,
+    features, handle: "test", status: "active", runtimeConfiguration: {}, accessPolicy: {},
   };
   const requests: { url: string; method?: string }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: unknown, init?: RequestInit) => {
@@ -31,7 +32,7 @@ function setup(features: Record<string, boolean>) {
   }));
   // Each request reads the universe, then the caller's membership.
   const reads = () => {
-    const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role: "admin" }]];
+    const queue: unknown[][] = [[universe], [{ id: "org", enabled: true, membershipPolicy: {} }], [{ role: "member" }], [{ role: "owner" }]];
     const chain: Record<string, unknown> = {};
     for (const step of ["from", "innerJoin", "where"]) chain[step] = () => chain;
     chain.limit = async () => queue.shift() ?? [];
@@ -50,6 +51,7 @@ function setup(features: Record<string, boolean>) {
   app.use("*", async (c, next) => {
     chain = reads();
     c.set("session", { user: { id: "caller" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
   app.route("/", botRoutes(ctx));

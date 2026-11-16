@@ -817,7 +817,7 @@ const WRITER_PROFILE: ProfileInit = {
 
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
-    member(store, universe, "user-marco", "admin", ago(38 * DAY_MS)),
+    member(store, universe, "user-marco", "owner", ago(38 * DAY_MS)),
     member(store, universe, "user-priya", "contributor", ago(22 * DAY_MS)),
   );
 }
@@ -2673,7 +2673,7 @@ export function seedPersonalAssistant(store: DemoStore): void {
     icon: "personal-assistant",
     iconColor: "blue",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
-    role: "admin",
+    role: "owner",
     createdAt: agoIso(5 * 7 * DAY_MS),
     responder,
     // Bots and channels are off in a new universe; this one is built on them.

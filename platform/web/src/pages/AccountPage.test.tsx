@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   changePassword: vi.fn(),
   config: { sso: false, autoSignIn: false, providerId: null, password: "local" } as LoginConfig,
 }));
+vi.mock("@/components/api-keys-card", () => ({ ApiKeysCard: () => null }));
 vi.mock("@/auth", () => ({
   authClient: { updateUser: mocks.updateUser, changePassword: mocks.changePassword },
   useLoginConfig: () => ({ data: mocks.config }),

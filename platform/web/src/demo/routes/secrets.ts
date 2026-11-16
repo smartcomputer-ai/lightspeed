@@ -640,7 +640,7 @@ export function secretRoutes(store: DemoStore): Hono {
   app.put("/:id/models/defaults", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (store.currentUser.role !== "admin" && !["operator", "admin"].includes(universe.universe.role ?? "")) return c.json({ error: "operator role required" }, 403);
+    if (store.currentUser.role !== "admin" && !["operator", "owner"].includes(universe.universe.role ?? "")) return c.json({ error: "operator role required" }, 403);
     const body = modelDefaultsPutSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, body.error.issues[0]?.message ?? "Invalid defaults update");
     if (body.data.expectedRevision !== universe.modelDefaults.revision) return conflict(c, "Model defaults changed elsewhere.");
@@ -648,17 +648,17 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(universe.modelDefaults);
   });
 
-  /// Operators see the templates; installing stays with Admins.
+  /// Operators see the templates; installing stays with Owners.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
     const role = universe?.universe.role;
-    if (!universe || (role !== "admin" && role !== "operator")) return notFound(c);
+    if (!universe || (role !== "owner" && role !== "operator")) return notFound(c);
     return c.json([{ id: "configurator", name: "Configurator", description: "Configurator setup is temporarily unavailable.", version: 5, available: false, status: "unavailable" }]);
   });
   app.post("/:id/setups/configurator/install", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (universe.universe.role !== "admin") return c.json({ error: "universe admin required" }, 403);
+    if (universe.universe.role !== "owner") return c.json({ error: "universe Owner required" }, 403);
     return c.json({ error: "Configurator setup is temporarily unavailable" }, 503);
   });
   return app;

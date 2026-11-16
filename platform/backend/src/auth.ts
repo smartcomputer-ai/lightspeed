@@ -1,21 +1,27 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { betterAuth } from "better-auth";
+import { apiKey } from "@better-auth/api-key";
+import { apiKeyConfigurations } from "./api-key-config.js";
+import { organizationKeyAuthority } from "./organization-key-authority.js";
+import { ensurePersonalAccount } from "./personal-accounts.js";
+import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins/admin";
 import { bearer } from "better-auth/plugins/bearer";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { organization } from "better-auth/plugins/organization";
-import { eq, sql } from "drizzle-orm";
-import { schema, identityUserFields, identitySessionFields, type Db } from "@lightspeed-ai/platform-db";
+import { and, eq, sql } from "drizzle-orm";
+import { schema, identityUserFields, identitySessionFields, accountOrganizationFields, type Db } from "@lightspeed-ai/platform-db";
 import type { ServerEnv } from "./env.js";
 import { admitCompanyIdentity, companyClaimsReader, companyProviderId, type LoginIdentity } from "./company-identity.js";
-import { canUsePassword, passwordMode, sessionAllowed } from "./auth-access.js";
+import { canUsePassword, passwordMode, principalAllowed, sessionAllowed } from "./auth-access.js";
 import { auditIdentity } from "./identity-audit.js";
+import { CLI_CLIENT_ID, DEVICE_AUTH_PATHS, deviceAuthorizationPlugin, deviceProtocolError, readDeviceBody } from "./device-authorization.js";
 
 interface AuthRequest {
   identity?: LoginIdentity;
   actorId?: string;
   createEmergency?: boolean;
+  cliSession?: boolean;
 }
 
 const servedPaths = new Set([
@@ -37,6 +43,8 @@ export function publicAuthConfig(env: ServerEnv) {
 
 export function createAuth(db: Db, env: ServerEnv) {
   const requests = new AsyncLocalStorage<AuthRequest>();
+  const keyAuthority = organizationKeyAuthority();
+  const database = drizzleAdapter(db, { provider: "pg", schema, transaction: true });
   const oidc = env.oidc;
   const providerId = oidc ? companyProviderId(oidc) : undefined;
   const readClaims = oidc ? companyClaimsReader(oidc) : undefined;
@@ -45,7 +53,7 @@ export function createAuth(db: Db, env: ServerEnv) {
     secret: env.authSecret,
     basePath: "/api/auth",
     trustedOrigins: [...new Set([env.baseUrl, ...env.trustedOrigins])],
-    database: drizzleAdapter(db, { provider: "pg", schema, transaction: true }),
+    database: (options: BetterAuthOptions) => keyAuthority.adapter(database(options)),
     // Provider errors can contain token responses; durable events below contain
     // only our action, outcome and identifiers.
     logger: { disabled: true },
@@ -54,6 +62,8 @@ export function createAuth(db: Db, env: ServerEnv) {
     session: {
       additionalFields: identitySessionFields,
       cookieCache: { enabled: false },
+      expiresIn: Math.min(env.browserSessionIdleDays ?? 30, env.browserSessionMaxDays ?? 90) * 86400,
+      updateAge: 86400,
       ...(oidc ? { expiresIn: oidc.sessionMaxAgeSeconds, disableSessionRefresh: true } : {}),
     },
     user: {
@@ -80,9 +90,14 @@ export function createAuth(db: Db, env: ServerEnv) {
           if (user.identitySource === "company" && (!oidc || identity?.source !== "company" || !user.companyAdmitted || user.oidcIssuer !== oidc.issuer)) return false;
           if (oidc && user.identitySource !== "company" && (!canUsePassword(user, env) || identity?.source !== "password")) return false;
           const expiresAt = oidc ? new Date(Math.min(session.expiresAt.getTime(), (identity?.checkedAt.getTime() ?? Date.now()) + oidc.sessionMaxAgeSeconds * 1000)) : session.expiresAt;
-          return { data: { ...session, expiresAt, accessVersion: identity?.accessVersion ?? user.accessVersion } };
+          return { data: { ...session, expiresAt, accessVersion: identity?.accessVersion ?? user.accessVersion,
+            sessionKind: requests.getStore()?.cliSession === true ? "cli" : "browser" } };
         },
         after: async (session) => {
+          if (requests.getStore()?.cliSession) {
+            await auditIdentity(db, { actorId: session.userId, action: "session.cli_sign_in", targetId: session.id });
+            return;
+          }
           const [user] = await db.select().from(schema.user).where(eq(schema.user.id, session.userId));
           if (user && requests.getStore()?.identity?.source === "password") {
             await auditIdentity(db, { actorId: user.id, action: oidc && user.emergencyAdmin ? "emergency.sign_in" : "password.sign_in", targetId: user.id });
@@ -92,7 +107,14 @@ export function createAuth(db: Db, env: ServerEnv) {
     },
     ...(!oidc && env.github ? { socialProviders: { github: { clientId: env.github.clientId, clientSecret: env.github.clientSecret } } } : {}),
     plugins: [
-      organization({ allowUserToCreateOrganization: false }), admin(), bearer(),
+      organization({ allowUserToCreateOrganization: false, creatorRole: "admin", schema: { organization: { additionalFields: accountOrganizationFields } } }), admin(), bearer(),
+      apiKey(apiKeyConfigurations(env)),
+      deviceAuthorizationPlugin(db, env, identity => {
+        const state = requests.getStore();
+        if (!state) throw new Error("Device session redemption requires the vetted HTTP entry point");
+        state.identity = identity;
+        state.cliSession = true;
+      }),
       ...(oidc ? [genericOAuth({ config: [{
         providerId: providerId!, discoveryUrl: oidc.discoveryUrl,
         clientId: oidc.clientId, clientSecret: oidc.clientSecret,
@@ -118,11 +140,53 @@ export function createAuth(db: Db, env: ServerEnv) {
 
   const handler = async (request: Request): Promise<Response> => requests.run({}, async () => {
     const path = new URL(request.url).pathname.replace(/^\/api\/auth/, "");
+    if (DEVICE_AUTH_PATHS.has(path)) {
+      const publicDevice = path === "/device/code" || path === "/device/token";
+      let approvalActor: string | undefined;
+      if (request.headers.has("authorization")) return deviceProtocolError("invalid_request", "Device approval requires a browser session; code and token requests carry no authorization header");
+      let body: Record<string, unknown> | null = null;
+      if (request.method === "POST") body = await readDeviceBody(request);
+      if (path === "/device" ? request.method !== "GET" : request.method !== "POST" || !body) return deviceProtocolError("invalid_request", "Invalid device request");
+      const fields = path === "/device/code" ? ["client_id"] : path === "/device/token" ? ["client_id", "device_code", "grant_type"] : ["userCode"];
+      if (body && (Object.keys(body).some(key => !fields.includes(key)) || fields.some(key => typeof body![key] !== "string" || !(body![key] as string).length))) return deviceProtocolError("invalid_request", "Invalid device request fields");
+      if (publicDevice && body?.client_id !== CLI_CLIENT_ID) return deviceProtocolError("invalid_client", "Unknown client");
+      if (body) {
+        const headers = new Headers(request.headers);
+        headers.delete("content-length");
+        request = new Request(request.url, { method: "POST", headers, body: JSON.stringify(body) });
+      }
+      if (!publicDevice) {
+        const current = await auth.api.getSession({ headers: request.headers });
+        if (!current || current.session.sessionKind !== "browser" || !sessionAllowed(current, env) || !principalAllowed(current.user, env)) return deviceProtocolError("unauthorized", "Sign in before reviewing this request", 401);
+        approvalActor = current.user.id;
+        const origin = request.headers.get("origin");
+        const site = request.headers.get("sec-fetch-site");
+        if (site === "cross-site" || (origin && ![env.baseUrl, ...env.trustedOrigins].includes(origin)) || (request.method === "POST" && !origin && site !== "same-origin" && site !== "same-site")) return deviceProtocolError("access_denied", "Untrusted origin", 403);
+        if (path === "/device/approve") {
+          // GET /device must first claim the request for this exact browser user.
+          const normalized = (body!.userCode as string).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+          const [claimed] = await db.update(schema.deviceCode).set({ approvalAccessVersion: current.user.accessVersion ?? 0 })
+            .where(and(eq(schema.deviceCode.userCode, normalized), eq(schema.deviceCode.userId, current.user.id), eq(schema.deviceCode.status, "pending"))).returning({ id: schema.deviceCode.id });
+          if (!claimed) return deviceProtocolError("access_denied", "Review and claim this code before approval", 403);
+        }
+      }
+      const response = await auth.handler(request);
+      if (response.ok && path === "/device/token" && requests.getStore()?.identity) await ensurePersonalAccount(db, env, requests.getStore()!.identity!.userId);
+      if (response.ok && (path === "/device/approve" || path === "/device/deny")) await auditIdentity(db, {
+        actorId: approvalActor, action: path === "/device/approve" ? "session.cli_approve" : "session.cli_deny", details: { clientId: CLI_CLIENT_ID },
+      });
+      const headers = new Headers(response.headers);
+      headers.set("cache-control", "no-store"); headers.set("pragma", "no-cache");
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+    }
     const callback = path === `/callback/${providerId}` || (!oidc && env.github && path === "/callback/github");
     if (!servedPaths.has(path) && !callback) return errorResponse("not found", 404);
+    // Browser auth endpoints never accept bearer sessions. CLI sessions enter
+    // only through the shared API, where provenance is checked explicitly.
+    if (request.headers.has("authorization")) return errorResponse("Browser session required", 401);
     if (path === "/get-session") {
       const current = await auth.api.getSession({ headers: request.headers });
-      if (!current || !sessionAllowed(current, env)) return Response.json(null);
+      if (!current || current.session.sessionKind !== "browser" || !sessionAllowed(current, env) || !principalAllowed(current.user, env)) return Response.json(null);
       return auth.handler(request);
     }
     let body: Record<string, any> = {};
@@ -132,7 +196,7 @@ export function createAuth(db: Db, env: ServerEnv) {
     }
     const publicPath = path === "/sign-in/email" || path === "/sign-in/social" || callback;
     const current = publicPath ? null : await auth.api.getSession({ headers: request.headers });
-    if (!publicPath && (!current || !sessionAllowed(current, env))) return errorResponse("Session expired or access unavailable", 401);
+    if (!publicPath && (!current || current.session.sessionKind !== "browser" || !sessionAllowed(current, env) || !principalAllowed(current.user, env))) return errorResponse("Session expired or access unavailable", 401);
     const state = requests.getStore()!;
     state.actorId = current?.user.id;
     if (request.method !== "GET") {
@@ -217,9 +281,10 @@ export function createAuth(db: Db, env: ServerEnv) {
     if (path === "/sign-in/email" && !response.ok && state.identity) {
       await auditIdentity(db, { action: "password.sign_in", targetId: state.identity.userId, outcome: "denied" });
     }
+    if (response.ok && state.identity) await ensurePersonalAccount(db, env, state.identity.userId);
     return response;
   });
-  return { ...auth, handler };
+  return { ...auth, handler, withOrganizationKeyAuthority: keyAuthority.run };
 }
 
 export type Auth = ReturnType<typeof createAuth>;

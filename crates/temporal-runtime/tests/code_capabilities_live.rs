@@ -286,6 +286,9 @@ where
             api::DeploymentUniverseCreateParams {
                 handle: None,
                 universe_id: universe.to_string(),
+                metadata: Default::default(),
+                protected: false,
+                expires_at_ms: None,
             },
         ),
     )

@@ -20,7 +20,6 @@ copy_workspace_manifests() {
   for workspace in \
     clients/typescript \
     docs/site \
-    platform/cli \
     platform/configurator-mcp \
     platform/connectors \
     platform/db \
@@ -50,10 +49,10 @@ stage_runtime() {
   # The documentation workspace participates in dependency resolution only.
   rm -rf "$root/docs"
   if [[ "$name" = platform ]]; then
-    rm -rf "$root/platform/cli" "$root/platform/configurator-mcp" \
+    rm -rf "$root/platform/configurator-mcp" \
       "$root/platform/connectors"
   else
-    rm -rf "$root/platform/cli" "$root/platform/configurator-mcp" \
+    rm -rf "$root/platform/configurator-mcp" \
       "$root/platform/db" "$root/platform/backend" "$root/platform/shared" \
       "$root/platform/web"
   fi

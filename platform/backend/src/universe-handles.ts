@@ -10,7 +10,7 @@ export interface UniverseHandleSyncResult { updated: number; skipped: number }
 /** Explicit administrative sync. Ordinary reads never call runtime. */
 export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHandleSyncResult> {
   let skipped = 0;
-  const rows = await ctx.db.select({ universe: schema.universes, handle: schema.organization.slug })
+  const rows = await ctx.db.select({ universe: schema.universes, handle: schema.universes.handle })
     .from(schema.universes).innerJoin(schema.organization, eq(schema.organization.id, schema.universes.organizationId));
   if (!rows.length) return { updated: 0, skipped: 0 };
   const endpoints = [...new Set(rows.map(row => row.universe.gatewayUrl ?? ctx.env.lightspeedApiUrl))];
@@ -19,7 +19,7 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
     return [endpoint, new Map((response.universes ?? []).map(universe => [universe.universeId, universe]))] as const;
   })));
   const seen = new Set<string>();
-  const changes: { organizationId: string; handle: string }[] = [];
+  const changes: { universeId: string; handle: string }[] = [];
   const deletions: { id: string; configuration: Record<string, unknown> }[] = [];
   for (const row of rows) {
     const runtime = inventories.get(row.universe.gatewayUrl ?? ctx.env.lightspeedApiUrl)?.get(row.universe.lightspeedUniverseId);
@@ -30,21 +30,21 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
     const handle = runtime?.deletion ? `_deleting-${runtime.universeId}` : runtime?.handle ?? row.handle;
     if (seen.has(handle)) throw new UniverseHandleCacheConflict("Linked runtime universes have conflicting handles; choose distinct handles in runtime before refreshing Platform.");
     seen.add(handle);
-    if (handle !== row.handle) changes.push({ organizationId: row.universe.organizationId, handle });
+    if (handle !== row.handle) changes.push({ universeId: row.universe.id, handle });
   }
   if (!changes.length && !deletions.length) return { updated: 0, skipped };
-  changes.sort((a, b) => a.organizationId.localeCompare(b.organizationId));
+  changes.sort((a, b) => a.universeId.localeCompare(b.universeId));
   await ctx.db.transaction(async tx => {
     for (const deletion of deletions) await tx.update(schema.universes).set({ status: "deleting", runtimeConfiguration: deletion.configuration }).where(eq(schema.universes.id, deletion.id));
     // A sequence of runtime renames can swap two cached handles. Clear both
     // inside this transaction before installing the authoritative values.
     for (const change of changes) {
-      await tx.update(schema.organization).set({ slug: `handle-cache-${crypto.randomUUID()}` })
-        .where(eq(schema.organization.id, change.organizationId));
+      await tx.update(schema.universes).set({ handle: `handle-cache-${crypto.randomUUID()}` })
+        .where(eq(schema.universes.id, change.universeId));
     }
     for (const change of changes) {
-      await tx.update(schema.organization).set({ slug: change.handle })
-        .where(eq(schema.organization.id, change.organizationId));
+      await tx.update(schema.universes).set({ handle: change.handle })
+        .where(eq(schema.universes.id, change.universeId));
     }
   });
   return { updated: changes.length, skipped };
@@ -52,8 +52,8 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
 
 /** Prevent a known cache collision before mutating runtime. External renames
  * can free a runtime handle while its old Platform cache entry still exists. */
-export async function requireAvailableCachedHandle(ctx: AppContext, handle: string, ownOrganizationId?: string): Promise<void> {
-  const [existing] = await ctx.db.select({ id: schema.organization.id }).from(schema.organization)
-    .where(ownOrganizationId ? and(eq(schema.organization.slug, handle), ne(schema.organization.id, ownOrganizationId)) : eq(schema.organization.slug, handle)).limit(1);
+export async function requireAvailableCachedHandle(ctx: AppContext, handle: string, ownUniverseId?: string): Promise<void> {
+  const [existing] = await ctx.db.select({ id: schema.universes.id }).from(schema.universes)
+    .where(ownUniverseId ? and(eq(schema.universes.handle, handle), ne(schema.universes.id, ownUniverseId)) : eq(schema.universes.handle, handle)).limit(1);
   if (existing) throw new UniverseHandleCacheConflict("This handle is already in Platform's cache. Choose another handle, or ask a Platform administrator to use Sync from runtime if it was renamed externally.");
 }

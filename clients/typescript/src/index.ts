@@ -39,3 +39,7 @@ export type * from "./generated/types.js";
 
 export { readEventStream } from "./event-stream.js";
 export type { ServerSentEvent } from "./event-stream.js";
+
+export { PLATFORM_OPERATIONS } from "./generated/platform.js";
+export type { PlatformOperationId, PlatformOperationMap, PlatformOperationParams, PlatformOperationResult } from "./generated/platform.js";
+export type * from "./generated/platform-types.js";

@@ -1,3 +1,4 @@
+import { userSubject } from "../test/subject-fixture.js";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
@@ -6,18 +7,19 @@ import { runtimeHttpRoutes } from "./runtime-http.js";
 import { ADMIN_OPERATIONS, DENIED_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
 
 const mocks = vi.hoisted(() => ({ access: vi.fn(), create: vi.fn(), remove: vi.fn(), handle: vi.fn() }));
-vi.mock("./routes/universes.js", () => ({ universeForRuntimeReference: mocks.access, createUniverseRows: mocks.create, deleteManagedUniverse: mocks.remove }));
+vi.mock("./routes/universes.js", () => ({ universeForRuntimeReference: mocks.access, listUniverseAccesses: vi.fn(async () => []), deleteManagedUniverse: mocks.remove, renameManagedUniverse: vi.fn(), updateUniverseLifecycle: vi.fn() }));
 vi.mock("./universe-handles.js", () => ({ requireAvailableCachedHandle: mocks.handle }));
 const runtimeUniverse = "00000000-0000-0000-0000-000000000001";
 const token = "platform-test-token-12345678901234567890";
 const connection = { runtime: "runtime", contractRevision: "1", caller: { single: false, tokenName: "platform" }, serverInfo: { name: "Lightspeed", version: "1" } };
-const access = (role = "admin") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, gatewayUrl: null, features: {} }, handle: "acme", role, member: { userId: "alice", role } });
+const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, gatewayUrl: null, features: {} }, handle: "acme", role, member: { userId: "alice", role } });
 
-function app(role = "admin", endpoint = "https://runtime.test/api/v1", platformAdmin = false) {
-  mocks.access.mockResolvedValue(access(role));
-  const ctx = { env: { lightspeedApiUrl: endpoint, lightspeedApiToken: token } } as AppContext;
+function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false) {
+  const auth = userSubject("alice", platformAdmin);
+  mocks.access.mockResolvedValue({ ...access(role), auth, accountRole: platformAdmin ? "admin" : "member", account: { id: "account", requireProtected: false } });
+  const ctx = { db: { select: () => ({ from: () => ({ where: async () => [], then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([]).then(resolve) }) }) }, env: { lightspeedApiUrl: endpoint, lightspeedApiToken: token } } as unknown as AppContext;
   const result = new Hono<{ Variables: ApiVariables }>();
-  result.use("*", async (c, next) => { c.set("session", { user: { id: "alice", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
+  result.use("*", async (c, next) => { c.set("auth", auth); c.set("session", { user: { id: "alice", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
   result.route("/api/v1", runtimeHttpRoutes(ctx));
   return result;
 }
@@ -104,7 +106,7 @@ describe("shared resource API admission", () => {
   it("bounds policy bodies even without Content-Length", async () => {
     const calls = runtime();
     const response = await app("contributor").request(path("/sessions"), { method: "POST", body: JSON.stringify({ displayName: "x".repeat(1024 * 1024) }) });
-    expect(response.status).toBe(403); expect(calls).toHaveLength(1);
+    expect(response.status).toBe(413); expect(calls).toHaveLength(1);
   });
   it("forwards binary responses and cancels the upstream reader", async () => {
     const canceled = vi.fn(); let upstreamSignal: AbortSignal | null | undefined;
@@ -118,14 +120,14 @@ describe("shared resource API admission", () => {
   });
   it("uses native lifecycle services instead of forwarding universe deletion", async () => {
     const calls = runtime(); mocks.remove.mockResolvedValue({ state: "deleting" });
-    const response = await app("admin", undefined, true).request(path(""), { method: "DELETE" });
+    const response = await app("owner", undefined, true).request(path(""), { method: "DELETE" });
     expect(response.status).toBe(200);
     expect(mocks.remove).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ handle: "acme" }), "alice");
     expect(calls).toHaveLength(1);
   });
   it("does not expose the upstream credential name in Platform discovery", async () => {
     runtime(); const response = await app().request("/api/v1/connection");
-    expect(await response.json()).toMatchObject({ runtime: "platform", caller: { single: false } });
+    expect(await response.json()).toMatchObject({ runtime: "platform", caller: { single: false }, platform: { credential: { kind: "session", id: "session-alice" } } });
     expect(await (await app().request("/api/v1/connection")).text()).not.toContain("tokenName");
   });
 });

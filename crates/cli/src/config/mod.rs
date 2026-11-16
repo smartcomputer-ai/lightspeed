@@ -77,6 +77,11 @@ pub(crate) struct DocumentArgs {
     /// YAML and JSON are both accepted.
     #[arg(short = 'f', long = "file", required = true, num_args = 1..)]
     files: Vec<PathBuf>,
+    #[command(flatten)]
+    owner: crate::platform_cli::InitialOwnerArgs,
+    /// Reuse a provisioning UUID when retrying one document after interruption.
+    #[arg(long)]
+    universe_id: Option<uuid::Uuid>,
     /// Print one JSON object per resource instead of lines for people.
     #[arg(long)]
     json: bool,
@@ -110,13 +115,21 @@ fn base_connection() -> ResolvedConnection {
     HttpAgentApi::new("").connection().clone()
 }
 
-async fn plan_all(files: &[PathBuf]) -> Result<Vec<DocumentPlan>> {
+async fn plan_all(
+    files: &[PathBuf],
+    owner: &crate::platform_cli::InitialOwnerArgs,
+    universe_id: Option<uuid::Uuid>,
+) -> Result<Vec<DocumentPlan>> {
     let documents = document::load(files)?;
+    anyhow::ensure!(
+        universe_id.is_none() || documents.len() == 1,
+        "--universe-id requires exactly one document"
+    );
     let base = base_connection();
     let mut plans = Vec::new();
     for loaded in &documents {
         plans.push(
-            plan::plan(&base, loaded)
+            plan::plan_with_owner(&base, loaded, owner.value(), universe_id)
                 .await
                 .with_context(|| format!("{}", loaded.path.display()))?,
         );
@@ -127,7 +140,7 @@ async fn plan_all(files: &[PathBuf]) -> Result<Vec<DocumentPlan>> {
 /// `lightspeed config diff`: exit status 0 when nothing would change, 2 when
 /// something would.
 async fn diff(args: DocumentArgs) -> Result<()> {
-    let plans = plan_all(&args.files).await?;
+    let plans = plan_all(&args.files, &args.owner, args.universe_id).await?;
     report(&plans, args.json)?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         bail!("the documents ask for changes apply will not make");
@@ -142,7 +155,7 @@ async fn diff(args: DocumentArgs) -> Result<()> {
 /// written, so a document that cannot be applied changes nothing.
 async fn apply(args: ApplyArgs) -> Result<()> {
     let args = args.document;
-    let mut plans = plan_all(&args.files).await?;
+    let mut plans = plan_all(&args.files, &args.owner, args.universe_id).await?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         report(&plans, args.json)?;
         bail!("the documents ask for changes apply will not make; nothing was written");

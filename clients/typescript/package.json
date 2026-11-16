@@ -34,7 +34,9 @@
     "./schema/openapi.json": "./schema/openapi.json",
     "./schema/workflow.schema.json": "./schema/workflow.schema.json",
     "./schema/workflow.json": "./schema/workflow.json",
-    "./release.json": "./release.json"
+    "./release.json": "./release.json",
+    "./schema/platform.schema.json": "./schema/platform.schema.json",
+    "./schema/platform-http.json": "./schema/platform-http.json"
   },
   "files": [
     "dist",

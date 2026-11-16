@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -34,6 +35,7 @@ function post(path: string, body: unknown) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "user" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
   app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));

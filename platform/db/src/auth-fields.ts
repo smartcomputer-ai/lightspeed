@@ -11,4 +11,19 @@ export const identityUserFields = {
 } as const;
 export const identitySessionFields = {
   accessVersion: { type: "number", required: false, defaultValue: 0, input: false },
+  sessionKind: { type: "string", required: false, defaultValue: "browser", input: false },
+} as const;
+
+export const deviceCodeFields = {
+  approvalAccessVersion: { type: "number", required: false, input: false },
+} as const;
+
+export const accountOrganizationFields = {
+  kind: { type: "string", required: false, defaultValue: "shared", input: false },
+  enabled: { type: "boolean", required: false, defaultValue: true, input: false },
+  personalUserId: { type: "string", required: false, input: false },
+  universeQuota: { type: "number", required: false, defaultValue: 100, input: false },
+  defaultProtected: { type: "boolean", required: false, defaultValue: true, input: false },
+  requireProtected: { type: "boolean", required: false, defaultValue: false, input: false },
+  membershipPolicy: { type: "json", required: false, input: false },
 } as const;

@@ -9,6 +9,35 @@ A runtime token can call every method in every universe, including reading priva
 sessions, so keep it on your server. The client itself also
 runs in a browser; [give it a proxy](#serve-a-browser-ui) instead of a key.
 
+## Connect through Platform
+
+Use a personal or application API key with the Platform `/api/v1` endpoint.
+The same runtime methods then enforce the principal's current account and
+universe permissions, narrowed by the key. Omit `actor`: Platform derives it.
+Runtime infrastructure tokens remain full-authority credentials for trusted
+components connecting directly to a runtime.
+
+```ts
+const client = new LightspeedClient({
+  endpoint: "https://lightspeed.example/api/v1",
+  token: process.env.LIGHTSPEED_PLATFORM_KEY!,
+});
+const { accounts } = await client.callPlatform("platform/accounts/list", {});
+const { universe } = await client.callPlatform("platform/universes/create", {
+  accountId: accounts[0]!.id,
+  universeId: crypto.randomUUID(), // Keep this ID if retrying creation.
+  name: "Experiment",
+  handle: "experiment",
+});
+```
+
+Creation requires an account Creator or Admin and a key that permits creation.
+Native account, application, grant, and credential types are generated from
+Platform's route descriptors. `callPlatform` shares the client's transport and
+credentials with `call`. Key-management routes require an authenticated browser
+session; a key cannot mint a broader credential. Browser-based CLI login is
+separate follow-up work.
+
 ## Install
 
 Requires Node.js 24 or newer.

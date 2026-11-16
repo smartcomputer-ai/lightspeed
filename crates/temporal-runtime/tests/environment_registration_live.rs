@@ -119,6 +119,9 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         operator.create_universe(DeploymentUniverseCreateParams {
             handle: None,
             universe_id: universe_id.to_string(),
+            metadata: Default::default(),
+            protected: false,
+            expires_at_ms: None,
         }),
     )
     .await?;

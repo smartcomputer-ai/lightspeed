@@ -28,7 +28,7 @@ export class GatewayUnconfigured extends Error {
 
 /// A refusal the Platform makes itself, before the request reaches core.
 export class GateRefusal extends Error {
-  constructor(readonly status: 403 | 404, message: string) { super(message); }
+  constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
 }
 
 /// Who a universe request is for: the signed-in user and the role they hold
@@ -110,7 +110,7 @@ export class MemberClient extends LightspeedClient {
     if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
     return {
       kinds,
-      ...(this.member.role === "admin" ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.member.userId }),
+      ...(this.member.role === "owner" ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.member.userId }),
     };
   }
 
@@ -119,7 +119,7 @@ export class MemberClient extends LightspeedClient {
   }
 
   needsPolicyBody(operation: string): boolean {
-    return (operation === "session/start" && this.member.role !== "admin")
+    return (operation === "session/start" && this.member.role !== "owner")
       || (operation === "session/runs/start" && !roleAtLeast(this.member.role, "operator"));
   }
 
@@ -156,14 +156,14 @@ export class MemberClient extends LightspeedClient {
       }
       if (method === "transcriptions/read") return { params, response };
     }
-    const admin = this.member.role === "admin";
+    const admin = this.member.role === "owner";
     if (method === "session/delete") {
       // Permanent deletion must use the separately authorized, audited purge route.
       params = { ...params, softDelete: true, ...(!admin ? { sharedOnly: true } : {}) };
     }
     if (!admin && CREATION_OPERATIONS.has(method)) {
       const start = params as { deleteAfterCloseMs?: number | null };
-      if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "admin role required for deletion retention");
+      if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "Owner role required for deletion retention");
       // Explicit null also overrides profile-derived deletion schedules.
       params = { ...params, deleteAfterCloseMs: null };
     }

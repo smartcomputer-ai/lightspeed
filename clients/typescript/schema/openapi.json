@@ -63,7 +63,7 @@
           },
           {
             "const": "unauthenticated",
-            "description": "No valid credential was presented. An authenticated gateway decides\nthis from the request headers and answers HTTP 401 without reading\nthe request body, so the error answers no request id.",
+            "description": "No valid credential was presented. An authenticated gateway decides\nthis from the request headers and answers HTTP 401 without reading\nthe request body.",
             "type": "string"
           },
           {
@@ -4322,9 +4322,6 @@
           "caller": {
             "$ref": "#/components/schemas/CallerAccess"
           },
-          "capabilities": {
-            "$ref": "#/components/schemas/ServerCapabilities"
-          },
           "contractRevision": {
             "type": "string"
           },
@@ -4334,9 +4331,6 @@
               "string",
               "null"
             ]
-          },
-          "protocolVersion": {
-            "type": "string"
           },
           "runtime": {
             "$ref": "#/components/schemas/RuntimeKind"
@@ -4348,9 +4342,7 @@
         "required": [
           "runtime",
           "contractRevision",
-          "protocolVersion",
           "serverInfo",
-          "capabilities",
           "caller"
         ],
         "type": "object"
@@ -6596,37 +6588,6 @@
         ],
         "type": "object"
       },
-      "DeclaredUniverseMember": {
-        "additionalProperties": false,
-        "properties": {
-          "email": {
-            "description": "Select by verified email, or by issuer and subject, never both.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "issuer": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "role": {
-            "$ref": "#/components/schemas/UniverseMemberRole"
-          },
-          "subject": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "role"
-        ],
-        "type": "object"
-      },
       "DeletedSessionView": {
         "additionalProperties": false,
         "properties": {
@@ -6677,6 +6638,13 @@
           },
           "handle": {
             "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "type": "object"
           },
           "requestedBy": {
             "$ref": "#/components/schemas/Attribution"
@@ -7141,32 +7109,28 @@
       },
       "DeploymentUniverseConfigurationPutParams": {
         "additionalProperties": false,
-        "description": "Patch desired Platform configuration. Absent fields retain their values.",
+        "description": "Patch universe settings. Absent fields retain their values.",
         "properties": {
-          "directoryGroupMappings": {
-            "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-            "items": {
-              "$ref": "#/components/schemas/UniverseDirectoryGroupMapping"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
           "displayName": {
-            "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
             "type": [
               "string",
               "null"
             ]
           },
-          "members": {
-            "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-            "items": {
-              "$ref": "#/components/schemas/DeclaredUniverseMember"
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
             },
+            "description": "Replaces the complete metadata map; omission leaves it unchanged.",
             "type": [
-              "array",
+              "object",
+              "null"
+            ]
+          },
+          "protected": {
+            "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+            "type": [
+              "boolean",
               "null"
             ]
           },
@@ -7182,12 +7146,33 @@
       "DeploymentUniverseCreateParams": {
         "additionalProperties": false,
         "properties": {
+          "expiresAtMs": {
+            "description": "Future Unix time in milliseconds. Incompatible with protection.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "handle": {
             "description": "The new universe's handle: 1-63 lowercase letters, digits and\nhyphens, starting and ending with a letter or digit, and not in the\nform of a UUID. Omit it to have one derived from the UUID. Ignored\nwhen the universe already exists.",
             "type": [
               "string",
               "null"
             ]
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "description": "At most 32 string entries; keys up to 64 bytes, values up to 256 bytes.\nCaller keys cannot start with lightspeed.",
+            "type": "object"
+          },
+          "protected": {
+            "default": false,
+            "type": "boolean"
           },
           "universeId": {
             "type": "string"
@@ -7244,6 +7229,29 @@
         ],
         "type": "object"
       },
+      "DeploymentUniverseExpiryPutParams": {
+        "additionalProperties": false,
+        "description": "Replace or clear expiry. Explicit null clears it; omission is refused.",
+        "properties": {
+          "expiresAtMs": {
+            "format": "uint64",
+            "maximum": 9223372036854775807,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "universe": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universe",
+          "expiresAtMs"
+        ],
+        "type": "object"
+      },
       "DeploymentUniverseHandlePutParams": {
         "additionalProperties": false,
         "description": "Rename a universe. The UUID and resources remain unchanged; the previous\nhandle is released, so requests and URLs using it stop reaching this\nuniverse.",
@@ -7265,6 +7273,16 @@
       },
       "DeploymentUniverseListParams": {
         "additionalProperties": false,
+        "properties": {
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "description": "Return universes containing every supplied key/value pair.",
+            "type": "object"
+          }
+        },
         "type": "object"
       },
       "DeploymentUniverseListResponse": {
@@ -7329,20 +7347,17 @@
               }
             ]
           },
-          "directoryGroupMappings": {
-            "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-            "items": {
-              "$ref": "#/components/schemas/UniverseDirectoryGroupMapping"
-            },
+          "displayName": {
             "type": [
-              "array",
+              "string",
               "null"
             ]
           },
-          "displayName": {
-            "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
             "type": [
-              "string",
+              "integer",
               "null"
             ]
           },
@@ -7359,13 +7374,13 @@
               "null"
             ]
           },
-          "members": {
-            "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-            "items": {
-              "$ref": "#/components/schemas/DeclaredUniverseMember"
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
             },
+            "description": "Replaces the complete metadata map; omission leaves it unchanged.",
             "type": [
-              "array",
+              "object",
               "null"
             ]
           },
@@ -7373,6 +7388,13 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "protected": {
+            "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "sessions": {
             "format": "uint64",
@@ -12482,30 +12504,6 @@
         ],
         "type": "string"
       },
-      "ServerCapabilities": {
-        "additionalProperties": false,
-        "properties": {
-          "eventLog": {
-            "default": false,
-            "type": "boolean"
-          },
-          "historyRead": {
-            "type": "boolean"
-          },
-          "localExecution": {
-            "type": "boolean"
-          },
-          "notifications": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "notifications",
-          "historyRead",
-          "localExecution"
-        ],
-        "type": "object"
-      },
       "ServerInfo": {
         "additionalProperties": false,
         "properties": {
@@ -17054,35 +17052,6 @@
         ],
         "type": "string"
       },
-      "UniverseDirectoryGroupMapping": {
-        "additionalProperties": false,
-        "properties": {
-          "group": {
-            "type": "string"
-          },
-          "issuer": {
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/components/schemas/UniverseMemberRole"
-          }
-        },
-        "required": [
-          "issuer",
-          "group",
-          "role"
-        ],
-        "type": "object"
-      },
-      "UniverseMemberRole": {
-        "enum": [
-          "viewer",
-          "contributor",
-          "operator",
-          "admin"
-        ],
-        "type": "string"
-      },
       "UniverseWatchParams": {
         "additionalProperties": false,
         "properties": {
@@ -17107,11 +17076,6 @@
             ]
           }
         },
-        "type": "object"
-      },
-      "UniverseWatchResponse": {
-        "additionalProperties": false,
-        "description": "Final response when a watch reaches its lifetime. Reconnect and refetch on\nwatch/reset; notifications are lossy hints and have no durable resume cursor.",
         "type": "object"
       },
       "VfsFeature": {
@@ -18190,7 +18154,7 @@
             "runtimeToken": []
           }
         ],
-        "summary": "Inspect the Lightspeed protocol",
+        "summary": "Inspect the runtime connection",
         "x-lightspeed-access": {
           "kind": "connection"
         },
@@ -19305,9 +19269,28 @@
     },
     "/api/v1/universes": {
       "get": {
-        "description": "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.",
+        "description": "Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.",
         "operationId": "deployment/universes/list",
-        "parameters": [],
+        "parameters": [
+          {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "default": {},
+                  "description": "Return universes containing every supplied key/value pair.",
+                  "type": "object"
+                }
+              }
+            },
+            "in": "query",
+            "name": "metadata",
+            "required": false,
+            "x-lightspeed-encoding": "json"
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -19467,7 +19450,7 @@
         "x-lightspeed-transfer": "json"
       },
       "post": {
-        "description": "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.",
+        "description": "Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.",
         "operationId": "deployment/universes/create",
         "parameters": [],
         "requestBody": {
@@ -19476,12 +19459,33 @@
               "schema": {
                 "additionalProperties": false,
                 "properties": {
+                  "expiresAtMs": {
+                    "description": "Future Unix time in milliseconds. Incompatible with protection.",
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "handle": {
                     "description": "The new universe's handle: 1-63 lowercase letters, digits and\nhyphens, starting and ending with a letter or digit, and not in the\nform of a UUID. Omit it to have one derived from the UUID. Ignored\nwhen the universe already exists.",
                     "type": [
                       "string",
                       "null"
                     ]
+                  },
+                  "metadata": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "default": {},
+                    "description": "At most 32 string entries; keys up to 64 bytes, values up to 256 bytes.\nCaller keys cannot start with lightspeed.",
+                    "type": "object"
+                  },
+                  "protected": {
+                    "default": false,
+                    "type": "boolean"
                   },
                   "universeId": {
                     "type": "string"
@@ -19669,7 +19673,7 @@
     },
     "/api/v1/universes/{universe}": {
       "delete": {
-        "description": "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
+        "description": "Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
         "operationId": "deployment/universes/delete",
         "parameters": [
           {
@@ -26435,7 +26439,7 @@
     },
     "/api/v1/universes/{universe}/configuration": {
       "put": {
-        "description": "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.",
+        "description": "Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.",
         "operationId": "deployment/universes/configuration/put",
         "parameters": [
           {
@@ -26452,32 +26456,28 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "description": "Patch desired Platform configuration. Absent fields retain their values.",
+                "description": "Patch universe settings. Absent fields retain their values.",
                 "properties": {
-                  "directoryGroupMappings": {
-                    "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-                    "items": {
-                      "$ref": "#/components/schemas/UniverseDirectoryGroupMapping"
-                    },
-                    "type": [
-                      "array",
-                      "null"
-                    ]
-                  },
                   "displayName": {
-                    "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
                     "type": [
                       "string",
                       "null"
                     ]
                   },
-                  "members": {
-                    "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-                    "items": {
-                      "$ref": "#/components/schemas/DeclaredUniverseMember"
+                  "metadata": {
+                    "additionalProperties": {
+                      "type": "string"
                     },
+                    "description": "Replaces the complete metadata map; omission leaves it unchanged.",
                     "type": [
-                      "array",
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "protected": {
+                    "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+                    "type": [
+                      "boolean",
                       "null"
                     ]
                   }
@@ -26636,7 +26636,7 @@
             "runtimeToken": []
           }
         ],
-        "summary": "Declare universe presentation and access",
+        "summary": "Update universe configuration",
         "x-lightspeed-access": {
           "kind": "deployment"
         },
@@ -37129,7 +37129,9 @@
           "resumable": false,
           "terminalEvent": "watch/end",
           "terminalSchema": {
-            "$ref": "#/components/schemas/UniverseWatchResponse"
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
           }
         },
         "x-lightspeed-success": {
@@ -37137,6 +37139,205 @@
           "status": 200
         },
         "x-lightspeed-transfer": "sse"
+      }
+    },
+    "/api/v1/universes/{universe}/expiry": {
+      "put": {
+        "description": "Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.",
+        "operationId": "deployment/universes/expiry/put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "universe",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "Replace or clear expiry. Explicit null clears it; omission is refused.",
+                "properties": {
+                  "expiresAtMs": {
+                    "format": "uint64",
+                    "maximum": 9223372036854775807,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "expiresAtMs"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeploymentUniverseReadResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "405": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          },
+          "504": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpProblem"
+                }
+              }
+            },
+            "description": "Request or service failure"
+          }
+        },
+        "security": [
+          {
+            "runtimeToken": []
+          }
+        ],
+        "summary": "Set or clear universe expiry",
+        "x-lightspeed-access": {
+          "kind": "deployment"
+        },
+        "x-lightspeed-scope": "deployment",
+        "x-lightspeed-success": {
+          "kind": "fixed",
+          "status": 200
+        },
+        "x-lightspeed-transfer": "json"
       }
     },
     "/api/v1/universes/{universe}/external-environments": {

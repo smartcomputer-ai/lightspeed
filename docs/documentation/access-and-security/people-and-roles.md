@@ -1,138 +1,134 @@
-# People and roles
+# People, accounts, and roles
 
-A Platform account identifies a person. A membership gives that account a role
-in one universe. The same person can be an Admin in Acorn's engineering
-universe and a Viewer in its support universe; signing in does not grant access
-to every universe on the deployment.
+A person signs in to the Platform. An **account** groups universes, people, and
+applications. Each universe belongs to exactly one account. Better Auth
+organizations store accounts; a Better Auth user remains a person, and its
+OAuth connection records are unrelated to these product accounts.
 
-The Platform stores these accounts and memberships and checks them when a
-person makes a request. The runtime receives a configured token, the selected universe, and
-an actor ID for attribution. It does not maintain a second directory of people
-or re-evaluate their roles. See the [access overview](overview.md) for that
-boundary.
+Accounts can be personal, shared, or development accounts. Personal accounts
+are provisioned for admitted users by default, including company users; a
+deployment can disable this. Shared accounts can represent a company or a
+business unit. Accounts are siblings, without nesting. Account Admins can see
+and administer all universes in their account, including private sessions.
 
-## Choose a universe role
+## Account and deployment roles
 
-The four roles are cumulative: each includes the permissions of the preceding
-role. Session visibility is a separate check. An Operator can configure a bot
-but cannot read another person's private session simply because they manage
-the universe's resources.
-
-| Role | What the person can do |
+| Role | Authority |
 | --- | --- |
-| **Viewer** | Read visible sessions, bots, and universe resources. A session they previously created remains visible after a downgrade to Viewer. |
-| **Contributor** | Create sessions with universe defaults or an existing profile; continue sessions, steer or stop work, decide tool approvals, invoke bots, and update workspace contents. |
-| **Operator** | Customize session setup and run options; create workspaces and create or configure profiles, bots, environments, MCP servers, credentials, and channels; manage bot triggers and replay bot events. |
-| **Admin** | Manage universe members and settings. Read, control, and share every session, including private sessions; soft-delete closed sessions and set deletion retention. |
+| **Platform Admin** | Rare deployment-wide administration, including all accounts and universes. |
+| **Account Admin** | Account policy, members, applications, and every universe in that account. |
+| **Creator** | Create universes within the account's quota and policy. Receives Owner on universes they create, without gaining access to other universes. |
+| **Member** | Access only to universes explicitly assigned to them or granted through account policy. |
 
-Contributors can name a new session and choose its saved profile, but cannot
-author inline setup, override the chosen setup, create integrated sessions, or
-create or edit profiles. After creation, changing configuration, custom
-instructions, metadata, or the active environment requires an Operator or
-Admin. Per-message model and reasoning overrides also require an Operator or
-Admin. These checks apply to the server, including a Contributor’s own sessions.
+Account membership is required for an ordinary user's universe grant to take
+effect. Losing account membership disables those grants; it does not destroy
+universes. Removing Creator permission leaves existing Owner grants intact.
+`createdBy` is attribution, not continuing ownership or authority.
 
-Viewers and Contributors can inspect profiles in **Form** or **JSON** view and
-open **Session settings** for sessions they can read. The form keeps sections
-expandable and values readable, with editing controls protected and save
-actions hidden.
+## Universe roles
 
-Contributors and Operators can start and control runs in any shared session.
-Sharing a session requires its creator, with at least the Contributor role,
-or an Admin. Contributors can close only their own unshared sessions;
-Operators can close their own or shared sessions. Operators can soft-delete
-shared closed sessions; Admins can close and soft-delete any session in their
-universe, subject to lifecycle requirements.
-The [private and shared work guide](private-and-shared-work.md) develops those
-rules with an example.
+The four roles are cumulative. Session visibility remains a separate check.
 
-A **Platform admin** has a separate deployment-wide role. Platform admins
-create accounts and universes, manage deployment configuration, and act as
-Admin in every universe even without a membership there. Giving someone an
-Admin membership in Acorn does not make them a Platform admin. Only Platform
-admins can permanently delete soft-deleted session history.
+| Role | Authority |
+| --- | --- |
+| **Viewer** | Read visible sessions and universe resources. Their own sessions remain visible after a downgrade. |
+| **Contributor** | Create sessions using defaults or a saved profile; continue sessions, steer or stop work, decide approvals, invoke bots, and update workspace contents. |
+| **Operator** | Configure profiles, bots, environments, MCP servers, credentials, channels, and session settings. Create workspaces and customize run setup. |
+| **Owner** | Manage settings, universe access, and other Owners. Read, control, and share every session. Delete an unprotected universe. |
 
-## Create an account and add a member
+Contributors cannot author inline setup, override profile setup, create
+integrated sessions, or edit profiles. Session configuration, custom
+instructions, metadata, environment changes, and per-message model or
+reasoning overrides require Operator or Owner, even in the caller's own
+session. An Operator cannot read another person's private session merely
+because they configure resources.
 
-With company sign-in configured, opening Lightspeed starts sign-in automatically
-by default when you have no active session. A deployment can instead require a
-click to start sign-in. The login page also offers **Sign in with your
-company account** for manual sign-in. Your provider handles internal single
-sign-on and any external password or MFA
-prompt. The company grants ordinary application access or Platform admin
-access. A first admitted sign-in creates the account; an ordinary account has
-no universe membership until an admin adds it on **Members**. Your company
-profile and Platform admin status are refreshed at each company sign-in.
+Contributors and Operators can start and control runs in shared sessions.
+Sharing requires the creator with Contributor access, or an Owner.
+Contributors can close their own private sessions; Operators can close their
+own or shared sessions and soft-delete shared closed sessions. Owners can
+close and soft-delete any session, subject to lifecycle requirements. Only
+Platform Admins permanently purge soft-deleted session history.
 
-Without company sign-in, use an email address and password. Public signup is
-disabled. A Platform admin creates the account as follows; the first account
-comes from [the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
+A universe can have multiple Owners. Creation establishes an explicit initial
+Owner. Ordinary grant changes cannot remove the last Owner; add another
+first. Suspension still takes effect immediately, even for a sole Owner, and
+Account Admins can restore access. Owners grant access to existing account
+members and applications. Account membership management requires an Account
+Admin.
 
-1. As a Platform admin, open **Platform admin → Users → Create user**. Enter the person's
-   **Name**, **Email**, and initial **Password**. Leave **Role** as `user` unless
-   they need deployment-wide administration; `admin` here means Platform admin.
-2. Give the person their initial password through your organization's protected
-   credential-sharing channel. They can change it under **Account → Password**;
-   changing it signs out their other browser sessions.
-3. As an Admin of the target universe, open that universe's **Members** page and
-   choose **Add member**. Select the **Account** and its **Role**, then choose
-   **Add member**.
-4. Confirm the account appears in the member list with the intended role. The
-   person can now select that universe after signing in.
+## Provision people and accounts
 
-![Members page with an Add member button, Ada Demo and Marco Ruiz as Admins, and Priya Natarajan as a Contributor, plus edit and remove controls for each row.](../images/members-and-roles.png)
+Company sign-in admits users according to the configured provider claims.
+Users are identified by exact issuer and subject, never automatically linked
+to local users by matching email. Company identity and group claims refresh
+at sign-in. See [Company sign-in](single-sign-on.md).
 
-*The demo member list shows each person's role in this universe. Use the row
-controls to change or remove their membership.*
+Without company sign-in, public signup is disabled. A Platform Admin creates
+users under **Platform admin → Users**. The first administrator comes from
+[the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
+Users manage their profile, password, and personal keys under **Your profile**.
 
-Creating the account alone gives an ordinary user no universe membership. The
-member picker selects existing accounts; it does not send an invitation.
+Under **Accounts**, select a personal or shared account. Account Admins add
+existing users by user ID, assign Member, Creator, or Admin, and manage
+applications. New shared members default to Member. Shared account creation
+is restricted to Platform Admins by default; deployments can explicitly
+allow admitted users to create their own shared accounts. There is no email
+invitation or SCIM workflow yet.
 
-Company accounts are identified by the provider's exact issuer and subject,
-not by email. The provider must supply a unique email. Matching a local
-account's email never links the two accounts. Company sign-in preserves local
-universe memberships; each universe uses the same four roles without needing
-its own directory group. SCIM and email invitation workflows are deferred.
+**New universe** selects an account where the caller is a Creator or Admin.
+The initial quotas are 25 universes for personal accounts and 100 for shared
+accounts, configurable by deployment and account policy. Shared universes are
+protected by default; personal and development universes are not. Account
+policy may require protection. Handles remain unique across the deployment.
 
-For provider registration, entitlement claims and emergency-access setup,
-follow [Company sign-in (SSO)](single-sign-on.md).
+On a universe's **Members** page, assign existing account users or applications
+one of the four universe roles. Membership changes apply on the next admitted
+request. Requests already admitted and work already running can continue;
+cancel that work separately if necessary.
+
+## Applications and API keys
+
+Applications are account records with their own role and universe grants.
+They have no fake email address or human session. Account Admins create and
+manage them under **Accounts → Applications**. Disabling an application blocks
+its keys without deleting its universes.
+
+A personal key represents the user; an application key represents the
+application. Every request intersects that principal's current authority with
+the key's allowed accounts, universe UUIDs, operations, and optional read-only
+restriction. An existing-universe restriction does not permit creation.
+Credential management requires a browser session. See
+[API keys and runtime tokens](api-keys-and-service-access.md).
+
+## Protection and expiry
+
+A protected universe cannot be deleted, including by an administrator or an
+automatic expiry sweep. Owners can enable protection. Only an Account Admin
+or Platform Admin can clear it, and mandatory account policy must first be
+changed. Clearing protection and deleting are separate operations.
+
+An unprotected universe may have an expiry timestamp. Expiry and protection
+are mutually exclusive. The runtime rechecks the current expiry under the
+same lock used for protection and deletion before admitting automatic
+deletion. Metadata is retained in the deletion record.
+
+Configuration documents protect newly created universes when protection is
+omitted; they preserve an existing universe's protection when omitted.
+Runtime configuration carries runtime settings and metadata only. Account
+membership declarations and universe access policies belong to the Platform.
 
 ## Session expiry and suspension
 
-With company sign-in configured, sessions expire after eight hours by default.
-Activity does not extend them; company users return to the provider to sign in
-again. Explicit local emergency admins use **Admins** when
-password access is enabled. See [Company sign-in](single-sign-on.md#session-expiry-and-suspension)
-for renewal, outages and provider revocation behavior.
+Local browser sessions have a 30-day inactivity lifetime and a 90-day absolute
+limit by default. Company sign-in retains its bounded admission policy:
+eight hours by default, without sliding renewal. A directory refresh source
+has not yet been implemented, so company API keys also require current
+company admission. A recent browser session is not required for local
+personal or application keys.
 
-Under **Platform admin → Users**, admins can suspend a person, reinstate them,
-or sign out all their sessions. Suspension blocks new sign-ins and subsequent
-requests immediately and persists until an admin lifts it. Reinstatement
-requires a fresh login; it does not revive old sessions. Users shows identity
-source, application access and the last successful provider check.
-
-Suspension preserves local memberships and historical records. There is no
-automatic deactivation for inactivity. Running work requires separate
-cancellation. Runtime tokens belong to trusted components and operators and
-are managed in deployment configuration, independently of user accounts.
-
-## Change or remove access
-
-On **Members**, choose the edit control beside a person, select their new role,
-and choose **Save role**. To remove them from the universe, use that row's remove
-control and confirm. The server refuses to demote or remove the last Admin
-membership: add another Admin first. Platform admins' deployment-wide authority
-does not replace this membership requirement.
-
-The Platform looks up membership for each universe request. A role change
-applies to the next request, and removal prevents further access through the
-Platform. An in-flight read can still complete; removal does not recall
-content already delivered. Existing sessions and their creator attribution
-remain.
-
-Work already admitted continues because the runtime executes for the universe,
-not with the requesting person's role. If work must stop, cancel its active
-and queued runs separately. Removing membership does not change configured
-runtime tokens. If an operator loses trusted infrastructure access, rotate the
-credentials they held using
-[Runtime service access](api-keys-and-service-access.md).
+Suspension blocks subsequent requests and preserves resources and historical
+attribution. Session revocation signs out browser sessions; revoke keys
+separately when those credentials should stop working. Reinstatement does
+not restore an expired or revoked credential. Runtime infrastructure tokens
+remain separate full-authority credentials.

@@ -117,7 +117,7 @@ from the configured email and password when its own user table is empty. The
 supervisor logs this dependency wait and fails startup after 60 seconds if the
 runtime never becomes ready. `--plan` also shows startup dependencies.
 
-Configurator setup and the connector host are disabled during the runtime access
+The connector host remains disabled during the runtime access
 cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty. Runtime tokens are full
 authority credentials and are never passed to agents. Bots and Channels core
 remain runtime components; removing Channels is separate work.
@@ -354,3 +354,7 @@ runtime with `LIGHTSPEED_API_TOKEN_CLI_FILE` and
 `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`. Every token has full authority and can name
 an actor. See the [terminal guide](../../docs/documentation/using-lightspeed/cli.md)
 for token generation, replacement and local connection setup.
+
+Configurator starts with the full and platform profiles, targets the Platform
+`/api/v1` endpoint, and receives no runtime infrastructure credentials. Install
+its restricted application key from the universe template as an Account Admin.

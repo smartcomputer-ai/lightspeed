@@ -11,11 +11,15 @@ pub struct UniverseArgs {
 }
 #[derive(Debug, Subcommand)]
 enum UniverseCommand {
+    /// Manage this universe's user/application grants and policy through Platform.
+    Access(crate::platform_cli::AccessArgs),
     /// List universes; * marks the active universe for this invocation.
     List {
         /// Show permanent records of deleted universes.
         #[arg(long)]
         deleted: bool,
+        #[arg(long, value_parser = parse_metadata_pair)]
+        metadata: Vec<(String, String)>,
     },
     /// Fence the universe immediately and remove its resources in the background.
     Delete {
@@ -39,6 +43,33 @@ enum UniverseCommand {
         /// omitted.
         #[arg(long)]
         handle: Option<String>,
+        #[arg(long, value_parser = crate::session_cli::parse_duration_ms)]
+        expires_in: Option<u64>,
+        #[arg(long, value_parser = parse_metadata_pair)]
+        metadata: Vec<(String, String)>,
+        /// Set deletion protection; Platform defaults to the account policy.
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        protected: Option<bool>,
+        /// Human-readable name for Platform provisioning.
+        #[arg(long)]
+        name: Option<String>,
+        #[command(flatten)]
+        owner: crate::platform_cli::InitialOwnerArgs,
+    },
+    /// Archive a Platform universe without deleting runtime resources.
+    Archive { target: String },
+    /// Restore an archived Platform universe.
+    Restore { target: String },
+    /// Prevent deletion until explicitly unprotected.
+    Protect { target: String },
+    /// Clear deletion protection before deleting or setting expiry.
+    Unprotect { target: String },
+    /// Set expiry relative to now, or clear it with never.
+    SetExpiry { target: String, duration: String },
+    /// Manage descriptive metadata.
+    Metadata {
+        #[command(subcommand)]
+        command: UniverseMetadataCommand,
     },
     /// Read a universe and its resource counts.
     Read { target: String },
@@ -46,10 +77,40 @@ enum UniverseCommand {
     /// stop reaching it.
     SetHandle { target: String, handle: String },
 }
+#[derive(Debug, Subcommand)]
+enum UniverseMetadataCommand {
+    /// Replace the complete metadata map; no entries clears it.
+    Put {
+        target: String,
+        #[arg(value_parser = parse_metadata_pair)]
+        metadata: Vec<(String, String)>,
+    },
+}
+fn parse_metadata_pair(raw: &str) -> Result<(String, String), String> {
+    raw.split_once('=')
+        .filter(|(key, _)| !key.is_empty())
+        .map(|(key, value)| (key.into(), value.into()))
+        .ok_or_else(|| "metadata must be key=value".into())
+}
+fn expiry_after(duration: u64) -> Result<u64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis();
+    let expiry = u64::try_from(now)?
+        .checked_add(duration)
+        .context("expiry is out of range")?;
+    anyhow::ensure!(
+        duration > 0 && expiry <= i64::MAX as u64,
+        "expiry is out of range"
+    );
+    Ok(expiry)
+}
+
 pub async fn universe(args: UniverseArgs) -> Result<()> {
     let active = connection::ACTIVE.get().context("no connection")?;
     let client = HttpAgentApi::new("");
     match args.command {
+        UniverseCommand::Access(args) => crate::platform_cli::access(args).await?,
         UniverseCommand::Use { target } => {
             let id = connection::resolve_universe(active, &target).await?;
             connection::select_universe(active, id.clone())?;
@@ -67,7 +128,11 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 status.print("Universe");
             }
         }
-        UniverseCommand::List { deleted: true } => {
+        UniverseCommand::List {
+            deleted: true,
+            metadata,
+        } => {
+            let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
             let mut after = None;
             let mut universes = Vec::new();
             loop {
@@ -77,7 +142,11 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                         api::DeploymentDeletedUniversesListParams { after },
                     )
                     .await?;
-                universes.extend(response.universes);
+                universes.extend(response.universes.into_iter().filter(|universe| {
+                    metadata
+                        .iter()
+                        .all(|(key, value)| universe.metadata.get(key) == Some(value))
+                }));
                 after = response.next_after;
                 if after.is_none() {
                     break;
@@ -174,11 +243,16 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             }
             crate::output::show(args.json, &response)?;
         }
-        UniverseCommand::List { deleted: false } => {
+        UniverseCommand::List {
+            deleted: false,
+            metadata,
+        } => {
             let response: api::DeploymentUniverseListResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-                    api::DeploymentUniverseListParams {},
+                    api::DeploymentUniverseListParams {
+                        metadata: metadata.into_iter().collect(),
+                    },
                 )
                 .await?;
             // The selection may be a handle; the listing gives its UUID.
@@ -219,11 +293,11 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 if response.universes.is_empty() {
                     println!("No universes found.");
                 } else {
-                    println!("  UUID                                  HANDLE");
+                    println!("  UUID                                  HANDLE  PROTECTED  EXPIRES");
                 }
                 for u in response.universes {
                     println!(
-                        "{} {}  {}{}",
+                        "{} {}  {}{}  {}  {}",
                         if is_active(&u) { "*" } else { " " },
                         u.universe_id,
                         u.handle,
@@ -231,18 +305,59 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                             "  (deleting)"
                         } else {
                             ""
-                        }
+                        },
+                        u.configuration.protected.unwrap_or(false),
+                        u.expires_at_ms
+                            .map_or_else(|| "never".into(), |time| time.to_string())
                     );
                 }
             }
         }
-        UniverseCommand::Create { id, handle } => {
+        UniverseCommand::Create {
+            id,
+            handle,
+            expires_in,
+            metadata,
+            protected,
+            name,
+            owner,
+        } => {
+            let id = id.unwrap_or_else(uuid::Uuid::new_v4).to_string();
+            let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
+            let expires_at_ms = expires_in.map(expiry_after).transpose()?;
+            if active.is_platform() {
+                let mut params = serde_json::json!({"accountId":crate::platform_cli::selected_account()?,"universeId":id,"name":name.or_else(|| handle.clone()).unwrap_or_else(|| id.clone()),"metadata":metadata});
+                if let Some(handle) = handle {
+                    params["handle"] = serde_json::json!(handle);
+                }
+                if let Some(protected) = protected {
+                    params["protected"] = serde_json::json!(protected);
+                }
+                if let Some(expiry) = expires_at_ms {
+                    params["expiresAtMs"] = serde_json::json!(expiry);
+                }
+                if let Some(owner) = owner.value() {
+                    params["initialOwner"] = owner;
+                }
+                let response = client
+                    .call_platform("platform/universes/create", params)
+                    .await?;
+                crate::output::show(args.json, &response)?;
+                return Ok(());
+            }
+            anyhow::ensure!(
+                owner.value().is_none() && name.is_none(),
+                "name and initial Owner apply only to Platform universe creation"
+            );
             let response: api::DeploymentUniverseCreateResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_UNIVERSES_CREATE,
                     api::DeploymentUniverseCreateParams {
-                        universe_id: id.unwrap_or_else(uuid::Uuid::new_v4).to_string(),
+                        universe_id: id,
                         handle,
+                        metadata,
+                        protected: protected.unwrap_or(false),
+                        expires_at_ms,
                     },
                 )
                 .await?;
@@ -254,6 +369,80 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     response.universe.universe_id, response.universe.handle
                 );
             }
+        }
+        UniverseCommand::Archive { ref target } | UniverseCommand::Restore { ref target } => {
+            anyhow::ensure!(
+                active.is_platform(),
+                "archive and restore require a Platform connection"
+            );
+            let response = client.call_platform("platform/universes/update", serde_json::json!({"universe":target,"status":if matches!(args.command, UniverseCommand::Archive { .. }) { "archived" } else { "active" }})).await?;
+            crate::output::show(args.json, &response)?;
+        }
+        UniverseCommand::Protect { target } => {
+            let response: api::DeploymentUniverseReadResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT,
+                    api::DeploymentUniverseConfigurationPutParams {
+                        universe: target,
+                        configuration: api::UniverseConfiguration {
+                            protected: Some(true),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .await?;
+            crate::output::show(args.json, &response.universe)?;
+        }
+        UniverseCommand::Unprotect { target } => {
+            let response: api::DeploymentUniverseReadResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT,
+                    api::DeploymentUniverseConfigurationPutParams {
+                        universe: target,
+                        configuration: api::UniverseConfiguration {
+                            protected: Some(false),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .await?;
+            crate::output::show(args.json, &response.universe)?;
+        }
+        UniverseCommand::SetExpiry { target, duration } => {
+            let expires_at_ms = if duration == "never" {
+                None
+            } else {
+                Some(expiry_after(
+                    crate::session_cli::parse_duration_ms(&duration).map_err(anyhow::Error::msg)?,
+                )?)
+            };
+            let response: api::DeploymentUniverseReadResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_EXPIRY_PUT,
+                    api::DeploymentUniverseExpiryPutParams {
+                        universe: target,
+                        expires_at_ms,
+                    },
+                )
+                .await?;
+            crate::output::show(args.json, &response.universe)?;
+        }
+        UniverseCommand::Metadata {
+            command: UniverseMetadataCommand::Put { target, metadata },
+        } => {
+            let response: api::DeploymentUniverseReadResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT,
+                    api::DeploymentUniverseConfigurationPutParams {
+                        universe: target,
+                        configuration: api::UniverseConfiguration {
+                            metadata: Some(metadata.into_iter().collect()),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .await?;
+            crate::output::show(args.json, &response.universe)?;
         }
         UniverseCommand::SetHandle { target, handle } => {
             let response: api::DeploymentUniverseReadResponse = client
@@ -402,7 +591,7 @@ mod tests {
         let args = CommandLine::try_parse_from(["universe", "list", "--deleted"]).unwrap();
         assert!(matches!(
             args.universe.command,
-            UniverseCommand::List { deleted: true }
+            UniverseCommand::List { deleted: true, .. }
         ));
     }
 }

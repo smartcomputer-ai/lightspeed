@@ -41,7 +41,9 @@ export class ApiError extends Error {
 }
 
 function extractMessage(body: unknown): string | null {
-  if (!body || typeof body !== "object" || !("error" in body)) return null;
+  if (!body || typeof body !== "object") return null;
+  if ("detail" in body && typeof body.detail === "string") return body.detail;
+  if (!("error" in body)) return null;
   const { error, issues, failure } = body as {
     error: unknown;
     issues?: unknown;
@@ -92,6 +94,10 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
 }
 
 export interface Universe {
+  accountId?: string;
+  accountRole?: "admin" | "creator" | "member" | null;
+  protected?: boolean;
+  expiresAtMs?: number | null;
   runtimeConfiguration?: Omit<import("@lightspeed-ai/sdk").DeploymentUniverseConfigurationPutParams, "universe">;
   icon?: UniverseIconName;
   iconColor?: UniverseIconColor;
@@ -113,6 +119,7 @@ export interface Universe {
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
+  protected?: boolean;
   handle: string;
   universeId: string;
   sessions: number;

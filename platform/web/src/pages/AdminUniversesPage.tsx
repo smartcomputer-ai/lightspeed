@@ -1,3 +1,4 @@
+import { platformApi, useAccounts } from "@/lib/platform-api";
 import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
@@ -223,7 +224,7 @@ export function AdminUniversesPage() {
                           </Button>
                         </>
                       )}
-                      <DeleteUniverseDialog name={universe.name} handle={universe.handle} onDelete={() => purge.mutate(universe)} />
+                      <DeleteUniverseDialog name={universe.name} handle={universe.handle} protected={universe.protected} onDelete={() => purge.mutate(universe)} />
                     </>}
                   </TableActionsCell>
                 </TableRow>
@@ -270,7 +271,7 @@ export function AdminUniversesPage() {
                       >
                         Adopt
                       </Button>
-                      <DeleteUniverseDialog name={orphan.handle} handle={orphan.handle} onDelete={() => deleteOrphan.mutate(orphan)} />
+                      <DeleteUniverseDialog name={orphan.handle} handle={orphan.handle} protected={orphan.protected} onDelete={() => deleteOrphan.mutate(orphan)} />
                     </TableActionsCell>
                   </TableRow>
                 ))}
@@ -293,10 +294,10 @@ export function AdminUniversesPage() {
   );
 }
 
-function DeleteUniverseDialog({ name, handle, onDelete }: { name: string; handle: string; onDelete: () => void }) {
+function DeleteUniverseDialog({ name, handle, protected: protectedValue, onDelete }: { name: string; handle: string; protected?: boolean; onDelete: () => void }) {
   const [confirmation, setConfirmation] = useState("");
   return <AlertDialog onOpenChange={() => setConfirmation("")}>
-    <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" />}>Delete</AlertDialogTrigger>
+    <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" disabled={protectedValue} title={protectedValue ? "Clear deletion protection in universe settings first" : undefined} />}>Delete</AlertDialogTrigger>
     <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle>Permanently delete {name}?</AlertDialogTitle>
@@ -345,12 +346,20 @@ export function AdoptDialog({
   onOpenChange: (open: boolean) => void;
   onAdopted: () => void;
 }) {
+  const accounts = useAccounts();
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const accountId = selectedAccount || accounts.data?.accounts.find(a => a.enabled)?.id || "";
+  const members = useQuery({ queryKey: ["account-members", accountId], enabled: !!orphan && !!accountId, queryFn: () => platformApi("platform/accounts/members/list", { accountId }) });
+  const [selectedOwner, setSelectedOwner] = useState("");
+  const ownerId = members.data?.members.some(m => m.userId === selectedOwner) ? selectedOwner : members.data?.members[0]?.userId ?? "";
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const adopt = useMutation({
     mutationFn: () =>
       api<Universe>("POST", "/api/ui/universes/adopt", {
+        accountId,
+        initialOwner: { kind: "user", id: ownerId },
         lightspeedUniverseId: orphan!.universeId,
         name: name.trim(),
       }),
@@ -369,6 +378,7 @@ export function AdoptDialog({
       setError("a name is required");
       return;
     }
+    if (!accountId || !ownerId || adopt.isPending) return;
     adopt.mutate();
   };
 
@@ -380,11 +390,14 @@ export function AdoptDialog({
           <DialogDescription>
             Creates the Platform display entry linked to{" "}
             <span className="font-mono text-xs">{orphan?.universeId}</span>. Engine
-            permissions are managed separately.
+            access is managed within the selected account.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
           <Field>
+            <FieldLabel htmlFor="adopt-account">Account</FieldLabel><select id="adopt-account" className="rounded-md border bg-background p-2" value={accountId} onChange={e => setSelectedAccount(e.target.value)} required>{accounts.data?.accounts.filter(a => a.enabled).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <FieldLabel htmlFor="adopt-owner">Initial Owner</FieldLabel><select id="adopt-owner" className="rounded-md border bg-background p-2" value={ownerId} onChange={e => setSelectedOwner(e.target.value)} required>{members.data?.members.map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select>
+            {(accounts.error || members.error) && <p role="alert">{(accounts.error || members.error)?.message}</p>}
             <FieldLabel htmlFor="adopt-name">Name</FieldLabel>
             <Input
               id="adopt-name"
@@ -407,7 +420,7 @@ export function AdoptDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={adopt.isPending}>
+            <Button type="submit" disabled={adopt.isPending || !accountId || !ownerId}>
               {adopt.isPending ? "Adopting…" : "Adopt"}
             </Button>
           </DialogFooter>

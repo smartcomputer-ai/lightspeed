@@ -197,9 +197,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "credentials_namespace",
         sql: include_str!("../migrations/027_credentials_namespace.sql"),
     },
+    EmbeddedMigration {
+        version: 28,
+        name: "universe_lifecycle_configuration",
+        sql: include_str!("../migrations/028_universe_lifecycle_configuration.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 27;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 28;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

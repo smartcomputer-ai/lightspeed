@@ -1,6 +1,6 @@
-import { relations } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { organization, user } from "./auth.js";
+import { relations, sql } from "drizzle-orm";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { apikey, organization, user } from "./auth.js";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () =>
@@ -21,24 +21,27 @@ export const identityAudit = pgTable("identity_audit", {
   details: jsonb("details").$type<Record<string, string | boolean | null>>().default({}).notNull(),
 }, (table) => [index("identity_audit_created_idx").on(table.createdAt)]);
 
-/// A platform universe: one better-auth organization plus its Lightspeed
-/// linkage. `lightspeedUniverseId` is the id stamped as
-/// runtime resource URLs; the app creates the engine universe explicitly.
+/// A runtime universe belongs to one account; creator identity is attribution only.
 export const universes = pgTable("universes", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: text("organization_id")
     .notNull()
-    .unique()
     .references(() => organization.id, { onDelete: "cascade" }),
   lightspeedUniverseId: uuid("lightspeed_universe_id").notNull().unique(),
   name: text("name").notNull(),
+  handle: text("handle").notNull().unique(),
+  createdBy: text("created_by"),
+  accessPolicy: jsonb("access_policy").$type<{
+    members?: { email?: string; issuer?: string; subject?: string; role: "owner" | "operator" | "contributor" | "viewer" }[];
+    directoryGroupMappings?: { issuer: string; group: string; role: "owner" | "operator" | "contributor" | "viewer" }[];
+  }>().default({}).notNull(),
   /// Last successful Runtime projection; declarations never replace manual members.
   runtimeConfiguration: jsonb("runtime_configuration").$type<Record<string, unknown>>().default({}).notNull(),
   icon: text("icon").default("orbit").notNull(),
   iconColor: text("icon_color").default("default").notNull(),
   /// Runtime HTTP API base; null = the deployment default from env.
   gatewayUrl: text("gateway_url"),
-  status: text("status", { enum: ["active", "archived", "deleting"] })
+  status: text("status", { enum: ["provisioning", "active", "archived", "deleting"] })
     .default("active")
     .notNull(),
   /// Feature switches set away from their default (see the shared feature
@@ -48,7 +51,58 @@ export const universes = pgTable("universes", {
   updatedAt: updatedAt(),
 });
 
+/** Independently enabled automation, owned by an account rather than a human profile. */
+export const applications = pgTable("applications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  role: text("role", { enum: ["admin", "creator", "member"] }).default("member").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [index("applications_organization_idx").on(table.organizationId)]);
+
+/** Membership in the containing account remains mandatory for every grant. */
+export const universeGrants = pgTable("universe_grants", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  universeId: uuid("universe_id").notNull().references(() => universes.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  applicationId: uuid("application_id").references(() => applications.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["owner", "operator", "contributor", "viewer"] }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  check("universe_grants_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.applicationId} IS NOT NULL)`),
+  uniqueIndex("universe_grants_user_idx").on(table.universeId, table.userId),
+  uniqueIndex("universe_grants_application_idx").on(table.universeId, table.applicationId),
+]);
+
+export interface CredentialRestrictions {
+  accountIds?: string[];
+  universeIds?: string[];
+  operations?: string[];
+  readOnly?: boolean;
+  allowUniverseCreation?: boolean;
+}
+
+/** Protected association; caller-controlled Better Auth metadata never selects identity. */
+export const credentialBindings = pgTable("credential_bindings", {
+  keyId: text("key_id").primaryKey().references(() => apikey.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  applicationId: uuid("application_id").references(() => applications.id, { onDelete: "cascade" }),
+  restrictions: jsonb("restrictions").$type<CredentialRestrictions>().default({}).notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+}, (table) => [
+  check("credential_bindings_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.applicationId} IS NOT NULL)`),
+  index("credential_bindings_user_idx").on(table.userId),
+  index("credential_bindings_application_idx").on(table.applicationId),
+]);
+
 export type UniverseSetupState = {
+  previous?: { applicationId?: string; credentialId?: string; grantId?: string; serverId?: string; profileId?: string };
+  applicationId?: string;
+  credentialId?: string;
   grantId?: string;
   serverId?: string;
   profileId?: string;

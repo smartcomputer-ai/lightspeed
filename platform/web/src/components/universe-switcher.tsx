@@ -1,6 +1,7 @@
-import { UNIVERSE_HANDLE_MAX_LENGTH, universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
+import { platformApi, useAccounts } from "@/lib/platform-api";
+import { effectiveFeatures, UNIVERSE_HANDLE_MAX_LENGTH, universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
 import { useRef, useState, type FormEvent, type RefObject } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDialogWarp } from "@/lib/dialog-warp";
 import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
@@ -85,9 +86,8 @@ export function UniverseSwitcher({
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const mine = memberships(universes.data);
-  // Universe creation is platform-admin-only today; the plan is to open
-  // this up — flip this gate, nothing else moves.
-  const canCreate = admin;
+  const accounts = useAccounts();
+  const canCreate = admin || accounts.data?.accounts.some(a => a.enabled && (a.role === "admin" || a.role === "creator"));
   const iconRef = useRef<HTMLSpanElement>(null);
 
   return (
@@ -213,23 +213,37 @@ export function NewUniverseDialog({
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const accounts = useAccounts();
+  const eligible = (accounts.data?.accounts ?? []).filter(a => a.enabled && (a.role === "admin" || a.role === "creator"));
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const account = eligible.find(a => a.id === selectedAccount) ?? eligible[0];
+  const accountId = account?.id ?? "";
+  const mayAppointOwner = account?.role === "admin";
+  const owners = useQuery({ queryKey: ["account-members", accountId], enabled: open && !!accountId && mayAppointOwner, queryFn: () => platformApi("platform/accounts/members/list", { accountId }) });
+  const me = useQuery({ queryKey: ["creation-identity"], enabled: open, queryFn: () => api<{ user: { id: string } }>("GET", "/api/ui/me") });
+  const [ownerId, setOwnerId] = useState("");
+  const initialOwnerId = mayAppointOwner
+    ? (owners.data?.members.some(m => m.userId === ownerId) ? ownerId : owners.data?.members.find(m => m.userId === me.data?.user.id)?.userId ?? owners.data?.members[0]?.userId ?? "")
+    : me.data?.user.id ?? "";
+  const universeId = useRef(crypto.randomUUID());
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
   const [handleEdited, setHandleEdited] = useState(false);
   const dialogWarp = useDialogWarp(open);
 
   const create = useMutation({
-    mutationFn: (input: { name: string; handle: string }) =>
-      api<Universe>("POST", "/api/ui/universes", input),
+    mutationFn: async (input: { name: string; handle: string }) =>
+      (await platformApi("platform/universes/create", { ...input, accountId, universeId: universeId.current, initialOwner: { kind: "user", id: initialOwnerId } })).universe,
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       // Once the warp has played out: close, and open the new universe.
       dialogWarp.afterWarp(() => {
         onOpenChange(false);
+        universeId.current = crypto.randomUUID();
         setName("");
         setHandle("");
         setHandleEdited(false);
-        navigate(universeHome(created));
+        navigate(universeHome({ handle: created.handle, features: effectiveFeatures(created.features) }));
       });
     },
     // Called off: the dialog comes back with the error.
@@ -238,7 +252,7 @@ export function NewUniverseDialog({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!universeHandleSchema.safeParse(handle.trim()).success) return;
+    if (!accountId || !initialOwnerId || !name.trim() || create.isPending || !universeHandleSchema.safeParse(handle.trim()).success) return;
     // Creating sends the dialog off to warp meanwhile.
     dialogWarp.start();
     create.mutate({ name: name.trim(), handle: handle.trim() });
@@ -254,6 +268,15 @@ export function NewUniverseDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
+          <Field><FieldLabel htmlFor="universe-account">Account</FieldLabel>
+            <select id="universe-account" className="rounded-md border bg-background p-2" value={accountId} onChange={event => setSelectedAccount(event.target.value)} required>
+              {eligible.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          </Field>
+          {mayAppointOwner ? <Field><FieldLabel htmlFor="universe-owner">Initial Owner</FieldLabel><select id="universe-owner" className="rounded-md border bg-background p-2" value={initialOwnerId} onChange={e => setOwnerId(e.target.value)} required>{owners.data?.members.map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select></Field> : <p className="text-sm text-muted-foreground">You will be the initial Owner.</p>}
+          {me.error && <p role="alert">{me.error.message}</p>}
+          {owners.error && <p role="alert">{owners.error.message}</p>}
+          {accounts.error && <p role="alert">{accounts.error.message}</p>}
           <Field>
             <FieldLabel htmlFor="new-universe-name">Name</FieldLabel>
             <Input
@@ -280,7 +303,7 @@ export function NewUniverseDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={create.isPending || !name.trim() || !universeHandleSchema.safeParse(handle.trim()).success}>
+            <Button type="submit" disabled={create.isPending || !accountId || !initialOwnerId || !name.trim() || !universeHandleSchema.safeParse(handle.trim()).success}>
               {create.isPending ? "Creating…" : "Create"}
             </Button>
           </DialogFooter>

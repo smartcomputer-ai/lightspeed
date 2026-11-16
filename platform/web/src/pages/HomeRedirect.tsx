@@ -1,3 +1,4 @@
+import { useAccounts } from "@/lib/platform-api";
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AddIcon } from "@/icons";
@@ -10,6 +11,8 @@ import { lastUniverse, memberships, universeHome, useUniverses } from "@/lib/uni
 /// membership, else an empty state.
 export function HomeRedirect({ admin }: { admin: boolean }) {
   const universes = useUniverses();
+  const accounts = useAccounts();
+  const canCreate = admin || accounts.data?.accounts.some(a => a.enabled && (a.role === "admin" || a.role === "creator"));
   const [createOpen, setCreateOpen] = useState(false);
 
   if (universes.isLoading) {
@@ -31,11 +34,11 @@ export function HomeRedirect({ admin }: { admin: boolean }) {
       <div className="grid w-full gap-4 text-center">
         <h1 className="text-xl font-semibold">No universes yet</h1>
         <p className="text-sm text-muted-foreground">
-          {admin
+          {canCreate
             ? "Create your first universe to get started."
-            : "You have not been added to a universe yet. Ask a platform or universe admin to add you."}
+            : "You have not been added to a universe yet. Ask an account admin or universe owner to add you."}
         </p>
-        {admin && (
+        {canCreate && (
           <div>
             <Button onClick={() => setCreateOpen(true)}>
               <AddIcon data-icon="inline-start" />

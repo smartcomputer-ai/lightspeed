@@ -289,7 +289,7 @@ export class DemoStore {
   addUniverse(init: UniverseInit): UniverseState {
     const id = init.id ?? crypto.randomUUID();
     const createdAt = init.createdAt ?? new Date().toISOString();
-    const role = init.role === undefined ? "admin" : init.role;
+    const role = init.role === undefined ? "owner" : init.role;
     const state: UniverseState = {
       universe: {
         id,
@@ -297,6 +297,10 @@ export class DemoStore {
         name: init.name,
         icon: init.icon ?? "orbit",
         iconColor: init.iconColor ?? "default",
+        accountId: "demo-account",
+        accountRole: "admin",
+        protected: false,
+        expiresAtMs: null,
         handle: init.handle,
         gatewayUrl: null,
         status: "active",

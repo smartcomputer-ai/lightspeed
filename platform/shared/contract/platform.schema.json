@@ -1,0 +1,3133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PlatformApi",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "PlatformSessionReadParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformSessionReadResult": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "application"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "name",
+            "email"
+          ],
+          "additionalProperties": false
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "session",
+                "cliSession",
+                "personalKey",
+                "applicationKey"
+              ]
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "session": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "expiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                }
+              },
+              "required": [
+                "id",
+                "createdAt",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "principal",
+        "credential",
+        "session"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSessionRevokeParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformSessionRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsListParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lastUsedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "accountIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "start",
+              "createdAt",
+              "expiresAt",
+              "enabled",
+              "lastUsedAt",
+              "restrictions"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "credentials"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "expiresInDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "restrictions": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "accountIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsCreateResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "accountIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsRevokeParams": {
+      "type": "object",
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformApplicationsCredentialsListParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "accountId",
+        "applicationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformApplicationsCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "lastUsedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "accountIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "prefix",
+              "start",
+              "createdAt",
+              "expiresAt",
+              "enabled",
+              "lastUsedAt",
+              "restrictions"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "credentials"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformApplicationsCredentialsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "expiresInDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "restrictions": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "accountIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "name",
+        "accountId",
+        "applicationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformApplicationsCredentialsCreateResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "accountIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformApplicationsCredentialsRevokeParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId",
+        "applicationId",
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformApplicationsCredentialsRevokeResult": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsListParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformAccountsListResult": {
+      "type": "object",
+      "properties": {
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "slug": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "personal",
+                  "shared",
+                  "development"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "role": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "creator",
+                      "admin"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "universeQuota": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "defaultProtected": {
+                "type": "boolean"
+              },
+              "requireProtected": {
+                "type": "boolean"
+              },
+              "membershipPolicy": {
+                "type": "object",
+                "properties": {
+                  "members": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "email": {
+                              "type": "string",
+                              "format": "email",
+                              "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "creator",
+                                "admin"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "email",
+                            "role"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "issuer": {
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "subject": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "creator",
+                                "admin"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "issuer",
+                            "subject",
+                            "role"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "directoryGroupMappings": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "issuer": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "group": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "member",
+                            "creator",
+                            "admin"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "issuer",
+                        "group",
+                        "role"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug",
+              "kind",
+              "enabled",
+              "role",
+              "universeQuota",
+              "defaultProtected",
+              "requireProtected",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "canCreate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "accounts",
+        "canCreate"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "kind": {
+          "default": "shared",
+          "type": "string",
+          "enum": [
+            "shared",
+            "development"
+          ]
+        },
+        "initialAdminUserId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "universeQuota": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "defaultProtected": {
+          "type": "boolean"
+        },
+        "requireProtected": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "slug"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsCreateResult": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "shared",
+                "development"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "defaultProtected": {
+              "type": "boolean"
+            },
+            "requireProtected": {
+              "type": "boolean"
+            },
+            "membershipPolicy": {
+              "type": "object",
+              "properties": {
+                "members": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "issuer": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "issuer",
+                          "subject",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "directoryGroupMappings": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "group": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "group",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "slug",
+            "kind",
+            "enabled",
+            "role",
+            "universeQuota",
+            "defaultProtected",
+            "requireProtected",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsReadParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsReadResult": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "shared",
+                "development"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "defaultProtected": {
+              "type": "boolean"
+            },
+            "requireProtected": {
+              "type": "boolean"
+            },
+            "membershipPolicy": {
+              "type": "object",
+              "properties": {
+                "members": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "issuer": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "issuer",
+                          "subject",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "directoryGroupMappings": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "group": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "group",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "slug",
+            "kind",
+            "enabled",
+            "role",
+            "universeQuota",
+            "defaultProtected",
+            "requireProtected",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsUpdateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "universeQuota": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "defaultProtected": {
+          "type": "boolean"
+        },
+        "requireProtected": {
+          "type": "boolean"
+        },
+        "membershipPolicy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "creator",
+                      "admin"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsUpdateResult": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "shared",
+                "development"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "defaultProtected": {
+              "type": "boolean"
+            },
+            "requireProtected": {
+              "type": "boolean"
+            },
+            "membershipPolicy": {
+              "type": "object",
+              "properties": {
+                "members": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "email",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "issuer": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "subject": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "creator",
+                              "admin"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "issuer",
+                          "subject",
+                          "role"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "directoryGroupMappings": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "group": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "group",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "slug",
+            "kind",
+            "enabled",
+            "role",
+            "universeQuota",
+            "defaultProtected",
+            "requireProtected",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsMembersListParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsMembersListResult": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "userId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "userId",
+              "name",
+              "email",
+              "role",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "members"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsMembersPutParams": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "default": "member",
+          "type": "string",
+          "enum": [
+            "member",
+            "creator",
+            "admin"
+          ]
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "userId",
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsMembersPutResult": {
+      "type": "object",
+      "properties": {
+        "member": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "userId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "member",
+                "creator",
+                "admin"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "userId",
+            "name",
+            "email",
+            "role",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "member"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsMembersDeleteParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId",
+        "userId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsMembersDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsListParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsListResult": {
+      "type": "object",
+      "properties": {
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "accountId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ]
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "accountId",
+              "name",
+              "enabled",
+              "role",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "applications"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsCreateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "role": {
+          "default": "member",
+          "type": "string",
+          "enum": [
+            "member",
+            "creator",
+            "admin"
+          ]
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsCreateResult": {
+      "type": "object",
+      "properties": {
+        "application": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "member",
+                "creator",
+                "admin"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "name",
+            "enabled",
+            "role",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "application"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsUpdateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "member",
+            "creator",
+            "admin"
+          ]
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId",
+        "applicationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsUpdateResult": {
+      "type": "object",
+      "properties": {
+        "application": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "member",
+                "creator",
+                "admin"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "name",
+            "enabled",
+            "role",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "application"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsDeleteParams": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicationId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accountId",
+        "applicationId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformAccountsApplicationsDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAdoptParams": {
+      "type": "object",
+      "properties": {
+        "lightspeedUniverseId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "initialOwner": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "application"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "lightspeedUniverseId",
+        "name",
+        "initialOwner",
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAdoptResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "accountRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "gatewayUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "accountRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "gatewayUrl",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesCreateParams": {
+      "type": "object",
+      "properties": {
+        "universeId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "handle": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "initialOwner": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "application"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "metadata": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "protected": {
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "accountId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesCreateResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "accountRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "gatewayUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "accountRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "gatewayUrl",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesUpdateParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "archived"
+          ]
+        },
+        "metadata": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "protected": {
+          "type": "boolean"
+        },
+        "expiresAtMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesUpdateResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "accountId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "accountRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "gatewayUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "accountId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "accountRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "gatewayUrl",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsListParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsListResult": {
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "universeId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "principal": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "application"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "operator",
+                  "owner"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              }
+            },
+            "required": [
+              "id",
+              "universeId",
+              "principal",
+              "role",
+              "name",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "grants"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsPutParams": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "application"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "viewer",
+            "contributor",
+            "operator",
+            "owner"
+          ]
+        },
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "principal",
+        "role",
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsPutResult": {
+      "type": "object",
+      "properties": {
+        "grant": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "universeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "principal": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "application"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "additionalProperties": false
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "universeId",
+            "principal",
+            "role",
+            "name",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "grant"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsDeleteParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grantId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe",
+        "grantId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesGrantsDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyPutParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe",
+        "policy"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyPutResult": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

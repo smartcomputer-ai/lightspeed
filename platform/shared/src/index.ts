@@ -15,13 +15,6 @@ export const universeHandleSchema = z
   .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
   .refine((handle) => !UUID_SHAPED.test(handle));
 
-export const universeCreateSchema = z.object({
-  name: z.string().min(1).max(100),
-  /// Requested handle; derived from the name when omitted.
-  handle: universeHandleSchema.optional(),
-});
-export type UniverseCreateInput = z.infer<typeof universeCreateSchema>;
-
 export const universeUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   icon: universeIconSchema.optional(),
@@ -33,9 +26,8 @@ export const universeUpdateSchema = z.object({
 });
 export type UniverseUpdateInput = z.infer<typeof universeUpdateSchema>;
 
-/// Member roles, least to most. A universe is an organization; its members
-/// hold exactly one of these.
-export const UNIVERSE_ROLES = ["viewer", "contributor", "operator", "admin"] as const;
+/// Member roles, least to most. Explicit grants assign these roles within an account.
+export const UNIVERSE_ROLES = ["viewer", "contributor", "operator", "owner"] as const;
 export const universeRoleSchema = z.enum(UNIVERSE_ROLES);
 export type UniverseRole = z.infer<typeof universeRoleSchema>;
 
@@ -43,18 +35,6 @@ export type UniverseRole = z.infer<typeof universeRoleSchema>;
 export function roleAtLeast(role: UniverseRole, required: UniverseRole): boolean {
   return UNIVERSE_ROLES.indexOf(role) >= UNIVERSE_ROLES.indexOf(required);
 }
-
-export const memberAddSchema = z
-  .object({
-    userId: z.string().min(1).optional(),
-    email: z.email().optional(),
-    role: universeRoleSchema.default("contributor"),
-  })
-  .refine((value) => !!value.userId || !!value.email, {
-    message: "userId or email is required",
-  });
-
-export type MemberAddInput = z.infer<typeof memberAddSchema>;
 
 export const memberUpdateSchema = z.object({
   role: universeRoleSchema,
@@ -231,11 +211,15 @@ export {
 
 /** Closing shared work is an operator responsibility, even for its creator. */
 export function canCloseSession(role: UniverseRole | null | undefined, creator: boolean, shared: boolean): boolean {
-  return role === "admin" || (role === "operator" && (creator || shared)) ||
+  return role === "owner" || (role === "operator" && (creator || shared)) ||
     (role === "contributor" && creator && !shared);
 }
 
 /** Operators may remove shared sessions; private sessions require an admin. */
 export function canDeleteSession(role: UniverseRole | null | undefined, shared: boolean): boolean {
-  return role === "admin" || (role === "operator" && shared);
+  return role === "owner" || (role === "operator" && shared);
 }
+
+export * from "./platform-api.js";
+export * from "./credential-api.js";
+export * from "./session-api.js";

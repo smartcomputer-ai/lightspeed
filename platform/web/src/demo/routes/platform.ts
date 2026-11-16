@@ -2,8 +2,8 @@
 /// configuration. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, universeHandleFromName, universeRoleSchema, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
-import type { EngineUniverse, Member, Universe } from "@/api";
+import { effectiveFeatures, featureOverridesSchema, mergeFeatureOverrides, universeHandleFromName, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
+import type { EngineUniverse, Universe } from "@/api";
 import { type DemoStore, type UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";
 
@@ -25,7 +25,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const handle = body.handle?.trim() || universeHandleFromName(name);
     if (!universeHandleSchema.safeParse(handle).success) return badRequest(c, "invalid universe handle");
     if (store.universeByHandle(handle) || store.orphanEngineUniverses.some(o => o.handle === handle)) return conflict(c, "universe handle is already in use");
-    const state = store.addUniverse({ handle, name, role: "admin" });
+    const state = store.addUniverse({ handle, name, role: "owner" });
     return c.json(state.universe, 201);
   });
 
@@ -66,7 +66,7 @@ export function platformRoutes(store: DemoStore): Hono {
       handle,
       name,
       lightspeedUniverseId: engineId,
-      role: "admin",
+      role: "owner",
       createdAt: new Date(orphan.createdAtMs).toISOString(),
     });
     return c.json(state.universe, 201);
@@ -139,68 +139,9 @@ export function platformRoutes(store: DemoStore): Hono {
     const body = await readBody<{ handle?: string }>(c);
     if (body.handle !== state.universe.handle) return badRequest(c, "type the universe handle to confirm deletion");
     store.auditEvents.push({ id: store.nextId("audit"), createdAt: nowIso(), actorId: store.currentUser.id, targetId: state.universe.lightspeedUniverseId, universeId: state.universe.id, action: "universe.delete", outcome: "success", details: {} });
+    if (state.universe.protected) return conflict(c, "Universe is protected");
     store.universes.delete(state.universe.id);
     return c.json({ ok: true, purge: { universeId: state.universe.lightspeedUniverseId, state: "deleted" } });
-  });
-
-  // --- membership ---------------------------------------------------------
-
-  /// Every member may list members; emails are for admins only.
-  app.get("/universes/:id/members", (c) => {
-    const state = universeFor(store, c);
-    if (!state || !state.universe.role) return notFound(c);
-    if (state.universe.role === "admin") return c.json(state.members);
-    return c.json(state.members.map(({ email: _email, ...member }) => member));
-  });
-
-  app.post("/universes/:id/members", async (c) => {
-    const state = universeFor(store, c);
-    if (!state) return notFound(c);
-    const body = await readBody<{ userId?: string; email?: string; role?: string }>(c);
-    const role = universeRoleSchema.safeParse(body.role ?? "contributor");
-    if (!role.success) return badRequest(c, "invalid role");
-    const target = body.userId
-      ? store.users.get(body.userId)
-      : [...store.users.values()].find((u) => u.email === body.email?.trim());
-    if (!target) return notFound(c, "user not found");
-    if (state.members.some((m) => m.userId === target.id)) return conflict(c, "already a member");
-    const created: Member = {
-      id: store.nextId("member"),
-      userId: target.id,
-      role: role.data,
-      email: target.email,
-      name: target.name,
-      createdAt: nowIso(),
-    };
-    state.members.push(created);
-    return c.json(created, 201);
-  });
-
-  app.patch("/universes/:id/members/:memberId", async (c) => {
-    const state = universeFor(store, c);
-    if (!state) return notFound(c);
-    const body = memberUpdateSchema.safeParse(await readBody(c));
-    if (!body.success) return badRequest(c, "invalid role");
-    const member = state.members.find((m) => m.id === c.req.param("memberId"));
-    if (!member) return notFound(c);
-    if (member.role === "admin" && body.data.role !== "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
-      return conflict(c, "a universe keeps at least one admin");
-    }
-    member.role = body.data.role;
-    if (member.userId === store.currentUser.id) state.universe.role = member.role;
-    return c.json(member);
-  });
-
-  app.delete("/universes/:id/members/:memberId", (c) => {
-    const state = universeFor(store, c);
-    if (!state) return notFound(c);
-    const member = state.members.find((m) => m.id === c.req.param("memberId"));
-    if (member?.role === "admin" && !state.members.some((m) => m.id !== member.id && m.role === "admin")) {
-      return conflict(c, "a universe keeps at least one admin");
-    }
-    const before = state.members.length;
-    state.members = state.members.filter((m) => m.id !== c.req.param("memberId"));
-    return state.members.length === before ? notFound(c) : c.json({ ok: true });
   });
 
   return app;

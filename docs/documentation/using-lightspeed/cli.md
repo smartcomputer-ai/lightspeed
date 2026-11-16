@@ -1,9 +1,94 @@
 # Use Lightspeed from the terminal
 
-The CLI connects directly to the runtime. Platform can be added to the same
-runtime for accounts, team permissions and the web interface; neither CLI
-configuration nor runtime-token authentication requires it. The runtime still uses
-PostgreSQL, Temporal and its configured content storage.
+One `lightspeed` CLI connects to either the core runtime or Platform. A runtime
+in single mode needs no credential. An authenticated direct runtime requires
+an infrastructure token with full runtime authority. Platform connections use
+a personal/application API key or browser-approved CLI session, with the same
+current account and universe permissions as other Platform API clients.
+
+`connect` manages connections and login. `platform account`,
+`platform application`, and `platform api-key` manage Platform resources.
+`universe access` manages grants and declared access policy for a universe.
+The generic `api` command remains at the root.
+
+## Connect to Platform
+
+Use the deployment URL, with or without `/api/v1`:
+
+```bash
+lightspeed connect login --url https://lightspeed.example --name work
+lightspeed connect status
+lightspeed platform account list
+lightspeed platform account use ACCOUNT_ID
+lightspeed universe list
+lightspeed universe use my-universe
+lightspeed session list
+```
+
+`connect login` prints a verification URL and short code and opens the browser
+when possible. Sign in using your deployment's password or company sign-in, verify
+the displayed code, then explicitly approve the CLI. Use `--no-browser` over
+SSH or on a machine without a browser; open the printed URL on another device.
+No password is collected by the CLI. Approval creates a Better Auth user
+session, stored in a private credential file. Local sessions renew during use
+within the deployment's inactivity and absolute limits; company session limits
+still apply. `lightspeed connect logout` revokes this CLI session and removes
+its local credential without signing other devices out.
+
+For automation, supply an existing Platform API key:
+
+```bash
+lightspeed connect add automation --url https://lightspeed.example --token-env LIGHTSPEED_KEY
+lightspeed connect use automation
+```
+
+`--token-file` and `--token-stdin` also work. Secrets are never command-line
+arguments. Platform API keys keep their own expiry and permission restrictions;
+removing a connection does not revoke its key. HTTPS is required for credentials
+except on loopback; `--allow-insecure-http` explicitly opts a connection into
+remote plaintext HTTP for controlled development environments.
+
+The global `--account ACCOUNT_ID` overrides account selection for one command.
+`platform account use` saves it and clears the previous universe selection.
+Account selection guides provisioning and account commands; it does not grant access.
+Use `--connection NAME`, `--account`, and `--universe` together for automation.
+
+### Platform administration
+
+```bash
+lightspeed platform account member list
+lightspeed platform account member add USER_ID --role creator
+lightspeed platform application create "Build automation" --role creator
+lightspeed universe create --name "Development" --handle development
+lightspeed universe access put --application APPLICATION_ID --role operator
+lightspeed platform api-key create local-tool --scope-universe UNIVERSE_UUID --output-secret ./local-tool.key
+lightspeed platform api-key --application APPLICATION_ID create build --output-secret ./build.key
+```
+
+Account Admins manage members and applications; Creators can create universes.
+A creator becomes the initial universe Owner unless an authorized account Admin
+selects another Owner. Platform Admin provisioning requires `--owner-user` or
+`--owner-application`. Account policy supplies default deletion protection;
+`config apply` creates new universes protected unless the document says otherwise.
+For retryable provisioning, pass `--universe-id UUID` to `config diff` and
+`config apply` for a single document; otherwise the plan prints a new UUID
+before creation so an interrupted attempt can be retried explicitly.
+Keys can be further limited with `--scope-account`, `--scope-universe`,
+`--operation`, `--read-only`, and `--allow-universe-creation`. Key management
+requires a human browser or CLI session; API keys cannot mint other keys.
+New key secrets require `--output-secret FILE` (creates a new private file) or
+explicit `--show-secret`.
+
+Use `platform account update --file settings.json` for account settings and
+`universe access policy-put --file policy.json` for declared access policy. `universe archive` and
+`universe restore` change Platform presentation state; they do not delete runtime
+resources. `api OPERATION --params params.json` exposes generated runtime and
+Platform operations, for example `platform/accounts/list` and `profiles/list`,
+without a separate copy of their routes. This generic command accepts JSON
+operations; streaming and binary resources use their dedicated commands. Platform user suspension and company
+identity administration remain web administration features.
+
+The former `lightspeed-platform` executable has been consolidated into this CLI.
 
 ## Connect to local development
 
@@ -49,8 +134,7 @@ LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime --no-envd
 target/debug/lightspeed connect dev
 ```
 
-Single mode uses the server's configured universe and sends no identity
-headers. Authentication failures never cause an automatic switch to this mode.
+Single mode uses the server's configured universe and sends no credentials. Authentication failures never cause an automatic switch to this mode.
 
 ## Configure an authenticated runtime without Platform
 
@@ -90,7 +174,7 @@ Environment, stdin and prompt input is stored in a protected local credential
 file; an explicitly supplied file remains externally owned. Use `--single` only
 for a server explicitly configured for single mode.
 
-The CLI address is the private HTTP API listener, normally port `18080`. The runtime's
+For a direct runtime connection, the CLI address is the private HTTP API listener, normally port `18080`. The runtime's
 OAuth callback and client metadata use the separate public listener, normally
 port `18082`, under `/ingress/credentials/callback` and
 `/ingress/credentials/client-metadata.json`. The public listener does not accept CLI API
@@ -127,8 +211,8 @@ for old overrides there if the effective connection is unexpected.
 
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
-`connect status` shows the effective connection, authentication mode, token name,
-and the selected universe's current handle and UUID. `universe status` shows just
+`connect status` shows the deployment kind, authentication kind, authenticated
+principal, selected account, and the selected universe's current handle and UUID. `universe status` shows just
 the active universe. A direct connection has full runtime authority.
 `universe list` marks the selected universe with `*`. These commands support
 `--json`, as does `connect list`.
@@ -150,8 +234,7 @@ and API clients that use it stop reaching the universe, and reach another one
 if that handle is later reused. Automation that addresses a universe by handle
 should treat a rename as a coordinated change.
 
-Deployment operations omit the universe header even when a universe is
-selected. A direct runtime token has full authority, independent of Platform
+Deployment operations omit a universe path parameter when none is required. A direct runtime token has full authority, independent of Platform
 membership and session visibility.
 See [Runtime access](../access-and-security/api-keys-and-service-access.md).
 
@@ -312,11 +395,36 @@ the cached universe list remains available for membership administration.
 Linked universes across different runtime deployments must have distinct handles
 within one Platform.
 
-IDs, profiles and sessions stay in the runtime; Platform creates only its
-organization and membership records. This
+IDs, profiles and sessions stay in the runtime; Platform records the containing
+account and explicit universe grants. This
 association does not automatically share private sessions. Direct CLI access
 continues to work while Platform is stopped.
 
+
+## Universe protection, metadata, and expiry
+
+Runtime operators can use:
+
+```bash
+lightspeed universe create --handle experiment --expires-in 2h --metadata purpose=development
+lightspeed universe list --metadata purpose=development
+lightspeed universe protect production
+lightspeed universe unprotect experiment
+lightspeed universe set-expiry experiment 4h
+lightspeed universe set-expiry experiment never
+lightspeed universe metadata put experiment purpose=development team=research
+```
+
+Metadata replacement clears keys not supplied; no pairs clears the map.
+Protected universes cannot expire or be deleted. Clear protection explicitly
+before deleting. `config apply` protects newly created universes when omitted
+and preserves protection on existing universes.
+
+Resource operations work through Platform with an API key or browser-approved
+CLI session. `universe create` uses the selected account on Platform and the
+runtime deployment API for direct connections. Platform checks the principal
+and credential restrictions, including account Admin authority to clear
+protection. Direct runtime credentials retain infrastructure authority.
 
 ## Command layout
 

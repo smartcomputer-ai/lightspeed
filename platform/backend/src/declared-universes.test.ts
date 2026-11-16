@@ -1,163 +1,71 @@
 import { decodeHttpRequest, problemResponse } from "../../test/http-fixture.js";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { Hono } from "hono";
-import { universeRoutes } from "./routes/universes.js";
-import type { ApiVariables } from "./context.js";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
+import { declaredPrincipalRole } from "./account-access.js";
+import { syncDeclaredUniverses } from "./declared-universes.js";
 import { identityEnv, identityFixture } from "../test/identity-fixture.js";
-import { effectiveDeclaredRole, syncDeclaredUniverses, type UniverseConfiguration } from "./declared-universes.js";
 import type { AppContext } from "./context.js";
 
 const issuer = "https://identity.example.test";
-const identity = { email: "owner@example.test", emailVerified: true, oidcIssuer: issuer, oidcSubject: "owner", identitySource: "company", companyAdmitted: true, directoryGroups: ["research-readers"] };
-it("combines independent manual, verified-email, subject and exact issuer-qualified group grants", () => {
-  const policy: UniverseConfiguration = {
-    members: [{ email: "OWNER@example.test", role: "contributor" }, { issuer, subject: "owner", role: "operator" }],
-    directoryGroupMappings: [{ issuer, group: "research-readers", role: "viewer" }],
-  };
-  expect(effectiveDeclaredRole(policy, identity)).toBe("operator");
-  expect(effectiveDeclaredRole(policy, identity, "admin")).toBe("admin");
-  expect(effectiveDeclaredRole({}, identity, "contributor")).toBe("contributor");
-  expect(effectiveDeclaredRole({}, identity)).toBeUndefined();
-  expect(effectiveDeclaredRole({ members: policy.members!.slice(0, 1) }, { ...identity, emailVerified: false })).toBeUndefined();
-  expect(effectiveDeclaredRole(policy, { ...identity, emailVerified: false, oidcIssuer: "https://other.example" })).toBeUndefined();
-  expect(effectiveDeclaredRole({ directoryGroupMappings: policy.directoryGroupMappings }, { ...identity, directoryGroups: ["research-readers-extra"] })).toBeUndefined();
-  expect(effectiveDeclaredRole(policy, { ...identity, emailVerified: false, companyAdmitted: false })).toBeUndefined();
-  expect(effectiveDeclaredRole(policy, { ...identity, banned: true }, "admin")).toBeUndefined();
+it("combines scoped manual and exact company-group roles without granting deployment authority", () => {
+  const identity = { email: "owner@example.test", emailVerified: true, oidcIssuer: issuer, oidcSubject: "owner", identitySource: "company", companyAdmitted: true, directoryGroups: ["research-readers"], banned: false } as typeof schema.user.$inferSelect;
+  const roles = ["viewer", "contributor", "operator", "owner"] as const;
+  const policy = { members: [{ email: "OWNER@example.test", role: "contributor" as const }, { issuer, subject: "owner", role: "operator" as const }], directoryGroupMappings: [{ issuer, group: "research-readers", role: "viewer" as const }] };
+  expect(declaredPrincipalRole(policy, identity, roles)).toBe("operator");
+  expect(declaredPrincipalRole(policy, identity, roles, "owner")).toBe("owner");
+  expect(declaredPrincipalRole(policy, { ...identity, banned: true }, roles, "owner")).toBeUndefined();
+  expect(declaredPrincipalRole(policy, { ...identity, emailVerified: false, oidcIssuer: "https://other.example" }, roles)).toBeUndefined();
+  expect(declaredPrincipalRole({ directoryGroupMappings: policy.directoryGroupMappings }, { ...identity, directoryGroups: ["research-readers-extra"] }, roles)).toBeUndefined();
 });
-
 let fixture: Awaited<ReturnType<typeof identityFixture>>;
 let context: AppContext;
 let inventory: Record<string, unknown>[];
 let absentKind: "gone" | "notFound";
 const first = "11111111-1111-4111-8111-111111111111";
 const second = "22222222-2222-4222-8222-222222222222";
-beforeAll(async () => {
-  fixture = await identityFixture({ ...identityEnv, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_fixture" });
-  context = { ...fixture, pool: {} as never };
-}, 30000);
+beforeAll(async () => { fixture = await identityFixture({ ...identityEnv, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "runtime-test-token" }); context = { ...fixture, pool: {} as never }; }, 30000);
 afterAll(async () => { await fixture?.postgres.close(); vi.unstubAllGlobals(); });
 beforeEach(async () => {
-  await fixture.postgres.exec('DELETE FROM "organization"');
-  absentKind = "notFound";
-  inventory = [{ universeId: first, handle: "research", displayName: "Research", members: [], directoryGroupMappings: [{ issuer, group: "research-readers", role: "viewer" }] }, { universeId: second, handle: "unnamed" }];
-  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const request = decodeHttpRequest(_url as string | Request | URL, init);
-    if (request.method === "deployment/universes/read") return problemResponse({ type: "about:blank", title: absentKind, detail: absentKind, status: 404, kind: absentKind });
-    expect(request.method).toBe("deployment/universes/list");
+  await fixture.postgres.exec('DELETE FROM "organization"'); absentKind = "notFound";
+  inventory = [{ universeId: first, handle: "research", displayName: "Research", metadata: {}, protected: true, expiresAtMs: null }, { universeId: second, handle: "other", displayName: "Other", metadata: {}, protected: false, expiresAtMs: null }];
+  vi.stubGlobal("fetch", vi.fn(async (url: string | Request | URL, init: RequestInit) => {
+    const request = decodeHttpRequest(url, init);
+    if (request.method === "deployment/universes/read") return problemResponse({ type: "about:blank", title: absentKind, detail: absentKind, status: absentKind === "gone" ? 410 : 404, kind: absentKind });
     return Response.json({ universes: inventory });
   }));
 });
-it("adopts only named universes without an invented owner and is idempotent", async () => {
-  expect(await syncDeclaredUniverses(context)).toEqual({ adopted: 1, updated: 0 });
-  const [row] = await fixture.db.select().from(schema.universes);
-  expect(row).toMatchObject({ name: "Research", lightspeedUniverseId: first, runtimeConfiguration: { members: [] } });
-  expect(await fixture.db.select().from(schema.member)).toEqual([]);
+async function link(runtimeId = first, handle = "research") {
+  const accountId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: accountId, name: "Account", slug: accountId, createdAt: new Date() });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: accountId, lightspeedUniverseId: runtimeId, handle, name: "Old name", accessPolicy: { directoryGroupMappings: [{ issuer, group: "owners", role: "owner" }] } }).returning();
+  return universe!;
+}
+it("never invents an account or Owner grant for runtime documents", async () => {
   expect(await syncDeclaredUniverses(context)).toEqual({ adopted: 0, updated: 0 });
-  expect(await fixture.db.select().from(schema.universes)).toEqual([row]);
-});
-it("updates names and declared access while preserving manual memberships and archived state", async () => {
-  await syncDeclaredUniverses(context);
-  const [row] = await fixture.db.select().from(schema.universes);
-  const [user] = await fixture.db.select().from(schema.user);
-  await fixture.db.insert(schema.member).values({ id: "manual", organizationId: row!.organizationId, userId: user!.id, role: "operator", createdAt: new Date() });
-  await fixture.db.update(schema.universes).set({ status: "archived" }).where(eq(schema.universes.id, row!.id));
-  inventory[0] = { ...inventory[0], displayName: "Renamed", directoryGroupMappings: [] };
-  expect(await syncDeclaredUniverses(context)).toEqual({ adopted: 0, updated: 1 });
-  expect((await fixture.db.select().from(schema.member))[0]?.role).toBe("operator");
-  expect((await fixture.db.select().from(schema.universes))[0]).toMatchObject({ status: "archived", name: "Renamed", runtimeConfiguration: { directoryGroupMappings: [] } });
-});
-it("supports handle swaps atomically and retains the last projection on Runtime failure", async () => {
-  inventory[1]!.displayName = "Second";
-  await syncDeclaredUniverses(context);
-  inventory[0]!.handle = "unnamed";
-  inventory[1]!.handle = "research";
-  await syncDeclaredUniverses(context);
-  const organizations = await fixture.db.select().from(schema.organization);
-  expect(organizations.find(o => o.name === "Research")?.slug).toBe("unnamed");
-  vi.mocked(fetch).mockRejectedValue(new Error("offline"));
-  await expect(syncDeclaredUniverses(context)).rejects.toThrow();
-  expect(await fixture.db.select().from(schema.organization)).toEqual(organizations);
-});
-it("rolls back adoption when an unrelated organization holds its handle", async () => {
-  await fixture.db.insert(schema.organization).values({ id: "unrelated", name: "Other", slug: "research", createdAt: new Date() });
-  await expect(syncDeclaredUniverses(context)).rejects.toThrow();
   expect(await fixture.db.select().from(schema.universes)).toEqual([]);
-  expect(await fixture.db.select().from(schema.organization)).toHaveLength(1);
+  expect(await fixture.db.select().from(schema.organization)).toEqual([]);
 });
-
-it("marks deleting universes and allows another universe to take their handle", async () => {
-  await syncDeclaredUniverses(context);
-  const deletion = { startedAtMs: 1, requestedBy: {}, step: "workflows", detail: "Waiting for visibility" };
-  inventory[0]!.deletion = deletion;
-  inventory[1] = { ...inventory[1], displayName: "Replacement", handle: "research" };
-  await syncDeclaredUniverses(context);
-  const rows = await fixture.db.select().from(schema.universes);
-  expect(rows.find(row => row.lightspeedUniverseId === first)).toMatchObject({ status: "deleting", runtimeConfiguration: { deletion, deletionHandle: "research" } });
-  expect((await fixture.db.select().from(schema.organization)).find(row => row.name === "Replacement")?.slug).toBe("research");
+it("updates linked metadata without overwriting Platform access policy or account identity", async () => {
+  const universe = await link();
+  expect(await syncDeclaredUniverses(context)).toEqual({ adopted: 0, updated: 1 });
+  const [updated] = await fixture.db.select().from(schema.universes);
+  expect(updated).toMatchObject({ name: "Research", accessPolicy: universe.accessPolicy, runtimeConfiguration: { protected: true } });
+  expect((await fixture.db.select().from(schema.organization))[0]?.name).toBe("Account");
 });
-it("keeps missing memberships on notFound but cascades them only on gone", async () => {
+it("removes only the universe after a permanent tombstone, preserving its account and siblings", async () => {
+  const firstUniverse = await link(); const secondUniverse = await link(second, "other");
+  inventory = inventory.slice(1); absentKind = "gone";
   await syncDeclaredUniverses(context);
-  const [row] = await fixture.db.select().from(schema.universes);
-  const [user] = await fixture.db.select().from(schema.user);
-  await fixture.db.insert(schema.member).values({ id: "member", organizationId: row!.organizationId, userId: user!.id, role: "admin", createdAt: new Date() });
-  await fixture.db.insert(schema.universeSetupInstallations).values({ universeId: row!.id, setupId: "setup" });
-  inventory = [];
-  await syncDeclaredUniverses(context);
-  expect(await fixture.db.select().from(schema.member)).toHaveLength(1);
-  expect(await fixture.db.select().from(schema.universeSetupInstallations)).toHaveLength(1);
-  absentKind = "gone";
-  await syncDeclaredUniverses(context);
-  expect(await fixture.db.select().from(schema.organization)).toHaveLength(0);
-  expect(await fixture.db.select().from(schema.universes)).toHaveLength(0);
-  expect(await fixture.db.select().from(schema.member)).toHaveLength(0);
-  expect(await fixture.db.select().from(schema.universeSetupInstallations)).toHaveLength(0);
+  expect(await fixture.db.select().from(schema.universes).where(eq(schema.universes.id, firstUniverse.id))).toEqual([]);
+  expect((await fixture.db.select().from(schema.universes))[0]?.id).toBe(secondUniverse.id);
+  expect(await fixture.db.select().from(schema.organization)).toHaveLength(2);
 });
-
-it("accepts deletion without archiving, fences member routes and audits the request", async () => {
+it("keeps linked resources on absence or upstream failure", async () => {
+  const universe = await link(); inventory = [];
   await syncDeclaredUniverses(context);
-  const [row] = await fixture.db.select().from(schema.universes);
-  const [user] = await fixture.db.select().from(schema.user);
-  await fixture.db.insert(schema.member).values({ id: "delete-member", organizationId: row!.organizationId, userId: user!.id, role: "admin", createdAt: new Date() });
-  let role = "admin";
-  const app = new Hono<{ Variables: ApiVariables }>();
-  app.use("*", async (c, next) => { c.set("session", { user: { id: user!.id, role } } as ApiVariables["session"]); await next(); });
-  app.route("/", universeRoutes(context));
-  const request = (handle: string) => app.request(`/${row!.id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ handle }) });
-  const runtime = vi.fn(async (_url: unknown, init: RequestInit) => {
-    const request = decodeHttpRequest(_url as string | Request | URL, init);
-    expect(request.method).toBe("deployment/universes/delete");
-    expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe(user!.id);
-    return Response.json({ universeId: first, state: "deleting" });
-  });
-  vi.stubGlobal("fetch", runtime);
-  expect((await request("wrong")).status).toBe(400);
-  expect(runtime).not.toHaveBeenCalled();
-  role = "user";
-  expect((await request("research")).status).toBe(403);
-  role = "admin";
-  expect((await request("research")).status).toBe(200);
-  expect((await fixture.db.select().from(schema.universes))[0]?.status).toBe("deleting");
-  expect((await fixture.db.select().from(schema.organization))[0]?.slug).toBe(`_deleting-${first}`);
-  expect((await fixture.db.select().from(schema.identityAudit)).at(-1)).toMatchObject({ action: "universe.delete", actorId: user!.id, targetId: first });
-  expect((await app.request(`/${row!.id}`)).status).toBe(404);
-  expect((await app.request(`/${row!.id}/engine`, { method: "POST" })).status).toBe(404);
-  expect((await (await app.request("/")).json() as { status: string; handle: string }[])[0]).toMatchObject({ status: "deleting", handle: "research" });
-  role = "user";
-  expect(await (await app.request("/")).json()).toEqual([]);
-});
-it("does not remove Platform data when the delete request fails", async () => {
-  await syncDeclaredUniverses(context);
-  const [row] = await fixture.db.select().from(schema.universes);
-  const [user] = await fixture.db.select().from(schema.user);
-  const app = new Hono<{ Variables: ApiVariables }>();
-  app.use("*", async (c, next) => { c.set("session", { user: { id: user!.id, role: "admin" } } as ApiVariables["session"]); await next(); });
-  app.route("/", universeRoutes(context));
-  vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const request = decodeHttpRequest(_url as string | Request | URL, init);
-    return problemResponse({ type: "about:blank", title: "not found", detail: "not found", status: 404, kind: "notFound" });
-  }));
-  expect((await app.request(`/${row!.id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ handle: "research" }) })).status).toBe(404);
-  expect((await fixture.db.select().from(schema.universes))[0]?.status).toBe("active");
+  expect((await fixture.db.select().from(schema.universes))[0]?.id).toBe(universe.id);
+  vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+  await expect(syncDeclaredUniverses(context)).rejects.toThrow("offline");
+  expect((await fixture.db.select().from(schema.universes))[0]?.id).toBe(universe.id);
 });

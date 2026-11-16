@@ -65,7 +65,7 @@ export function watchRoutes(store: DemoStore): Hono {
 function snapshot(store: DemoStore, universe: UniverseState) {
   const rows = new Map<string, { event: AgentNotification; serialized: string }>();
   const add = (key: string, event: AgentNotification) => rows.set(key, { event, serialized: JSON.stringify(event) });
-  const admin = store.currentUser.role === "admin" || universe.universe.role === "admin";
+  const admin = store.currentUser.role === "admin" || universe.universe.role === "owner";
   for (const record of universe.sessions.values()) {
     const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
     const access = root.view.access;

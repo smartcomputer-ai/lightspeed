@@ -170,7 +170,7 @@ Sets the positive close-relative automatic soft-deletion duration on a retention
 - Request body: JSON object: `deleteAfterCloseMs`
 - Access: `{"action":"setSessionRetention","kind":"universe"}`
 - Group: `session/delete`
-- Role: `admin`
+- Role: `owner`
 
 ### `session/restart`
 
@@ -2133,13 +2133,13 @@ Deployment configuration inventory of one universe's provider bindings.
 
 **Create a universe**
 
-Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused.
+Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.
 
 - HTTP: `POST /api/v1/universes`
 - Success: `200`, `201` (`created: true` selects 201; false selects 200)
 - Transfer: `json`
 - Query: none
-- Request body: JSON object: `handle`, `universeId`
+- Request body: JSON object: `expiresAtMs`, `handle`, `metadata`, `protected`, `universeId`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
@@ -2148,12 +2148,12 @@ Creates the deployment tenant boundary for an explicit UUID, under the given han
 
 **List universes**
 
-Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity.
+Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.
 
 - HTTP: `GET /api/v1/universes`
 - Success: `200`
 - Transfer: `json`
-- Query: none
+- Query: `metadata`
 - Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
@@ -2177,16 +2177,32 @@ Returns one deployment tenant summary, addressed by UUID or active handle, with 
 
 ### `deployment/universes/configuration/put`
 
-**Declare universe presentation and access**
+**Update universe configuration**
 
-Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.
+Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.
 
 - HTTP: `PUT /api/v1/universes/{universe}/configuration`
 - Success: `200`
 - Transfer: `json`
 - Query: none
 - Path input fields: `universe` → `universe`
-- Request body: JSON object: `directoryGroupMappings`, `displayName`, `members`
+- Request body: JSON object: `displayName`, `metadata`, `protected`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
+
+### `deployment/universes/expiry/put`
+
+**Set or clear universe expiry**
+
+Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.
+
+- HTTP: `PUT /api/v1/universes/{universe}/expiry`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: JSON object: `expiresAtMs`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
@@ -2211,7 +2227,7 @@ Changes the deployment-unique handle without changing the universe UUID or resou
 
 **Request universe deletion**
 
-Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
+Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
 
 - HTTP: `DELETE /api/v1/universes/{universe}`
 - Success: `200`

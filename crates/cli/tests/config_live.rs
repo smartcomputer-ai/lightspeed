@@ -100,6 +100,11 @@ impl Live {
     }
 
     async fn delete_universe(&self, handle: &str) {
+        self.call(
+            "deployment/universes/configuration/put",
+            json!({"universe":handle,"protected":false}),
+        )
+        .await;
         self.call("deployment/universes/delete", json!({ "universe": handle }))
             .await;
     }
@@ -493,4 +498,43 @@ async fn a_provider_header_names_a_credential_the_same_document_adds() {
     );
 
     live.delete_universe(&handle).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires an authenticated runtime and deployment token; serialized"]
+async fn document_protection_defaults_only_apply_to_new_universes() {
+    let live = Live::from_env();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let names = [
+        format!("doc-default-{}", &suffix[..10]),
+        format!("doc-false-{}", &suffix[..10]),
+        format!("doc-existing-{}", &suffix[..10]),
+    ];
+    let expiry = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 3_600_000;
+    live.call("deployment/universes/create",json!({"universeId":uuid::Uuid::new_v4().to_string(),"handle":names[2],"expiresAtMs":expiry})).await;
+    for (index, name) in names.iter().enumerate() {
+        let file = live.path(&format!("{index}.yaml"));
+        let extra = if index == 1 { "protected: false\n" } else { "" };
+        std::fs::write(&file,format!("schemaVersion: 1\nkind: universe\nhandle: {name}\nmetadata: {{ purpose: config-test }}\n{extra}")).unwrap();
+        live.ok(&["config", "apply", "-f", file.to_str().unwrap()], &[]);
+        let value = live
+            .call("deployment/universes/read", json!({"universe":name}))
+            .await;
+        assert_eq!(value["universe"]["configuration"]["protected"], index == 0);
+        assert_eq!(
+            value["universe"]["metadata"],
+            json!({"purpose":"config-test"})
+        );
+        if index == 2 {
+            assert_eq!(value["universe"]["expiresAtMs"], expiry);
+        }
+        live.ok(&["config", "apply", "-f", file.to_str().unwrap()], &[]);
+    }
+    for name in names {
+        live.delete_universe(&name).await;
+    }
 }

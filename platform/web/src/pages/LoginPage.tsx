@@ -12,6 +12,7 @@ import {
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { beginAutomaticSignIn } from "@/lib/automatic-sign-in";
+import { appReturnUrl, loginReturnPath } from "@/lib/login-return";
 
 export function LoginPage() {
   useDocumentTitle(["Sign in"]);
@@ -28,10 +29,13 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
+      const errorCallback = new URL(`${import.meta.env.BASE_URL}login`, window.location.origin);
+      const returnTo = loginReturnPath(window.location.search);
+      if (returnTo !== "/") errorCallback.searchParams.set("returnTo", returnTo);
       const result = await authClient.signIn.social({
         provider: config.data.providerId,
-        callbackURL: new URL(import.meta.env.BASE_URL, window.location.origin).href,
-        errorCallbackURL: new URL(`${import.meta.env.BASE_URL}login`, window.location.origin).href,
+        callbackURL: appReturnUrl(window.location.search, window.location.origin),
+        errorCallbackURL: errorCallback.href,
       });
       if (result.error) throw new Error("Company sign-in is unavailable. Try again or contact your administrator.");
     } catch (error) {
@@ -56,7 +60,7 @@ export function LoginPage() {
     try {
       const result = await authClient.signIn.email({ email, password });
       if (result.error) throw new Error(result.error.message ?? "Sign-in failed");
-      window.location.assign(import.meta.env.BASE_URL);
+      window.location.assign(appReturnUrl(window.location.search, window.location.origin));
     } catch (error) {
       setError(error instanceof Error ? error.message : "Sign-in failed");
       setBusy(false);

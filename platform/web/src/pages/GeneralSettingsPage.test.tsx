@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   universe = {
     id: "platform-id", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory", gatewayUrl: null,
-    status: "active", createdAt: "2026-01-01T00:00:00Z", role: "admin", features: { bots: true, channels: true },
+    status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", features: { bots: true, channels: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {
     if (method === "GET" && path === "/api/ui/universes") return [universe];
@@ -135,10 +135,37 @@ it("restores an archived universe without a confirmation", async () => {
 });
 
 
-it("shows a Runtime-managed name without offering a conflicting local edit", async () => {
+it("allows an Owner to rename a universe with a runtime displayName", async () => {
   universe.runtimeConfiguration = { displayName: "Factory" };
   await show();
-  expect(container.querySelector<HTMLInputElement>("#universe-name")?.disabled).toBe(true);
-  expect(container.textContent).toContain("Managed by the universe configuration");
+  expect(container.querySelector<HTMLInputElement>("#universe-name")?.disabled).toBe(false);
+  expect(container.textContent).not.toContain("Managed by the universe configuration");
   expect(mocks.api.mock.calls.some(([method]) => method === "PATCH")).toBe(false);
+});
+
+
+it("requires an account administrator to clear protection", async () => {
+  universe.protected = true;
+  universe.accountRole = "member";
+  await show();
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Deletion protection"]')?.disabled).toBe(true);
+  expect(button("Delete universe")?.disabled).toBe(true);
+});
+
+it("allows an Account Admin to clear protection as a separate lifecycle update", async () => {
+  universe.protected = true;
+  universe.accountRole = "admin";
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) => path === "/api/v1/platform/universes/core-id" ? { universe: { ...universe, ...body } } : implementation(method, path, body));
+  await show();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Deletion protection"]')!.click());
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/platform/universes/core-id", { protected: false }));
+  expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
+});
+
+it("requires an existing expiry to be cleared before protection can be enabled", async () => {
+  universe.expiresAtMs = Date.now() + 60_000;
+  await show();
+  expect(container.querySelector<HTMLButtonElement>('[aria-label="Deletion protection"]')?.disabled).toBe(true);
+  expect(container.textContent).toContain("Clear the expiry before enabling protection");
 });

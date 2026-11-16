@@ -167,6 +167,12 @@ pub struct PgStore {
 
 #[derive(Debug, Error)]
 pub enum PgStoreError {
+    #[error("universe {universe_id} is protected; explicitly unprotect it before deleting")]
+    UniverseProtected { universe_id: Uuid },
+    #[error("a protected universe cannot have an expiry; clear protection or expiry first")]
+    UniverseProtectionExpiryConflict,
+    #[error("invalid universe configuration: {message}")]
+    InvalidUniverseConfiguration { message: String },
     #[error("universe {universe_id} is deleting or was deleted")]
     UniverseDeleted { universe_id: Uuid },
     #[error("postgres failure: {0}")]
@@ -338,12 +344,13 @@ pub use cas_sweep::{
 pub use channels::list_channel_accounts_all;
 pub use deployment::{
     UNIVERSE_HANDLE_MAX_LEN, UniverseDeletionRecord, UniverseStats, begin_universe_deletion,
-    create_universe, create_universe_with_handle, default_universe_handle, delete_universe,
-    finish_universe_deletion, finish_universe_deletion_in_transaction, is_valid_universe_handle,
-    list_deleted_universes, list_deleting_universes, list_universe_object_keys,
-    list_universe_session_ids, list_universe_stats, put_universe_configuration,
-    put_universe_handle, read_deleted_universe, read_universe_stats, resolve_universe_reference,
-    update_universe_deletion,
+    create_universe, create_universe_with_configuration, create_universe_with_handle,
+    default_universe_handle, delete_universe, expire_universes, finish_universe_deletion,
+    finish_universe_deletion_in_transaction, is_valid_universe_handle, list_deleted_universes,
+    list_deleting_universes, list_universe_object_keys, list_universe_session_ids,
+    list_universe_stats, list_universe_stats_matching, put_universe_configuration,
+    put_universe_expiry, put_universe_handle, read_deleted_universe, read_universe_stats,
+    resolve_universe_reference, update_universe_deletion,
 };
 pub use environment::{
     list_revoked_environment_routes, list_universes_with_environment_work,

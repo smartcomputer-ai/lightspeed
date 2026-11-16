@@ -36,6 +36,20 @@
       "when": 1794582699056,
       "tag": "0004_shiny_onslaught",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794866510527,
+      "tag": "0005_careful_big_bertha",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794868278049,
+      "tag": "0006_colorful_sersi",
+      "breakpoints": true
     }
   ]
 }

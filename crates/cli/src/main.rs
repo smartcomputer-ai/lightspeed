@@ -4,11 +4,14 @@ mod chat;
 mod config;
 mod connection;
 mod credentials_cli;
+mod device_login;
 mod env_cli;
 mod key_secrets;
 mod mcp_cli;
 mod model_defaults_cli;
 mod output;
+mod platform_api;
+mod platform_cli;
 mod profile_cli;
 mod request_headers;
 mod session_cli;
@@ -29,12 +32,15 @@ use clap::{Parser, Subcommand};
     about = "Lightspeed command-line tools"
 )]
 struct Cli {
-    /// Runtime endpoint override; never forwards a saved key to a different endpoint.
+    /// Deployment URL override; never forwards a saved key to a different endpoint.
     #[arg(long, global = true)]
     api_url: Option<String>,
-    /// Use a saved runtime connection for this invocation.
+    /// Use a saved runtime or Platform connection for this invocation.
     #[arg(long, global = true)]
     connection: Option<String>,
+    /// Platform account for this invocation.
+    #[arg(long, global = true)]
+    account: Option<String>,
     /// Universe UUID or handle for this invocation.
     #[arg(long, global = true)]
     universe: Option<String>,
@@ -44,9 +50,13 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Manage local runtime connections.
+    /// Manage saved runtime and Platform connections.
     #[command(visible_alias = "connections")]
     Connect(connection::ConnectArgs),
+    /// Manage Platform accounts, applications, and API keys.
+    Platform(platform_cli::PlatformArgs),
+    /// Call a runtime or Platform operation using JSON parameters.
+    Api(platform_cli::ApiArgs),
     /// Select and administer runtime universes.
     #[command(visible_alias = "universes")]
     Universe(administration_cli::UniverseArgs),
@@ -92,6 +102,7 @@ async fn main() -> Result<()> {
             cli.connection.as_deref(),
             cli.universe.as_deref(),
             cli.api_url.as_deref(),
+            cli.account.as_deref(),
         )
         .await;
     }
@@ -115,18 +126,25 @@ async fn main() -> Result<()> {
         Command::Config(args) => args.wait_seconds(),
         _ => None,
     };
-    let active = connection::resolve_wait(
+    let mut active = connection::resolve_wait(
         cli.connection.as_deref(),
         cli.api_url.as_deref(),
         cli.universe.as_deref(),
         wait,
     )
     .await?;
+    connection::apply_account_override(
+        &mut active,
+        cli.account.as_deref(),
+        cli.universe.as_deref(),
+    )?;
     connection::ACTIVE
         .set(active)
         .map_err(|_| anyhow::anyhow!("connection already initialized"))?;
     match cli.command {
         Command::Connect(_) => unreachable!(),
+        Command::Platform(args) => platform_cli::handle(args).await,
+        Command::Api(args) => platform_cli::api(args).await,
         Command::Universe(args) => administration_cli::universe(args).await,
         Command::Config(args) => config::handle(args).await,
         Command::Token(args) => administration_cli::token(args),
@@ -170,8 +188,31 @@ mod tests {
             let error = Cli::try_parse_from(["lightspeed", plural, "--help"]).unwrap_err();
             assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
         }
-        for removed in ["auth", "skills"] {
+        for removed in [
+            "auth",
+            "skills",
+            "login",
+            "logout",
+            "account",
+            "application",
+            "api-key",
+            "access",
+        ] {
             assert!(Cli::try_parse_from(["lightspeed", removed]).is_err());
+        }
+        for path in [
+            vec!["connect", "login"],
+            vec!["connect", "logout"],
+            vec!["platform", "account", "show"],
+            vec!["platform", "application", "create"],
+            vec!["platform", "api-key", "create"],
+            vec!["universe", "access", "put"],
+            vec!["api"],
+        ] {
+            let error =
+                Cli::try_parse_from(std::iter::once("lightspeed").chain(path).chain(["--help"]))
+                    .unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
         }
     }
 

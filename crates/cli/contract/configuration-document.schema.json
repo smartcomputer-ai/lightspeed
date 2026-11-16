@@ -372,37 +372,6 @@
       ],
       "type": "object"
     },
-    "DeclaredUniverseMember": {
-      "additionalProperties": false,
-      "properties": {
-        "email": {
-          "description": "Select by verified email, or by issuer and subject, never both.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "issuer": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "role": {
-          "$ref": "#/definitions/UniverseMemberRole"
-        },
-        "subject": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "role"
-      ],
-      "type": "object"
-    },
     "EnvironmentAccess": {
       "description": "Per-attachment environment access, an ordered ladder: `edit` adds file\nediting to `read`, `exec` adds processes, `jobs` adds durable jobs.\nProcesses can write files regardless of the file-tool level, so\nread-only files with commands is deliberately not expressible.",
       "enum": [
@@ -1780,26 +1749,6 @@
         }
       ]
     },
-    "UniverseDirectoryGroupMapping": {
-      "additionalProperties": false,
-      "properties": {
-        "group": {
-          "type": "string"
-        },
-        "issuer": {
-          "type": "string"
-        },
-        "role": {
-          "$ref": "#/definitions/UniverseMemberRole"
-        }
-      },
-      "required": [
-        "issuer",
-        "group",
-        "role"
-      ],
-      "type": "object"
-    },
     "UniverseDocument": {
       "additionalProperties": false,
       "description": "The configuration of one universe. A section left out is not managed by the document.",
@@ -1817,18 +1766,7 @@
           },
           "type": "array"
         },
-        "directoryGroupMappings": {
-          "description": "Exact issuer-qualified directory groups. Omit to leave unchanged;\nan empty list clears declared group grants.",
-          "items": {
-            "$ref": "#/definitions/UniverseDirectoryGroupMapping"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
         "displayName": {
-          "description": "Runtime-owned name. Named universes are adopted automatically by Platform.",
           "type": [
             "string",
             "null"
@@ -1881,13 +1819,13 @@
           },
           "type": "array"
         },
-        "members": {
-          "description": "Declared grants, independent of manual memberships. Omit to leave unmanaged;\nan empty list clears declared members. Email selectors require verified email.",
-          "items": {
-            "$ref": "#/definitions/DeclaredUniverseMember"
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
           },
+          "description": "Replaces the complete metadata map; omission leaves it unchanged.",
           "type": [
-            "array",
+            "object",
             "null"
           ]
         },
@@ -1931,6 +1869,13 @@
           },
           "type": "array"
         },
+        "protected": {
+          "description": "Deletion is refused while enabled. Cannot be enabled while an expiry exists.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "providers": {
           "items": {
             "anyOf": [
@@ -1968,15 +1913,6 @@
         "handle"
       ],
       "type": "object"
-    },
-    "UniverseMemberRole": {
-      "enum": [
-        "viewer",
-        "contributor",
-        "operator",
-        "admin"
-      ],
-      "type": "string"
     },
     "VfsFeature": {
       "additionalProperties": false,

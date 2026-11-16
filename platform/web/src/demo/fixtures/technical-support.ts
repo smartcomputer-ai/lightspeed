@@ -671,7 +671,7 @@ function seedChannels(universe: UniverseState): void {
 
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
-    member(store, universe, "user-jonas", "admin", ago(47 * DAY_MS)),
+    member(store, universe, "user-jonas", "owner", ago(47 * DAY_MS)),
     member(store, universe, "user-priya", "contributor", ago(32 * DAY_MS)),
   );
 }
@@ -2312,7 +2312,7 @@ export function seedTechnicalSupport(store: DemoStore): void {
     icon: "support",
     iconColor: "amber",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
-    role: "admin",
+    role: "owner",
     createdAt: agoIso(49 * DAY_MS),
     responder,
     // Bots and channels are off in a new universe; this one is built on them.

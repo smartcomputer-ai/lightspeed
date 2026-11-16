@@ -1,107 +1,63 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
+import { schema } from "@lightspeed-ai/platform-db";
+import { accountFixture } from "../../test/account-fixture.js";
 import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
-import { Hono } from "hono";
-import { afterEach, expect, it, vi } from "vitest";
-import type { ApiVariables, AppContext } from "../context.js";
-import { universeRoutes } from "./universes.js";
 
-afterEach(() => vi.unstubAllGlobals());
-function fixture(platformAdmin = true) {
-  let handle = "cached";
-  const universe = { id: "platform-id", organizationId: "org-id", lightspeedUniverseId: "11111111-1111-4111-8111-111111111111", gatewayUrl: null };
-  const reads: unknown[][] = [];
-  const calls: { method: string; params: Record<string, unknown> }[] = [];
-  const updates: string[] = [];
-  const sequence: string[] = [];
-  const next = async () => { const value = reads.shift(); if (!value) throw new Error("unexpected database read"); return value; };
-  const chain = { from: () => chain, innerJoin: () => chain, leftJoin: () => chain, where: () => chain,
-    limit: next, then: (resolve: (value: unknown[]) => unknown) => next().then(resolve) };
-  const db = {
-    select: () => chain,
-    update: () => ({ set: (value: { slug: string }) => ({ where: async () => { handle = value.slug; updates.push(handle); sequence.push("cache"); } }) }),
-  };
-  const runtime = vi.fn(async (_url: unknown, init: RequestInit) => {
-    const request = decodeHttpRequest(_url as string | Request | URL, init); calls.push({ method: request.method, params: request.params }); sequence.push("runtime");
-    const result = request.method === "deployment/universes/list"
-      ? { universes: [{ universeId: universe.lightspeedUniverseId, handle: "from-runtime" }] }
-      : { universe: { universeId: universe.lightspeedUniverseId, handle: request.params.handle } };
-    return Response.json(result);
-  });
-  vi.stubGlobal("fetch", runtime);
-  const app = new Hono<{ Variables: ApiVariables }>();
-  app.use("*", async (c, next) => { c.set("session", { user: { id: "user", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
-  app.route("/", universeRoutes({ db: { ...db, transaction: async (work: (tx: typeof db) => unknown) => work(db) },
-    env: { lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_fixture" },
-  } as unknown as AppContext));
-  const row = () => ({ universe, handle, role: "admin" });
-  const request = (path: string, method = "GET", body?: object) => app.request(path, { method,
-    headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
-  return { request, row, reads, calls, updates, runtime, sequence };
-}
-
-it("serves lists and individual reads from Platform only, even with an unavailable runtime", async () => {
-  const f = fixture();
-  f.runtime.mockRejectedValue(new TypeError("offline"));
-  f.reads.push([f.row()]);
-  const listed = await f.request("/");
-  expect(listed.status).toBe(200);
-  expect(await listed.json()).toMatchObject([{ handle: "cached" }]);
-  f.reads.push([f.row()], [{ role: "admin" }]);
-  const read = await f.request("/platform-id");
-  expect(read.status).toBe(200);
-  expect(await read.json()).toMatchObject({ handle: "cached" });
-  expect(f.runtime).not.toHaveBeenCalled();
-  expect(f.updates).toEqual([]);
+let fixture: Awaited<ReturnType<typeof accountFixture>>;
+let calls: Array<ReturnType<typeof decodeHttpRequest>>;
+let runtimeHandle = "runtime-handle";
+let rejectRename = false;
+beforeEach(async () => {
+  fixture = await accountFixture(); calls = []; runtimeHandle = "runtime-handle"; rejectRename = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string | Request | URL, init?: RequestInit) => {
+    const request = decodeHttpRequest(url, init); calls.push(request);
+    if (request.operation === "deployment/universes/list") return Response.json({ universes: [{ universeId: fixture.universe.lightspeedUniverseId, handle: runtimeHandle }] });
+    if (rejectRename) return problemResponse({ type: "about:blank", title: "Conflict", detail: "handle already in use", kind: "conflict", status: 409 });
+    runtimeHandle = String(request.params.handle);
+    return Response.json({ universe: { universeId: fixture.universe.lightspeedUniverseId, handle: runtimeHandle } });
+  }));
+}, 30000);
+afterEach(async () => { vi.unstubAllGlobals(); await fixture?.postgres.close(); });
+const path = () => `/api/ui/universes/${fixture.universe.id}`;
+it("serves cached lists and reads without contacting an unavailable runtime", async () => {
+  vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+  expect(await (await fixture.request("/api/ui/universes")).json()).toMatchObject([{ handle: "work" }]);
+  expect(await (await fixture.request(path())).json()).toMatchObject({ handle: "work" });
+  expect(fetch).not.toHaveBeenCalled();
 });
-
-it("syncs only on an explicit admin action and subsequent reads use the updated cache", async () => {
-  const f = fixture(); f.reads.push([f.row()]);
-  const synced = await f.request("/sync-handles", "POST");
-  expect(synced.status).toBe(200);
-  expect(await synced.json()).toEqual({ updated: 1, skipped: 0 });
-  expect(f.calls.map(c => c.method)).toEqual(["deployment/universes/list"]);
-  f.reads.push([f.row()]);
-  expect(await (await f.request("/")).json()).toMatchObject([{ handle: "from-runtime" }]);
-  expect(f.calls).toHaveLength(1);
+it("syncs only for Platform Admins and keeps the account's slug independent", async () => {
+  expect((await fixture.request("/api/ui/universes/sync-handles", "POST")).status).toBe(403);
+  await fixture.asUser("owner", true);
+  const response = await fixture.request("/api/ui/universes/sync-handles", "POST");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ updated: 1, skipped: 0 });
+  expect((await fixture.db.select().from(schema.universes))[0]?.handle).toBe(runtimeHandle);
+  expect((await fixture.db.select().from(schema.organization).where(eq(schema.organization.id, "account-a")))[0]?.slug).toBe("a");
 });
-
-it("rejects non-admin sync and preserves cache when an explicit sync fails", async () => {
-  const denied = fixture(false);
-  expect((await denied.request("/sync-handles", "POST")).status).toBe(403);
-  expect(denied.runtime).not.toHaveBeenCalled();
-  const offline = fixture(); offline.reads.push([offline.row()]);
-  offline.runtime.mockRejectedValue(new TypeError("offline"));
-  expect((await offline.request("/sync-handles", "POST")).status).toBe(502);
-  expect(offline.updates).toEqual([]);
+it("preserves the cache when runtime synchronization fails", async () => {
+  await fixture.asUser("owner", true); vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+  expect((await fixture.request("/api/ui/universes/sync-handles", "POST")).status).toBe(502);
+  expect((await fixture.db.select().from(schema.universes))[0]?.handle).toBe("work");
 });
-
-it("renames through runtime first and immediately caches the returned handle", async () => {
-  const f = fixture(false);
-  f.reads.push([f.row()], [{ role: "admin" }], []);
-  const response = await f.request("/platform-id/handle", "PUT", { handle: "renamed" });
+it("renames through runtime and updates only the universe handle", async () => {
+  const response = await fixture.request(`${path()}/handle`, "PUT", { handle: "renamed" });
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ handle: "renamed" });
-  expect(f.calls).toMatchObject([{ method: "deployment/universes/handle/put", params: { universe: "11111111-1111-4111-8111-111111111111", handle: "renamed" } }]);
-  expect(f.sequence).toEqual(["runtime", "cache"]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.headers.get("x-lightspeed-actor")).toBe("owner");
+  expect((await fixture.db.select().from(schema.organization).where(eq(schema.organization.id, "account-a")))[0]?.slug).toBe("a");
 });
-
-it("preserves the cached handle if runtime rejects the rename", async () => {
-  const f = fixture(false);
-  f.reads.push([f.row()], [{ role: "admin" }], []);
-  f.runtime.mockImplementationOnce(async (_url: unknown, init: RequestInit) => {
-    const request = decodeHttpRequest(_url as string | Request | URL, init);
-    return problemResponse({ type: "about:blank", title: "handle is already in use", detail: "handle is already in use", status: 409, kind: "conflict" });
-  });
-  const response = await f.request("/platform-id/handle", "PUT", { handle: "taken" });
-  expect(response.status).toBe(409);
-  expect(f.updates).toEqual([]);
+it("keeps the old cache if runtime refuses a rename", async () => {
+  rejectRename = true;
+  expect((await fixture.request(`${path()}/handle`, "PUT", { handle: "taken" })).status).toBe(409);
+  expect((await fixture.db.select().from(schema.universes))[0]?.handle).toBe("work");
 });
-
-it("refuses unauthorized renames and known cache collisions before mutating runtime", async () => {
-  const denied = fixture(false); denied.reads.push([denied.row()], [{ role: "viewer" }]);
-  expect((await denied.request("/platform-id/handle", "PUT", { handle: "other" })).status).toBe(403);
-  expect(denied.calls).toEqual([]);
-  const collision = fixture(); collision.reads.push([collision.row()], [{ role: "admin" }], [{ id: "other-org" }]);
-  expect((await collision.request("/platform-id/handle", "PUT", { handle: "other" })).status).toBe(409);
-  expect(collision.calls).toEqual([]);
-  expect(collision.updates).toEqual([]);
+it("refuses unauthorized renames and known universe handle collisions before contacting runtime", async () => {
+  await fixture.asUser("viewer");
+  expect((await fixture.request(`${path()}/handle`, "PUT", { handle: "new" })).status).toBe(403);
+  await fixture.asUser("owner");
+  await fixture.db.insert(schema.universes).values({ organizationId: "account-a", handle: "taken", name: "Other", lightspeedUniverseId: crypto.randomUUID() });
+  expect((await fixture.request(`${path()}/handle`, "PUT", { handle: "taken" })).status).toBe(409);
+  expect(fetch).not.toHaveBeenCalled();
 });

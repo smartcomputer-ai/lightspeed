@@ -147,11 +147,12 @@ export const ADMIN_OPERATIONS: ReadonlySet<string> = new Set([
 export const NATIVE_OPERATIONS: ReadonlySet<string> = new Set([
   "initialize", "deployment/universes/create", "deployment/universes/list",
   "deployment/universes/read", "deployment/universes/delete", "deployment/universes/handle/put",
+  "deployment/universes/configuration/put", "deployment/universes/expiry/put",
 ]);
 
 /** Service ingress, grants, purge and declared-universe administration have
  * separate trusted or audited entry points; none are public proxy routes. */
 export const DENIED_OPERATIONS: ReadonlySet<string> = new Set([
   "credentials/grants/lease", "channels/inbound/admit", "deployment/channels/accounts/list",
-  "deployment/sessions/deleted/list", "deployment/sessions/purge", "deployment/universes/configuration/put",
+  "deployment/sessions/deleted/list", "deployment/sessions/purge",
 ]);

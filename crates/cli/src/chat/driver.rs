@@ -2338,6 +2338,7 @@ mod tests {
                     secret: None,
                     universe: Some("fixture".into()),
                     caller: None,
+                    ..Default::default()
                 },
             )),
             session_id: "session_original".into(),
@@ -2557,6 +2558,7 @@ mod tests {
                         secret: None,
                         universe: Some("fixture".into()),
                         caller: None,
+                        ..Default::default()
                     },
                 )),
                 profile: None,

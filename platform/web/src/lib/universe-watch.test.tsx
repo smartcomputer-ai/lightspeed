@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import { UniverseWatchProvider, useWatchConnected } from "./universe-watch";
 import { waitForUi } from "@/test/wait-for-ui";
 
-vi.mock("./universes", () => ({ useActiveUniverse: () => ({ universe: { id: "u", lightspeedUniverseId: "runtime-u", role: "admin", features: {} } }) }));
+vi.mock("./universes", () => ({ useActiveUniverse: () => ({ universe: { id: "u", lightspeedUniverseId: "runtime-u", role: "owner", features: {} } }) }));
 
 it("shares one stream between consumers and falls back when it disconnects", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

@@ -405,7 +405,7 @@ impl MethodAccess {
         };
         Some(match action {
             Read => RecommendedRole::Viewer,
-            SetSessionRetention => RecommendedRole::Admin,
+            SetSessionRetention => RecommendedRole::Owner,
             CreateSession | ControlSession | StopSession | CloseSession | ShareSession
             | InvokeBot | UseResource => RecommendedRole::Contributor,
             DeleteSession | ConfigureSession | CreateProfile | ManageProfile | CreateBot
@@ -424,7 +424,7 @@ pub enum RecommendedRole {
     Viewer,
     Contributor,
     Operator,
-    Admin,
+    Owner,
 }
 
 /// Where a method names the session it acts on, so a gate can decide per

@@ -1,7 +1,7 @@
 # Private and shared work
 
 A new standalone session starts private. Through the Platform, only its creator
-and the universe's Admins can read it. The creator can investigate a problem,
+and the universe's Owners can read it. The creator can investigate a problem,
 collect context, and then share the conversation with the whole universe when
 it is ready for other people to use.
 
@@ -14,7 +14,7 @@ components; the runtime does not check a person's membership or role. See
 
 Suppose an Acorn Contributor creates a session to review a release. Its header
 shows a lock marked **Private**. Other Contributors cannot find or open it, but
-Acorn's Admins can. Private work is not hidden from the people administering the
+Acorn's Owners can. Private work is not hidden from the people administering the
 universe.
 
 After finishing the initial review, the creator opens the session title menu
@@ -29,7 +29,7 @@ session's sub-agents. Sharing cannot be undone.*
 
 ```mermaid
 flowchart LR
-    P["Private root session<br/>Creator and Admins can read"] -->|"Creator or Admin shares"| S["Shared root session<br/>All universe members can read"]
+    P["Private root session<br/>Creator and Owners can read"] -->|"Creator or Owner shares"| S["Shared root session<br/>All universe members can read"]
     P -.-> PC["Its sub-agents are private"]
     S -.-> SC["Its sub-agents are shared"]
 ```
@@ -38,7 +38,7 @@ Sharing changes who may use the same continuing conversation. It does not make
 a snapshot or start another session. Viewers can inspect it; Contributors and
 above can continue, steer, or cancel its work, subject to ordinary session
 lifecycle rules. Configuring the session or overriding a run's model or
-reasoning options requires an Operator or Admin. Someone joining the universe later can read its
+reasoning options requires an Operator or Owner. Someone joining the universe later can read its
 shared history too.
 
 ## What each person may do
@@ -48,21 +48,21 @@ creator. These checks apply on the server as well as in the UI.
 
 | Operation | Private session | Shared session |
 | --- | --- | --- |
-| Read | Creator and Admins | Every member |
-| Start runs, steer, cancel, or approve tools | Creator with Contributor or Operator role, and Admins | Contributors, Operators, and Admins |
-| Close or force-close | Creator with Contributor or Operator role, and Admins | Operators and Admins |
-| Configure setup or override run options | Creator with Operator role, and Admins | Operators and Admins |
-| Share | Creator with Contributor or Operator role, and Admins | Already shared; no reverse operation |
-| Soft-delete a closed session | Admins | Operators and Admins |
-| Set deletion retention | Admins | Admins |
+| Read | Creator and Owners | Every member |
+| Start runs, steer, cancel, or approve tools | Creator with Contributor or Operator role, and Owners | Contributors, Operators, and Owners |
+| Close or force-close | Creator with Contributor or Operator role, and Owners | Operators and Owners |
+| Configure setup or override run options | Creator with Operator role, and Owners | Operators and Owners |
+| Share | Creator with Contributor or Operator role, and Owners | Already shared; no reverse operation |
+| Soft-delete a closed session | Owners | Operators and Owners |
+| Set deletion retention | Owners | Owners |
 
 A creator downgraded to Viewer can still read their session but cannot control,
 share, or delete it. An Operator does not acquire another creator's private
-work by managing profiles or environments. Platform admins act as Admin in
+work by managing profiles or environments. Account Admins and Platform Admins act as Owner in
 every universe.
 
 Soft deletion requires closing the session first and hides it even from universe
-Admins. A cascade must contain only closed sessions. Permanent deletion requires a Platform admin and prior soft
+Owners. A cascade must contain only closed sessions. Permanent deletion requires a Platform admin and prior soft
 deletion. See [Sessions and runs](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
 for the procedure and retention behavior.
 

@@ -76,6 +76,7 @@ impl HttpAgentApi {
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
                 caller: None,
+                ..Default::default()
             }
         });
         Self::with_connection(connection)
@@ -646,6 +647,42 @@ impl HttpAgentApi {
             .await
     }
 
+    /// Native Platform routes are described by its generated catalog; authentication
+    /// and response handling share the resource HTTP transport.
+    pub(crate) async fn platform_request<P: Serialize, R: DeserializeOwned>(
+        &self,
+        operation: &str,
+        params: P,
+    ) -> Result<R, AgentApiError> {
+        let result: anyhow::Result<R> = async {
+            if !self.connection.is_platform() {
+                anyhow::bail!("this command requires a Platform deployment");
+            }
+            let parts =
+                crate::platform_api::request_parts(operation, serde_json::to_value(params)?)?;
+            let response = self
+                .send_parts(parts, self.connection.auth_headers()?)
+                .await?;
+            response
+                .json::<R>()
+                .await
+                .map_err(|_| anyhow::anyhow!("invalid Platform API response"))
+        }
+        .await;
+        result.map_err(|error| match error.downcast::<AgentApiError>() {
+            Ok(error) => error,
+            Err(error) => AgentApiError::internal(error.to_string()),
+        })
+    }
+
+    pub(crate) async fn call_platform(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, AgentApiError> {
+        self.platform_request(operation, params).await
+    }
+
     pub(crate) async fn request<P, R>(&self, method: &str, params: P) -> Result<R, AgentApiError>
     where
         P: Serialize,
@@ -667,9 +704,10 @@ impl HttpAgentApi {
         params: P,
     ) -> anyhow::Result<R> {
         let response = self.send(method, serde_json::to_value(params)?).await?;
-        response.json::<R>().await.map_err(|error| {
-            AgentApiError::internal(format!("invalid API response: {error}")).into()
-        })
+        response
+            .json::<R>()
+            .await
+            .map_err(|_| AgentApiError::internal("invalid API response").into())
     }
 
     async fn send(
@@ -678,7 +716,20 @@ impl HttpAgentApi {
         params: serde_json::Value,
     ) -> anyhow::Result<reqwest::Response> {
         let parts = api::http_request(operation, self.connection.universe.as_deref(), params)?;
-        let base = self.endpoint.trim_end_matches('/');
+        self.send_parts(parts, self.connection.headers(operation)?)
+            .await
+    }
+
+    async fn send_parts(
+        &self,
+        parts: api::HttpRequestParts,
+        headers: reqwest::header::HeaderMap,
+    ) -> anyhow::Result<reqwest::Response> {
+        let endpoint = crate::connection::endpoint_with_policy(
+            &self.endpoint,
+            self.connection.allow_insecure_http,
+        )?;
+        let base = endpoint.trim_end_matches('/');
         let suffix = parts
             .path
             .strip_prefix("/api/v1")
@@ -689,7 +740,7 @@ impl HttpAgentApi {
                 reqwest::Method::from_bytes(parts.method.as_str().as_bytes())?,
                 format!("{base}{suffix}"),
             )
-            .headers(self.connection.headers(operation)?);
+            .headers(headers);
         if let Some(body) = parts.body {
             request = request.json(&body);
         }
@@ -698,17 +749,22 @@ impl HttpAgentApi {
                 anyhow::Error::new(StartupUnavailable)
             } else {
                 anyhow::Error::new(AgentApiError::internal(format!(
-                    "runtime unavailable: {error}"
+                    "deployment unavailable: {error}"
                 )))
             }
         })?;
+        if !response.status().is_redirection() {
+            self.connection
+                .accept_session_rotation(response.headers())?;
+        }
         if response.status().is_success() {
             return Ok(response);
         }
         let status = response.status();
         let body = response.bytes().await?;
         if let Ok(problem) = serde_json::from_slice::<api::HttpProblem>(&body) {
-            let mut error = AgentApiError::new(problem.kind, problem.detail);
+            let mut error =
+                AgentApiError::new(problem.kind, self.connection.redact_error(problem.detail));
             error.model_default_slot = problem.model_default_slot;
             error.submission_id = problem.submission_id;
             error.deleted_universe = problem.deleted_universe;
@@ -734,7 +790,7 @@ pub(crate) fn api_error(error: api::AgentApiError) -> anyhow::Error {
 pub(crate) struct StartupUnavailable;
 impl std::fmt::Display for StartupUnavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Runtime connection is temporarily unavailable")
+        f.write_str("Deployment connection is temporarily unavailable")
     }
 }
 impl std::error::Error for StartupUnavailable {}
@@ -784,6 +840,7 @@ mod tests {
                 secret: Some("fixture-token".into()),
                 universe: Some("team space".into()),
                 caller: None,
+                ..Default::default()
             }),
             task,
         )

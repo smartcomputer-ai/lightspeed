@@ -1,8 +1,9 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ApiVariables, AppContext } from "../context.js";
-import { setupRoutes } from "./setups.js";
+import { CONFIGURATOR_OPERATIONS, setupRoutes } from "./setups.js";
 import { universeForSession } from "./universes.js";
 
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn() }));
@@ -20,7 +21,7 @@ function routes(role: UniverseRole) {
   const writes = vi.fn();
   const ctx = {
     db: {
-      select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }),
+      select: () => ({ from: () => ({ where: async () => [] }) }),
       insert: writes,
       update: writes,
     },
@@ -29,17 +30,18 @@ function routes(role: UniverseRole) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "platform-user" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
   app.route("/", setupRoutes(ctx));
   return { app, writes, runtime };
 }
 
-it.each(["operator", "admin"] as const)("lists Configurator as unavailable for %s", async (role) => {
+it.each(["operator", "owner"] as const)("lists Configurator as available for %s", async (role) => {
   const { app, writes, runtime } = routes(role);
   const response = await app.request("/platform-universe/setups");
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject([{ id: "configurator", status: "unavailable", available: false }]);
+  expect(await response.json()).toMatchObject([{ id: "configurator", status: "available", available: true }]);
   expect(writes).not.toHaveBeenCalled();
   expect(runtime).not.toHaveBeenCalled();
 });
@@ -47,10 +49,15 @@ it.each(["viewer", "contributor"] as const)("hides setup from %s", async (role) 
   const { app } = routes(role);
   expect((await app.request("/platform-universe/setups")).status).toBe(404);
 });
-it.each(["viewer", "contributor", "operator", "admin"] as const)("never installs an agent credential for %s", async (role) => {
+it.each(["viewer", "contributor", "operator"] as const)("requires Owner for installation by %s", async (role) => {
   const { app, writes, runtime } = routes(role);
   const response = await app.request("/platform-universe/setups/configurator/install", { method: "POST" });
-  expect(response.status).toBe(role === "admin" ? 503 : 403);
+  expect(response.status).toBe(403);
   expect(writes).not.toHaveBeenCalled();
   expect(runtime).not.toHaveBeenCalled();
+});
+
+it("permits reviewed configuration operations without execution, lifecycle or identity administration", () => {
+  expect(CONFIGURATOR_OPERATIONS).toContain("profiles/put");
+  for (const operation of ["session/start", "session/runs/start", "credentials/grants/import", "credentials/grants/lease", "deployment/universes/create", "platform/applications/create"]) expect(CONFIGURATOR_OPERATIONS).not.toContain(operation);
 });

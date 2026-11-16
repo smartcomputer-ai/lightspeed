@@ -245,7 +245,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 147);
+        assert_eq!(total, 148);
         let streaming: Vec<_> = manifest
             .iter()
             .filter(|spec| !spec.notifications.is_empty())
@@ -258,7 +258,7 @@ mod tests {
                 .iter()
                 .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
-            17
+            18
         );
     }
 

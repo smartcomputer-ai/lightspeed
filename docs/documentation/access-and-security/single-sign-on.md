@@ -2,7 +2,7 @@
 
 Connect Lightspeed to one company OIDC provider so people sign in with their
 company account. The provider grants ordinary application access or Platform
-admin access. Platform admins and universe admins then assign local universe
+admin access. Account Admins and universe Owners then assign local universe
 memberships using the four roles described in [People and roles](people-and-roles.md).
 No directory group is needed for each universe.
 
@@ -123,7 +123,9 @@ password changes, including emergency access. With OIDC, the default is
 
 With company sign-in configured, Platform sessions have an absolute eight-hour
 limit, adjustable with `LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS`.
-Activity does not extend that limit. Renewal sends company users back to the
+This includes browser-approved CLI sessions created with `lightspeed connect login`.
+The CLI opens a verification URL; the user signs in and explicitly approves
+the displayed device code. Activity does not extend the company session limit. Renewal sends company users back to the
 provider, automatically or after a click according to the sign-in setting.
 The provider may sign them in silently using an existing company session.
 Emergency password sessions have the same limit. A provider outage does not
@@ -142,6 +144,13 @@ provider refuses login without returning claims, existing Platform sessions
 expire at their original limit. Validate your provider's account-disable and
 entitlement-removal behavior, including existing company SSO cookies, before
 claiming an offboarding time bound. Directory propagation may add delay.
+
+Personal API keys use the same current company admission state, independently
+of browser-session expiry. Until a background directory source is configured,
+a company user must renew admission by signing in within the configured
+company window. Application keys represent account-owned applications and do
+not borrow their creator's human session. Local personal and application keys
+have their own expiry and revocation lifecycle.
 
 There is no automatic deactivation for inactivity. Suspension and company
 admission changes preserve local memberships, historical records and running

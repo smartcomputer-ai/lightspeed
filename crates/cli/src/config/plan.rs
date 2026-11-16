@@ -114,6 +114,11 @@ enum Work {
     },
     CreateUniverse {
         handle: String,
+        protected: bool,
+        metadata: Value,
+        initial_owner: Option<Value>,
+        name: String,
+        universe_id: uuid::Uuid,
     },
     Write {
         resource: usize,
@@ -207,9 +212,11 @@ pub(crate) fn check_universe(document: &super::document::UniverseDocument) -> Re
 }
 
 /// Phases 1 to 3 for one document.
-pub(crate) async fn plan(
+pub(crate) async fn plan_with_owner(
     base: &ResolvedConnection,
     loaded: &LoadedDocument,
+    initial_owner: Option<Value>,
+    requested_universe_id: Option<uuid::Uuid>,
 ) -> Result<DocumentPlan> {
     let subject = loaded.subject();
     let (resources, sections, handle) = match &loaded.document {
@@ -269,13 +276,46 @@ pub(crate) async fn plan(
     }
 
     let target = connect(base, handle.as_deref()).await?;
+    if let (Some(requested), Some(existing)) =
+        (requested_universe_id, target.universe_id.as_deref())
+    {
+        anyhow::ensure!(
+            requested.to_string() == existing,
+            "--universe-id differs from the existing universe UUID"
+        );
+    }
     let mut steps = Vec::new();
     if let Some(handle) = &handle
         && target.universe_id.is_none()
     {
-        let mut step = Step::new(&subject, "universe", handle, Action::Create);
+        if base.is_platform() {
+            anyhow::ensure!(
+                base.selected_account().is_some(),
+                "Platform creation requires --account ID or account use ID"
+            );
+        } else {
+            anyhow::ensure!(
+                initial_owner.is_none(),
+                "initial Owner applies only to Platform provisioning"
+            );
+        }
+        let universe_id = requested_universe_id.unwrap_or_else(uuid::Uuid::new_v4);
+        let mut step = Step::new(&subject, "universe", handle, Action::Create).with_message(
+            format!("universeId {universe_id}; retry with --universe-id {universe_id}"),
+        );
         step.work = Some(Work::CreateUniverse {
             handle: handle.clone(),
+            initial_owner,
+            universe_id,
+            name: configuration["displayName"]
+                .as_str()
+                .unwrap_or(handle)
+                .to_owned(),
+            protected: configuration["protected"].as_bool().unwrap_or(true),
+            metadata: configuration
+                .get("metadata")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
         });
         steps.push(step);
     }
@@ -287,7 +327,7 @@ pub(crate) async fn plan(
         let current = if target.exists() {
             target
                 .call("deployment/universes/read", json!({"universe": handle}))
-                .await?["universe"]
+                .await?["universe"]["configuration"]
                 .clone()
         } else {
             json!({})
@@ -403,7 +443,25 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
                     .await
                     .map(drop)
             }
-            Work::CreateUniverse { handle } => create_universe(&mut plan.target, &handle).await,
+            Work::CreateUniverse {
+                handle,
+                protected,
+                metadata,
+                initial_owner,
+                name,
+                universe_id,
+            } => {
+                create_universe(
+                    &mut plan.target,
+                    &handle,
+                    protected,
+                    metadata,
+                    initial_owner,
+                    name,
+                    universe_id,
+                )
+                .await
+            }
             Work::Write {
                 resource,
                 entry,
@@ -439,19 +497,50 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
     Ok(())
 }
 
-async fn create_universe(target: &mut Target, handle: &str) -> Result<()> {
-    let response = target
-        .call(
-            "deployment/universes/create",
-            json!({ "universeId": uuid::Uuid::new_v4().to_string(), "handle": handle }),
-        )
-        .await?;
-    target.universe_id = response["universe"]["universeId"]
-        .as_str()
-        .map(str::to_owned);
-    if target.universe_id.is_none() {
-        bail!("the runtime did not return the created universe");
-    }
+async fn create_universe(
+    target: &mut Target,
+    handle: &str,
+    protected: bool,
+    metadata: Value,
+    initial_owner: Option<Value>,
+    name: String,
+    universe_id: uuid::Uuid,
+) -> Result<()> {
+    let platform = target.api.connection().is_platform();
+    eprintln!(
+        "Provisioning universe {handle}: {universe_id}. Retry this document with --universe-id {universe_id} if interrupted."
+    );
+    let mut params = json!({ "universeId": universe_id.to_string(), "handle": handle, "protected":protected,"metadata":metadata });
+    let response = if platform {
+        params["accountId"] = json!(
+            target
+                .api
+                .connection()
+                .selected_account()
+                .context("Platform creation needs an account")?
+        );
+        params["name"] = json!(name);
+        if let Some(owner) = initial_owner {
+            params["initialOwner"] = owner;
+        }
+        target
+            .api
+            .call_platform("platform/universes/create", params)
+            .await?
+    } else {
+        target.call("deployment/universes/create", params).await?
+    };
+    target.universe_id = response["universe"][if platform {
+        "lightspeedUniverseId"
+    } else {
+        "universeId"
+    }]
+    .as_str()
+    .map(str::to_owned);
+    anyhow::ensure!(
+        target.universe_id.is_some(),
+        "server did not return the created universe"
+    );
     Ok(())
 }
 
@@ -478,7 +567,9 @@ pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> 
             .map(str::to_owned),
         Err(error) if error.kind == api::AgentApiErrorKind::NotFound => None,
         Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => {
-            bail!("universe {handle}: {error}. Configuration commands need a runtime token")
+            bail!(
+                "universe {handle}: {error}. Configuration commands need permission to access this universe"
+            )
         }
         Err(error) => bail!("universe {handle}: {error}"),
     };

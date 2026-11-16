@@ -1,5 +1,5 @@
 //! Connection presentation captured once for a chat, without polling on redraw.
-use crate::connection::{ResolvedConnection, UniverseStatus};
+use crate::connection::{CredentialKind, ResolvedConnection, UniverseStatus};
 
 #[derive(Default)]
 pub(super) struct ConnectionDisplay {
@@ -44,7 +44,7 @@ impl ConnectionDisplay {
             |url| {
                 format!(
                     "{}{}",
-                    url.host_str().unwrap_or("runtime"),
+                    url.host_str().unwrap_or("deployment"),
                     url.port()
                         .map(|port| format!(":{port}"))
                         .unwrap_or_default()
@@ -78,15 +78,16 @@ impl ConnectionDisplay {
             .unwrap_or("none selected")
             .to_owned();
         if let Some(caller) = &connection.caller {
-            header_universe.push_str(if caller.single {
-                " · single mode"
-            } else {
-                " · runtime token"
+            header_universe.push_str(match connection.credential_kind {
+                CredentialKind::PlatformSession => " · CLI session",
+                CredentialKind::PlatformApiKey => " · Platform API key",
+                _ if caller.single => " · single mode",
+                _ => " · runtime token",
             });
         }
         let header_context = vec![
             ("Universe".into(), header_universe),
-            ("Runtime".into(), runtime),
+            ("Deployment".into(), runtime),
         ];
 
         let mut details = format!(
@@ -94,7 +95,19 @@ impl ConnectionDisplay {
             connection.name.as_deref().unwrap_or("environment"),
             connection.endpoint,
         );
-        if let Some(caller) = &connection.caller {
+        if connection.is_platform() {
+            details.push_str(&format!(
+                "  Server: Platform\n  Authentication: {:?}\n  Account: {}\n",
+                connection.credential_kind,
+                connection.account_id.as_deref().unwrap_or("none selected")
+            ));
+            if let Some(principal) = &connection.principal {
+                details.push_str(&format!(
+                    "  Principal: {} ({}, {})\n",
+                    principal.name, principal.kind, principal.id
+                ));
+            }
+        } else if let Some(caller) = &connection.caller {
             details.push_str(&format!(
                 "  Mode: {}\n  Token: {}\n  Authority: full runtime access\n",
                 if caller.single {
@@ -142,6 +155,7 @@ mod tests {
                 single: false,
                 token_name: Some("operator".into()),
             }),
+            ..Default::default()
         }
     }
 
@@ -225,5 +239,29 @@ mod tests {
         assert!(display.details.contains("Handle: unavailable"));
         assert!(display.details.contains("runtime unavailable"));
         assert!(display.details.contains("Authority: full runtime access"));
+    }
+
+    #[test]
+    fn platform_identity_does_not_claim_runtime_authority_or_display_a_secret() {
+        let mut connection = connection(Some("team"), "https://platform.example/api/v1");
+        connection.server_kind = Some(crate::connection::ServerKind::Platform);
+        connection.credential_kind = CredentialKind::PlatformSession;
+        connection.account_id = Some("team-account".into());
+        connection.principal = Some(crate::connection::PlatformPrincipal {
+            kind: "user".into(),
+            id: "person".into(),
+            name: "Ada".into(),
+        });
+        let display = ConnectionDisplay::new(&connection, &universe());
+        assert!(display.details.contains("Principal: Ada"));
+        assert!(display.details.contains("Account: team-account"));
+        assert!(!display.details.contains("full runtime access"));
+        assert!(!display.details.contains("lsr_do_not_display"));
+        assert!(
+            display
+                .header_context
+                .iter()
+                .any(|(_, text)| text.contains("CLI session"))
+        );
     }
 }

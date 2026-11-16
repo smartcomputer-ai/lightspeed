@@ -15,7 +15,7 @@
     "envdBinaries",
     "envdBuilds",
     "buildImage",
-    "protocolVersion",
+    "httpContractRevision",
     "envdProtocolVersion",
     "controllerProtocolVersion",
     "contractRevision",
@@ -58,7 +58,7 @@
       }
     },
     "buildImage": { "type": "string", "pattern": "@sha256:[0-9a-f]{64}$" },
-    "protocolVersion": { "type": "string", "minLength": 1 },
+    "httpContractRevision": { "type": "string", "minLength": 1 },
     "envdProtocolVersion": { "type": "integer", "minimum": 1 },
     "controllerProtocolVersion": { "type": "integer", "minimum": 1 },
     "contractRevision": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },

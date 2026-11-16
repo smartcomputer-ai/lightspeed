@@ -196,6 +196,7 @@ function createPlan(profile, sourceEnv) {
     sourceEnv.LIGHTSPEED_PLATFORM_DATABASE_URL ??
     sourceEnv.LIGHTSPEED_TEST_POSTGRES_URL;
   const platformPort = positivePort(sourceEnv.PORT, 3_000, "PORT");
+  const configuratorPort = positivePort(sourceEnv.LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT, 18_081, "LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT");
   const runtimePort = addressPort(sourceEnv.LIGHTSPEED_GATEWAY_BIND, 18_080);
   const publicBind = sourceEnv.LIGHTSPEED_PUBLIC_BIND ?? "127.0.0.1:18082";
   const publicPort = addressPort(publicBind, 18_082, "LIGHTSPEED_PUBLIC_BIND");
@@ -233,6 +234,8 @@ function createPlan(profile, sourceEnv) {
     LIGHTSPEED_MCP_PRIVATE_NETWORKS:
       sourceEnv.LIGHTSPEED_MCP_PRIVATE_NETWORKS ?? "localhost,127.0.0.1,::1",
     LIGHTSPEED_PLATFORM_DATABASE_URL: platformDatabaseUrl,
+    LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL: sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? `http://127.0.0.1:${configuratorPort}/mcp`,
+    LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK: sourceEnv.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK ?? "true",
     LIGHTSPEED_PLATFORM_AUTH_SECRET:
       sourceEnv.LIGHTSPEED_PLATFORM_AUTH_SECRET ??
       "local-platform-auth-secret-0123456789abcdef",
@@ -334,6 +337,21 @@ function createPlan(profile, sourceEnv) {
         env,
       },
     );
+  }
+
+  if (profile === "full" || profile === "platform") {
+    ports.push({ name: "configurator MCP", port: configuratorPort });
+    readiness.push({ name: "configurator MCP", url: `http://127.0.0.1:${configuratorPort}/health` });
+    processes.push({
+      name: "configurator", command: tsx, args: ["watch", "platform/configurator-mcp/src/bin.ts"], cwd: repoRoot,
+      // Deliberately construct this environment: the facade receives credentials
+      // per MCP request and must not inherit runtime or Platform authority.
+      env: { PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, NODE_OPTIONS: env.NODE_OPTIONS,
+        LIGHTSPEED_AUTH_MODE: "authenticated", LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST: "127.0.0.1",
+        LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT: String(configuratorPort),
+        LIGHTSPEED_CONFIGURATOR_MCP_API_URL: `http://127.0.0.1:${platformPort}/api/v1` },
+      startAfter: { name: "platform API", url: `http://127.0.0.1:${platformPort}/health` },
+    });
   }
 
   // The demo is the web UI over its in-browser backend: no infrastructure,
@@ -668,6 +686,8 @@ function printPlan(plan) {
     console.log(`ready: ${service.name} -> ${service.url ?? service.port}`);
   }
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
+  const configurator = plan.processes.find(process => process.name === "configurator");
+  if (configurator) console.log(`configurator upstream: ${configurator.env.LIGHTSPEED_CONFIGURATOR_MCP_API_URL}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
   console.log(`development fixtures: ${plan.env.LIGHTSPEED_PLATFORM_DEV_SEED}`);
   console.log(
@@ -738,7 +758,7 @@ The npm run dev commands are aliases for the same launcher.
 
 Profiles:
   full      Infrastructure, Rust runtime (with Bots and Channels core),
-            Platform, and web. Configurator setup and channel connectors are disabled.
+            Platform, web, and the Configurator MCP facade. Channel connectors are disabled.
   platform  Infrastructure, Platform API, and web UI against the runtime at
             LIGHTSPEED_API_URL (start one with the runtime profile).
   runtime   Infrastructure and the migrated Rust runtime.

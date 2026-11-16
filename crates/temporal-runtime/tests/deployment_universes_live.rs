@@ -57,6 +57,9 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
                 operator.create_universe(DeploymentUniverseCreateParams {
                     universe_id: universe_id.to_string(),
                     handle: handle.map(str::to_owned),
+                    metadata: Default::default(),
+                    protected: false,
+                    expires_at_ms: None,
                 }),
             )
         };

@@ -1,3 +1,4 @@
+import { ApiKeysCard } from "@/components/api-keys-card";
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
@@ -17,9 +18,10 @@ export function AccountPage({ user }: { user: SessionUser }) {
   const config = useLoginConfig();
   return (
     <>
-      <PageHeader title="Account" description="Your profile and password." />
+      <PageHeader title="Your profile" description="Your profile, password, and personal API keys." />
       <div className="grid gap-6">
         <ProfileCard user={user} />
+        <ApiKeysCard />
         {user.identitySource === "company" ? <p className="text-sm text-muted-foreground">Your profile and sign-in are managed by your company.</p> : config.data?.password !== "off" && (!config.data?.sso || user.emergencyAdmin) && <PasswordCard />}
       </div>
     </>

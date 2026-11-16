@@ -174,10 +174,13 @@ impl DeploymentApiService for GatewayDeploymentApi {
             if let Some(handle) = &params.handle {
                 validate_universe_handle(handle)?;
             }
-            let created = store_pg::create_universe_with_handle(
+            let created = store_pg::create_universe_with_configuration(
                 self.pool(),
                 universe_id,
                 params.handle.as_deref(),
+                &params.metadata,
+                params.protected,
+                expiry_i64(params.expires_at_ms)?,
             )
             .await
             .map_err(map_universe_store_error)?;
@@ -398,6 +401,27 @@ impl DeploymentApiService for GatewayDeploymentApi {
         .await
     }
 
+    async fn put_universe_expiry(
+        &self,
+        params: api::DeploymentUniverseExpiryPutParams,
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_EXPIRY_PUT, async {
+            let id = self.resolve_universe(&params.universe).await?;
+            if !store_pg::put_universe_expiry(self.pool(), id, expiry_i64(params.expires_at_ms)?)
+                .await
+                .map_err(map_store_error)?
+            {
+                return Err(AgentApiError::not_found("universe no longer exists"));
+            }
+            let universe = self
+                .read_universe_view(id)
+                .await?
+                .ok_or_else(|| AgentApiError::not_found("universe no longer exists"))?;
+            Ok(DeploymentUniverseReadResponse { universe })
+        })
+        .await
+    }
+
     async fn put_universe_handle(
         &self,
         params: api::DeploymentUniverseHandlePutParams,
@@ -420,10 +444,10 @@ impl DeploymentApiService for GatewayDeploymentApi {
 
     async fn list_universes(
         &self,
-        _params: DeploymentUniverseListParams,
+        params: DeploymentUniverseListParams,
     ) -> Result<DeploymentUniverseListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_LIST, async {
-            let universes = store_pg::list_universe_stats(self.pool())
+            let universes = store_pg::list_universe_stats_matching(self.pool(), &params.metadata)
                 .await
                 .map_err(map_store_error)?;
             Ok(DeploymentUniverseListResponse {
@@ -559,6 +583,7 @@ fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     DeploymentUniverseView {
         deletion: stats.deletion,
         configuration: stats.configuration,
+        expires_at_ms: stats.expires_at_ms.map(|time| time as u64),
         universe_id: stats.universe_id.to_string(),
         handle: stats.handle,
         created_at_ms: u64::try_from(stats.created_at_ms).unwrap_or(0),
@@ -603,7 +628,25 @@ fn map_universe_store_error(error: store_pg::PgStoreError) -> AgentApiError {
 }
 
 fn map_store_error(error: store_pg::PgStoreError) -> AgentApiError {
-    AgentApiError::internal(error.to_string())
+    match error {
+        store_pg::PgStoreError::UniverseProtected { .. }
+        | store_pg::PgStoreError::UniverseProtectionExpiryConflict => {
+            AgentApiError::rejected(error.to_string())
+        }
+        store_pg::PgStoreError::InvalidUniverseConfiguration { .. } => {
+            AgentApiError::invalid_request(error.to_string())
+        }
+        _ => AgentApiError::internal(error.to_string()),
+    }
+}
+fn expiry_i64(value: Option<u64>) -> Result<Option<i64>, AgentApiError> {
+    value
+        .map(|value| {
+            i64::try_from(value).map_err(|_| {
+                AgentApiError::invalid_request("expiresAtMs exceeds the supported timestamp range")
+            })
+        })
+        .transpose()
 }
 
 /// A deployment method requires an explicit deployment request target.

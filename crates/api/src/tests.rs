@@ -1200,6 +1200,7 @@ fn an_environment_credential_source_is_a_grant_or_a_provider_credential() {
 #[test]
 fn gone_error_carries_the_permanent_universe_record() {
     let record = DeletedUniverseView {
+        metadata: Default::default(),
         universe_id: "universe".into(),
         handle: "old".into(),
         display_name: None,

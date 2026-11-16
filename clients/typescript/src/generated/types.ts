@@ -897,7 +897,6 @@ export type CredentialProviderConfigView =
       type: "modelEndpoint";
     };
 export type CredentialProviderStatus = "active" | "needsConfiguration" | "disabled";
-export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
 export type UniverseDeletionStep = "intake" | "workflows" | "environments" | "storage";
 /**
  * Current state after the immediate deletion fence has been applied.
@@ -1194,7 +1193,7 @@ export type PromiseSourceKind = "timer" | "workflow";
  * Universe roles as gates built on this contract name them. Core holds no
  * roles; this is metadata only.
  */
-export type RecommendedRole = "viewer" | "contributor" | "operator" | "admin";
+export type RecommendedRole = "viewer" | "contributor" | "operator" | "owner";
 export type RunAcceptedSourceView = {
   entries: ContextEntryInputView[];
   type: "input";
@@ -3273,21 +3272,13 @@ export interface ConnectionParams {}
  */
 export interface ConnectionResponse {
   caller: CallerAccess;
-  capabilities: ServerCapabilities;
   contractRevision: string;
   /**
    * Default URL universe for a gateway configured with a single universe.
    */
   defaultUniverse?: string | null;
-  protocolVersion: string;
   runtime: RuntimeKind;
   serverInfo: ServerInfo;
-}
-export interface ServerCapabilities {
-  eventLog?: boolean;
-  historyRead: boolean;
-  localExecution: boolean;
-  notifications: boolean;
 }
 export interface ServerInfo {
   /**
@@ -3926,15 +3917,6 @@ export interface CredentialProviderReadParams {
 export interface CredentialProviderReadResponse {
   provider: CredentialProviderView;
 }
-export interface DeclaredUniverseMember {
-  /**
-   * Select by verified email, or by issuer and subject, never both.
-   */
-  email?: string | null;
-  issuer?: string | null;
-  role: UniverseMemberRole;
-  subject?: string | null;
-}
 export interface DeletedSessionView {
   deletedAtMs: number;
   displayName?: string | null;
@@ -3949,6 +3931,9 @@ export interface DeletedUniverseView {
   deletingAtMs: number;
   displayName?: string | null;
   handle: string;
+  metadata?: {
+    [k: string]: string;
+  };
   requestedBy: Attribution;
   summary: unknown;
   universeId: string;
@@ -4140,31 +4125,27 @@ export interface DeploymentSessionPurgeResponse {
   deletedSessionIds: string[];
 }
 /**
- * Patch desired Platform configuration. Absent fields retain their values.
+ * Patch universe settings. Absent fields retain their values.
  */
 export interface DeploymentUniverseConfigurationPutParams {
-  /**
-   * Exact issuer-qualified directory groups. Omit to leave unchanged;
-   * an empty list clears declared group grants.
-   */
-  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
-  /**
-   * Runtime-owned name. Named universes are adopted automatically by Platform.
-   */
   displayName?: string | null;
   /**
-   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
-   * an empty list clears declared members. Email selectors require verified email.
+   * Replaces the complete metadata map; omission leaves it unchanged.
    */
-  members?: DeclaredUniverseMember[] | null;
+  metadata?: {
+    [k: string]: string;
+  } | null;
+  /**
+   * Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+   */
+  protected?: boolean | null;
   universe: string;
 }
-export interface UniverseDirectoryGroupMapping {
-  group: string;
-  issuer: string;
-  role: UniverseMemberRole;
-}
 export interface DeploymentUniverseCreateParams {
+  /**
+   * Future Unix time in milliseconds. Incompatible with protection.
+   */
+  expiresAtMs?: number | null;
   /**
    * The new universe's handle: 1-63 lowercase letters, digits and
    * hyphens, starting and ending with a letter or digit, and not in the
@@ -4172,6 +4153,14 @@ export interface DeploymentUniverseCreateParams {
    * when the universe already exists.
    */
   handle?: string | null;
+  /**
+   * At most 32 string entries; keys up to 64 bytes, values up to 256 bytes.
+   * Caller keys cannot start with lightspeed.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  protected?: boolean;
   universeId: string;
 }
 export interface DeploymentUniverseCreateResponse {
@@ -4189,15 +4178,8 @@ export interface DeploymentUniverseView {
   blobBytes: number;
   createdAtMs: number;
   deletion?: UniverseDeletion | null;
-  /**
-   * Exact issuer-qualified directory groups. Omit to leave unchanged;
-   * an empty list clears declared group grants.
-   */
-  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
-  /**
-   * Runtime-owned name. Named universes are adopted automatically by Platform.
-   */
   displayName?: string | null;
+  expiresAtMs?: number | null;
   /**
    * The universe's deployment-unique name. Requests may address the
    * universe by it wherever they may by UUID.
@@ -4209,11 +4191,16 @@ export interface DeploymentUniverseView {
    */
   lastActivityAtMs?: number | null;
   /**
-   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
-   * an empty list clears declared members. Email selectors require verified email.
+   * Replaces the complete metadata map; omission leaves it unchanged.
    */
-  members?: DeclaredUniverseMember[] | null;
+  metadata?: {
+    [k: string]: string;
+  } | null;
   profiles: number;
+  /**
+   * Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+   */
+  protected?: boolean | null;
   sessions: number;
   universeId: string;
   workspaces: number;
@@ -4235,6 +4222,13 @@ export interface DeploymentUniverseDeleteResponse {
   universeId: string;
 }
 /**
+ * Replace or clear expiry. Explicit null clears it; omission is refused.
+ */
+export interface DeploymentUniverseExpiryPutParams {
+  expiresAtMs: number | null;
+  universe: string;
+}
+/**
  * Rename a universe. The UUID and resources remain unchanged; the previous
  * handle is released, so requests and URLs using it stop reaching this
  * universe.
@@ -4250,7 +4244,14 @@ export interface DeploymentUniverseHandlePutParams {
    */
   universe: string;
 }
-export interface DeploymentUniverseListParams {}
+export interface DeploymentUniverseListParams {
+  /**
+   * Return universes containing every supplied key/value pair.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+}
 export interface DeploymentUniverseListResponse {
   universes?: DeploymentUniverseView[];
 }
@@ -6061,11 +6062,6 @@ export interface UniverseWatchParams {
    */
   visibleTo?: string | null;
 }
-/**
- * Final response when a watch reaches its lifetime. Reconnect and refetch on
- * watch/reset; notifications are lossy hints and have no durable resume cursor.
- */
-export interface UniverseWatchResponse {}
 export interface VfsSnapshotCommitParams {
   manifest: unknown;
 }

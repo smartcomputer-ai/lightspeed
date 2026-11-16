@@ -15,6 +15,7 @@ before choosing an exporter or changing a version.
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
 | Public application API | DTOs, typed operation catalogs, HTTP bindings and service interfaces in `crates/api/src/` | JSON Schema, HTTP routing catalog, OpenAPI, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
+| Native Platform API | Zod route descriptors in `platform/shared/src/platform-api.ts` and `credential-api.ts` | Native JSON Schema/HTTP catalog and TypeScript/Python clients. |
 | Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
@@ -112,6 +113,7 @@ consumers:
 cargo run -p api --bin export-schema
 cargo run -q -p cli -- config schema > crates/cli/contract/configuration-document.schema.json
 npm install
+npm run generate:platform-contract
 npm run generate --workspace @lightspeed-ai/sdk
 npm run generate --workspace @lightspeed-ai/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
@@ -132,7 +134,9 @@ entry is the input of the API method that writes the resource, so a change to
 one of those inputs changes this schema too. A CLI test fails while the
 committed copy is stale.
 
-The TypeScript generator reads both the API and workflow exports. It writes
+The native Platform exporter reads the same Zod descriptors used by its routes. It writes `platform/shared/contract`; clients consume that export rather than authoring their own native routes or DTOs.
+
+The TypeScript generator reads runtime, native Platform, and workflow exports. It writes
 the generated types and method metadata under `clients/typescript/src/generated/`
 and schema copies under `clients/typescript/schema/`. Configurator generates
 `platform/configurator-mcp/src/generated/tools.ts`. The config-reference command updates

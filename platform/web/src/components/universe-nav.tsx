@@ -63,7 +63,7 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
     label: "Access",
     items: [
       { path: "credentials", label: "Credentials", icon: CredentialIcon, action: "configureResource" },
-      { path: "members", label: "Members", icon: MemberIcon, action: "read" },
+      { path: "members", label: "Members", icon: MemberIcon, action: "manageAccess" },
     ],
   },
   { label: "Settings", items: SETTINGS_NAV },

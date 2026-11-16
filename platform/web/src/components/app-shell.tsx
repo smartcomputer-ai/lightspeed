@@ -38,15 +38,16 @@ import { rememberUniverse, useUniverses } from "@/lib/universes";
 /// *above* the universe structure — the header becomes a deliberately
 /// generic "Back" (naming no universe) and the content is the mode's own
 /// menu, if it has one.
-type ShellMode = "universe" | "admin" | "account" | "preferences";
+type ShellMode = "universe" | "admin" | "account" | "accounts" | "preferences";
 
 const ADMIN_TITLE = "Platform admin";
-const ACCOUNT_TITLE = "Your account";
+const ACCOUNT_TITLE = "Your profile";
 const PREFERENCES_TITLE = "Preferences";
 
 const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
   admin: ADMIN_TITLE,
   account: ACCOUNT_TITLE,
+  accounts: "Accounts",
   preferences: PREFERENCES_TITLE,
 };
 
@@ -54,7 +55,7 @@ const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
 /// universes.
 function shellMode(pathname: string): ShellMode {
   const first = pathname.split("/")[1];
-  return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
+  return first === "admin" || first === "account" || first === "accounts" || first === "preferences" ? first : "universe";
 }
 
 const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
@@ -137,6 +138,7 @@ const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label
   account: [
     { id: "profile", label: "Profile", icon: UserIcon },
     { id: "security", label: "Security", icon: SecurityIcon },
+    { id: "api-keys", label: "API keys", icon: SecurityIcon },
   ],
   preferences: [
     { id: "appearance", label: "Appearance", icon: AppearanceIcon },
@@ -188,7 +190,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
     mode === "universe"
       ? (active?.name ?? "Lightspeed")
       : mode === "account"
-        ? "Account"
+        ? "Your profile"
         : MODE_TITLE[mode];
 
   return (

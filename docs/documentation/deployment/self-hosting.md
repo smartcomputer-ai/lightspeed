@@ -10,8 +10,9 @@ The [deployment overview](overview.md) explains how the components fit together.
 This recipe initially stores small blobs in PostgreSQL. The current inline
 limit is 64 KiB per blob; larger writes require S3-compatible object storage.
 Use the small-text verification below, then configure object storage before
-using larger files, attachments, or payloads. Execution environments can be added afterward. The channel connector host
-and Platform Configurator setup are currently disabled.
+using larger files, attachments, or payloads. Execution environments can be added afterward. The channel connector host remains disabled. Configurator is an optional
+service targeting the Platform API with restricted application credentials;
+see [Configurator MCP](../integrating-and-extending/configurator-mcp.md).
 
 ## Prepare the infrastructure
 

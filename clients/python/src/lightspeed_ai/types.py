@@ -1118,6 +1118,7 @@ class DeletedUniverseView(TypedDict):
     deletingAtMs: int
     displayName: NotRequired[str | None]
     handle: str
+    metadata: NotRequired[dict[str, str]]
     requestedBy: Attribution
     summary: Any
     universeId: str
@@ -1298,7 +1299,28 @@ class DeploymentSessionPurgeResponse(TypedDict):
     """
 
 
+class DeploymentUniverseConfigurationPutParams(TypedDict):
+    """
+    Patch universe settings. Absent fields retain their values.
+    """
+
+    displayName: NotRequired[str | None]
+    metadata: NotRequired[dict[str, Any] | None]
+    """
+    Replaces the complete metadata map; omission leaves it unchanged.
+    """
+    protected: NotRequired[bool | None]
+    """
+    Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+    """
+    universe: str
+
+
 class DeploymentUniverseCreateParams(TypedDict):
+    expiresAtMs: NotRequired[int | None]
+    """
+    Future Unix time in milliseconds. Incompatible with protection.
+    """
     handle: NotRequired[str | None]
     """
     The new universe's handle: 1-63 lowercase letters, digits and
@@ -1306,6 +1328,12 @@ class DeploymentUniverseCreateParams(TypedDict):
     form of a UUID. Omit it to have one derived from the UUID. Ignored
     when the universe already exists.
     """
+    metadata: NotRequired[dict[str, str]]
+    """
+    At most 32 string entries; keys up to 64 bytes, values up to 256 bytes.
+    Caller keys cannot start with lightspeed.
+    """
+    protected: NotRequired[bool]
     universeId: str
 
 
@@ -1314,6 +1342,15 @@ class DeploymentUniverseDeleteParams(TypedDict):
     """
     The universe's UUID or handle.
     """
+
+
+class DeploymentUniverseExpiryPutParams(TypedDict):
+    """
+    Replace or clear expiry. Explicit null clears it; omission is refused.
+    """
+
+    expiresAtMs: int | None
+    universe: str
 
 
 class DeploymentUniverseHandlePutParams(TypedDict):
@@ -1335,7 +1372,10 @@ class DeploymentUniverseHandlePutParams(TypedDict):
 
 
 class DeploymentUniverseListParams(TypedDict):
-    pass
+    metadata: NotRequired[dict[str, str]]
+    """
+    Return universes containing every supplied key/value pair.
+    """
 
 
 class DeploymentUniverseReadParams(TypedDict):
@@ -2601,7 +2641,7 @@ Where a promise's answer comes from.
 ProviderNativeToolExecutionView: TypeAlias = Literal['providerHosted', 'clientEffect']
 
 
-RecommendedRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
+RecommendedRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'owner']
 """
 Universe roles as gates built on this contract name them. Core holds no
 roles; this is metadata only.
@@ -2748,13 +2788,6 @@ class RunTerminalNotificationInput(TypedDict):
 
 
 RuntimeKind: TypeAlias = Literal['runtime', 'platform']
-
-
-class ServerCapabilities(TypedDict):
-    eventLog: NotRequired[bool]
-    historyRead: bool
-    localExecution: bool
-    notifications: bool
 
 
 class ServerInfo(TypedDict):
@@ -3824,16 +3857,6 @@ Current state after the immediate deletion fence has been applied.
 UniverseDeletionStep: TypeAlias = Literal[
     'intake', 'workflows', 'environments', 'storage'
 ]
-
-
-UniverseMemberRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
-
-
-class UniverseWatchResponse(TypedDict):
-    """
-    Final response when a watch reaches its lifetime. Reconnect and refetch on
-    watch/reset; notifications are lossy hints and have no durable resume cursor.
-    """
 
 
 class VfsPromptsConfig(TypedDict):
@@ -4984,13 +5007,11 @@ class ConnectionResponse(TypedDict):
     """
 
     caller: CallerAccess
-    capabilities: ServerCapabilities
     contractRevision: str
     defaultUniverse: NotRequired[str | None]
     """
     Default URL universe for a gateway configured with a single universe.
     """
-    protocolVersion: str
     runtime: RuntimeKind
     serverInfo: ServerInfo
 
@@ -5112,16 +5133,6 @@ class CredentialGrantView(TypedDict):
     status: CredentialGrantStatus
     subjectHint: NotRequired[str | None]
     updatedAtMs: int
-
-
-class DeclaredUniverseMember(TypedDict):
-    email: NotRequired[str | None]
-    """
-    Select by verified email, or by issuer and subject, never both.
-    """
-    issuer: NotRequired[str | None]
-    role: UniverseMemberRole
-    subject: NotRequired[str | None]
 
 
 class DeploymentChannelAccountListResponse(TypedDict):
@@ -6163,12 +6174,6 @@ class UniverseDeletion(TypedDict):
     step: UniverseDeletionStep
 
 
-class UniverseDirectoryGroupMapping(TypedDict):
-    group: str
-    issuer: str
-    role: UniverseMemberRole
-
-
 class UniverseWatchParams(TypedDict):
     kinds: NotRequired[list[WatchKind]]
     """
@@ -6999,28 +7004,6 @@ class CredentialProviderView(TypedDict):
     updatedAtMs: int
 
 
-class DeploymentUniverseConfigurationPutParams(TypedDict):
-    """
-    Patch desired Platform configuration. Absent fields retain their values.
-    """
-
-    directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
-    """
-    Exact issuer-qualified directory groups. Omit to leave unchanged;
-    an empty list clears declared group grants.
-    """
-    displayName: NotRequired[str | None]
-    """
-    Runtime-owned name. Named universes are adopted automatically by Platform.
-    """
-    members: NotRequired[list[DeclaredUniverseMember] | None]
-    """
-    Declared grants, independent of manual memberships. Omit to leave unmanaged;
-    an empty list clears declared members. Email selectors require verified email.
-    """
-    universe: str
-
-
 class DeploymentUniverseView(TypedDict):
     """
     Per-universe stats view. Counts are cheap aggregates computed at read
@@ -7030,15 +7013,8 @@ class DeploymentUniverseView(TypedDict):
     blobBytes: int
     createdAtMs: int
     deletion: NotRequired[UniverseDeletion | None]
-    directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
-    """
-    Exact issuer-qualified directory groups. Omit to leave unchanged;
-    an empty list clears declared group grants.
-    """
     displayName: NotRequired[str | None]
-    """
-    Runtime-owned name. Named universes are adopted automatically by Platform.
-    """
+    expiresAtMs: NotRequired[int | None]
     handle: str
     """
     The universe's deployment-unique name. Requests may address the
@@ -7049,12 +7025,15 @@ class DeploymentUniverseView(TypedDict):
     Most recent session activity (`max(sessions.updated_at_ms)`); absent
     when the universe has no sessions.
     """
-    members: NotRequired[list[DeclaredUniverseMember] | None]
+    metadata: NotRequired[dict[str, Any] | None]
     """
-    Declared grants, independent of manual memberships. Omit to leave unmanaged;
-    an empty list clears declared members. Email selectors require verified email.
+    Replaces the complete metadata map; omission leaves it unchanged.
     """
     profiles: int
+    protected: NotRequired[bool | None]
+    """
+    Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+    """
     sessions: int
     universeId: str
     workspaces: int

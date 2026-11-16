@@ -1,14 +1,13 @@
+import { listAccountsForPrincipal } from "./account-access.js";
 import { Hono, type Context } from "hono";
-import { eq } from "drizzle-orm";
-import { schema } from "@lightspeed-ai/platform-db";
 import { LightspeedApiError, type ConnectionResponse, type UniverseWatchParams } from "@lightspeed-ai/sdk";
 import { HTTP_CONTRACT_REVISION, HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
 import type { AppContext, ApiVariables } from "./context.js";
-import { isPlatformAdmin } from "./context.js";
+import { enforceRestrictions, getAuth } from "./auth-context.js";
+import { HTTPException } from "hono/http-exception";
 import { clientOptions, deploymentClient, GateRefusal, memberClient } from "./runtime-client.js";
 import { ADMIN_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
-import { createUniverseRows, deleteManagedUniverse, universeForRuntimeReference } from "./routes/universes.js";
-import { requireAvailableCachedHandle } from "./universe-handles.js";
+import { deleteManagedUniverse, listUniverseAccesses, renameManagedUniverse, universeForRuntimeReference, updateUniverseLifecycle } from "./routes/universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 const MAX_POLICY_BODY = 1024 * 1024;
@@ -18,7 +17,8 @@ const MAX_POLICY_BODY = 1024 * 1024;
 export function runtimeHttpRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.onError((error, c) => {
-    if (error instanceof GateRefusal) return problem(c, error.status, error.status === 404 ? "notFound" : "forbidden", error.message);
+    if (error instanceof HTTPException) return problem(c, error.status, error.status === 401 ? "unauthenticated" : error.status === 413 ? "invalidRequest" : "forbidden", error.message);
+    if (error instanceof GateRefusal) return problem(c, error.status, error.status === 404 ? "notFound" : error.status === 400 ? "invalidRequest" : error.status === 409 ? "conflict" : "forbidden", error.message);
     if (error instanceof LightspeedApiError) return new Response(JSON.stringify(error.payload), { status: error.status, headers: { "content-type": "application/problem+json" } });
     console.error("runtime API request failed", error);
     return problem(c, 502, "internal", "runtime unavailable");
@@ -28,12 +28,14 @@ export function runtimeHttpRoutes(ctx: AppContext) {
     const path = spec.path.replace(/^\/api\/v1/, "").replace(/\{([^}]+)\}/g, ":$1");
     app.on(spec.method, path, async c => {
       if (c.req.method !== spec.method) return problem(c, 405, "invalidRequest", "method not allowed");
+      const auth = getAuth(c);
+      enforceRestrictions(auth, { operation: spec.operationId });
       const requestedRevision = c.req.header("x-lightspeed-contract-revision");
       if (requestedRevision && requestedRevision !== HTTP_CONTRACT_REVISION) return problem(c, 409, "invalidRequest", "unsupported API contract revision");
       const connection = await deploymentClient(ctx.env).call("initialize", {}, { signal: c.req.raw.signal });
       if (connection.contractRevision !== HTTP_CONTRACT_REVISION || connection.runtime !== "runtime") return problem(c, 502, "invalidRequest", "runtime API contract does not match Platform");
       if (NATIVE_OPERATIONS.has(spec.operationId)) return nativeOperation(ctx, c, spec.operationId, connection);
-      const options = clientOptions(ctx.env, undefined, { "x-lightspeed-actor": c.get("session").user.id });
+      const options = clientOptions(ctx.env, undefined, { "x-lightspeed-actor": auth.actorId });
       const url = new URL(options.endpoint);
       const incoming = new URL(c.req.url);
       let upstreamPath: string = spec.path;
@@ -42,6 +44,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       if (MEMBER_OPERATIONS.has(spec.operationId)) {
         const access = await universeForRuntimeReference(ctx, c, reference ?? "");
         if (!access) throw new GateRefusal(404, "universe not found");
+        enforceRestrictions(auth, { operation: spec.operationId, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
         // Recheck the stored destination too; no database value can redirect the token.
         clientOptions(ctx.env, access.universe.gatewayUrl, {});
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
@@ -81,11 +84,14 @@ export function runtimeHttpRoutes(ctx: AppContext) {
         url.search = incoming.search;
         return forward(c.req.raw, url, options.headers, body, spec.transfer === "sse");
       }
-      if (!isPlatformAdmin(c.get("session"))) throw new GateRefusal(403, "platform admin required");
+      if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+      if (!reference) enforceRestrictions(auth, { operation: spec.operationId, write: spec.method !== "GET" });
+      if (!reference && (auth.credential.restrictions.accountIds || auth.credential.restrictions.universeIds)) throw new GateRefusal(403, "deployment operation is outside credential resource scope");
       // Deployment routes with a universe still resolve a Platform-owned resource.
       if (reference) {
         const access = await universeForRuntimeReference(ctx, c, reference);
         if (!access) throw new GateRefusal(404, "universe not found");
+        enforceRestrictions(auth, { operation: spec.operationId, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
       }
       for (const field of spec.pathFields) upstreamPath = upstreamPath.replace(`{${field.parameter}}`, encodeURIComponent(c.req.param(field.parameter)!));
@@ -98,7 +104,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
   return app;
 }
 
-export function problem(_c: ApiContext, status: number, kind: string, detail: string) {
+export function problem(_c: unknown, status: number, kind: string, detail: string) {
   return new Response(JSON.stringify({ type: "about:blank", title: detail, detail, status, kind }), { status, headers: { "content-type": "application/problem+json" } });
 }
 
@@ -106,7 +112,7 @@ export function problem(_c: ApiContext, status: number, kind: string, detail: st
  * values before rewriting, rather than silently rounding a Rust integer. */
 export async function policyBody(request: Request): Promise<Record<string, unknown>> {
   const declared = Number(request.headers.get("content-length"));
-  if (declared > MAX_POLICY_BODY) throw new GateRefusal(403, "policy-inspected body exceeds 1 MiB");
+  if (declared > MAX_POLICY_BODY) throw new HTTPException(413, { message: "policy-inspected body exceeds 1 MiB" });
   const reader = request.body?.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -115,7 +121,7 @@ export async function policyBody(request: Request): Promise<Record<string, unkno
       const next = await reader.read();
       if (next.done) break;
       size += next.value.byteLength;
-      if (size > MAX_POLICY_BODY) { await reader.cancel(); throw new GateRefusal(403, "policy-inspected body exceeds 1 MiB"); }
+      if (size > MAX_POLICY_BODY) { await reader.cancel(); throw new HTTPException(413, { message: "policy-inspected body exceeds 1 MiB" }); }
       chunks.push(next.value);
     }
   } finally { reader.releaseLock(); }
@@ -187,42 +193,48 @@ async function forward(request: Request, url: URL, identity: Record<string, stri
 }
 
 async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string, connection: ConnectionResponse): Promise<Response> {
-  const actorId = c.get("session").user.id;
+  const auth = getAuth(c);
   const client = deploymentClient(ctx.env);
-  if (operation === "initialize") return c.json({ ...connection, runtime: "platform", caller: { single: false } });
-  if (operation === "deployment/universes/list") {
-    const listed = await client.call("deployment/universes/list", {});
-    const allowed = await Promise.all((listed.universes ?? []).map(async universe => { const access = await universeForRuntimeReference(ctx, c, universe.universeId); return access ? visibleUniverse(universe, access.role) : null; }));
-    return c.json({ universes: allowed.filter(universe => universe !== null) });
+  if (operation === "initialize") {
+    const principal = auth.principal;
+    const admitted = await listAccountsForPrincipal(ctx, auth);
+    const accounts = admitted.map(({ account, role }) => ({ id: account.id, name: account.name, role }));
+    const selected = auth.credential.restrictions.universeIds;
+    const defaultUniverse = selected?.length === 1 && await universeForRuntimeReference(ctx, c, selected[0]!) ? selected[0] : undefined;
+    return c.json({ ...connection, defaultUniverse, runtime: "platform", caller: { single: false }, platform: { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.application.name }, credential: { kind: auth.credential.kind, id: auth.credential.id }, accounts, restrictions: auth.credential.restrictions } });
   }
-  if (operation === "deployment/universes/create") {
-    if (!isPlatformAdmin(c.get("session"))) throw new GateRefusal(403, "platform admin required");
-    const body = await policyBody(c.req.raw);
-    if (typeof body.universeId !== "string" || (body.handle != null && typeof body.handle !== "string") || Object.keys(body).some(key => !["universeId", "handle"].includes(key))) return problem(c, 400, "invalidRequest", "expected universeId and optional handle");
-    const existing = await universeForRuntimeReference(ctx, c, body.universeId);
-    if (body.handle && !existing) await requireAvailableCachedHandle(ctx, body.handle as string);
-    const result = await client.call("deployment/universes/create", { universeId: body.universeId, handle: body.handle as string | undefined });
-    if (!existing) await createUniverseRows(ctx, actorId, result.universe.handle, result.universe.handle, result.universe.universeId);
-    return c.json(result, result.created ? 201 : 200);
+  if (operation === "deployment/universes/create") return problem(c, 400, "invalidRequest", "Create through /api/v1/platform/accounts/{accountId}/universes to select an account and initial Owner");
+  if (operation === "deployment/universes/list") {
+    const query = new URL(c.req.url).searchParams;
+    if ([...query.keys()].some(key => key !== "metadata") || query.getAll("metadata").length > 1) return problem(c, 400, "invalidRequest", "unsupported universe list query");
+    let metadata: Record<string, string> | undefined;
+    if (query.has("metadata")) {
+      try { const value: unknown = JSON.parse(query.get("metadata")!); if (!value || typeof value !== "object" || Array.isArray(value) || Object.values(value).some(entry => typeof entry !== "string")) throw new Error(); metadata = value as Record<string, string>; }
+      catch { return problem(c, 400, "invalidRequest", "metadata must be a JSON string map"); }
+    }
+    const listed = await client.call("deployment/universes/list", metadata ? { metadata } : {});
+    const allowed = new Set((await listUniverseAccesses(ctx, auth)).map(access => access.universe.lightspeedUniverseId));
+    return c.json({ universes: (listed.universes ?? []).filter(universe => allowed.has(universe.universeId)) });
   }
   const access = await universeForRuntimeReference(ctx, c, c.req.param("universe") ?? "", operation === "deployment/universes/delete");
   if (!access) throw new GateRefusal(404, "universe not found");
-  if (operation === "deployment/universes/read") { const result = await client.call("deployment/universes/read", { universe: access.universe.lightspeedUniverseId }); return c.json({ universe: visibleUniverse(result.universe, access.role) }); }
-  if (operation === "deployment/universes/delete") {
-    if (!isPlatformAdmin(c.get("session"))) throw new GateRefusal(403, "platform admin required");
-    return c.json(await deleteManagedUniverse(ctx, access, actorId));
-  }
-  if (access.role !== "admin") throw new GateRefusal(403, "universe admin required");
+  enforceRestrictions(auth, { operation, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: operation !== "deployment/universes/read" });
+  if (operation === "deployment/universes/read") return c.json(await client.call(operation, { universe: access.universe.lightspeedUniverseId }));
+  if (operation === "deployment/universes/delete") return c.json(await deleteManagedUniverse(ctx, access));
   const body = await policyBody(c.req.raw);
-  if (typeof body.handle !== "string" || Object.keys(body).some(key => key !== "handle")) return problem(c, 400, "invalidRequest", "expected handle");
-  await requireAvailableCachedHandle(ctx, body.handle, access.universe.organizationId);
-  const result = await client.call("deployment/universes/handle/put", { universe: access.universe.lightspeedUniverseId, handle: body.handle });
-  await ctx.db.update(schema.organization).set({ slug: result.universe.handle }).where(eq(schema.organization.id, access.universe.organizationId));
-  return c.json(result);
-}
-
-function visibleUniverse<T extends { members?: unknown; directoryGroupMappings?: unknown }>(universe: T, role: string): T {
-  if (role === "admin") return universe;
-  const { members: _members, directoryGroupMappings: _groups, ...view } = universe;
-  return view as T;
+  if (operation === "deployment/universes/handle/put") {
+    if (typeof body.handle !== "string" || Object.keys(body).some(key => key !== "handle")) return problem(c, 400, "invalidRequest", "expected handle");
+    return c.json((await renameManagedUniverse(ctx, access, body.handle)).result);
+  }
+  if (operation === "deployment/universes/configuration/put") {
+    if (Object.keys(body).some(key => !["displayName", "metadata", "protected"].includes(key)) || (body.displayName !== undefined && typeof body.displayName !== "string") || (body.protected !== undefined && typeof body.protected !== "boolean") || (body.metadata !== undefined && (!body.metadata || typeof body.metadata !== "object" || Array.isArray(body.metadata) || Object.values(body.metadata).some(value => typeof value !== "string")))) return problem(c, 400, "invalidRequest", "expected universe displayName, metadata and protection settings");
+    await updateUniverseLifecycle(ctx, access, { ...(body.displayName !== undefined ? { name: body.displayName as string } : {}), ...(body.protected !== undefined ? { protected: body.protected as boolean } : {}), ...(body.metadata !== undefined ? { metadata: body.metadata as Record<string, string> } : {}) }, operation);
+    return c.json(await client.call("deployment/universes/read", { universe: access.universe.lightspeedUniverseId }));
+  }
+  if (operation === "deployment/universes/expiry/put") {
+    if (!Object.hasOwn(body, "expiresAtMs") || Object.keys(body).some(key => key !== "expiresAtMs") || (body.expiresAtMs !== null && (!Number.isSafeInteger(body.expiresAtMs) || (body.expiresAtMs as number) < 0))) return problem(c, 400, "invalidRequest", "expected nullable expiresAtMs");
+    await updateUniverseLifecycle(ctx, access, { expiresAtMs: body.expiresAtMs as number | null }, operation);
+    return c.json(await client.call("deployment/universes/read", { universe: access.universe.lightspeedUniverseId }));
+  }
+  throw new GateRefusal(404, "native operation not found");
 }

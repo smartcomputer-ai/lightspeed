@@ -51,7 +51,7 @@ export async function identifyCaller(
     {},
     { signal: requestSignal(signal, timeoutMs) },
   );
-  if (auth.mode === "single" && response.defaultUniverse) auth.universeId = response.defaultUniverse;
+  if (!auth.universeId && response.defaultUniverse) auth.universeId = response.defaultUniverse;
   return response.caller;
 }
 

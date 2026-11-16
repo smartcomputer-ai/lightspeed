@@ -47,7 +47,7 @@ if (value.controllerProtocolVersion !== Number(metadata.LIGHTSPEED_CONTROLLER_PR
 }
 if (!/@sha256:[0-9a-f]{64}$/.test(value.buildImage)) fail("buildImage is not digest-pinned");
 if (published && !value.buildImage.startsWith("ghcr.io/")) fail("published build image is not in GHCR");
-if (value.protocolVersion !== metadata.LIGHTSPEED_API_PROTOCOL_VERSION) fail("unexpected protocol version");
+if (!value.httpContractRevision || value.httpContractRevision !== metadata.LIGHTSPEED_HTTP_CONTRACT_REVISION) fail("unexpected HTTP contract revision");
 if (value.schemaRevision !== Number(metadata.LIGHTSPEED_SCHEMA_REVISION)) fail("unexpected schema revision");
 if (value.platformSchemaRevision !== Number(metadata.LIGHTSPEED_PLATFORM_SCHEMA_REVISION)) {
   fail("unexpected platform schema revision");
@@ -56,6 +56,8 @@ if (value.platformUpgradeFrom !== metadata.LIGHTSPEED_PLATFORM_UPGRADE_FROM) {
   fail("unexpected platform upgrade baseline");
 }
 if (!value.rustVersion.includes(metadata.LIGHTSPEED_RELEASE_RUST_VERSION)) fail("unexpected Rust version");
+const packagedHttpRevision = JSON.parse(fs.readFileSync("dist/contracts/http.json", "utf8")).contractRevision;
+if (packagedHttpRevision !== value.httpContractRevision) fail("packaged HTTP contract revision differs from manifest");
 const contractHash = crypto.createHash("sha256");
 for (const contract of ["api.schema.json", "http.json", "openapi.json", "api-reference.md"]) {
   contractHash.update(fs.readFileSync(path.join("dist/contracts", contract)));

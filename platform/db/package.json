@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@azure/identity": "^4.14.1",
+    "@better-auth/api-key": "1.7.7",
     "drizzle-orm": "^0.45.3",
     "pg": "^8.23.1",
     "pg-connection-string": "^2.14.1"

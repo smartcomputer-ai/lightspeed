@@ -26,7 +26,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", handle: "test",
-    gatewayUrl: null, status: "active", createdAt: "2026-01-01", role: "admin",
+    gatewayUrl: null, status: "active", createdAt: "2026-01-01", role: "owner",
     features: { bots: true, channels: true }, icon: "orbit", iconColor: "default" };
   mocks.api.mockReset().mockImplementation(async (_method, _path, fields) => ({ ...mocks.universe, ...fields }));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -133,7 +133,7 @@ it.each(["viewer", "contributor", "operator"] as const)("hides General settings 
 });
 
 it.each([false, true])("offers appearance on General settings for an authorized admin (platform admin: %s)", async platformAdmin => {
-  mocks.universe.role = platformAdmin ? null : "admin";
+  mocks.universe.role = platformAdmin ? null : "owner";
   await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><GeneralSettingsPage admin={platformAdmin} /></PermissionIdentityProvider>);
   expect(container.textContent).toContain("Appearance");
   expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`)).toBeDefined();

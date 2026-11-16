@@ -1,7 +1,13 @@
+import { userSubject } from "../test/subject-fixture.js";
 import { expect, it, vi } from "vitest";
 import { buildApp } from "./api.js";
 import type { AppContext } from "./context.js";
 import { identityEnv } from "../test/identity-fixture.js";
+
+vi.mock("./authentication.js", () => ({ authenticateRequest: async (ctx: AppContext, request: Request) => {
+  const session = await ctx.auth.api.getSession({ headers: request.headers });
+  return session ? { session, auth: userSubject(session.user.id) } : null;
+} }));
 
 it("does not serve the organization plugin's endpoints; membership changes go through the universe routes", async () => {
   const handler = vi.fn(async () => new Response("handled"));

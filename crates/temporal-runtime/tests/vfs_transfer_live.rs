@@ -84,6 +84,9 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
             api::DeploymentUniverseCreateParams {
                 handle: None,
                 universe_id: universe_id.to_string(),
+                metadata: Default::default(),
+                protected: false,
+                expires_at_ms: None,
             },
         ),
     )

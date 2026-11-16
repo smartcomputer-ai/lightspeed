@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -34,6 +35,7 @@ function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMu
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "member", role: auth.platformAdmin ? "admin" : "user" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "admin"));
     await next();
   });
   app.route("/universes", gatewayRoutes(ctx));

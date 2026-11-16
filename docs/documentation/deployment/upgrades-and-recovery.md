@@ -17,7 +17,7 @@ rolling update, both builds poll one task queue during the overlap.
 
 Build or obtain the target release before the maintenance window. Keep its
 manifest together with the deployed release's manifest and images. The
-manifest records the source revision, API protocol and contract revision, runtime and
+manifest records the source revision, HTTP contract revision and contract artifact checksum, runtime and
 Platform schema revisions, Platform migration baseline, environment protocol,
 image references, and binary checksums.
 

@@ -96,13 +96,11 @@ async fn exercise(pool: &sqlx::PgPool) {
     // Declaration updates are partial and preserve unrelated sections and tenants.
     let configuration = api::UniverseConfiguration {
         display_name: Some("Fresh universe".into()),
-        members: Some(vec![api::DeclaredUniverseMember {
-            email: None,
-            issuer: Some("https://id.example".into()),
-            subject: Some("owner".into()),
-            role: api::UniverseMemberRole::Admin,
-        }]),
-        directory_group_mappings: None,
+        metadata: Some(std::collections::BTreeMap::from([(
+            "purpose".into(),
+            "research".into(),
+        )])),
+        protected: Some(false),
     };
     assert!(
         store_pg::put_universe_configuration(pool, fresh_id, &configuration)
@@ -118,7 +116,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         configuration
     );
     let clear = api::UniverseConfiguration {
-        members: Some(vec![]),
+        metadata: Some(Default::default()),
         ..Default::default()
     };
     for _ in 0..2 {
@@ -134,15 +132,19 @@ async fn exercise(pool: &sqlx::PgPool) {
         .unwrap()
         .configuration;
     assert_eq!(actual.display_name, configuration.display_name);
-    assert_eq!(actual.members, Some(vec![]));
-    assert_eq!(actual.directory_group_mappings, None);
+    assert_eq!(actual.metadata, Some(Default::default()));
+    assert_eq!(actual.protected, Some(false));
     assert_eq!(
         store_pg::read_universe_stats(pool, id)
             .await
             .unwrap()
             .unwrap()
             .configuration,
-        api::UniverseConfiguration::default()
+        api::UniverseConfiguration {
+            metadata: Some(Default::default()),
+            protected: Some(false),
+            ..Default::default()
+        }
     );
 
     // Handles are unique across universes, at creation and on rename.
