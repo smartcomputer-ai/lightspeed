@@ -70,7 +70,7 @@ describe("demo router", () => {
       const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
       const session = universe.sessions.get("session-flaky-scheduler")!;
       const active = startRun(store, universe, session, { text: "Work on this" });
-      const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+      const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
       const upload = await call("POST", `${base}/attachments`, { bytesBase64: btoa("%PDF-1.7") });
       const blobRef = (upload.json as { blobs: { blobRef: string }[] }).blobs[0]!.blobRef;
       const attachment = { blobRef, mime: "application/pdf", kind: "document" as const, name: "notes.pdf" };
@@ -98,7 +98,7 @@ describe("demo router", () => {
 
   it("starts demo universes with their own icons in the default color, while new universes use defaults", async () => {
     const { call } = await boot();
-    const response = await call("GET", "/api/v1/universes");
+    const response = await call("GET", "/api/ui/universes");
     expect(response.status).toBe(200);
     const universes = response.json as Universe[];
     expect(universes).toHaveLength(3);
@@ -107,21 +107,21 @@ describe("demo router", () => {
       "Technical Support": ["support", "amber"],
       "Personal Assistant": ["personal-assistant", "blue"],
     });
-    const created = await call("POST", "/api/v1/universes", { name: "New universe" });
+    const created = await call("POST", "/api/ui/universes", { name: "New universe" });
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ icon: "orbit", iconColor: "default" });
   });
   it("keeps bots and channels on in the seeded universes while a new universe starts with them off", async () => {
     const { store, call } = await boot();
-    const seeded = (await call("GET", "/api/v1/universes")).json as Universe[];
+    const seeded = (await call("GET", "/api/ui/universes")).json as Universe[];
     expect(seeded).toHaveLength(3);
     for (const universe of seeded) {
       expect(universe.features, universe.handle).toEqual({ bots: true, channels: true });
     }
-    const created = (await call("POST", "/api/v1/universes", { name: "New universe" })).json as Universe;
+    const created = (await call("POST", "/api/ui/universes", { name: "New universe" })).json as Universe;
     expect(created.features).toEqual({ bots: false, channels: false });
     // A switch is stored only while it differs from the default, as on the Platform.
-    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.featureOverrides).toEqual({ bots: true, channels: true });
     expect((await call("PATCH", path, { features: { bots: false } })).json).toMatchObject({ features: { bots: false, channels: false } });
     expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.featureOverrides).toEqual({ channels: true });
@@ -129,10 +129,10 @@ describe("demo router", () => {
   });
   it("saves shared universe appearance and validates choices", async () => {
     const { call } = await boot();
-    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     expect((await call("PATCH", path, { icon: "network", iconColor: "violet" })).status).toBe(200);
     expect((await call("GET", path)).json).toMatchObject({ icon: "network", iconColor: "violet" });
-    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([
+    expect((await call("GET", "/api/ui/universes")).json).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: SOFTWARE_FACTORY_UNIVERSE_ID, icon: "network", iconColor: "violet" }),
     ]));
     expect((await call("PATCH", path, { icon: "security", iconColor: "invalid" })).status).toBe(400);
@@ -141,7 +141,7 @@ describe("demo router", () => {
   });
   it("keeps model defaults universe-scoped and revision-safe while preserving existing session models", async () => {
     const { store, call } = await boot();
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const other = [...store.universes.values()].find((state) => state.universe.id !== SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const otherDefaults = structuredClone(other.modelDefaults);
     const original = (await call("GET", `${base}/models/defaults`)).json as ModelDefaults;
@@ -174,7 +174,7 @@ describe("demo router", () => {
     store.currentUser.role = "user";
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     universe.universe.role = "viewer";
-    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/models/defaults`;
+    const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/models/defaults`;
     expect((await call("GET", path)).status).toBe(200);
     expect((await call("PUT", path, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision })).status).toBe(403);
     expect(universe.modelDefaults.agentRun).not.toBeNull();
@@ -183,7 +183,7 @@ describe("demo router", () => {
   it("uses universe defaults for demo bot sessions and refuses rotation when that choice is cleared", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     await call("PUT", `${base}/profiles/inherit`, { profileId: "inherit", config: {} });
     const created = await call("POST", `${base}/bots`, { bot: { botId: "inherit-model", profileId: "inherit" } });
     expect(created.status).toBe(201);
@@ -202,26 +202,26 @@ describe("demo router", () => {
 
   it("carries runtime handles through creation and adoption without local suffixes", async () => {
     const { store, call } = await boot();
-    const created = await call("POST", "/api/v1/universes", { name: "Display", handle: "chosen" });
+    const created = await call("POST", "/api/ui/universes", { name: "Display", handle: "chosen" });
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ handle: "chosen" });
-    expect((await call("POST", "/api/v1/universes", { name: "Another", handle: "chosen" })).status).toBe(409);
+    expect((await call("POST", "/api/ui/universes", { name: "Another", handle: "chosen" })).status).toBe(409);
     const named = { universeId: "11111111-1111-4111-8111-111111111111", handle: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
     store.orphanEngineUniverses.push(named);
-    const adopted = await call("POST", "/api/v1/universes/adopt", { name: "Unrelated name", lightspeedUniverseId: named.universeId });
+    const adopted = await call("POST", "/api/ui/universes/adopt", { name: "Unrelated name", lightspeedUniverseId: named.universeId });
     expect(adopted.status).toBe(201);
     expect(adopted.json).toMatchObject({ handle: "from-runtime", lightspeedUniverseId: named.universeId });
     const other = { ...named, universeId: "22222222-2222-4222-8222-222222222222", handle: "kept" };
     store.orphanEngineUniverses.push(other);
-    expect((await call("POST", "/api/v1/universes/adopt", { name: "Other", lightspeedUniverseId: other.universeId, handle: "renamed-on-adopt" })).status).toBe(400);
+    expect((await call("POST", "/api/ui/universes/adopt", { name: "Other", lightspeedUniverseId: other.universeId, handle: "renamed-on-adopt" })).status).toBe(400);
     expect(store.orphanEngineUniverses.some(u => u.universeId === other.universeId)).toBe(true);
     const universe = created.json as Universe;
-    expect((await call("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: "from-runtime" })).status).toBe(409);
-    const renamed = await call("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: "renamed" });
+    expect((await call("PUT", `/api/ui/universes/${universe.id}/handle`, { handle: "from-runtime" })).status).toBe(409);
+    const renamed = await call("PUT", `/api/ui/universes/${universe.id}/handle`, { handle: "renamed" });
     expect(renamed.status).toBe(200);
     expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, handle: "renamed" });
-    expect((await call("GET", "/api/v1/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, handle: "renamed" })]));
-    expect((await call("POST", "/api/v1/universes/sync-handles", {})).json).toEqual({ updated: 0, skipped: 0 });
+    expect((await call("GET", "/api/ui/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, handle: "renamed" })]));
+    expect((await call("POST", "/api/ui/universes/sync-handles", {})).json).toEqual({ updated: 0, skipped: 0 });
   });
 
   it("keeps seeded final replies outside each run's collapsible activity", async () => {
@@ -251,9 +251,9 @@ describe("demo router", () => {
   it("shares an unshared root session once, with its sub-agents", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/session-flaky-scheduler`;
+    const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/session-flaky-scheduler`;
     expect((await call("GET", path)).json).toMatchObject({ access: { visibility: "restricted" } });
-    const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as { sessions: { id: string; access: { visibility: string } }[] };
+    const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as { sessions: { id: string; access: { visibility: string } }[] };
     expect(listed.sessions.find((session) => session.id === "session-flaky-scheduler")?.access.visibility).toBe("restricted");
     const shared = await call("POST", `${path}/share`);
     expect(shared.status).toBe(200);
@@ -265,7 +265,7 @@ describe("demo router", () => {
   it("lists each session with its active environment", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+    const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
       sessions: { id: string; activeEnvironmentId?: string }[];
     };
     expect(listed.sessions.length).toBeGreaterThan(0);
@@ -280,7 +280,7 @@ describe("demo router", () => {
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const session = universe.sessions.get("session-flaky-scheduler")!;
     const list = async () => {
-      const listed = (await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
+      const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
         sessions: { id: string; lastMessagePreview?: string }[];
       };
       return new Map(listed.sessions.map((entry) => [entry.id, entry.lastMessagePreview]));
@@ -307,7 +307,7 @@ describe("demo router", () => {
 
   it("uploads an attachment and runs it through the transcript as input media", async () => {
     const { store, call } = await boot();
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const created = (await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } })).json as SessionView;
     const uploaded = await call("POST", `${base}/attachments`, { bytesBase64: btoa("%PDF-1.7") });
     expect(uploaded.status).toBe(200);
@@ -355,7 +355,7 @@ describe("demo router", () => {
     const { store, call } = await boot();
     const text = "full tool result ".repeat(700);
     const blobRef = store.putText(text);
-    const result = await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/blobs/${encodeURIComponent(blobRef)}`);
+    const result = await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/blobs/${encodeURIComponent(blobRef)}`);
     expect(result.status).toBe(200);
     expect(result.json).toEqual({ blobRef, bytesBase64: btoa(text), bytes: text.length });
   });
@@ -369,28 +369,28 @@ describe("demo router", () => {
 
   it("answers every read the universe pages open with, for every universe", async () => {
     const { call } = await boot();
-    const universes = await call("GET", "/api/v1/universes");
+    const universes = await call("GET", "/api/ui/universes");
     expect(universes.status).toBe(200);
     const list = universes.json as Universe[];
     expect(list.length).toBeGreaterThanOrEqual(2);
     for (const universe of list) {
       for (const path of universeReads) {
-        const result = await call("GET", `/api/v1/universes/${universe.id}/${path}`);
+        const result = await call("GET", `/api/ui/universes/${universe.id}/${path}`);
         expect(result.status, `${universe.handle}: ${path}`).toBe(200);
       }
-      const bots = ((await call("GET", `/api/v1/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
+      const bots = ((await call("GET", `/api/ui/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
       expect(bots.length, `${universe.handle}: bots`).toBeGreaterThan(0);
       for (const bot of bots) {
         for (const path of ["", "/triggers", "/events", "/state"]) {
-          const result = await call("GET", `/api/v1/universes/${universe.id}/bots/${bot.botId}${path}`);
+          const result = await call("GET", `/api/ui/universes/${universe.id}/bots/${bot.botId}${path}`);
           expect(result.status, `${universe.handle}: bots/${bot.botId}${path}`).toBe(200);
         }
       }
-      const sessions = (await call("GET", `/api/v1/universes/${universe.id}/sessions`)).json as SessionListPage;
+      const sessions = (await call("GET", `/api/ui/universes/${universe.id}/sessions`)).json as SessionListPage;
       expect(sessions.sessions.length, `${universe.handle}: sessions`).toBeGreaterThan(0);
       for (const session of sessions.sessions) {
         for (const path of ["", "/events?limit=200", "/events?direction=backward&limit=200", "/instructions"]) {
-          const result = await call("GET", `/api/v1/universes/${universe.id}/sessions/${session.id}${path}`);
+          const result = await call("GET", `/api/ui/universes/${universe.id}/sessions/${session.id}${path}`);
           expect(result.status, `${universe.handle}: sessions/${session.id}${path}`).toBe(200);
         }
       }
@@ -401,7 +401,7 @@ describe("demo router", () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const session = universe.sessions.get("session-flaky-scheduler")!;
-    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/${session.view.id}/events?direction=backward`;
+    const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/${session.view.id}/events?direction=backward`;
     const expected = session.events.map((event) => event.cursor.seq);
     const first = (await call("GET", `${path}&limit=7`)).json as SessionEventsPage;
     expect(first.events?.map((event) => event.cursor.seq)).toEqual(expected.slice(-7));
@@ -424,7 +424,7 @@ describe("demo router", () => {
     const { call } = await boot();
     const response = await call(
       "GET",
-      `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/session-flaky-scheduler/events?limit=200`,
+      `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions/session-flaky-scheduler/events?limit=200`,
     );
     expect(response.status).toBe(200);
     const page = response.json as SessionEventsPage;
@@ -449,7 +449,7 @@ describe("demo router", () => {
     const campaign = "terminal-bench-lightspeed-rerun-hosted-20260904-113000-software-factory";
     const result = await call(
       "GET",
-      `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?metadata=${encodeURIComponent(`campaign=${campaign}`)}`,
+      `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?metadata=${encodeURIComponent(`campaign=${campaign}`)}`,
     );
     expect(result.status).toBe(200);
     const sessions = (result.json as SessionListPage).sessions;
@@ -461,7 +461,7 @@ describe("demo router", () => {
   it("deletes an active universe only with its exact handle and records the request", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const path = `/api/v1/universes/${state.universe.id}`;
+    const path = `/api/ui/universes/${state.universe.id}`;
     expect(state.universe.status).toBe("active");
     expect((await call("DELETE", path, { handle: "wrong" })).status).toBe(400);
     expect((await call("DELETE", path, { handle: state.universe.handle })).status).toBe(200);
@@ -472,12 +472,12 @@ describe("demo router", () => {
   it("answers the admin pages", async () => {
     const { call } = await boot();
     for (const path of [
-      "/api/v1/users",
-      "/api/v1/universes/reconcile",
-      "/api/v1/status/channels",
-      "/api/v1/channel-accounts",
-      "/api/v1/admin/environment-providers",
-      "/api/v1/admin/environment-provider-bindings",
+      "/api/ui/users",
+      "/api/ui/universes/reconcile",
+      "/api/ui/status/channels",
+      "/api/ui/channel-accounts",
+      "/api/ui/admin/environment-providers",
+      "/api/ui/admin/environment-provider-bindings",
       "/api/auth/admin/list-users",
     ]) {
       expect((await call("GET", path)).status, path).toBe(200);
@@ -489,7 +489,7 @@ describe("demo router", () => {
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const admin = state.members.find((member) => member.role === "admin")!;
     state.members = [admin];
-    const path = `/api/v1/universes/${state.universe.id}/members/${admin.id}`;
+    const path = `/api/ui/universes/${state.universe.id}/members/${admin.id}`;
     expect((await call("PATCH", path, { role: "viewer" })).status).toBe(409);
     expect(admin.role).toBe("admin");
     state.members.push({ ...admin, id: "other-admin", userId: "other-user" });
@@ -501,7 +501,7 @@ describe("demo router", () => {
   it("lists members to every member, with emails for Admins only", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const path = `/api/v1/universes/${state.universe.id}/members`;
+    const path = `/api/ui/universes/${state.universe.id}/members`;
     const admin = (await call("GET", path)).json as Record<string, unknown>[];
     expect(admin.every((member) => typeof member.email === "string")).toBe(true);
     for (const role of ["viewer", "contributor", "operator"] as const) {
@@ -521,7 +521,7 @@ describe("demo router", () => {
   it("shows the unavailable setup without allowing installation", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const base = `/api/v1/universes/${state.universe.id}/setups`;
+    const base = `/api/ui/universes/${state.universe.id}/setups`;
     for (const role of ["viewer", "contributor"] as const) {
       state.universe.role = role;
       expect((await call("GET", base)).status, role).toBe(404);
@@ -572,16 +572,16 @@ describe("demo router", () => {
 
   it("returns a request-local MCP tool inventory", async () => {
     const { call } = await boot();
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
     const servers = (await call(
       "GET",
-      `/api/v1/universes/${universe!.id}/mcp-servers`,
+      `/api/ui/universes/${universe!.id}/mcp-servers`,
     )).json as McpServer[];
     const server = servers.find((candidate) => candidate.status === "active");
     expect(server).toBeDefined();
     const discovered = await call(
       "POST",
-      `/api/v1/universes/${universe!.id}/mcp-servers/${server!.serverId}/tools/discover`,
+      `/api/ui/universes/${universe!.id}/mcp-servers/${server!.serverId}/tools/discover`,
     );
     expect(discovered.status).toBe(200);
     const inventory = discovered.json as McpToolDiscovery;
@@ -593,14 +593,14 @@ describe("demo router", () => {
 
   it("runs a message through the tail and completes it", async () => {
     const { call } = await boot();
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
-    const created = await call("POST", `/api/v1/universes/${universe!.id}/sessions`, {
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
+    const created = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
       displayName: "smoke",
       profile: { kind: "inline", profile: {} },
     });
     expect(created.status).toBe(200);
     const sessionId = (created.json as { id: string }).id;
-    const accepted = await call("POST", `/api/v1/universes/${universe!.id}/sessions/${sessionId}/messages`, {
+    const accepted = await call("POST", `/api/ui/universes/${universe!.id}/sessions/${sessionId}/messages`, {
       text: "hello from the smoke test",
       submissionId: "sub-1",
     });
@@ -614,7 +614,7 @@ describe("demo router", () => {
     let transcript = emptyTranscript();
     for (let i = 0; i < 20 && !completed; i++) {
       const page = (
-        await call("GET", `/api/v1/universes/${universe!.id}/sessions/${sessionId}/events?after=${after}&limit=100&waitMs=3000`)
+        await call("GET", `/api/ui/universes/${universe!.id}/sessions/${sessionId}/events?after=${after}&limit=100&waitMs=3000`)
       ).json as SessionEventsPage;
       transcript = applyEvents(transcript, page.events ?? []);
       for (const event of page.events ?? []) {
@@ -641,7 +641,7 @@ describe("demo router", () => {
     expect(acceptedSubmission).toBe("sub-1");
     expect(userEntrySource).toMatchObject({ type: "runInput", runId });
     expect(userEntryOrigin).toMatch(/^user:.+/);
-    const view = (await call("GET", `/api/v1/universes/${universe!.id}/sessions/${sessionId}`)).json as {
+    const view = (await call("GET", `/api/ui/universes/${universe!.id}/sessions/${sessionId}`)).json as {
       lifecycleStatus: string;
       activity: string;
       runs: Array<{ id: string; status: string }>;
@@ -661,7 +661,7 @@ describe("demo router", () => {
 
   it("copies profile metadata and selects only its default environment attachment", async () => {
     const { call } = await boot();
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: Record<string, unknown> };
     const defaultId = defaultEnvironmentAttachment(profile.config)?.environmentId;
     expect(defaultId).toBeDefined();
@@ -693,7 +693,7 @@ describe("demo router", () => {
   it.each([{ type: "none" }, { type: "existing", environmentId: "runner" }, null])(
     "rejects a removed creation-time environment field: %j", async (environment) => {
       const { call } = await boot();
-      const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+      const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
       const response = await call("POST", `${base}/sessions`, {
         profile: { kind: "named", profileId: "implementer" }, environment,
       });
@@ -703,7 +703,7 @@ describe("demo router", () => {
 
   it("session start, close, and deletion leave environments independently managed", async () => {
     const { call, store } = await boot();
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const before = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: unknown };
     const existing = before.find((environment) => environment.environmentId === defaultEnvironmentAttachment(profile.config)?.environmentId)!;
@@ -720,13 +720,13 @@ describe("demo router", () => {
     expect((await call("DELETE", `${base}/sessions/${session.id}`)).status).toBe(200);
     expect(store.auditEvents.filter((event) => event.targetId === session.id)).toEqual([]);
     expect((await call("GET", `${base}/sessions/${session.id}`)).status).toBe(404);
-    const adminBase = `/api/v1/admin/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const adminBase = `/api/ui/admin/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const deleted = (await call("GET", `${adminBase}/deleted-sessions`)).json as { sessions: { sessionId: string }[] };
     expect(deleted.sessions.map((entry) => entry.sessionId)).toContain(session.id);
     expect(store.deletedSessions.size).toBe(1);
     expect((await call("POST", `${adminBase}/sessions/${session.id}/purge`, {})).status).toBe(200);
     expect(store.deletedSessions.size).toBe(0);
-    const audit = (await call("GET", "/api/v1/admin/audit")).json as { action: string; targetId: string }[];
+    const audit = (await call("GET", "/api/ui/admin/audit")).json as { action: string; targetId: string }[];
     expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
     const after = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
@@ -734,7 +734,7 @@ describe("demo router", () => {
 
   it("mints a registration key under a chosen id and refuses an id a key already holds", async () => {
     const { call } = await boot();
-    const keys = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/environment-registration-keys`;
+    const keys = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/environment-registration-keys`;
     const body = { identityMode: "ephemeral", displayName: "Sandboxes", registrationKeyId: " sandboxes " };
     const created = await call("POST", keys, body);
     expect(created.status).toBe(201);
@@ -755,7 +755,7 @@ describe("demo router", () => {
 
   it("declares registered environments under persistent keys and releases their daemons", async () => {
     const { call, store } = await boot();
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const keys = `${base}/environment-registration-keys`;
     const mint = async (body: Record<string, unknown>) =>
       ((await call("POST", keys, body)).json as { registrationKey: EnvironmentRegistrationKey }).registrationKey;
@@ -808,7 +808,7 @@ describe("demo router", () => {
 
   it("rejects unlisted activation and clears removed selections without filling defaults", async () => {
     const { call } = await boot();
-    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: Record<string, unknown> };
     const defaultId = defaultEnvironmentAttachment(profile.config)!.environmentId!;
     const environments = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
@@ -827,8 +827,8 @@ describe("demo router", () => {
 
   it("sets and clears session-tree retention through the web routes", async () => {
     const { call } = await boot();
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
-    const created = await call("POST", `/api/v1/universes/${universe!.id}/sessions`, {
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
+    const created = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
       displayName: "retained",
       deleteAfterCloseMs: 86_400_000,
       profile: { kind: "inline", profile: {} },
@@ -842,13 +842,13 @@ describe("demo router", () => {
 
     const cleared = await call(
       "PUT",
-      `/api/v1/universes/${universe!.id}/sessions/${session.id}/retention`,
+      `/api/ui/universes/${universe!.id}/sessions/${session.id}/retention`,
       { deleteAfterCloseMs: null },
     );
     expect(cleared.status).toBe(200);
     expect((cleared.json as { retention: { deleteAfterCloseMs: null } }).retention.deleteAfterCloseMs).toBeNull();
 
-    const inherited = await call("POST", `/api/v1/universes/${universe!.id}/sessions`, {
+    const inherited = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
       profile: {
         kind: "inline",
         profile: { retention: { deleteAfterCloseMs: 172_800_000 } },
@@ -856,7 +856,7 @@ describe("demo router", () => {
     });
     expect((inherited.json as SessionView).retention.deleteAfterCloseMs).toBe(172_800_000);
 
-    const overriddenToKeep = await call("POST", `/api/v1/universes/${universe!.id}/sessions`, {
+    const overriddenToKeep = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
       deleteAfterCloseMs: null,
       profile: {
         kind: "inline",
@@ -873,18 +873,18 @@ describe("demo router", () => {
       vi.useRealTimers();
     });
     const { call } = await boot();
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
-    const [bot] = ((await call("GET", `/api/v1/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots;
-    const before = (await call("GET", `/api/v1/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
+    const [bot] = ((await call("GET", `/api/ui/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots;
+    const before = (await call("GET", `/api/ui/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
       events: Array<{ seq: number }>;
     };
-    const admitted = await call("POST", `/api/v1/universes/${universe!.id}/bots/${bot!.botId}/events`, {
+    const admitted = await call("POST", `/api/ui/universes/${universe!.id}/bots/${bot!.botId}/events`, {
       event: { kind: "smoke.test", summary: "smoke test event", data: { hello: "world" } },
     });
     expect(admitted.status).toBe(202);
     expect((admitted.json as { duplicate: boolean }).duplicate).toBe(false);
     await vi.runAllTimersAsync();
-    const after = (await call("GET", `/api/v1/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
+    const after = (await call("GET", `/api/ui/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
       events: Array<{ seq: number; outcome: string | null }>;
     };
     expect(after.events.length).toBe(before.events.length + 1);
@@ -898,17 +898,17 @@ describe("demo router", () => {
     type Secrets = { ingestPath?: string; pairingCode?: string };
     let webhooks = 0;
     let pairedChats = 0;
-    for (const universe of (await call("GET", "/api/v1/universes")).json as Universe[]) {
-      const bots = ((await call("GET", `/api/v1/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
+    for (const universe of (await call("GET", "/api/ui/universes")).json as Universe[]) {
+      const bots = ((await call("GET", `/api/ui/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
       for (const bot of bots) {
-        const base = `/api/v1/universes/${universe.id}/bots/${bot.botId}/triggers`;
+        const base = `/api/ui/universes/${universe.id}/bots/${bot.botId}/triggers`;
         const listed = await call("GET", base);
         const text = JSON.stringify(listed.json);
-        expect(text, `${bot.botId}: list`).not.toMatch(/ingestPath|pairingCode|\/hooks\//);
+        expect(text, `${bot.botId}: list`).not.toMatch(/ingestPath|pairingCode|\/ingress\/webhooks\//);
         for (const trigger of (listed.json as { triggers: Trigger[] }).triggers) {
           const read = await call("GET", `${base}/${trigger.triggerId}`);
           expect(JSON.stringify(read.json), `${bot.botId}/${trigger.triggerId}: read`).not.toMatch(
-            /ingestPath|pairingCode|\/hooks\//,
+            /ingestPath|pairingCode|\/ingress\/webhooks\//,
           );
           const secrets = await call("GET", `${base}/${trigger.triggerId}/secrets`);
           expect(secrets.status, `${bot.botId}/${trigger.triggerId}: secrets`).toBe(200);
@@ -917,7 +917,7 @@ describe("demo router", () => {
           if (trigger.kind === "webhook") {
             webhooks += 1;
             expect(ingestPath).toBe(stored.ingestPath);
-            expect(ingestPath).toMatch(/^\/hooks\/bots\//);
+            expect(ingestPath).toMatch(/^\/ingress\/webhooks\/bots\//);
           } else {
             expect(ingestPath).toBeUndefined();
           }
@@ -933,7 +933,7 @@ describe("demo router", () => {
     }
     expect(webhooks).toBeGreaterThan(0);
     expect(pairedChats).toBeGreaterThan(0);
-    expect((await call("GET", `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/bots/no-such-bot/triggers/x/secrets`)).status).toBe(404);
+    expect((await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/bots/no-such-bot/triggers/x/secrets`)).status).toBe(404);
   });
 
   it("answers a trigger write with its secrets and keeps the URL token across edits", async ({ onTestFinished }) => {
@@ -944,15 +944,15 @@ describe("demo router", () => {
     });
     const { call } = await boot();
     type Written = { trigger: Record<string, unknown> & { revision: number }; secrets?: { ingestPath?: string; pairingCode?: string } };
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
-    const bot = ((await call("GET", `/api/v1/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
+    const bot = ((await call("GET", `/api/ui/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots
       .find((entry) => entry.enabled !== false && entry.closedAtMs == null)!;
-    const base = `/api/v1/universes/${universe!.id}/bots/${bot.botId}/triggers`;
+    const base = `/api/ui/universes/${universe!.id}/bots/${bot.botId}/triggers`;
     const created = await call("PUT", `${base}/secrets-hook`, { trigger: { kind: "webhook" } });
     expect(created.status).toBe(200);
     const first = created.json as Written;
-    expect(JSON.stringify(first.trigger)).not.toMatch(/ingestPath|\/hooks\//);
-    expect(first.secrets?.ingestPath).toMatch(/^\/hooks\/bots\/.+\/secrets-hook\/[0-9a-f]{48}$/);
+    expect(JSON.stringify(first.trigger)).not.toMatch(/ingestPath|\/ingress\/webhooks\//);
+    expect(first.secrets?.ingestPath).toMatch(/^\/ingress\/webhooks\/bots\/.+\/secrets-hook\/[0-9a-f]{48}$/);
     // An edit keeps the URL token, and the answer still carries the path.
     const edited = (await call("PUT", `${base}/secrets-hook`, {
       trigger: { kind: "webhook", filter: "event.kind == 'x'" },
@@ -964,6 +964,8 @@ describe("demo router", () => {
     );
     // The path it answered with is the one the public route accepts.
     expect((await call("POST", first.secrets!.ingestPath!, { kind: "sample" })).status).toBe(202);
+    const removedPath = first.secrets!.ingestPath!.replace("/ingress/webhooks/", "/hooks/");
+    expect((await call("POST", removedPath, { kind: "sample" })).status).toBe(404);
     await vi.runAllTimersAsync();
     // A schedule has no secret to answer with.
     const schedule = (await call("PUT", `${base}/secrets-nightly`, {
@@ -977,13 +979,13 @@ describe("demo router", () => {
     const { store, call } = await boot();
     type Written = { trigger: { revision: number }; secrets?: { pairingCode?: string } };
     let checked = 0;
-    for (const universe of (await call("GET", "/api/v1/universes")).json as Universe[]) {
+    for (const universe of (await call("GET", "/api/ui/universes")).json as Universe[]) {
       for (const record of store.universe(universe.id)!.bots.values()) {
         if (record.bot.closedAtMs != null) continue;
         for (const stored of [...record.triggers.values()]) {
           if (stored.kind !== "chat" || stored.pairing === "open" || checked > 0) continue;
           checked += 1;
-          const path = `/api/v1/universes/${universe.id}/bots/${record.bot.botId}/triggers/${stored.triggerId}`;
+          const path = `/api/ui/universes/${universe.id}/bots/${record.bot.botId}/triggers/${stored.triggerId}`;
           const code = stored.pairingCode;
           const input = { kind: "chat", accountId: stored.accountId, pairing: "code" };
           const kept = (await call("PUT", path, { trigger: input })).json as Written;
@@ -1004,8 +1006,8 @@ describe("demo router", () => {
 
   it("stores model endpoint headers as the runtime does and refuses a plain secret", async () => {
     const { call } = await boot();
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
-    const modelKeys = `/api/v1/universes/${universe!.id}/integrations/model-keys`;
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
+    const modelKeys = `/api/ui/universes/${universe!.id}/integrations/model-keys`;
     const endpoint = (headers: unknown) => ({
       provider: "header-router",
       endpoint: { baseUrl: "https://router.example/v1", apiKinds: ["openai:completions"], headers },
@@ -1030,8 +1032,8 @@ describe("demo router", () => {
 
   it("stores MCP server headers as the runtime does and refuses a plain secret", async () => {
     const { call } = await boot();
-    const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
-    const servers = `/api/v1/universes/${universe!.id}/mcp-servers`;
+    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
+    const servers = `/api/ui/universes/${universe!.id}/mcp-servers`;
     const server = (serverId: string, headers: unknown) => ({
       serverId,
       serverUrl: "https://tracker.example.com/mcp",
@@ -1060,7 +1062,7 @@ describe("demo router", () => {
 
   it("names the missing stub instead of hanging", async () => {
     const { call } = await boot();
-    const result = await call("GET", "/api/v1/nope");
+    const result = await call("GET", "/api/ui/nope");
     expect(result.status).toBe(404);
     expect((result.json as { error: string }).error).toMatch(/demo: no stub/);
   });

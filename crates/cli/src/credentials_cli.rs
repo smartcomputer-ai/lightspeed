@@ -51,7 +51,7 @@ enum CredentialModelCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
 struct CredentialModelPutArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the result as JSON.
@@ -123,7 +123,7 @@ impl std::fmt::Debug for CredentialModelPutArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialModelListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit providers as JSON.
@@ -133,7 +133,7 @@ struct CredentialModelListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialModelRemoveArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the removed provider as JSON.
@@ -181,7 +181,7 @@ enum CredentialGithubAppCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("private_key_source").required(true)))]
 struct CredentialGithubAppAddArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the created provider as JSON.
@@ -226,7 +226,7 @@ impl std::fmt::Debug for CredentialGithubAppAddArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubAppListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit providers as JSON.
@@ -236,7 +236,7 @@ struct CredentialGithubAppListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubAppReadArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the provider as JSON.
@@ -248,7 +248,7 @@ struct CredentialGithubAppReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubAppRemoveArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the removed provider as JSON.
@@ -274,7 +274,7 @@ enum CredentialGithubInstallationCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubInstallationListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit installations as JSON.
@@ -287,7 +287,7 @@ struct CredentialGithubInstallationListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubInstallationGrantArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the grant as JSON.
@@ -337,7 +337,7 @@ enum CredentialGrantCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct CredentialGrantPutArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the result as JSON.
@@ -398,7 +398,7 @@ impl std::fmt::Debug for CredentialGrantPutArgs {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct CredentialGrantReplaceArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the updated grant as JSON.
@@ -435,7 +435,7 @@ impl std::fmt::Debug for CredentialGrantReplaceArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGrantListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit grants as JSON.
@@ -448,7 +448,7 @@ struct CredentialGrantListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGrantReadArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the grant as JSON.
@@ -460,7 +460,7 @@ struct CredentialGrantReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGrantRevokeArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the revoked grant as JSON.
@@ -512,7 +512,7 @@ enum CredentialClientCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("client_secret_source")))]
 struct CredentialClientAddArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the created client as JSON.
@@ -602,7 +602,7 @@ impl std::fmt::Debug for CredentialClientAddArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialClientListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit clients as JSON.
@@ -612,7 +612,7 @@ struct CredentialClientListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialClientReadArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the client as JSON.
@@ -624,7 +624,7 @@ struct CredentialClientReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialClientRemoveArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the removed client as JSON.
@@ -636,7 +636,7 @@ struct CredentialClientRemoveArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialLoginArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the final flow status as JSON.
@@ -817,8 +817,7 @@ async fn grant_put(args: CredentialGrantPutArgs) -> Result<()> {
             dry_run: args.dry_run,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     print_put(&response, args.dry_run, args.json)
 }
 
@@ -837,7 +836,6 @@ async fn grant_replace(args: CredentialGrantReplaceArgs) -> Result<()> {
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .grant;
     let response = api
         .put_credential_grant(api::CredentialGrantPutParams {
@@ -855,8 +853,7 @@ async fn grant_replace(args: CredentialGrantReplaceArgs) -> Result<()> {
             dry_run: false,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -892,8 +889,7 @@ async fn grant_list(args: CredentialGrantListArgs) -> Result<()> {
             status: args.status.map(Into::into),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -918,8 +914,7 @@ async fn grant_read(args: CredentialGrantReadArgs) -> Result<()> {
             grant_id: args.grant_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -935,8 +930,7 @@ async fn grant_revoke(args: CredentialGrantRevokeArgs) -> Result<()> {
             grant_id: args.grant_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -995,8 +989,7 @@ async fn client_add(args: CredentialClientAddArgs) -> Result<()> {
                 .clone(),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1010,8 +1003,7 @@ async fn client_list(args: CredentialClientListArgs) -> Result<()> {
     let response = api
         .list_credential_clients(api::CredentialClientListParams {})
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1035,8 +1027,7 @@ async fn client_read(args: CredentialClientReadArgs) -> Result<()> {
             client_id: args.client_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1052,8 +1043,7 @@ async fn client_remove(args: CredentialClientRemoveArgs) -> Result<()> {
             client_id: args.client_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1078,8 +1068,7 @@ async fn login(args: CredentialLoginArgs) -> Result<()> {
             audience: args.audience.clone(),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
 
     eprintln!("Open this URL in your browser to authorize:");
     eprintln!("{}", started.authorize_url);
@@ -1096,8 +1085,7 @@ async fn login(args: CredentialLoginArgs) -> Result<()> {
                 flow_id: started.flow_id.clone(),
             })
             .await
-            .map_err(crate::api_client::api_error)?
-            .result;
+            .map_err(crate::api_client::api_error)?;
         match response.flow.status {
             api::CredentialFlowStatus::Pending => continue,
             api::CredentialFlowStatus::Completed => {
@@ -1237,8 +1225,7 @@ async fn model_put(args: CredentialModelPutArgs) -> Result<()> {
             },
         )
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1264,8 +1251,7 @@ async fn model_list(args: CredentialModelListArgs) -> Result<()> {
     let response = api
         .list_credential_providers(api::CredentialProviderListParams {})
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     let providers: Vec<_> = response
         .providers
         .iter()
@@ -1307,7 +1293,6 @@ async fn read_model_provider(
             provider_id: model_provider_row_id(id),
         })
         .await?
-        .result
         .provider;
     anyhow::ensure!(
         matches!(
@@ -1329,8 +1314,7 @@ async fn model_remove(args: CredentialModelRemoveArgs) -> Result<()> {
             provider_id: model_provider_row_id(&args.provider_id),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1353,8 +1337,7 @@ async fn github_app_add(args: CredentialGithubAppAddArgs) -> Result<()> {
             credential: Some(private_key),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1367,7 +1350,6 @@ async fn github_app_list(args: CredentialGithubAppListArgs) -> Result<()> {
     let providers = HttpAgentApi::new(args.api_url)
         .list_credential_providers(api::CredentialProviderListParams {})
         .await?
-        .result
         .providers;
     let providers: Vec<_> = providers
         .into_iter()
@@ -1400,7 +1382,6 @@ async fn github_app_read(args: CredentialGithubAppReadArgs) -> Result<()> {
             provider_id: args.provider_id.clone(),
         })
         .await?
-        .result
         .provider;
     anyhow::ensure!(
         matches!(
@@ -1415,8 +1396,7 @@ async fn github_app_read(args: CredentialGithubAppReadArgs) -> Result<()> {
             provider_id: args.provider_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1432,7 +1412,6 @@ async fn github_app_remove(args: CredentialGithubAppRemoveArgs) -> Result<()> {
             provider_id: args.provider_id.clone(),
         })
         .await?
-        .result
         .provider;
     anyhow::ensure!(
         matches!(
@@ -1447,8 +1426,7 @@ async fn github_app_remove(args: CredentialGithubAppRemoveArgs) -> Result<()> {
             provider_id: args.provider_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1464,8 +1442,7 @@ async fn github_installation_list(args: CredentialGithubInstallationListArgs) ->
             provider_id: args.provider_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -1492,8 +1469,7 @@ async fn github_installation_grant(args: CredentialGithubInstallationGrantArgs) 
             display_name: args.display_name,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());

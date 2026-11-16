@@ -7,7 +7,7 @@ import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 it("removes a workspace from the demo list and refuses further workspace reads", async () => {
   const store = createDemoStore();
   const app = createDemoRouter(store);
-  const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
+  const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
   const created = await app.request(base, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -54,7 +54,7 @@ it("removes a workspace from the demo list and refuses further workspace reads",
 
 it("round-trips uploaded folders and binary files through the demo routes", async () => {
   const app = createDemoRouter(createDemoStore());
-  const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
+  const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
   const post = (path: string, body: unknown) =>
     app.request(path, {
       method: "POST",
@@ -145,7 +145,7 @@ it("round-trips uploaded folders and binary files through the demo routes", asyn
 
 it("moves demo entries atomically and rejects stale, conflicting and recursive moves", async () => {
   const app = createDemoRouter(createDemoStore());
-  const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
+  const base = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
   const post = (path: string, body: unknown) => app.request(path, {
     method: "POST",
     headers: { "content-type": "application/json" },

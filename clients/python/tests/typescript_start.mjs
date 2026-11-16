@@ -4,7 +4,7 @@ import { LightspeedClient } from "../../typescript/dist/index.js";
 const [sessionId, submissionId, prompt] = process.argv.slice(2);
 const client = new LightspeedClient({
   endpoint: process.env.LIGHTSPEED_API_URL,
-  token: process.env.LIGHTSPEED_RPC_TOKEN,
+  token: process.env.LIGHTSPEED_RUNTIME_TOKEN,
   universe: process.env.LIGHTSPEED_UNIVERSE,
 });
 const options = { signal: AbortSignal.timeout(30_000) };

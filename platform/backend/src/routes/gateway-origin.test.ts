@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -5,7 +6,7 @@ import { gatewayRoutes } from "./gateway.js";
 
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
+    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
     handle: "test",
     role: "operator",
     member: { userId: "operator", role: "operator" },
@@ -24,26 +25,20 @@ describe("composer input origin", () => {
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer lsr_platform_fixture");
       expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe("operator");
       expect(init.redirect).toBe("error");
-      const rpc = JSON.parse(String(init.body));
-      if (rpc.method === "session/read") {
+      const request = decodeHttpRequest(_url as string | Request | URL, init);
+      if (request.method === "session/read") {
         const access = { visibility: "restricted", createdBy: { kind: "actor", id: "operator" } };
-        return Response.json({ id: rpc.id, result: { result: { session: { id: "session", access } }, notifications: [] } });
+        return Response.json({ session: { id: "session", access } });
       }
-      requests.push(rpc);
-      return Response.json({
-        id: rpc.id,
-        result: {
-          result: { run: { id: "run", status: "running" }, steeringId: "steer" },
-          notifications: [],
-        },
-      });
+      requests.push({ method: request.method, params: request.params });
+      return Response.json({ run: { id: "run", status: "running" }, steeringId: "steer" });
     }));
     const app = new Hono<{ Variables: ApiVariables }>();
     app.use("*", async (c, next) => {
       c.set("session", { user: { id: "operator" } } as ApiVariables["session"]);
       await next();
     });
-    app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_platform_fixture" } } as AppContext));
+    app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_platform_fixture" } } as AppContext));
     const response = await app.request(path, {
       method: "POST",
       headers: { "content-type": "application/json" },

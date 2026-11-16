@@ -19,7 +19,7 @@ export function sessionAdminRoutes(ctx: AppContext) {
     const result = await deploymentClientFor(ctx, universe.gatewayUrl).call("deployment/sessions/deleted/list", {
       universe: universe.lightspeedUniverseId, after: c.req.query("after"),
     });
-    return c.json(result.result);
+    return c.json(result);
   }));
   app.post("/universes/:id/sessions/:sessionId/purge", (c) => withGateway(c, async () => {
     const [universe] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.id, c.req.param("id"))).limit(1);
@@ -27,12 +27,12 @@ export function sessionAdminRoutes(ctx: AppContext) {
     const result = await deploymentClientFor(ctx, universe.gatewayUrl).call("deployment/sessions/purge", {
       universe: universe.lightspeedUniverseId, sessionId: c.req.param("sessionId"),
     });
-    if (result.result.deletedSessionIds.length) await auditIdentity(ctx.db, {
+    if (result.deletedSessionIds.length) await auditIdentity(ctx.db, {
       actorId: c.get("session").user.id, universeId: universe.id,
       targetId: c.req.param("sessionId"), action: "session.purge",
-      details: { deletedSessionIds: JSON.stringify(result.result.deletedSessionIds) },
+      details: { deletedSessionIds: JSON.stringify(result.deletedSessionIds) },
     });
-    return c.json(result.result);
+    return c.json(result);
   }));
   return app;
 }

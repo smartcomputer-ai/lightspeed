@@ -969,7 +969,7 @@ async fn start_integrated_session_and_run(
         })
         .await
         .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-    wait_for_terminal_run_slow(api, session_id, &run.result.run.id).await
+    wait_for_terminal_run_slow(api, session_id, &run.run.id).await
 }
 
 /// Start a run that calls `call_tool` and then stays in its next generation until
@@ -1004,7 +1004,7 @@ async fn start_integrated_session_and_hold_run(
         })
         .await
         .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-    Ok(run.result.run.id)
+    Ok(run.run.id)
 }
 
 /// Delivery retries, recovery polls, and start backoff make some scenarios
@@ -1227,7 +1227,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
             })
             .await
             .map_err(|error| anyhow::anyhow!("start declared Channels run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let output = final_assistant_text(&run).expect("assistant output");
         assert!(
@@ -1503,7 +1503,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             })
             .await
             .map_err(|error| anyhow::anyhow!("start stalled declared run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let joined_call = run
             .tool_batches
@@ -1727,7 +1727,6 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             .await
             .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
         let promise_id = events
-            .result
             .events
             .iter()
             .find_map(|event| match &event.kind {
@@ -1863,7 +1862,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                         run_limit: None,
                     })
                     .await?;
-                assert_eq!(session.result.session.execution_failure, None);
+                assert_eq!(session.session.execution_failure, None);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1886,7 +1885,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             .await
             .map_err(|error| anyhow::anyhow!("signal authorized reply: {error}"))?;
 
-        let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
 
         // Stale reply: the promise is already terminal, so a re-delivered
@@ -2047,7 +2046,6 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             .await
             .map_err(|error| anyhow::anyhow!("read Start + Joined events: {error:?}"))?;
         let execution_id = events
-            .result
             .events
             .iter()
             .find_map(|event| match &event.kind {
@@ -2248,7 +2246,7 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                 })
                 .await
                 .map_err(|error| anyhow::anyhow!("start absent-controller run: {error:?}"))?;
-            let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
+            let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
 
             assert_eq!(run.status, api::RunStatus::Completed);
             let output = final_assistant_text(&run).expect("assistant output");
@@ -2269,7 +2267,7 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                 .await
                 .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
             assert!(
-                events.result.events.iter().any(|event| matches!(
+                events.events.iter().any(|event| matches!(
                     event.kind,
                     api::SessionEventKindView::WorkflowToolDeliveryFailed { .. }
                 )),
@@ -2299,7 +2297,6 @@ async fn started_execution_ids(
         .await
         .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
     Ok(events
-        .result
         .events
         .iter()
         .filter_map(|event| match &event.kind {
@@ -2328,7 +2325,6 @@ async fn invocation_promises(
         .await
         .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
     Ok(events
-        .result
         .events
         .iter()
         .filter_map(|event| match &event.kind {
@@ -2426,12 +2422,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                     })
                     .await
                     .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-                let expected_promises = run
-                    .result
-                    .run
-                    .id
-                    .trim_start_matches("run_")
-                    .parse::<usize>()?;
+                let expected_promises = run.run.id.trim_start_matches("run_").parse::<usize>()?;
                 let started = std::time::Instant::now();
                 let promise_id = loop {
                     if started.elapsed() > Duration::from_secs(30) {
@@ -2458,7 +2449,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                     )
                     .await
                     .map_err(|error| anyhow::anyhow!("signal reply: {error}"))?;
-                let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+                let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
                 assert_eq!(run.status, api::RunStatus::Completed);
                 let output = final_assistant_text(&run)
                     .expect("assistant output")
@@ -2642,7 +2633,6 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 .await
                 .map_err(|error| anyhow::anyhow!("read continued Joined session: {error:?}"))?;
             let completion = &session
-                .result
                 .session
                 .integration
                 .as_ref()
@@ -2669,7 +2659,6 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 .await
                 .map_err(|error| anyhow::anyhow!("read continued Joined events: {error:?}"))?;
             let (event_call_id, promise_id) = events
-                .result
                 .events
                 .iter()
                 .find_map(|event| match &event.kind {
@@ -2684,7 +2673,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 })
                 .ok_or_else(|| anyhow::anyhow!("continued Joined start event was not projected"))?;
             assert_eq!(event_call_id, joined_call.call_id);
-            assert!(events.result.events.iter().any(|event| matches!(
+            assert!(events.events.iter().any(|event| matches!(
                 &event.kind,
                 api::SessionEventKindView::PromiseResolved {
                     promise_id: resolved,
@@ -2765,7 +2754,7 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
             })
             .await
             .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
 
         let plugin_handle = client.get_workflow_handle::<TestBoundPluginWorkflow>(receiver_id);
@@ -3012,7 +3001,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
             })
             .await
             .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         // The execution id is a client fact on the start-requested event,
         // not part of the model-visible acknowledgement.

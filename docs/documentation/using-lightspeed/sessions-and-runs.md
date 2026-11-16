@@ -292,8 +292,8 @@ configured or remote direct connection, use the runtime address and token
 supplied by the operator, and select the universe explicitly:
 
 ```bash
-export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
-export LIGHTSPEED_RPC_TOKEN="<runtime token>"
+export LIGHTSPEED_API_URL=http://127.0.0.1:18080/api/v1
+export LIGHTSPEED_API_TOKEN="<runtime token>"
 export LIGHTSPEED_UNIVERSE="<universe UUID or handle>"
 lightspeed chat --session "<session-id>"
 ```

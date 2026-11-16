@@ -3,7 +3,7 @@
 //! sessions and count descendants, read tool invocations and blobs.
 //!
 //! Everything goes through the universe's in-process `GatewayAgentApi` at
-//! the same boundaries the JSON-RPC methods expose (`session/start`,
+//! the same boundaries the public operations expose (`session/start`,
 //! `session/runs/start`, `session/context/append`, ...), so a bot session is
 //! an ordinary integrated session whose lifecycle controller — and the receiver
 //! of every pushed `bot_*` invocation — is the bot controller workflow.
@@ -116,7 +116,6 @@ async fn read_session_view(
             run_limit: None,
         })
         .await?
-        .result
         .session)
 }
 
@@ -276,8 +275,7 @@ async fn list_descendants(
                 ..Default::default()
             })
             .await
-            .map_err(|error| activity_error("list descendant sessions", error))?
-            .result;
+            .map_err(|error| activity_error("list descendant sessions", error))?;
         sessions.extend(page.sessions);
         match page.next_cursor {
             Some(next) => cursor = Some(next),
@@ -532,7 +530,7 @@ pub async fn ensure_session(
     if let Some(dead) = started
         .as_ref()
         .ok()
-        .and_then(|outcome| closed_session_dead(&outcome.result.session))
+        .and_then(|outcome| closed_session_dead(&outcome.session))
     {
         return Ok(dead);
     }
@@ -662,7 +660,7 @@ pub async fn read_dead_sessions(
                     run_limit: Some(1),
                 })
                 .await
-                .map(|outcome| outcome.result.session);
+                .map(|outcome| outcome.session);
             if let Err(error) = &read
                 && error.kind != AgentApiErrorKind::NotFound
             {
@@ -732,8 +730,8 @@ pub async fn start_run(
         .await
     {
         Ok(response) => Ok(BotStartRunResult::Started {
-            finished: finished_status(response.result.run.status),
-            run_id: response.result.run.id,
+            finished: finished_status(response.run.status),
+            run_id: response.run.id,
         }),
         Err(error) => start_run_failure(error),
     }
@@ -801,7 +799,7 @@ pub async fn append_context(
             })
             .await
             .map_err(|error| activity_error("append event context", error))?;
-        check_context_append(&response.result)?;
+        check_context_append(&response)?;
     }
     Ok(())
 }
@@ -945,8 +943,7 @@ pub async fn read_tool_invocations(
                 wait_ms: None,
             })
             .await
-            .map_err(|error| activity_error("read session events", error))?
-            .result;
+            .map_err(|error| activity_error("read session events", error))?;
         for event in &page.events {
             cursor = cursor.max(event.cursor.seq);
             invocations.extend(tool_invocation(event));

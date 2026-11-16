@@ -7,7 +7,7 @@ import {
   parseWhatsAppMediaLocatorKey,
   whatsAppMediaScope,
 } from "../src/providers/whatsapp/media.js";
-import { UNIVERSE_A, UNIVERSE_B, fakeRpc } from "./fixtures.js";
+import { UNIVERSE_A, UNIVERSE_B, fakeHttp } from "./fixtures.js";
 
 const accountId = "primary";
 const scope = whatsAppMediaScope(UNIVERSE_A, accountId);
@@ -62,8 +62,8 @@ describe("WhatsApp media", () => {
         yield Buffer.from("media");
       })();
     });
-    const rpc = fakeRpc(() => ({ blobs: [{ blobRef: `sha256:${"c".repeat(64)}`, bytes: 11 }] }));
-    const core = new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc", fetch: rpc.fetch });
+    const api = fakeHttp(() => ({ blobs: [{ blobRef: `sha256:${"c".repeat(64)}`, bytes: 11 }] }));
+    const core = new CoreClient({ apiToken: "connector-test-runtime-token-1234567890", endpoint: "http://lightspeed.test/api/v1", fetch: api.fetch });
     const activities = createWhatsAppMediaActivities({
       universeId: UNIVERSE_A,
       accountId,
@@ -80,11 +80,11 @@ describe("WhatsApp media", () => {
     ).resolves.toEqual({
       item: { blobRef: `sha256:${"c".repeat(64)}`, kind: "document", mime: "text/plain", name: "notes.txt" },
     });
-    expect(rpc.calls[0]).toMatchObject({
+    expect(api.calls[0]).toMatchObject({
       method: "blobs/put",
       params: { blobs: [{ bytesBase64: Buffer.from("hello media").toString("base64") }] },
     });
-    expect(rpc.calls[0]?.headers.get("x-lightspeed-universe")).toBe(UNIVERSE_A);
+    expect(api.calls[0]?.universe).toBe(UNIVERSE_A);
   });
 
   it("binds locators to the account inside its universe", async () => {
@@ -100,7 +100,7 @@ describe("WhatsApp media", () => {
       universeId: UNIVERSE_B,
       accountId,
       locatorKey,
-      core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://lightspeed.test/rpc" }).forUniverse(UNIVERSE_B),
+      core: new CoreClient({ apiToken: "connector-test-runtime-token-1234567890", endpoint: "http://lightspeed.test/api/v1" }).forUniverse(UNIVERSE_B),
       download,
     });
     await expect(

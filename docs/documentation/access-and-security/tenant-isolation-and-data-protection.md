@@ -13,7 +13,7 @@ The same boundary follows requests into storage and workflows.
 ## How the universe follows a request
 
 The Platform selects a universe after checking the person's membership and
-permissions. It sends the UUID or handle in `x-lightspeed-universe` along with
+permissions. It sends the UUID or handle in the resource URL along with
 its runtime token. The runtime resolves a service bound to that universe
 before dispatching resource operations.
 

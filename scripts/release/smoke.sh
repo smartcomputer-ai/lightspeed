@@ -104,7 +104,7 @@ probe_envd() {
   shift
   local status=0
   (cd "$probe_dir" && timeout 8 "$envd_bin" \
-    --gateway-url "wss://127.0.0.1:$probe_port/environment-gateway/connect" \
+    --gateway-url "wss://127.0.0.1:$probe_port/environments/connect" \
     --cwd "$probe_dir/cwd" --state-dir "$probe_dir/state" "$@") >"$log" 2>&1 || status=$?
   if [[ "$status" -ne 124 ]]; then
     echo "envd exited with status $status instead of retrying until the timeout:" >&2

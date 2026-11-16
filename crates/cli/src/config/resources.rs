@@ -36,7 +36,6 @@ impl Target {
         self.api
             .request::<Value, Value>(method, params)
             .await
-            .map(|outcome| outcome.result)
             .map_err(|error| anyhow!("{method}: {error}"))
     }
 

@@ -115,10 +115,10 @@ fresh runtime database and a new Temporal namespace. Every API enum and error ki
 is now camelCase, so clients and dashboards reading the old values need updating.
 
 Runtime caller access now uses configuration tokens. Before starting an
-authenticated runtime, supply `LIGHTSPEED_RPC_TOKEN` or named tokens such as
-`LIGHTSPEED_RPC_TOKEN_PLATFORM`; each supports a `_FILE` form. Give the Platform
-the matching value through `LIGHTSPEED_PLATFORM_RPC_TOKEN` or its `_FILE` form.
-Every token has full authority. Keep `/rpc` restricted to trusted components;
+authenticated runtime, supply `LIGHTSPEED_API_TOKEN` or named tokens such as
+`LIGHTSPEED_API_TOKEN_PLATFORM`; each supports a `_FILE` form. Give the Platform
+the matching value through `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE` form.
+Every token has full authority. Keep `/api/v1` restricted to trusted components;
 the runtime no longer enforces caller scopes or method groups.
 
 Migration 26 drops the `api_keys` table and rewrites stored key attribution to
@@ -138,16 +138,15 @@ and workflow consumers, and use a new namespace. Clients reading `createdBy`,
 Remove `deployment/api-keys/*` calls, `api-key` commands, and `apiKeys` entries
 from configuration documents. Deployment configuration documents are removed;
 universe documents remain. Direct SDK connections use `token` and explicitly
-select their universe. Configurator setup and connector startup are disabled;
-never replace their old restricted credentials with a full-authority runtime
-token. See [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
+select their universe. Configurator and connector runtime credentials are configured infrastructure
+tokens; keep these components trusted and enforce access at their own boundaries. See [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
 
 In `authenticated` mode, missing or invalid tokens receive HTTP 401 with an
-`unauthenticated` JSON-RPC error and a null `id`, before the body is read. Token
+`application/problem+json` error with kind `unauthenticated`, before the body is read. Token
 validation uses configuration and needs no database lookup. Universe resolution
 still uses PostgreSQL, so authenticated requests can fail if that store is
-unavailable. The CLI and SDKs preserve the typed error; a client calling `/rpc`
-itself must inspect both the HTTP status and JSON-RPC error. See
+unavailable. The CLI and SDKs preserve the typed error; a client calling the API
+itself must inspect the HTTP status and structured problem body. See
 [Gateway modes](../access-and-security/api-keys-and-service-access.md#gateway-modes).
 
 An extra header of a model provider's endpoint is now a tagged value, a
@@ -335,7 +334,7 @@ record how their recovery points fit together.
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Without it, open sessions can [restart from the runtime database](#restart-a-stopped-session), with [these losses](#move-a-breaking-release-to-a-new-namespace). Nothing rebuilds the rest. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
-| Deployment configuration and other stable secrets | Runtime RPC tokens, Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
+| Deployment configuration and other stable secrets | Runtime API tokens, Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
 | WhatsApp connector state, when used | The complete authentication directory and unchanged media-locator key preserve linked-device state and the ability to resolve sealed media locators. |
 | Machine/VM storage and daemon state | Real environment files, daemon identity, and persisted job records/output live outside the VFS and application databases. |
 | Release artifacts | The exact compatible images, executables, and manifests needed to run the restored state. |
@@ -346,7 +345,7 @@ recovery plan. A runtime database backup does not contain those disks.
 
 Preserve universe UUIDs and their Platform mappings. Secret encryption binds
 ciphertext to the universe UUID, secret ID, and kind, so relabeling restored
-records with a new UUID can make their credentials unreadable. Runtime RPC
+records with a new UUID can make their credentials unreadable. Runtime API
 tokens live in configuration or mounted secret files, not in PostgreSQL; restore
 those secrets and the matching trusted-client configuration separately.
 

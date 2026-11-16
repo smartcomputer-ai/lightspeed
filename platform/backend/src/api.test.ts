@@ -27,3 +27,23 @@ it.each([true, false, null])("serves public login settings without a session whe
   });
   expect(getSession).not.toHaveBeenCalled();
 });
+
+it("protects the shared API with browser authentication and typed HTTP problems", async () => {
+  const app = buildApp({ auth: { api: { getSession: async () => null } }, env: {} } as unknown as AppContext);
+  const response = await app.request("/api/v1/universes/acme/profiles");
+  expect(response.status).toBe(401);
+  expect(response.headers.get("content-type")).toBe("application/problem+json");
+  expect(await response.json()).toMatchObject({ kind: "unauthenticated", status: 401, detail: "authentication required" });
+});
+
+it.each([
+  { origin: "https://evil.example", cookie: "session=browser" },
+  { cookie: "session=browser", "sec-fetch-site": "cross-site" },
+  { cookie: "session=browser" },
+])("rejects unsafe cookie mutations before reaching the runtime: %j", async headers => {
+  const getSession = async () => ({ user: { id: "alice" }, session: { expiresAt: new Date(Date.now() + 60_000), createdAt: new Date() } });
+  const app = buildApp({ auth: { api: { getSession } }, env: { baseUrl: "https://platform.example", trustedOrigins: [] } } as unknown as AppContext);
+  const response = await app.request("/api/v1/universes/acme/sessions", { method: "POST", headers, body: "{}" });
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ kind: "forbidden", status: 403 });
+});

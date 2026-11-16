@@ -7,13 +7,13 @@ const key = Buffer.alloc(32, 1).toString("base64");
 describe("connector host configuration", () => {
   it("defaults to every provider and every account", () => {
     const config = parseHostConfig({
-      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
-      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc",
+      LIGHTSPEED_CONNECTOR_API_TOKEN: "connector-test-runtime-token-1234567890",
+      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/api/v1",
       LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR: "/var/lib/wa",
       LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY: key,
     });
     expect(config).toMatchObject({
-      apiUrl: "http://127.0.0.1:18080/rpc",
+      apiUrl: "http://127.0.0.1:18080/api/v1",
       providers: ["telegram", "whatsapp"],
       accounts: null,
       discoveryIntervalMs: 30_000,
@@ -27,12 +27,12 @@ describe("connector host configuration", () => {
   });
 
   it("needs the WhatsApp session directory and locator key only when WhatsApp is served", () => {
-    expect(() => parseHostConfig({ LIGHTSPEED_API_URL: "http://core/rpc" })).toThrow(
+    expect(() => parseHostConfig({ LIGHTSPEED_API_URL: "http://core/api/v1" })).toThrow(
       "LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR is required",
     );
     const telegramOnly = parseHostConfig({
-      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
-      LIGHTSPEED_API_URL: "http://core/rpc",
+      LIGHTSPEED_CONNECTOR_API_TOKEN: "connector-test-runtime-token-1234567890",
+      LIGHTSPEED_API_URL: "http://core/api/v1",
       LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
       LIGHTSPEED_CONNECTOR_ACCOUNTS: `${UNIVERSE_A}/tg-main, ${UNIVERSE_B}/tg-b,${UNIVERSE_A}/tg-main`,
       LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS: "5000",
@@ -58,8 +58,8 @@ describe("connector host configuration", () => {
 
   it("reads the Temporal TLS and API key settings into the host configuration", () => {
     const config = parseHostConfig({
-      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
-      LIGHTSPEED_API_URL: "http://core/rpc",
+      LIGHTSPEED_CONNECTOR_API_TOKEN: "connector-test-runtime-token-1234567890",
+      LIGHTSPEED_API_URL: "http://core/api/v1",
       LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
       TEMPORAL_ADDRESS: "temporal.internal:7233",
       TEMPORAL_TLS_SERVER_CA_FILE: "/etc/temporal/ca.pem",
@@ -73,8 +73,8 @@ describe("connector host configuration", () => {
     });
     expect(() =>
       parseHostConfig({
-        LIGHTSPEED_CONNECTOR_API_KEY: "lsk_test_connector",
-        LIGHTSPEED_API_URL: "http://core/rpc",
+        LIGHTSPEED_CONNECTOR_API_TOKEN: "connector-test-runtime-token-1234567890",
+        LIGHTSPEED_API_URL: "http://core/api/v1",
         LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
         TEMPORAL_TLS_CLIENT_CERT_FILE: "/etc/temporal/client.pem",
       }),

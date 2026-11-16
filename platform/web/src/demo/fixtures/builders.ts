@@ -811,7 +811,7 @@ export interface WebhookSpecInit {
 }
 
 /// A webhook trigger, stored with its capability-URL ingest path in the core
-/// shape: `/hooks/bots/{universeId}/{botId}/{triggerId}/{token}`.
+/// shape: `/ingress/webhooks/bots/{universeId}/{botId}/{triggerId}/{token}`.
 export function webhookTrigger(
   universe: UniverseState,
   botId: string,
@@ -824,7 +824,7 @@ export function webhookTrigger(
     kind: "webhook",
     verification: spec.verification ?? { scheme: "token" },
     preset: spec.preset ?? null,
-    ingestPath: `/hooks/bots/${universe.universe.lightspeedUniverseId}/${botId}/${triggerId}/${spec.token}`,
+    ingestPath: `/ingress/webhooks/bots/${universe.universe.lightspeedUniverseId}/${botId}/${triggerId}/${spec.token}`,
   } as StoredBotTrigger;
 }
 

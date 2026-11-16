@@ -904,7 +904,7 @@ mod tests {
                         serde_json::json!({
                             "client_id": "registered-client",
                             "client_secret": "registered-secret",
-                            "redirect_uris": ["https://lightspeed.example/credentials/callback"]
+                            "redirect_uris": ["https://lightspeed.example/ingress/credentials/callback"]
                         }),
                     ),
                     ("POST", "https://login.example/token") => Self::response(
@@ -974,7 +974,7 @@ mod tests {
         let started = begin_rmcp_authorization(
             &client,
             None,
-            "https://lightspeed.example/credentials/callback",
+            "https://lightspeed.example/ingress/credentials/callback",
             &client.scopes_default,
             client.audience.as_deref().unwrap(),
         )
@@ -1003,7 +1003,7 @@ mod tests {
         let client = driver
             .ensure_client(
                 &target(),
-                "https://lightspeed.example/credentials/callback",
+                "https://lightspeed.example/ingress/credentials/callback",
                 None,
             )
             .await
@@ -1051,17 +1051,18 @@ mod tests {
         let client = driver
             .ensure_client(
                 &target(),
-                "https://lightspeed.example/credentials/callback",
+                "https://lightspeed.example/ingress/credentials/callback",
                 Some(&CimdConfig {
-                    client_id_url: "https://lightspeed.example/credentials/client-metadata.json"
-                        .to_owned(),
+                    client_id_url:
+                        "https://lightspeed.example/ingress/credentials/client-metadata.json"
+                            .to_owned(),
                 }),
             )
             .await
             .unwrap();
         assert_eq!(
             client.remote_client_id,
-            "https://lightspeed.example/credentials/client-metadata.json"
+            "https://lightspeed.example/ingress/credentials/client-metadata.json"
         );
         assert!(client.client_secret.is_none());
         assert!(
@@ -1181,7 +1182,7 @@ mod tests {
             auth_method: TokenEndpointAuthMethod::ClientSecretPost,
             grant: OAuthTokenGrant::AuthorizationCode {
                 code: SecretValue::new("authorization-code"),
-                redirect_uri: "https://lightspeed.example/credentials/callback".to_owned(),
+                redirect_uri: "https://lightspeed.example/ingress/credentials/callback".to_owned(),
                 code_verifier: SecretValue::new("pkce-verifier"),
             },
             resource: Some("https://mcp.example/mcp".to_owned()),

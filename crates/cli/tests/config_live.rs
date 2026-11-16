@@ -5,8 +5,8 @@
 //! create universes and write every resource a document holds:
 //!
 //! ```bash
-//! LIGHTSPEED_CONFIG_LIVE_API_URL=http://127.0.0.1:18080/rpc \
-//! LIGHTSPEED_CONFIG_LIVE_RPC_TOKEN_FILE=/path/to/runtime-token \
+//! LIGHTSPEED_CONFIG_LIVE_API_URL=http://127.0.0.1:18080/api/v1 \
+//! LIGHTSPEED_CONFIG_LIVE_API_TOKEN_FILE=/path/to/runtime-token \
 //!   cargo test -p cli --test config_live -- --ignored --test-threads=1
 //! ```
 //!
@@ -28,10 +28,10 @@ struct Live {
 impl Live {
     fn from_env() -> Self {
         let api_url = std::env::var("LIGHTSPEED_CONFIG_LIVE_API_URL").expect(
-            "LIGHTSPEED_CONFIG_LIVE_API_URL must name the JSON-RPC endpoint of a running, authenticated runtime",
+            "LIGHTSPEED_CONFIG_LIVE_API_URL must name the HTTP API base URL of a running, authenticated runtime",
         );
-        let key_file = std::env::var("LIGHTSPEED_CONFIG_LIVE_RPC_TOKEN_FILE").expect(
-            "LIGHTSPEED_CONFIG_LIVE_RPC_TOKEN_FILE must name a file holding a runtime token",
+        let key_file = std::env::var("LIGHTSPEED_CONFIG_LIVE_API_TOKEN_FILE").expect(
+            "LIGHTSPEED_CONFIG_LIVE_API_TOKEN_FILE must name a file holding a runtime token",
         );
         let token = std::fs::read_to_string(&key_file)
             .unwrap_or_else(|error| panic!("read {key_file}: {error}"))
@@ -55,7 +55,7 @@ impl Live {
             .args(args)
             .env("LIGHTSPEED_CONFIG_DIR", self.path("cli-config"))
             .env("LIGHTSPEED_API_URL", &self.api_url)
-            .env("LIGHTSPEED_RPC_TOKEN", &self.token)
+            .env("LIGHTSPEED_API_TOKEN", &self.token)
             .env_remove("LIGHTSPEED_UNIVERSE");
         for (name, value) in secrets {
             command.env(name, value);
@@ -96,18 +96,7 @@ impl Live {
     }
 
     async fn call(&self, method: &str, params: Value) -> Value {
-        let response: Value = reqwest::Client::new()
-            .post(&self.api_url)
-            .bearer_auth(&self.token)
-            .json(&json!({ "id": 1, "method": method, "params": params }))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert!(response.get("error").is_none(), "{method}: {response}");
-        response["result"]["result"].clone()
+        self.call_as_optional(None, method, params).await
     }
 
     async fn delete_universe(&self, handle: &str) {
@@ -353,19 +342,36 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
 impl Live {
     /// Call a universe method directly, as an operator editing by hand would.
     async fn call_as(&self, universe: &str, method: &str, params: Value) -> Value {
-        let response: Value = reqwest::Client::new()
-            .post(&self.api_url)
-            .bearer_auth(&self.token)
-            .header("x-lightspeed-universe", universe)
-            .json(&json!({ "id": 1, "method": method, "params": params }))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert!(response.get("error").is_none(), "{method}: {response}");
-        response["result"]["result"].clone()
+        self.call_as_optional(Some(universe), method, params).await
+    }
+    async fn call_as_optional(
+        &self,
+        universe: Option<&str>,
+        operation: &str,
+        params: Value,
+    ) -> Value {
+        let parts = api::http_request(operation, universe, params).unwrap();
+        let url = format!(
+            "{}{}",
+            self.api_url.trim_end_matches('/'),
+            parts.path.strip_prefix("/api/v1").unwrap()
+        );
+        let mut request = reqwest::Client::new()
+            .request(
+                reqwest::Method::from_bytes(parts.method.as_str().as_bytes()).unwrap(),
+                url,
+            )
+            .bearer_auth(&self.token);
+        if let Some(body) = parts.body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.unwrap();
+        assert!(
+            response.status().is_success(),
+            "{operation}: {}",
+            response.status()
+        );
+        response.json().await.unwrap()
     }
 }
 

@@ -111,12 +111,12 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
   const inventory = useQuery({
     queryKey: ["secrets", universeId],
     queryFn: () =>
-      api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
+      api<SecretsInventory>("GET", `/api/ui/universes/${universeId}/secrets`),
   });
   const github = useQuery({
     queryKey: ["integrations", "github", universeId],
     queryFn: () =>
-      api<GitHubIntegration>("GET", `/api/v1/universes/${universeId}/integrations/github`),
+      api<GitHubIntegration>("GET", `/api/ui/universes/${universeId}/integrations/github`),
   });
   const invalidate = () =>
     Promise.all([
@@ -130,7 +130,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
     mutationFn: (grantId: string) =>
       api<SecretGrant>(
         "DELETE",
-        `/api/v1/universes/${universeId}/secrets/grants/${encodeURIComponent(grantId)}`,
+        `/api/ui/universes/${universeId}/secrets/grants/${encodeURIComponent(grantId)}`,
       ),
     onSuccess: () => void invalidate(),
   });
@@ -509,7 +509,7 @@ function PasteCredentialDialog({
       if (kind === "environment") {
         return api<SecretGrant>(
           "POST",
-          `/api/v1/universes/${universeId}/secrets/environment`,
+          `/api/ui/universes/${universeId}/secrets/environment`,
           {
             value: secret,
             ...(grantId.trim() ? { grantId: grantId.trim() } : {}),
@@ -519,7 +519,7 @@ function PasteCredentialDialog({
       }
       return api<SecretGrant>(
         "POST",
-        `/api/v1/universes/${universeId}/secrets/grants`,
+        `/api/ui/universes/${universeId}/secrets/grants`,
         {
           token: secret,
           exposure: retrievable ? "retrievable" : "brokered",
@@ -727,7 +727,7 @@ function ReplaceValueDialog({
     mutationFn: () =>
       api<SecretGrant>(
         "POST",
-        `/api/v1/universes/${universeId}/secrets/grants/${encodeURIComponent(grant!.grantId)}/replace`,
+        `/api/ui/universes/${universeId}/secrets/grants/${encodeURIComponent(grant!.grantId)}/replace`,
         { value },
       ),
     onSuccess: () => {

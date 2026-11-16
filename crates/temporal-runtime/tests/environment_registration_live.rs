@@ -102,13 +102,10 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let base_url = format!("http://{address}");
-    let connect_url = format!("ws://{address}/environment-gateway/connect");
+    let connect_url = format!("ws://{address}/environments/connect");
     // A second name for the same listener: accepted only because it is a
     // configured registration URL.
-    let alias_connect_url = format!(
-        "ws://localhost:{}/environment-gateway/connect",
-        address.port()
-    );
+    let alias_connect_url = format!("ws://localhost:{}/environments/connect", address.port());
     let runtime = Arc::new(UniverseRuntime::new(
         client,
         format!("environment-registration-live-{suffix}"),
@@ -179,7 +176,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         .await
     });
     let http = reqwest::Client::new();
-    for path in ["/environment-gateway/connect", "/environment-gateway/data"] {
+    for path in ["/environments/connect", "/environments/data"] {
         let status = http
             .get(format!("{api_only_url}{path}"))
             .send()
@@ -199,7 +196,7 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         reqwest::StatusCode::OK
     );
     assert_ne!(
-        http.get(format!("{base_url}/environment-gateway/connect"))
+        http.get(format!("{base_url}/environments/connect"))
             .send()
             .await?
             .status(),
@@ -273,8 +270,7 @@ async fn ephemeral_scenario(
             declared_only: false,
             expires_at_ms: None,
         })
-        .await?
-        .result;
+        .await?;
     let key_id = minted.registration_key.registration_key_id.clone();
     let secret = minted.secret.0.clone();
     assert!(secret.starts_with("lsrk_"));
@@ -651,8 +647,7 @@ async fn persistent_scenario(
             declared_only: false,
             expires_at_ms: None,
         })
-        .await?
-        .result;
+        .await?;
     let key_id = minted.registration_key.registration_key_id.clone();
     let first_secret = minted.secret.0.clone();
 
@@ -739,8 +734,7 @@ async fn persistent_scenario(
         .rotate_environment_registration_key(EnvironmentRegistrationKeyRotateParams {
             registration_key_id: key_id.clone(),
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(rotated.registration_key.registration_key_id, key_id);
     assert_eq!(
         rotated.registration_key.identity_mode,
@@ -819,8 +813,7 @@ async fn persistent_scenario(
             declared_only: false,
             expires_at_ms: None,
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(updated.registration_key.offline_close_after_ms, Some(1_000));
     assert_eq!(
         updated.registration_key.display_name,
@@ -894,8 +887,7 @@ async fn ephemeral_grace_scenario(
             declared_only: false,
             expires_at_ms: None,
         })
-        .await?
-        .result;
+        .await?;
     let short_key_id = short.registration_key.registration_key_id.clone();
     let root_d = workspace(sandbox, "d")?;
     let daemon_d = spawn_daemon(daemon_config(
@@ -970,8 +962,7 @@ async fn declared_scenario(
             declared_only: true,
             expires_at_ms: None,
         })
-        .await?
-        .result;
+        .await?;
     assert!(minted.registration_key.declared_only);
     let secret = minted.secret.0.clone();
     // Every daemon here presents the same secret and the same name; only
@@ -1019,7 +1010,7 @@ async fn declared_scenario(
     );
 
     // Declared: it exists at once, away, with its name and no daemon.
-    let declared = declare("build-box", "runner-0").await?.result;
+    let declared = declare("build-box", "runner-0").await?;
     assert!(declared.created);
     let waiting = &declared.environment;
     assert_eq!(waiting.environment_id, "build-box");
@@ -1033,7 +1024,7 @@ async fn declared_scenario(
             ..
         } if registration_key_id == KEY && name == "runner-0"
     ));
-    assert!(!declare("build-box", "runner-0").await?.result.created);
+    assert!(!declare("build-box", "runner-0").await?.created);
     for (environment_id, name) in [("build-box", "runner-1"), ("other-box", "runner-0")] {
         assert_eq!(
             declare(environment_id, name).await.unwrap_err().kind,
@@ -1114,8 +1105,7 @@ async fn declared_scenario(
         .release_registered_environment(EnvironmentRegisteredReleaseParams {
             environment_id: "build-box".to_owned(),
         })
-        .await?
-        .result;
+        .await?;
     assert!(released.released);
     assert_eq!(released.environment.state, EnvironmentStateView::Open);
     assert_eq!(daemon_of(&released.environment), None);
@@ -1142,13 +1132,12 @@ async fn declared_scenario(
     client.close().await?;
 
     // Nothing to release where no daemon is bound.
-    assert!(declare("spare-box", "runner-1").await?.result.created);
+    assert!(declare("spare-box", "runner-1").await?.created);
     assert!(
         !api.release_registered_environment(EnvironmentRegisteredReleaseParams {
             environment_id: "spare-box".to_owned(),
         })
         .await?
-        .result
         .released
     );
 
@@ -1167,7 +1156,6 @@ async fn declared_scenario(
         assert_eq!(
             external("declared-live-external", "ext-box")
                 .await?
-                .result
                 .environment
                 .environment_id,
             "ext-box"
@@ -1204,7 +1192,7 @@ async fn declared_scenario(
         declare("build-box", "runner-0").await.unwrap_err().kind,
         AgentApiErrorKind::Conflict
     );
-    assert!(declare("build-box-2", "runner-0").await?.result.created);
+    assert!(declare("build-box-2", "runner-0").await?.created);
 
     // Revoking the key with its environments closes the waiting ones too.
     let revoked = api
@@ -1212,8 +1200,7 @@ async fn declared_scenario(
             registration_key_id: KEY.to_owned(),
             close_environments: true,
         })
-        .await?
-        .result;
+        .await?;
     let mut closed = revoked.closed_environment_ids.clone();
     closed.sort();
     assert_eq!(closed, ["build-box-2", "spare-box"]);
@@ -1696,7 +1683,6 @@ async fn read_key(
             registration_key_id: key_id.to_owned(),
         })
         .await?
-        .result
         .registration_key)
 }
 
@@ -1763,7 +1749,6 @@ async fn list_by_key(
             ..EnvironmentListParams::default()
         })
         .await?
-        .result
         .environments)
 }
 
@@ -1780,7 +1765,6 @@ async fn wait_for_environment(
                 environment_id: environment_id.to_owned(),
             })
             .await?
-            .result
             .environment;
         if ready(&environment) {
             return Ok(environment);

@@ -553,7 +553,7 @@ mod tests {
     fn start_request() -> StartCredentialFlow {
         StartCredentialFlow {
             client_id: OAuthClientId::new("crm"),
-            redirect_uri: "https://lightspeed.example.com/credentials/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/ingress/credentials/callback".to_owned(),
             scopes: None,
             audience: None,
             grant_exposure: CredentialGrantExposure::Brokered,

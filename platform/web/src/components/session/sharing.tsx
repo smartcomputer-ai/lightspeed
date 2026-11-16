@@ -90,7 +90,7 @@ export function ShareSessionDialog({
 }) {
   const queryClient = useQueryClient();
   const share = useMutation({
-    mutationFn: () => api<{ access: ResourceAccessSummary }>("POST", `/api/v1/universes/${universeId}/sessions/${sessionId}/share`),
+    mutationFn: () => api<{ access: ResourceAccessSummary }>("POST", `/api/ui/universes/${universeId}/sessions/${sessionId}/share`),
     onSuccess: async () => {
       onOpenChange(false);
       await Promise.all([

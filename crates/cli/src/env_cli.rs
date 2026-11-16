@@ -388,8 +388,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     expires_at_ms,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_secret(&response.registration_key, &response.secret.0)
             })
@@ -409,8 +408,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     secret: api::EnvironmentRegistrationSecretView(args.secret.read()?),
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_key(&response.registration_key);
                 println!();
@@ -438,8 +436,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     expires_at_ms,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_key(&response.registration_key)
             })
@@ -450,8 +447,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     registration_key_id: args.registration_key_id,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_secret(&response.registration_key, &response.secret.0)
             })
@@ -460,8 +456,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             let response = HttpAgentApi::new(args.api_url)
                 .list_environment_registration_keys(api::EnvironmentRegistrationKeyListParams {})
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 if response.registration_keys.is_empty() {
                     println!("No environment registration keys found.");
@@ -477,8 +472,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     registration_key_id: args.registration_key_id,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_key(&response.registration_key)
             })
@@ -490,8 +484,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     close_environments: args.close_environments,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.common.json, &response, || {
                 print_registration_key(&response.registration_key);
                 for environment_id in &response.closed_environment_ids {
@@ -513,7 +506,7 @@ fn print_registration_secret(key: &api::EnvironmentRegistrationKeyView, secret: 
     println!("  {secret}");
     println!();
     println!("Bootstrap a daemon with:");
-    println!("  LIGHTSPEED_ENVD_GATEWAY_URL=wss://<gateway>/environment-gateway/connect");
+    println!("  LIGHTSPEED_ENVD_GATEWAY_URL=wss://<gateway>/environments/connect");
     println!("  LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE=<file holding the key>");
     println!("  lightspeed-envd");
 }
@@ -525,8 +518,7 @@ async fn power(args: PowerArgs) -> Result<()> {
             power: args.power.into(),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.common.json {
         crate::output::show(true, &response)
     } else {
@@ -545,8 +537,7 @@ async fn update(args: EnvUpdateArgs) -> Result<()> {
             metadata: args.metadata.map(),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     crate::output::show(args.common.json, &response.environment)
 }
 
@@ -562,8 +553,7 @@ async fn list(args: EnvListArgs) -> Result<()> {
             ..Default::default()
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.common.json {
         crate::output::show(true, &response)
     } else {
@@ -589,8 +579,7 @@ async fn read(args: EnvironmentResourceArgs) -> Result<()> {
         .read_environment(api::EnvironmentReadParams {
             environment_id: args.environment_id,
         })
-        .await?
-        .result;
+        .await?;
     crate::output::show(args.json, &response.environment)
 }
 
@@ -600,8 +589,7 @@ async fn close(args: EnvironmentResourceArgs) -> Result<()> {
             environment_id: args.environment_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     print_json_or(args.json, &response, || {
         if response.environment.state == api::EnvironmentStateView::Closed {
             println!("Closed {}.", response.environment.environment_id);
@@ -635,8 +623,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
                     source,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.common.json, &response, || {
                 print_credential(&response.credential)
             })
@@ -647,8 +634,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
                     environment_id: args.environment_id,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 if response.credentials.is_empty() {
                     println!("No credentials bound to this environment.");
@@ -665,8 +651,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
                     env_name: args.env_name,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.common.json, &response, || {
                 print_credential(&response.credential)
             })
@@ -829,8 +814,7 @@ async fn create(args: CreateArgs) -> Result<()> {
                 idle: None,
             },
         )
-        .await?
-        .result;
+        .await?;
     if !args.common.json {
         println!("Provisioning requested; use environment read to inspect progress.");
     }
@@ -854,8 +838,7 @@ async fn register(args: RegisterArgs) -> Result<()> {
                 metadata: args.metadata.map(),
             },
         )
-        .await?
-        .result;
+        .await?;
     crate::output::show(args.common.json, &response.environment)
 }
 async fn declare(args: DeclareArgs) -> Result<()> {
@@ -870,8 +853,7 @@ async fn declare(args: DeclareArgs) -> Result<()> {
                 metadata: args.metadata.map(),
             },
         )
-        .await?
-        .result;
+        .await?;
     if args.common.json {
         return crate::output::show(true, &response);
     }
@@ -895,8 +877,7 @@ async fn release(args: EnvironmentResourceArgs) -> Result<()> {
                 environment_id: args.environment_id,
             },
         )
-        .await?
-        .result;
+        .await?;
     if args.json {
         return crate::output::show(true, &response);
     }
@@ -930,8 +911,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                         enabled,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.binding)
         }
         BindingCommand::Delete { provider_id, json } => {
@@ -943,8 +923,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                         provider_id,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if !json {
                 println!("Deleted environment provider binding.");
             }
@@ -956,8 +935,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                     api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST,
                     api::EnvironmentProviderBindingListParams {},
                 )
-                .await?
-                .result;
+                .await?;
             if args.json {
                 crate::output::show(true, &response)
             } else {
@@ -974,8 +952,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
                     api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ,
                     api::EnvironmentProviderBindingReadParams { provider_id },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.binding)
         }
     }
@@ -991,8 +968,7 @@ async fn template(args: TemplateArgs) -> Result<()> {
                         provider_id: provider,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if json {
                 crate::output::show(true, &response)
             } else {
@@ -1022,8 +998,7 @@ async fn template(args: TemplateArgs) -> Result<()> {
                         template_id,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.template)
         }
     }
@@ -1037,8 +1012,7 @@ async fn ingress(args: IngressArgs) -> Result<()> {
                 enabled: args.enable,
             },
         )
-        .await?
-        .result;
+        .await?;
     crate::output::show(args.common.json, &response.environment)
 }
 
@@ -1121,8 +1095,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST,
                     api::DeploymentEnvironmentProviderListParams {},
                 )
-                .await?
-                .result;
+                .await?;
             if json {
                 crate::output::show(true, &response)
             } else {
@@ -1144,8 +1117,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ,
                     api::DeploymentEnvironmentProviderReadParams { provider_id },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.provider)
         }
         ProviderCommand::Put(args) => {
@@ -1176,8 +1148,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                         clear_credential: args.clear_credential,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(args.json, &response.provider)
         }
         ProviderCommand::Delete { provider_id, json } => {
@@ -1186,8 +1157,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE,
                     api::DeploymentEnvironmentProviderDeleteParams { provider_id },
                 )
-                .await?
-                .result;
+                .await?;
             if !json {
                 println!("Deleted environment provider controller.");
             }

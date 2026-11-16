@@ -69,7 +69,7 @@ export function channelAccountAdminRoutes(ctx: AppContext) {
       const response = await client.call("deployment/channels/accounts/list", {
         includeDisabled: true,
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -114,7 +114,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
       const response = await client.call("channels/accounts/list", {
         provider: c.req.query("provider"),
       } as unknown as ChannelAccountListParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -133,7 +133,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
       const response = await client.call("channels/accounts/create", {
         account,
       } as unknown as ChannelAccountCreateParams);
-      return c.json(response.result, 201);
+      return c.json(response, 201);
     });
   });
 
@@ -161,7 +161,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
             settings: { printQr: input.printQr },
           },
         } as ChannelAccountCreateParams);
-        return c.json(response.result, 201);
+        return c.json(response, 201);
       });
     }
 
@@ -201,14 +201,14 @@ export function channelUniverseRoutes(ctx: AppContext) {
             provider: "telegram",
             providerAccountId: identity.username,
             displayName,
-            credentialGrantId: imported.result.grant.grantId,
+            credentialGrantId: imported.grant.grantId,
             settings: {},
           },
         } as ChannelAccountCreateParams);
-        return c.json(response.result, 201);
+        return c.json(response, 201);
       } catch (error) {
         await client.call("credentials/grants/revoke", {
-          grantId: imported.result.grant.grantId,
+          grantId: imported.grant.grantId,
         }).catch(() => undefined);
         throw error;
       }
@@ -225,7 +225,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
       const response = await client.call("channels/accounts/read", {
         accountId: c.req.param("accountId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -245,7 +245,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
         account: { ...account, accountId: c.req.param("accountId") },
         expectedRevision: body.expectedRevision,
       } as unknown as ChannelAccountPutParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -259,7 +259,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
       const response = await client.call("channels/accounts/delete", {
         accountId: c.req.param("accountId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -274,7 +274,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
         accountId: c.req.query("accountId"),
         botId: c.req.query("botId"),
       } as unknown as ChannelPairingListParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -289,7 +289,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
         accountId: c.req.param("accountId"),
         chatId: c.req.param("chatId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 

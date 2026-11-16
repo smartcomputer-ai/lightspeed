@@ -203,19 +203,43 @@ session and its sub-agents, once and for good. The session header marks private
 work with a lock and shared work with people; lists mark only shared sessions.
 Bots and their conversations are always shared.
 
-**Runtime access.** `LIGHTSPEED_PLATFORM_RPC_TOKEN`, or
-`LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`, supplies the Platform's full-authority
+**Runtime access.** `LIGHTSPEED_PLATFORM_API_TOKEN`, or
+`LIGHTSPEED_PLATFORM_API_TOKEN_FILE`, supplies the Platform's full-authority
 runtime credential. Configure the same secret among the runtime's
-`LIGHTSPEED_RPC_TOKEN` values. The runtime must run in `authenticated` mode.
+`LIGHTSPEED_API_TOKEN` values. The runtime must run in `authenticated` mode.
 It no longer stores or issues caller API keys, and the universe and deployment
 API-key pages have been removed. Follow
 [Runtime service access](../docs/documentation/access-and-security/api-keys-and-service-access.md)
 for configuration and rotation.
 
-The connector host and Configurator setup are disabled. Configurator must not
+The development launcher does not start the connector host or Configurator.
+The connector can run manually as a trusted runtime service with an explicit
+`LIGHTSPEED_CONNECTOR_API_TOKEN`. The Configurator setup remains unavailable. Configurator must not
 receive a runtime token for use by an agent. Its replacement will use a
 restricted Platform token. Operators and Admins see the unavailable template;
 installation performs no credential or resource writes.
+
+## HTTP surfaces
+
+`/api/v1` is the shared runtime resource API. Hono registrations come from the
+SDK's generated HTTP catalog, with a reviewed operation admission registry.
+Browser sessions supply identity; the backend authorizes universe membership,
+roles, features and session visibility before using its configured runtime
+credential. Unknown operations and service-only credential leases, connector
+ingress and deployment discovery are denied.
+
+Most request bodies stream unchanged to the runtime, which owns wire validation.
+Session creation and run overrides have bounded policy inspection; inspected
+JSON rejects unsafe integer values before rewriting. Responses, blobs and named
+SSE events stream with cancellation and backpressure. Runtime contract revision
+admission prevents forwarding to a mismatched deployment. Native universe
+creation, handle changes and deletion coordinate Platform records with runtime
+state rather than bypassing the existing lifecycle services.
+
+`/api/ui` contains browser composition and management adapters. The web watch
+uses `/api/v1/universes/{universe}/events` directly. Better Auth retains
+`/api/auth`; login discovery retains `/api/login-config`. The demo follows the
+same URL separation and named event stream format.
 
 ## Development
 
@@ -309,7 +333,7 @@ The server accepts the following primary configuration names:
 
 - `LIGHTSPEED_PLATFORM_DATABASE_URL`;
 - `LIGHTSPEED_PLATFORM_AUTH_SECRET`;
-- `LIGHTSPEED_PLATFORM_RPC_TOKEN` or `LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`;
+- `LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`;
 - `LIGHTSPEED_PLATFORM_BASE_URL`;
 - `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`;
 - `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and

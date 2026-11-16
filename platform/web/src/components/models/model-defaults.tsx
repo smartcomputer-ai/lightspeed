@@ -30,7 +30,7 @@ export function ModelDefaultsSection({ universeId, writable, onEdit }: { univers
   const discovery = useModelDiscovery(universeId);
   const queryClient = useQueryClient();
   const clear = useMutation({
-    mutationFn: ({ revision, slot }: { revision: number; slot: DefaultSlot }) => api<ModelDefaults>("PUT", `/api/v1/universes/${universeId}/models/defaults`, {
+    mutationFn: ({ revision, slot }: { revision: number; slot: DefaultSlot }) => api<ModelDefaults>("PUT", `/api/ui/universes/${universeId}/models/defaults`, {
       slot, model: null, expectedRevision: revision,
     } satisfies ModelDefaultsPutParams),
     onSuccess: (value) => queryClient.setQueryData(modelDefaultsKey(universeId), value),
@@ -102,7 +102,7 @@ export function DefaultModelDialog({ universeId, initial, slot, onClose }: { uni
   const params: ModelDefaultsPutParams = { slot, model: clean, expectedRevision: revision };
   const valid = modelDefaultsPutSchema.safeParse(params).success;
   const save = useMutation({
-    mutationFn: () => api<ModelDefaults>("PUT", `/api/v1/universes/${universeId}/models/defaults`, params),
+    mutationFn: () => api<ModelDefaults>("PUT", `/api/ui/universes/${universeId}/models/defaults`, params),
     onSuccess: (value) => { queryClient.setQueryData(modelDefaultsKey(universeId), value); onClose(); },
   });
   const conflict = save.error instanceof ApiError && save.error.status === 409;
@@ -110,7 +110,7 @@ export function DefaultModelDialog({ universeId, initial, slot, onClose }: { uni
     setReloading(true);
     setReloadError(null);
     try {
-      const latest = await api<ModelDefaults>("GET", `/api/v1/universes/${universeId}/models/defaults`);
+      const latest = await api<ModelDefaults>("GET", `/api/ui/universes/${universeId}/models/defaults`);
       queryClient.setQueryData(modelDefaultsKey(universeId), latest);
       setRevision(latest.revision);
       setModel(latest[slot] ?? emptyModel);

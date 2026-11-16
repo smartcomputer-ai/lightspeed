@@ -107,7 +107,7 @@ be changed afterwards, and a revoked key is never
 restored, so either needs a new key id. A supplied secret is `lsrk_` followed
 by 32 random bytes encoded as base64url without padding.
 
-Daemons dial `wss://<public host>/environment-gateway/connect`, the route the
+Daemons dial `wss://<public host>/environments/connect`, the route the
 public edge publishes; see
 [Self-hosting](../deployment/self-hosting.md#configure-the-public-edge).
 Inside the same Kubernetes cluster as the runtime, they can instead dial the
@@ -115,7 +115,7 @@ environment gateway's Service directly:
 
 1. On the process running the `environment-gateway` role, add the in-cluster
    URL to `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, for example
-   `ws://lightspeed-environment-gateway.lightspeed.svc.cluster.local:18083/environment-gateway/connect`.
+   `ws://lightspeed-environment-gateway.lightspeed.svc.cluster.local:18083/environments/connect`.
    Daemons sign the origin they dial, and the gateway accepts only the
    origins it is configured with.
 2. Set `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY=true` on the daemons when the
@@ -124,7 +124,7 @@ environment gateway's Service directly:
    network policy.
 
 The Service can route to multiple environment-gateway replicas. Publish both
-`/environment-gateway/connect` and `/environment-gateway/data`; they may land
+`/environments/connect` and `/environments/data`; they may land
 on different replicas. Configure each gateway's direct peer URL and the shared
 gateway token as described in [networking and ingress](networking-and-ingress.md).
 
@@ -190,7 +190,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: LIGHTSPEED_ENVD_GATEWAY_URL
-              value: wss://lightspeed.example.com/environment-gateway/connect
+              value: wss://lightspeed.example.com/environments/connect
             - name: LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE
               value: /etc/lightspeed-envd/registration-key
             - name: LIGHTSPEED_ENVD_REGISTRATION_NAME
@@ -405,7 +405,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: LIGHTSPEED_ENVD_GATEWAY_URL
-              value: wss://lightspeed.example.com/environment-gateway/connect
+              value: wss://lightspeed.example.com/environments/connect
             - name: LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE
               value: /etc/lightspeed-envd/registration-key
             - name: LIGHTSPEED_ENVD_REGISTRATION_NAME
@@ -469,7 +469,7 @@ Install the binary at `/usr/local/bin/lightspeed-envd`, create the
 `0600`. Then create `/etc/lightspeed-envd/envd.env`:
 
 ```bash
-LIGHTSPEED_ENVD_GATEWAY_URL=wss://lightspeed.example.com/environment-gateway/connect
+LIGHTSPEED_ENVD_GATEWAY_URL=wss://lightspeed.example.com/environments/connect
 LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE=/etc/lightspeed-envd/registration-key
 LIGHTSPEED_ENVD_STATE_DIR=/var/lib/lightspeed-envd
 LIGHTSPEED_ENVD_CWD=/srv/lightspeed/workspace
@@ -533,7 +533,7 @@ directory listed in `ReadWritePaths` and set
 | Two pods take turns connecting, one exits with status 5 | Both use one state directory. Give every pod its own volume. |
 | Registration is refused because the signature does not verify | The URL the daemon dials is not the public base URL or one of `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. |
 | The daemon refuses a `ws://` gateway URL | Set `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY=true`, or use `wss://`. |
-| Pods connect but commands cannot route | `/environment-gateway/data` does not reach the same environment-gateway process as `/environment-gateway/connect`. |
+| Pods connect but commands cannot route | `/environments/data` does not reach the same environment-gateway process as `/environments/connect`. |
 | Closed environments of an ephemeral fleet accumulate | Closed registered environments stay listed, because a spent identity can never return. Hide them with the default list, which omits closed environments. |
 
 The [environment-variable reference](../reference/environment-variables.md#environment-daemon)

@@ -64,7 +64,7 @@ export function App() {
   }, [session.data?.session.expiresAt]);
   const location = useLocation();
   const me = useQuery({ queryKey: ["me", session.data?.user.id], enabled: !!session.data,
-    queryFn: () => api<{ user: SessionUser }>("GET", "/api/v1/me"), retry: false,
+    queryFn: () => api<{ user: SessionUser }>("GET", "/api/ui/me"), retry: false,
   });
 
   if (DebugRoutes && location.pathname.startsWith("/debug/")) {

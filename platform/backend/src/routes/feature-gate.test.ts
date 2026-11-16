@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -24,9 +25,9 @@ function setup(features: Record<string, boolean>) {
       requests.push({ url });
       return Response.json({});
     }
-    const rpc = JSON.parse(String(init?.body));
-    requests.push({ url, method: rpc.method });
-    return Response.json({ id: rpc.id, result: { result: {}, notifications: [] } });
+    const request = decodeHttpRequest(input as string | Request | URL, init);
+    requests.push({ url, method: request.method });
+    return Response.json({});
   }));
   // Each request reads the universe, then the caller's membership.
   const reads = () => {
@@ -40,8 +41,8 @@ function setup(features: Record<string, boolean>) {
   const ctx = {
     db: { select: () => chain },
     env: {
-      lightspeedApiUrl: "https://core.example/rpc",
-      lightspeedRpcToken: "lsr_fixture",
+      lightspeedApiUrl: "https://core.example/api/v1",
+      lightspeedApiToken: "lsr_fixture",
       channelsHealthUrls: ["https://connector.example/"],
     },
   } as unknown as AppContext;
@@ -105,7 +106,7 @@ it("serves channels once both switches are on", async () => {
   expect((await request("GET", "/channel-accounts")).status).toBe(200);
   expect((await request("GET", "/channel-status")).status).toBe(200);
   expect(requests).toEqual([
-    { url: "https://core.example/rpc", method: "channels/accounts/list" },
+    { url: "https://core.example/api/v1/universes/33333333-3333-4333-8333-333333333333/channels/accounts", method: "channels/accounts/list" },
     { url: "https://connector.example/healthz" },
   ]);
 });

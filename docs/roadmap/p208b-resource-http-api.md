@@ -1,8 +1,9 @@
 # P208b — A resource-oriented HTTP API
 
-**Status:** Design for review, 2026-11-16. The move from JSON-RPC to a
-resource-oriented HTTP client API is agreed. The implementation below is
-proposed; no HTTP API migration has started.
+**Status:** HTTP cutover implemented; final integration validation in progress,
+2026-11-16. Runtime, SDKs, CLI and Platform now use the resource contract.
+Application JSON-RPC transport and generated artifacts are removed. Platform
+personal/service-account tokens remain in P209.
 
 This accompanies [runtime access simplification](p208-runtime-access-simplification.md)
 and changes the transport assumed by
@@ -47,13 +48,13 @@ tenant rules without parsing JSON. They do not replace application policy:
 membership, session visibility, transcription ownership and Contributor input
 restrictions still require Platform's authorization logic.
 
-## What exists today
+## Starting point
 
 There are 146 declared client operations: 129 universe, connection or service
 operations and 17 deployment operations. The count is an inventory of this
 checkout, not a target that future releases must preserve.
 
-- [The API declarations](../../crates/api/src/rpc.rs) produce dispatch and
+- [The API declarations](../../crates/api/src/operations.rs) produce dispatch and
   metadata from `api_methods!`; deployment has a similar declaration in
   [deployment.rs](../../crates/api/src/deployment.rs).
 - [Service interfaces](../../crates/api/src/service.rs) and DTOs are already
@@ -208,12 +209,13 @@ methods return base64 JSON. These need deliberate adapter/service work, not
 just new URLs. Stream handles remain runtime types; their event items and
 metadata have public schemas.
 
-Generate a closed HTTP response enum from each operation's declared variants.
-The response adapter returns that enum, and a shared encoder implements its
-status, headers and body. An existing `created` flag, for example, can select
-the declared `200` or `201` variant. Do not allow an arbitrary `IntoResponse`
-implementation to circumvent the declared status set. Custom response mapping
-has conformance tests just as custom input assembly does.
+Bindings select a closed success policy: `200`, `201`, or the declared
+`200`/`201` pair selected by a required boolean `created` field. The exporter
+checks that selector against the typed result schema; the shared encoder
+enforces it at runtime. Typed service results remain the response DTOs.
+Additional status variants require an explicit policy and matching contract,
+rather than an arbitrary `IntoResponse` implementation bypassing the declared
+set. Response mapping has conformance tests just as input assembly does.
 
 Explicitly account for `HEAD` and `OPTIONS`. Axum's automatic `HEAD` support
 for a `GET` route must not bypass admission or accidentally open an SSE
@@ -729,6 +731,57 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   [problem details, RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).
 
 ## Progress
+
+- 2026-11-16: implemented all 146 existing operations as catalog-generated
+  typed runtime HTTP bindings, plus `blobs/upload` for binary PUT. Added
+  direct DTO responses, connection discovery, structured HTTP problems,
+  strict path/query/body partitioning, named SSE and bounded binary transfers.
+  Uploads spool and verify length/digest before storage admission. Preserved
+  configured-token authority, attribution, retry identities and listener
+  isolation. Applied `/ingress` and `/environments` across callers and guides.
+
+- 2026-11-16: exported `http.json`, OpenAPI 3.1 and the HTTP reference from
+  the same catalog, preserving canonical operation IDs. Generated SDK wire
+  types and server descriptors, added structural OpenAPI checks and included
+  the new artifacts in release checksums. The TypeScript/Python/CLI clients
+  still use RPC for transport; descriptors do not constitute client migration
+  or the Platform proxy implementation.
+
+- 2026-11-16: validation passed: `cargo test --workspace --locked` (3,405
+  passed, 367 ignored); exact workspace/all-target Clippy with warnings
+  denied; TypeScript typechecks and 111 SDK tests; 46 Python tests and mypy;
+  63 affected web tests; 56 launcher tests; 19 release-packaging tests;
+  OpenAPI validation, documentation checks/build, formatting and package-age
+  checks. CLI configuration-schema regeneration matched the committed file.
+  Three serialized local PostgreSQL/Temporal HTTP integration checks passed,
+  covering profile CRUD, binary integrity/ownership, watch events, token/actor
+  behavior and listener/OAuth isolation. The isolation check initially hit a
+  PostgreSQL pool connection timeout and passed on isolated retry. The
+  disposable database and object-store prefix were removed afterward.
+
+- 2026-11-16: cut over TypeScript, Python and Rust CLI transports to HTTP,
+  direct DTOs, problem details, named SSE and binary downloads. Platform
+  consumes generated routes with explicit admission and shared member policy;
+  browser adapters moved to `/api/ui`, with shared watch access under `/api/v1`.
+  Removed application RPC dispatch, response envelopes, request IDs, OpenRPC,
+  the old method manifest and their generation/release inputs. Runtime token
+  configuration now uses `LIGHTSPEED_API_TOKEN` and named/file variants;
+  Platform uses `LIGHTSPEED_PLATFORM_API_TOKEN`.
+
+- Final cutover validation is in progress. CLI tests (256 passed, 2 ignored),
+  launcher tests (56), release tests (19), OpenAPI lint and documentation
+  checks/build pass. Full workspace, Platform and local runtime integration
+  results will be recorded after the final run.
+
+- Remaining outside this transport cutover: P209 personal/service-account
+  authentication, its Platform-owned resource API, range support and composed
+  SDK work. Browser sessions use the shared API with existing Platform policy.
+
+- 2026-11-16: core implementation started after `cargo test --workspace
+  --locked` passed on the simplification baseline (3,378 passed, 366 ignored).
+  The core phase retains `/rpc` for existing callers until client transport
+  migration and final cutover. This is temporary coexistence, not completion
+  of the single-transport cutover or the Platform adapter prototype.
 
 - 2026-11-16: companion design written before implementation, following the
   decision to replace the shared JSON-RPC client transport. No API code or

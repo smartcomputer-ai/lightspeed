@@ -1,7 +1,7 @@
 //! Authentication of trusted components and resolution of request targets.
 //! Tokens have identical authority. Actor names provide attribution only.
 use super::request_context::RequestContext;
-use crate::config::RpcTokens;
+use crate::config::RuntimeTokens;
 use api::{AccessScope, AgentApiError, MethodScope};
 use axum::http::{HeaderMap, header};
 use uuid::Uuid;
@@ -49,19 +49,6 @@ pub fn unknown_method() -> AgentApiError {
     AgentApiError::invalid_request("unknown method")
 }
 
-/// The longest method name a log line repeats. The name is caller-supplied
-/// and a request body may be tens of megabytes, so a refusal never writes
-/// more of it than any real method needs.
-const MAX_LOGGED_METHOD_CHARS: usize = 128;
-
-/// The caller-supplied method name as a log line may repeat it.
-pub fn logged_method(method: &str) -> &str {
-    method
-        .char_indices()
-        .nth(MAX_LOGGED_METHOD_CHARS)
-        .map_or(method, |(end, _)| &method[..end])
-}
-
 /// Resolved once, before the request body is read.
 #[derive(Clone, Debug)]
 pub struct Caller {
@@ -77,36 +64,23 @@ fn bearer_secret(headers: &HeaderMap) -> Result<&str, AgentApiError> {
         .ok_or_else(AgentApiError::unauthenticated)
 }
 
-pub async fn resolve_caller(
-    tokens: &RpcTokens,
-    pool: &sqlx::PgPool,
+pub fn resolve_caller(
+    tokens: &RuntimeTokens,
     headers: &HeaderMap,
 ) -> Result<Caller, AgentApiError> {
     let secret = bearer_secret(headers)?;
     let token_name = tokens
         .authenticate(secret)
         .ok_or_else(AgentApiError::unauthenticated)?;
-    let universe = header_value(headers, UNIVERSE_HEADER)?;
     let actor = header_value(headers, ACTOR_HEADER)?;
     if headers.contains_key(REMOVED_PRINCIPAL_HEADER)
         || actor.is_some_and(|value| !valid_actor(value))
     {
         return Err(AgentApiError::invalid_request("invalid identity header"));
     }
-    let universe = match universe {
-        None => None,
-        Some(reference) => Some(
-            store_pg::resolve_universe_reference(pool, reference)
-                .await
-                .map_err(|error| AgentApiError::internal(error.to_string()))?
-                .ok_or_else(|| {
-                    AgentApiError::not_found(format!("unknown universe: {reference}"))
-                })?,
-        ),
-    };
     Ok(Caller {
         token_name: token_name.to_owned(),
-        universe,
+        universe: None,
         actor: actor.map(str::to_owned),
     })
 }
@@ -123,12 +97,12 @@ pub fn request_context(caller: Caller, method: &str) -> Result<RequestContext, A
         }
         (MethodScope::Connection | MethodScope::Deployment, Some(_)) => {
             return Err(AgentApiError::invalid_request(
-                "this method takes no universe header",
+                "this operation has no universe target",
             ));
         }
         (_, None) => {
             return Err(AgentApiError::invalid_request(
-                "a universe method requires x-lightspeed-universe",
+                "this operation requires a universe URL target",
             ));
         }
     };
@@ -139,23 +113,30 @@ pub fn request_context(caller: Caller, method: &str) -> Result<RequestContext, A
     })
 }
 
+/// A resource route supplies its resolved universe after authenticating the
+/// caller. The HTTP adapter rejects caller-supplied universe headers.
+pub fn request_context_for_universe(
+    mut caller: Caller,
+    method: &str,
+    universe: Option<Uuid>,
+) -> Result<RequestContext, AgentApiError> {
+    caller.universe = universe;
+    request_context(caller, method)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use api::{AgentApiErrorKind, Attribution};
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
-    fn tokens() -> RpcTokens {
-        RpcTokens::from_configuration(
-            [("LIGHTSPEED_RPC_TOKEN_PLATFORM".into(), SECRET.into())],
+    fn tokens() -> RuntimeTokens {
+        RuntimeTokens::from_configuration(
+            [("LIGHTSPEED_API_TOKEN_PLATFORM".into(), SECRET.into())],
             |_| unreachable!(),
         )
         .unwrap()
     }
-    fn pool() -> sqlx::PgPool {
-        sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://127.0.0.1:1/unreachable")
-            .unwrap()
-    }
+
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
         for (name, value) in pairs {
@@ -170,13 +151,10 @@ mod tests {
     async fn token_authentication_needs_no_database_and_rejects_ambiguous_headers() {
         let auth = format!("Bearer {SECRET}");
         let tokens = tokens();
-        let pool = pool();
         let caller = resolve_caller(
             &tokens,
-            &pool,
             &headers(&[("authorization", &auth), (ACTOR_HEADER, "alice")]),
         )
-        .await
         .unwrap();
         let context = request_context(caller, "initialize").unwrap();
         assert_eq!(context.token_name.as_deref(), Some("platform"));
@@ -195,10 +173,7 @@ mod tests {
             ],
         ] {
             assert_eq!(
-                resolve_caller(&tokens, &pool, &headers(&pairs))
-                    .await
-                    .unwrap_err()
-                    .kind,
+                resolve_caller(&tokens, &headers(&pairs)).unwrap_err().kind,
                 AgentApiErrorKind::Unauthenticated
             );
         }
@@ -236,13 +211,5 @@ mod tests {
                 assert!(request_context(make(None), "deployment/api-keys/create").is_err());
             }
         }
-    }
-    #[test]
-    fn a_logged_method_is_bounded_on_a_character_boundary() {
-        assert_eq!(logged_method("session/read"), "session/read");
-        assert_eq!(
-            logged_method(&"é".repeat(200)).chars().count(),
-            MAX_LOGGED_METHOD_CHARS
-        );
     }
 }

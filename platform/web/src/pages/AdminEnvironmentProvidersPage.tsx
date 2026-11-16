@@ -54,7 +54,7 @@ import { LoadingNote, PageHeader } from "@/components/page";
 type Provider = DeploymentEnvironmentProviderView;
 
 /// One platform universe with the provider bindings the engine reports for
-/// it (see `GET /api/v1/admin/environment-provider-bindings`).
+/// it (see `GET /api/ui/admin/environment-provider-bindings`).
 type UniverseBindings = {
   universeId: string;
   lightspeedUniverseId: string;
@@ -78,12 +78,12 @@ export function AdminEnvironmentProvidersPage() {
 
   const providers = useQuery({
     queryKey: ["admin-environment-providers"],
-    queryFn: () => api<Provider[]>("GET", "/api/v1/admin/environment-providers"),
+    queryFn: () => api<Provider[]>("GET", "/api/ui/admin/environment-providers"),
   });
   const bindings = useQuery({
     queryKey: ["admin-environment-provider-bindings"],
     queryFn: () =>
-      api<UniverseBindings[]>("GET", "/api/v1/admin/environment-provider-bindings"),
+      api<UniverseBindings[]>("GET", "/api/ui/admin/environment-provider-bindings"),
   });
 
   const refresh = () => {
@@ -94,7 +94,7 @@ export function AdminEnvironmentProvidersPage() {
 
   const removeProvider = useMutation({
     mutationFn: (providerId: string) =>
-      api<Provider>("DELETE", `/api/v1/admin/environment-providers/${encodeURIComponent(providerId)}`),
+      api<Provider>("DELETE", `/api/ui/admin/environment-providers/${encodeURIComponent(providerId)}`),
     onSuccess: refresh,
   });
 
@@ -290,7 +290,7 @@ function BindingRow({
   binding: EnvironmentProviderBindingView;
   onChanged: () => void;
 }) {
-  const path = `/api/v1/admin/universes/${universe.lightspeedUniverseId}/environment-provider-bindings/${encodeURIComponent(binding.providerId)}`;
+  const path = `/api/ui/admin/universes/${universe.lightspeedUniverseId}/environment-provider-bindings/${encodeURIComponent(binding.providerId)}`;
   const setEnabled = useMutation({
     mutationFn: (enabled: boolean) =>
       api<EnvironmentProviderBindingView>("PUT", path, { enabled }),
@@ -370,7 +370,7 @@ function ProviderDialog({
 
   const save = useMutation({
     mutationFn: () =>
-      api<Provider>("PUT", `/api/v1/admin/environment-providers/${encodeURIComponent(providerId.trim())}`, {
+      api<Provider>("PUT", `/api/ui/admin/environment-providers/${encodeURIComponent(providerId.trim())}`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         controllerEndpoint: endpoint.trim(),
         ...(dataRouteBase.trim() ? { dataRouteBase: dataRouteBase.trim() } : {}),
@@ -542,7 +542,7 @@ function BindUniverseDialog({
     mutationFn: () =>
       api<EnvironmentProviderBindingView>(
         "PUT",
-        `/api/v1/admin/universes/${universeId}/environment-provider-bindings/${encodeURIComponent(provider!.providerId)}`,
+        `/api/ui/admin/universes/${universeId}/environment-provider-bindings/${encodeURIComponent(provider!.providerId)}`,
         { enabled: true },
       ),
     onSuccess: () => {

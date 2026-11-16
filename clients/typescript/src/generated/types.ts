@@ -39,27 +39,6 @@ export type ToolKindView =
 export type ProviderNativeToolExecutionView = "providerHosted" | "clientEffect";
 export type RemoteMcpApprovalPolicy = "never" | "always";
 export type ToolParallelismView = "exclusive" | "parallelSafe";
-/**
- * Who created a resource or authored bytes. Actors are opaque caller claims;
- * the runtime records them without resolving caller permissions.
- */
-export type Attribution =
-  | {
-      id: string;
-      kind: "actor";
-    }
-  | {
-      kind: "token";
-      name: string;
-    }
-  | {
-      kind: "local";
-    }
-  | {
-      cause: string;
-      component: string;
-      kind: "internal";
-    };
 export type AgentApiErrorKind =
   | ("invalidRequest" | "notFound" | "conflict" | "audioBlobTooLarge" | "internal")
   | "gone"
@@ -72,11 +51,6 @@ export type AgentApiErrorKind =
   | "environmentNotReady"
   | "responseTooLarge"
   | "operationPending";
-/**
- * A universe's model selection for a particular use. Protocol and purpose
- * are separate: several purposes may use the same provider API.
- */
-export type ModelDefaultSlot = "agentRun" | "speechToText";
 export type AgentNotification =
   | {
       method: "session/changed";
@@ -129,39 +103,27 @@ export type AgentNotification =
   | {
       method: "watch/reset";
       params: {};
+    };
+/**
+ * Who created a resource or authored bytes. Actors are opaque caller claims;
+ * the runtime records them without resolving caller permissions.
+ */
+export type Attribution =
+  | {
+      id: string;
+      kind: "actor";
     }
   | {
-      method: "session/started";
-      params: {
-        session: SessionView;
-      };
+      kind: "token";
+      name: string;
     }
   | {
-      method: "session/event";
-      params: {
-        event: SessionEventView;
-      };
+      kind: "local";
     }
   | {
-      method: "session/runs/started";
-      params: {
-        run: RunView;
-        sessionId: string;
-      };
-    }
-  | {
-      method: "session/runs/completed";
-      params: {
-        run: RunView;
-        sessionId: string;
-      };
-    }
-  | {
-      method: "error";
-      params: {
-        message: string;
-        sessionId?: string | null;
-      };
+      cause: string;
+      component: string;
+      kind: "internal";
     };
 /**
  * What a session is doing now. A queued run counts as idle until it starts;
@@ -314,110 +276,6 @@ export type EnvironmentStatusView =
   | "stopped"
   | "unknown"
   | "away";
-export type ContextCompactionMode = "disabled" | "providerTriggered" | "providerStandalone";
-export type ContextCompactionStrategy =
-  "disabled" | "providerTriggered" | "modelSummary" | "nativePreferred";
-/**
- * Where `compactThresholdTokens` came from.
- */
-export type ContextCompactionThresholdSource =
-  "disabled" | "override" | "providerDefault" | "inputCapacity" | "contextLengthError";
-export type ToolItemStatus =
-  "requested" | "running" | "succeeded" | "failed" | "cancelled" | "unavailable";
-/**
- * Coarse activity family of a tool call, chosen by the projection from the
- * tool name. Clients key icons and colours on it; the verb and target carry
- * the specifics. Unknown tools land in `Other`.
- */
-export type ToolCallDisplayGroup =
-  "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot" | "message";
-export type ContextEntryKindView =
-  | {
-      role: ContextMessageRoleView;
-      type: "message";
-    }
-  | {
-      type: "instructions";
-    }
-  | {
-      title: string;
-      type: "catalog";
-    }
-  | {
-      callId: string;
-      name: string;
-      type: "toolCall";
-    }
-  | {
-      callId: string;
-      isError: boolean;
-      type: "toolResult";
-    }
-  | {
-      type: "reasoningState";
-    }
-  | {
-      type: "providerOpaque";
-    }
-  | {
-      approve: boolean;
-      type: "mcpApprovalResponse";
-    };
-export type ContextEntrySourceView =
-  | {
-      type: "contextEdit";
-    }
-  | {
-      inputIndex: number;
-      runId: string;
-      type: "runInput";
-    }
-  | {
-      inputIndex: number;
-      runId: string;
-      steeringId: string;
-      type: "steering";
-    }
-  | {
-      runId: string;
-      turnId: string;
-      type: "assistantOutput";
-    }
-  | {
-      approvalId: string;
-      runId: string;
-      type: "approvalDecision";
-    }
-  | {
-      batchId?: string | null;
-      runId: string;
-      turnId: string;
-      type: "tool";
-    }
-  | {
-      runId: string;
-      turnId: string;
-      type: "reasoning";
-    }
-  | {
-      label: string;
-      type: "runtime";
-    };
-export type TokenEstimateQualityView = "exact" | "providerCounted" | "estimated";
-export type ApprovalSubjectView = {
-  argumentsPreview: string;
-  argumentsRef: string;
-  kind: "mcpToolCall";
-  serverId: string;
-  serverLabel: string;
-  toolName: string;
-};
-export type RunSummarySourceView = {
-  blobRef?: string | null;
-  preview?: string | null;
-  previewTruncated?: boolean;
-  type: "input";
-};
 export type CompactionPolicy =
   | {
       mode: "disabled";
@@ -460,6 +318,803 @@ export type ToolChoice =
       toolId: string;
       type: "specific";
     };
+export type ProfileInstructions =
+  | {
+      text: string;
+      type: "text";
+    }
+  | {
+      blobRef: string;
+      type: "textRef";
+    };
+export type ApprovalDecisionFailureKind =
+  | (
+      | "invalidId"
+      | "unknown"
+      | "foreignRun"
+      | "alreadyDecided"
+      | "cancelled"
+      | "duplicate"
+      | "invalidNote"
+      | "rejected"
+    )
+  | "internal";
+export type ApprovalDecisionKind = "approve" | "reject";
+export type ApprovalDecisionStatus = ("decided" | "failed") | "pending";
+export type ApprovalSubjectView = {
+  argumentsPreview: string;
+  argumentsRef: string;
+  kind: "mcpToolCall";
+  serverId: string;
+  serverLabel: string;
+  toolName: string;
+};
+export type BotControllerStatus =
+  | "initializing"
+  | "degraded"
+  | "idle"
+  | "deliveringEvent"
+  | "budgetExhausted"
+  | "closing"
+  | "closed";
+export type BotSessionKind = "main" | "perKey" | "perEvent";
+export type BotSetupStatus = "initializing" | "degraded" | "ready";
+/**
+ * The whole configuration of one trigger, replaced with an expected
+ * revision.
+ */
+export type BotTriggerInput = {
+  coalesce?: BotCoalescePolicy | null;
+  deliver?: BotDeliverPolicy | null;
+  enabled?: boolean;
+  /**
+   * CEL over `{event, data, headers}`; a non-matching event is refused
+   * and never stored. Fails closed.
+   */
+  filter?: string | null;
+  /**
+   * Chat triggers with `pairing: code`: set a specific pairing code
+   * (8–64 chars) instead of the server-minted one. Absent keeps the
+   * stored code, so an edit never has to send it back.
+   */
+  pairingCode?: string | null;
+  route?: BotTriggerRoute | null;
+  /**
+   * Idle-close policy for sessions this trigger routes to: absent inherits the
+   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+   * chat default).
+   */
+  sessionCloseAfterMs?: number | null;
+  triggerId: BotTriggerId;
+} & BotTriggerInput1;
+export type BotWhenBusy = "queue" | "steer" | "append";
+/**
+ * Which session a trigger's events are delivered to; absent means the
+ * bot's main session.
+ */
+export type BotTriggerRoute =
+  | {
+      policy: "bot";
+    }
+  | {
+      key?: string | null;
+      policy: "perKey";
+    }
+  | {
+      policy: "perEvent";
+    };
+export type BotTriggerInput1 =
+  | {
+      /**
+       * One-shot instant; the trigger disables itself after firing.
+       */
+      atMs?: number | null;
+      /**
+       * Classic 5-field cron or an `@macro`; exclusive with `atMs`.
+       */
+      cron?: string | null;
+      kind: "schedule";
+      /**
+       * What the fired event asks the session to do.
+       */
+      summary: string;
+      /**
+       * IANA timezone for cron evaluation; default `UTC`.
+       */
+      timezone?: string;
+    }
+  | {
+      kind: "webhook";
+      preset?: WebhookPreset | null;
+      verification?: WebhookVerification;
+    }
+  | {
+      cursor: PollCursorSpec;
+      intervalMs: number;
+      /**
+       * Dot path to the item array in the payload; absent = the payload
+       * is the item list (or one item).
+       */
+      items?: string | null;
+      kind: "poll";
+      source: PollSource;
+    }
+  | {
+      from?: BotId[] | null;
+      kind: "bot";
+    }
+  | {
+      access?: ChatAccess;
+      /**
+       * The universe's channel account this connection serves.
+       */
+      accountId: string;
+      activation?: ChatActivation;
+      kind: "chat";
+      matchScope?: ChatScope | null;
+      pairing?: ChatPairing & string;
+      /**
+       * Lower wins among matching chat triggers on one account.
+       */
+      priority?: number;
+    };
+export type WebhookPreset = "github";
+/**
+ * How an inbound webhook proves it comes from the sender: possession of
+ * the URL token, or additionally an HMAC-SHA256 over the raw body with a
+ * secret leased from a retrievable grant.
+ */
+export type WebhookVerification =
+  | {
+      scheme: "token";
+    }
+  | {
+      audience?: string | null;
+      grantId: string;
+      header: string;
+      prefix?: string | null;
+      scheme: "hmac-sha256";
+    };
+/**
+ * Dedupe discipline of a poll: an id set for unordered feeds, a watermark
+ * for ordered ones.
+ */
+export type PollCursorSpec =
+  | {
+      id: string;
+      kind: "idSet";
+    }
+  | {
+      field: string;
+      kind: "watermark";
+    };
+/**
+ * Where a poll trigger reads from.
+ */
+export type PollSource =
+  | {
+      auth?: PollHttpAuth | null;
+      body?: string | null;
+      /**
+       * Non-secret headers only; credentials come from `auth`.
+       */
+      headers?: {
+        [k: string]: string;
+      };
+      kind: "http";
+      method?: PollHttpMethod & string;
+      url: string;
+    }
+  | {
+      argv: string[];
+      cwd?: string | null;
+      /**
+       * Universe environment the command runs in (woken on use); absent
+       * runs in the bot's own environment (the profile's `existing`
+       * one), resolved at fire time.
+       */
+      environmentId?: string | null;
+      kind: "exec";
+      /**
+       * Job wall-clock budget; also bounds the fire activity's wait.
+       */
+      timeoutMs?: number | null;
+    };
+export type PollHttpMethod = "GET" | "POST";
+export type ChatTurnAccess = "anyone" | "listed";
+export type ChatGroupActivation = "mention" | "always";
+export type ChatScope = "direct" | "group";
+/**
+ * Whether a conversation must present a pairing code before it connects.
+ */
+export type ChatPairing = "code" | "open";
+/**
+ * The whole configuration of one trigger, replaced with an expected
+ * revision.
+ */
+export type BotTriggerView = {
+  botId: BotId;
+  coalesce?: BotCoalescePolicy | null;
+  createdAtMs: number;
+  /**
+   * Poll triggers: the advancing runtime cursor. Named apart from the
+   * poll spec's dedupe `cursor`, which the flattened document already
+   * serializes under that key.
+   */
+  cursorState?: PollCursorState | null;
+  deliver?: BotDeliverPolicy | null;
+  disabledAtMs?: number | null;
+  disabledReason?: BotTriggerDisabledReason | null;
+  enabled?: boolean;
+  /**
+   * CEL over `{event, data, headers}`; a non-matching event is refused
+   * and never stored. Fails closed.
+   */
+  filter?: string | null;
+  /**
+   * Last runtime failure of the CEL filter (the event was refused);
+   * cleared by the next match.
+   */
+  lastFilterError?: string | null;
+  lastFilterErrorAtMs?: number | null;
+  revision: number;
+  route?: BotTriggerRoute | null;
+  /**
+   * Idle-close policy for sessions this trigger routes to: absent inherits the
+   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
+   * chat default).
+   */
+  sessionCloseAfterMs?: number | null;
+  triggerId: BotTriggerId;
+  updatedAtMs: number;
+} & BotTriggerView1;
+export type BotTriggerDisabledReason =
+  "breaker" | "pollFailed" | "oneShot" | "operator" | "botClosed";
+export type BotTriggerView1 =
+  | {
+      /**
+       * One-shot instant; the trigger disables itself after firing.
+       */
+      atMs?: number | null;
+      /**
+       * Classic 5-field cron or an `@macro`; exclusive with `atMs`.
+       */
+      cron?: string | null;
+      kind: "schedule";
+      /**
+       * What the fired event asks the session to do.
+       */
+      summary: string;
+      /**
+       * IANA timezone for cron evaluation; default `UTC`.
+       */
+      timezone?: string;
+    }
+  | {
+      kind: "webhook";
+      preset?: WebhookPreset | null;
+      verification?: WebhookVerification;
+    }
+  | {
+      cursor: PollCursorSpec;
+      intervalMs: number;
+      /**
+       * Dot path to the item array in the payload; absent = the payload
+       * is the item list (or one item).
+       */
+      items?: string | null;
+      kind: "poll";
+      source: PollSource;
+    }
+  | {
+      from?: BotId[] | null;
+      kind: "bot";
+    }
+  | {
+      access?: ChatAccess;
+      /**
+       * The universe's channel account this connection serves.
+       */
+      accountId: string;
+      activation?: ChatActivation;
+      kind: "chat";
+      matchScope?: ChatScope | null;
+      pairing?: ChatPairing & string;
+      /**
+       * Lower wins among matching chat triggers on one account.
+       */
+      priority?: number;
+    };
+/**
+ * How an invocation of a bound workflow tool reaches its receiver.
+ */
+export type BoundWorkflowToolDispatchInput = "pull" | "push";
+export type ChannelAccountId = string;
+export type ChannelProvider = string;
+export type ChannelMediaKind = "image" | "audio" | "document";
+/**
+ * What the connector should do after admission. Pairing replies are the
+ * connector's to send, in the provider's own voice.
+ */
+export type ChannelInboundDecision =
+  "bound" | "paired" | "pairingRequired" | "pairingPending" | "unbound";
+/**
+ * How a chat got its route: claimed by an open trigger's first contact,
+ * or paired by code.
+ */
+export type ChannelPairedVia = "open" | "code";
+/**
+ * Bounded lifecycle telemetry for a session-owned code tool execution.
+ */
+export type CodeToolProgressPhase =
+  "scopeOpened" | "callAdmitted" | "callDeferred" | "callCompleted" | "scopeClosed";
+export type RuntimeKind = "runtime" | "platform";
+export type InputItem =
+  | {
+      /**
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
+       * The platform uses `user:<id>` for direct human input and `event` for
+       * bot deliveries; other values are allowed. Omitted means unknown.
+       * This metadata is not an authorization identity or model input text.
+       */
+      origin?: string | null;
+      /**
+       * Optional source blob in this universe, retained with the session.
+       * Provenance is metadata, not model input or an authorization identity.
+       */
+      provenanceRef?: string | null;
+      text: string;
+      type: "text";
+    }
+  | {
+      blobRef: string;
+      /**
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
+       * The platform uses `user:<id>` for direct human input and `event` for
+       * bot deliveries; other values are allowed. Omitted means unknown.
+       * This metadata is not an authorization identity or model input text.
+       */
+      origin?: string | null;
+      /**
+       * Optional source blob in this universe, retained with the session.
+       * Provenance is metadata, not model input or an authorization identity.
+       */
+      provenanceRef?: string | null;
+      type: "textRef";
+    }
+  | {
+      blobRef: string;
+      kind: MediaKind;
+      mime: string;
+      /**
+       * Shown as the item's preview; at most 256 characters, with no NUL.
+       */
+      name?: string | null;
+      /**
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
+       * The platform uses `user:<id>` for direct human input and `event` for
+       * bot deliveries; other values are allowed. Omitted means unknown.
+       * This metadata is not an authorization identity or model input text.
+       */
+      origin?: string | null;
+      type: "media";
+    }
+  | {
+      /**
+       * The catalog body, plain text or Markdown.
+       */
+      text: string;
+      /**
+       * Short name shown as the catalog's heading, e.g. "Bot directory".
+       * Cannot contain NUL.
+       */
+      title: string;
+      type: "catalog";
+    };
+export type MediaKind = "image" | "audio" | "document";
+export type ContextEntryKindView =
+  | {
+      role: ContextMessageRoleView;
+      type: "message";
+    }
+  | {
+      type: "instructions";
+    }
+  | {
+      title: string;
+      type: "catalog";
+    }
+  | {
+      callId: string;
+      name: string;
+      type: "toolCall";
+    }
+  | {
+      callId: string;
+      isError: boolean;
+      type: "toolResult";
+    }
+  | {
+      type: "reasoningState";
+    }
+  | {
+      type: "providerOpaque";
+    }
+  | {
+      approve: boolean;
+      type: "mcpApprovalResponse";
+    };
+export type TokenEstimateQualityView = "exact" | "providerCounted" | "estimated";
+export type InputAdmissionFailureKind = "unsupportedMedia" | "blobMissing" | "admissionRejected";
+export type ContextAppendStatus = "applied" | "unchanged" | "failed";
+export type ContextCompactionMode = "disabled" | "providerTriggered" | "providerStandalone";
+export type ContextCompactionStatus = "succeeded" | "failed";
+export type ContextCompactionStrategy =
+  "disabled" | "providerTriggered" | "modelSummary" | "nativePreferred";
+/**
+ * Where `compactThresholdTokens` came from.
+ */
+export type ContextCompactionThresholdSource =
+  "disabled" | "override" | "providerDefault" | "inputCapacity" | "contextLengthError";
+/**
+ * What asked for a compaction.
+ */
+export type ContextCompactionTrigger = "manual" | "highWatermark" | "contextLimit";
+export type ContextEntrySourceView =
+  | {
+      type: "contextEdit";
+    }
+  | {
+      inputIndex: number;
+      runId: string;
+      type: "runInput";
+    }
+  | {
+      inputIndex: number;
+      runId: string;
+      steeringId: string;
+      type: "steering";
+    }
+  | {
+      runId: string;
+      turnId: string;
+      type: "assistantOutput";
+    }
+  | {
+      approvalId: string;
+      runId: string;
+      type: "approvalDecision";
+    }
+  | {
+      batchId?: string | null;
+      runId: string;
+      turnId: string;
+      type: "tool";
+    }
+  | {
+      runId: string;
+      turnId: string;
+      type: "reasoning";
+    }
+  | {
+      label: string;
+      type: "runtime";
+    };
+export type ToolItemStatus =
+  "requested" | "running" | "succeeded" | "failed" | "cancelled" | "unavailable";
+/**
+ * Coarse activity family of a tool call, chosen by the projection from the
+ * tool name. Clients key icons and colours on it; the verb and target carry
+ * the specifics. Unknown tools land in `Other`.
+ */
+export type ToolCallDisplayGroup =
+  "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot" | "message";
+/**
+ * Why entries left the active context.
+ */
+export type ContextRemovalReason = "providerCompacted";
+export type ContextRemoveStatus = "removed" | "absent" | "failed";
+export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
+/**
+ * On a grant, how its token is obtained; on a provider, what it configures.
+ * `staticToken` is a pasted secret, sent under whatever header its consumer
+ * uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+ * endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+ * on demand. The `model*` kinds configure model providers; `modelEndpoint`
+ * is a provider without a credential and never appears on a grant.
+ */
+export type CredentialProviderKind =
+  | "staticToken"
+  | "mcpOAuth"
+  | "gitHubApp"
+  | "customOAuth"
+  | "modelApiKey"
+  | "modelOAuth"
+  | "modelEndpoint";
+export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
+/**
+ * Where a credential's plain value may go, fixed when it is created.
+ */
+export type CredentialGrantExposure = "brokered" | "retrievable";
+export type CredentialFlowStatus = "pending" | "completed" | "failed" | "expired";
+export type CredentialGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
+export type CredentialProviderConfigInput =
+  | {
+      apiBaseUrl?: string | null;
+      appId: string;
+      type: "githubApp";
+    }
+  | {
+      endpoint?: ModelEndpointConfig | null;
+      type: "modelApiKey";
+    }
+  | {
+      audience?: string | null;
+      endpoint?: ModelEndpointConfig | null;
+      grantId: string;
+      type: "modelOAuth";
+    }
+  | {
+      endpoint: ModelEndpointConfig;
+      type: "modelEndpoint";
+    };
+/**
+ * Value of one configured request header, as an MCP server and a model
+ * provider's endpoint both carry them. A name listed in
+ * [`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.
+ */
+export type RequestHeader =
+  | {
+      type: "literal";
+      value: string;
+    }
+  | {
+      grantId: string;
+      type: "credential";
+    };
+/**
+ * Non-secret, provider-specific configuration. New providers add a
+ * variant, not a table.
+ */
+export type CredentialProviderConfigView =
+  | {
+      apiBaseUrl: string;
+      appId: string;
+      type: "githubApp";
+    }
+  | {
+      endpoint?: ModelEndpointConfig | null;
+      type: "modelApiKey";
+    }
+  | {
+      audience?: string | null;
+      endpoint?: ModelEndpointConfig | null;
+      grantId: string;
+      type: "modelOAuth";
+    }
+  | {
+      endpoint: ModelEndpointConfig;
+      type: "modelEndpoint";
+    };
+export type CredentialProviderStatus = "active" | "needsConfiguration" | "disabled";
+export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
+export type UniverseDeletionStep = "intake" | "workflows" | "environments" | "storage";
+/**
+ * Current state after the immediate deletion fence has been applied.
+ */
+export type UniverseDeletionState = "deleting" | "deleted";
+export type EnvironmentCredentialSourceView =
+  | {
+      grantId: string;
+      type: "authGrant";
+    }
+  | {
+      providerId: string;
+      type: "authProviderCredential";
+    };
+export type SessionJobCancelScopeView = "job" | "dependents";
+/**
+ * How a job's root process ended.
+ */
+export type SessionJobExitView =
+  | {
+      code: number;
+      type: "code";
+    }
+  | {
+      coreDumped?: boolean;
+      signal: string;
+      type: "signal";
+    };
+/**
+ * Job lifecycle. `queued` and `running` are live; the rest are terminal.
+ */
+export type SessionJobStatusView =
+  | "running"
+  | "queued"
+  | "succeeded"
+  | "failed"
+  | "timedOut"
+  | "cancelled"
+  | "dependencyFailed"
+  | "interrupted";
+/**
+ * Why Lightspeed stopped a running job.
+ */
+export type SessionJobStoppedByView = "timeout" | "terminate" | "kill";
+export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
+export type SessionJobOutputStreamView = "stdout" | "stderr";
+export type SessionJobOutputGapReasonView = "overflow" | "expired";
+export type EnvironmentRegistrationKeyStatusView = "active" | "revoked" | "expired";
+/**
+ * A freshly minted registration secret. `Debug` output is redacted so the
+ * plaintext cannot leak through derived logging; it is shown once.
+ */
+export type EnvironmentRegistrationSecretView = string;
+/**
+ * A universe's model selection for a particular use. Protocol and purpose
+ * are separate: several purposes may use the same provider API.
+ */
+export type ModelDefaultSlot = "agentRun" | "speechToText";
+export type McpServerAuthPolicy =
+  | {
+      type: "none";
+    }
+  | {
+      type: "optionalBearer";
+    }
+  | {
+      type: "requiredBearer";
+    }
+  | {
+      authorization_server?: string | null;
+      protected_resource_metadata_url?: string | null;
+      resource: string;
+      scopes_default?: string[];
+      type: "optionalOAuth";
+    }
+  | {
+      authorization_server?: string | null;
+      protected_resource_metadata_url?: string | null;
+      resource: string;
+      scopes_default?: string[];
+      type: "requiredOAuth";
+    };
+/**
+ * Non-secret universe credential selected by this configured MCP server.
+ * Token material remains in the credentials subsystem and is never returned.
+ */
+export type McpServerCredential = {
+  grantId: string;
+  type: "authGrant";
+};
+/**
+ * Who connects to the server and runs its tools. `runtime`, the default, means
+ * Lightspeed does: each call runs once, under the approval policy, and is recorded.
+ * With `provider` the model provider does, so the endpoint must be publicly reachable
+ * and tools run at least once: a retried generation re-sends the request, so a tool
+ * can run again with its side effects, and the transcript shows at most one run.
+ */
+export type RemoteMcpExecution = "provider" | "runtime";
+export type RemoteMcpExposure = "inject" | "search";
+export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
+/**
+ * The result of one live MCP `tools/list` exchange. Operational connection
+ * failures are data so management clients can render stable remediation;
+ * ordinary API admission/not-found/internal failures remain API errors.
+ */
+export type McpServerToolsDiscoverResponse =
+  | {
+      status: "success";
+      tools: McpAdvertisedToolView[];
+    }
+  | {
+      code: McpToolDiscoveryFailureCode;
+      message: string;
+      required_scopes?: string[];
+      status: "failure";
+    };
+export type McpToolDiscoveryFailureCode =
+  | "credentialAbsent"
+  | "grantNeedsReauth"
+  | "grantAudienceMismatch"
+  | "unauthorized"
+  | "forbidden"
+  | "additionalConsentRequired"
+  | "remoteRateLimited"
+  | "remoteFailure"
+  | "unreachable"
+  | "invalidResponse"
+  | "unsupportedProtocol"
+  | "paginationLimit"
+  | "responseTooLarge";
+export type MethodAccess =
+  | {
+      kind: "connection";
+    }
+  | {
+      action: UniverseAction;
+      kind: "universe";
+    }
+  | {
+      kind: "service";
+    }
+  | {
+      kind: "deployment";
+    };
+/**
+ * What a public method does, independent of its operation ID. This classifies
+ * the runtime's own work and the role an external gate should require.
+ */
+export type UniverseAction =
+  | (
+      | "read"
+      | "createSession"
+      | "controlSession"
+      | "configureSession"
+      | "stopSession"
+      | "closeSession"
+      | "deleteSession"
+      | "setSessionRetention"
+      | "createProfile"
+      | "manageProfile"
+      | "createBot"
+      | "manageBot"
+      | "invokeBot"
+      | "createWorkspace"
+    )
+  | "shareSession"
+  | "useResource"
+  | "configureResource";
+/**
+ * The API family of a method, published for external authorization gates.
+ * `initialize` and `universe/watch` have no single family.
+ */
+export type MethodGroup =
+  | (
+      | "vfs"
+      | "profiles"
+      | "transcriptions"
+      | "models"
+      | "mcp"
+      | "bots"
+      | "deployment/universes"
+      | "deployment/sessions"
+    )
+  | "session"
+  | "session/delete"
+  | "blobs/put"
+  | "environments"
+  | "channels"
+  | "channels/inbound"
+  | "credentials"
+  | "credentials/lease"
+  | "deployment/environment-providers"
+  | "deployment/channels";
+/**
+ * Where a method names the session it acts on, so a gate can decide per
+ * session without a hand-written table. A creation method may name one that
+ * does not exist yet.
+ */
+export type MethodTarget = "sessionId";
+export type ModelSource = "provider";
+export type ModelProviderCredentialStatus = "configured" | "missing" | "invalid" | "notRequired";
+export type ModelProviderCredentialSource = "none" | "universe" | "deployment";
+export type ProfileSource =
+  | {
+      kind: "named";
+      profileId: ProfileId;
+    }
+  | {
+      kind: "inline";
+      profile: InlineAgentProfile;
+    };
+export type RunSummarySourceView = {
+  blobRef?: string | null;
+  preview?: string | null;
+  previewTruncated?: boolean;
+  type: "input";
+};
 /**
  * Completion contract for one workflow-tool invocation. Joined tools park
  * the original call on one runtime-owned reply; Promises exposes handles for
@@ -532,9 +1187,27 @@ export type WorkflowToolTargetInput =
       type: "start";
     };
 /**
- * How an invocation of a bound workflow tool reaches its receiver.
+ * Where a promise's answer comes from.
  */
-export type BoundWorkflowToolDispatchInput = "pull" | "push";
+export type PromiseSourceKind = "timer" | "workflow";
+/**
+ * Universe roles as gates built on this contract name them. Core holds no
+ * roles; this is metadata only.
+ */
+export type RecommendedRole = "viewer" | "contributor" | "operator" | "admin";
+export type RunAcceptedSourceView = {
+  entries: ContextEntryInputView[];
+  type: "input";
+};
+export type RunViewSource = {
+  items: InputItem[];
+  type: "input";
+};
+export type RunStartSource = {
+  items: InputItem[];
+  type: "input";
+};
+export type SessionEventDirection = "forward" | "backward";
 export type SessionEventKindView =
   | {
       model?: ModelConfig | null;
@@ -876,521 +1549,10 @@ export type SessionEventKindView =
       status?: ToolItemStatus | null;
       type: "codeToolProgress";
     };
-export type RunAcceptedSourceView = {
-  entries: ContextEntryInputView[];
-  type: "input";
-};
-export type ApprovalDecisionKind = "approve" | "reject";
-/**
- * Where a promise's answer comes from.
- */
-export type PromiseSourceKind = "timer" | "workflow";
 /**
  * How a generation ended.
  */
 export type TurnGenerationStatus = ("succeeded" | "failed" | "cancelled") | "rejected";
-/**
- * Why entries left the active context.
- */
-export type ContextRemovalReason = "providerCompacted";
-/**
- * What asked for a compaction.
- */
-export type ContextCompactionTrigger = "manual" | "highWatermark" | "contextLimit";
-export type ContextCompactionStatus = "succeeded" | "failed";
-/**
- * Bounded lifecycle telemetry for a session-owned code tool execution.
- */
-export type CodeToolProgressPhase =
-  "scopeOpened" | "callAdmitted" | "callDeferred" | "callCompleted" | "scopeClosed";
-export type RunViewSource = {
-  items: InputItem[];
-  type: "input";
-};
-export type InputItem =
-  | {
-      /**
-       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
-       * The platform uses `user:<id>` for direct human input and `event` for
-       * bot deliveries; other values are allowed. Omitted means unknown.
-       * This metadata is not an authorization identity or model input text.
-       */
-      origin?: string | null;
-      /**
-       * Optional source blob in this universe, retained with the session.
-       * Provenance is metadata, not model input or an authorization identity.
-       */
-      provenanceRef?: string | null;
-      text: string;
-      type: "text";
-    }
-  | {
-      blobRef: string;
-      /**
-       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
-       * The platform uses `user:<id>` for direct human input and `event` for
-       * bot deliveries; other values are allowed. Omitted means unknown.
-       * This metadata is not an authorization identity or model input text.
-       */
-      origin?: string | null;
-      /**
-       * Optional source blob in this universe, retained with the session.
-       * Provenance is metadata, not model input or an authorization identity.
-       */
-      provenanceRef?: string | null;
-      type: "textRef";
-    }
-  | {
-      blobRef: string;
-      kind: MediaKind;
-      mime: string;
-      /**
-       * Shown as the item's preview; at most 256 characters, with no NUL.
-       */
-      name?: string | null;
-      /**
-       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
-       * The platform uses `user:<id>` for direct human input and `event` for
-       * bot deliveries; other values are allowed. Omitted means unknown.
-       * This metadata is not an authorization identity or model input text.
-       */
-      origin?: string | null;
-      type: "media";
-    }
-  | {
-      /**
-       * The catalog body, plain text or Markdown.
-       */
-      text: string;
-      /**
-       * Short name shown as the catalog's heading, e.g. "Bot directory".
-       * Cannot contain NUL.
-       */
-      title: string;
-      type: "catalog";
-    };
-export type MediaKind = "image" | "audio" | "document";
-/**
- * The whole configuration of one trigger, replaced with an expected
- * revision.
- */
-export type BotTriggerView = {
-  botId: BotId;
-  coalesce?: BotCoalescePolicy | null;
-  createdAtMs: number;
-  /**
-   * Poll triggers: the advancing runtime cursor. Named apart from the
-   * poll spec's dedupe `cursor`, which the flattened document already
-   * serializes under that key.
-   */
-  cursorState?: PollCursorState | null;
-  deliver?: BotDeliverPolicy | null;
-  disabledAtMs?: number | null;
-  disabledReason?: BotTriggerDisabledReason | null;
-  enabled?: boolean;
-  /**
-   * CEL over `{event, data, headers}`; a non-matching event is refused
-   * and never stored. Fails closed.
-   */
-  filter?: string | null;
-  /**
-   * Last runtime failure of the CEL filter (the event was refused);
-   * cleared by the next match.
-   */
-  lastFilterError?: string | null;
-  lastFilterErrorAtMs?: number | null;
-  revision: number;
-  route?: BotTriggerRoute | null;
-  /**
-   * Idle-close policy for sessions this trigger routes to: absent inherits the
-   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-   * chat default).
-   */
-  sessionCloseAfterMs?: number | null;
-  triggerId: BotTriggerId;
-  updatedAtMs: number;
-} & BotTriggerView1;
-export type BotWhenBusy = "queue" | "steer" | "append";
-export type BotTriggerDisabledReason =
-  "breaker" | "pollFailed" | "oneShot" | "operator" | "botClosed";
-/**
- * Which session a trigger's events are delivered to; absent means the
- * bot's main session.
- */
-export type BotTriggerRoute =
-  | {
-      policy: "bot";
-    }
-  | {
-      key?: string | null;
-      policy: "perKey";
-    }
-  | {
-      policy: "perEvent";
-    };
-export type BotTriggerView1 =
-  | {
-      /**
-       * One-shot instant; the trigger disables itself after firing.
-       */
-      atMs?: number | null;
-      /**
-       * Classic 5-field cron or an `@macro`; exclusive with `atMs`.
-       */
-      cron?: string | null;
-      kind: "schedule";
-      /**
-       * What the fired event asks the session to do.
-       */
-      summary: string;
-      /**
-       * IANA timezone for cron evaluation; default `UTC`.
-       */
-      timezone?: string;
-    }
-  | {
-      kind: "webhook";
-      preset?: WebhookPreset | null;
-      verification?: WebhookVerification;
-    }
-  | {
-      cursor: PollCursorSpec;
-      intervalMs: number;
-      /**
-       * Dot path to the item array in the payload; absent = the payload
-       * is the item list (or one item).
-       */
-      items?: string | null;
-      kind: "poll";
-      source: PollSource;
-    }
-  | {
-      from?: BotId[] | null;
-      kind: "bot";
-    }
-  | {
-      access?: ChatAccess;
-      /**
-       * The universe's channel account this connection serves.
-       */
-      accountId: string;
-      activation?: ChatActivation;
-      kind: "chat";
-      matchScope?: ChatScope | null;
-      pairing?: ChatPairing & string;
-      /**
-       * Lower wins among matching chat triggers on one account.
-       */
-      priority?: number;
-    };
-export type WebhookPreset = "github";
-/**
- * How an inbound webhook proves it comes from the sender: possession of
- * the URL token, or additionally an HMAC-SHA256 over the raw body with a
- * secret leased from a retrievable grant.
- */
-export type WebhookVerification =
-  | {
-      scheme: "token";
-    }
-  | {
-      audience?: string | null;
-      grantId: string;
-      header: string;
-      prefix?: string | null;
-      scheme: "hmac-sha256";
-    };
-/**
- * Dedupe discipline of a poll: an id set for unordered feeds, a watermark
- * for ordered ones.
- */
-export type PollCursorSpec =
-  | {
-      id: string;
-      kind: "idSet";
-    }
-  | {
-      field: string;
-      kind: "watermark";
-    };
-/**
- * Where a poll trigger reads from.
- */
-export type PollSource =
-  | {
-      auth?: PollHttpAuth | null;
-      body?: string | null;
-      /**
-       * Non-secret headers only; credentials come from `auth`.
-       */
-      headers?: {
-        [k: string]: string;
-      };
-      kind: "http";
-      method?: PollHttpMethod & string;
-      url: string;
-    }
-  | {
-      argv: string[];
-      cwd?: string | null;
-      /**
-       * Universe environment the command runs in (woken on use); absent
-       * runs in the bot's own environment (the profile's `existing`
-       * one), resolved at fire time.
-       */
-      environmentId?: string | null;
-      kind: "exec";
-      /**
-       * Job wall-clock budget; also bounds the fire activity's wait.
-       */
-      timeoutMs?: number | null;
-    };
-export type PollHttpMethod = "GET" | "POST";
-export type ChatTurnAccess = "anyone" | "listed";
-export type ChatGroupActivation = "mention" | "always";
-export type ChatScope = "direct" | "group";
-/**
- * Whether a conversation must present a pairing code before it connects.
- */
-export type ChatPairing = "code" | "open";
-export type BotControllerStatus =
-  | "initializing"
-  | "degraded"
-  | "idle"
-  | "deliveringEvent"
-  | "budgetExhausted"
-  | "closing"
-  | "closed";
-export type BotSessionKind = "main" | "perKey" | "perEvent";
-export type BotSetupStatus = "initializing" | "degraded" | "ready";
-export type ChannelAccountId = string;
-export type ChannelProvider = string;
-/**
- * What the connector should do after admission. Pairing replies are the
- * connector's to send, in the provider's own voice.
- */
-export type ChannelInboundDecision =
-  "bound" | "paired" | "pairingRequired" | "pairingPending" | "unbound";
-/**
- * How a chat got its route: claimed by an open trigger's first contact,
- * or paired by code.
- */
-export type ChannelPairedVia = "open" | "code";
-export type InputAdmissionFailureKind = "unsupportedMedia" | "blobMissing" | "admissionRejected";
-export type ContextAppendStatus = "applied" | "unchanged" | "failed";
-export type ContextRemoveStatus = "removed" | "absent" | "failed";
-export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
-/**
- * On a grant, how its token is obtained; on a provider, what it configures.
- * `staticToken` is a pasted secret, sent under whatever header its consumer
- * uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
- * endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
- * on demand. The `model*` kinds configure model providers; `modelEndpoint`
- * is a provider without a credential and never appears on a grant.
- */
-export type CredentialProviderKind =
-  | "staticToken"
-  | "mcpOAuth"
-  | "gitHubApp"
-  | "customOAuth"
-  | "modelApiKey"
-  | "modelOAuth"
-  | "modelEndpoint";
-export type TokenEndpointAuthMethod = "clientSecretBasic" | "clientSecretPost" | "none";
-export type CredentialFlowStatus = "pending" | "completed" | "failed" | "expired";
-/**
- * Where a credential's plain value may go, fixed when it is created.
- */
-export type CredentialGrantExposure = "brokered" | "retrievable";
-export type CredentialGrantStatus = "active" | "needsReauth" | "revoked" | "failed";
-/**
- * Non-secret, provider-specific configuration. New providers add a
- * variant, not a table.
- */
-export type CredentialProviderConfigView =
-  | {
-      apiBaseUrl: string;
-      appId: string;
-      type: "githubApp";
-    }
-  | {
-      endpoint?: ModelEndpointConfig | null;
-      type: "modelApiKey";
-    }
-  | {
-      audience?: string | null;
-      endpoint?: ModelEndpointConfig | null;
-      grantId: string;
-      type: "modelOAuth";
-    }
-  | {
-      endpoint: ModelEndpointConfig;
-      type: "modelEndpoint";
-    };
-/**
- * Value of one configured request header, as an MCP server and a model
- * provider's endpoint both carry them. A name listed in
- * [`CREDENTIAL_ONLY_HEADER_NAMES`] accepts only a `credential` value.
- */
-export type RequestHeader =
-  | {
-      type: "literal";
-      value: string;
-    }
-  | {
-      grantId: string;
-      type: "credential";
-    };
-export type CredentialProviderStatus = "active" | "needsConfiguration" | "disabled";
-export type UniverseDeletionStep = "intake" | "workflows" | "environments" | "storage";
-export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
-/**
- * Current state after the immediate deletion fence has been applied.
- */
-export type UniverseDeletionState = "deleting" | "deleted";
-export type EnvironmentCredentialSourceView =
-  | {
-      grantId: string;
-      type: "authGrant";
-    }
-  | {
-      providerId: string;
-      type: "authProviderCredential";
-    };
-/**
- * How a job's root process ended.
- */
-export type SessionJobExitView =
-  | {
-      code: number;
-      type: "code";
-    }
-  | {
-      coreDumped?: boolean;
-      signal: string;
-      type: "signal";
-    };
-/**
- * Job lifecycle. `queued` and `running` are live; the rest are terminal.
- */
-export type SessionJobStatusView =
-  | "running"
-  | "queued"
-  | "succeeded"
-  | "failed"
-  | "timedOut"
-  | "cancelled"
-  | "dependencyFailed"
-  | "interrupted";
-/**
- * Why Lightspeed stopped a running job.
- */
-export type SessionJobStoppedByView = "timeout" | "terminate" | "kill";
-export type SessionJobOutputStreamView = "stdout" | "stderr";
-export type SessionJobOutputGapReasonView = "overflow" | "expired";
-export type EnvironmentRegistrationKeyStatusView = "active" | "revoked" | "expired";
-/**
- * A freshly minted registration secret. `Debug` output is redacted so the
- * plaintext cannot leak through derived logging; it is shown once.
- */
-export type EnvironmentRegistrationSecretView = string;
-export type McpServerAuthPolicy =
-  | {
-      type: "none";
-    }
-  | {
-      type: "optionalBearer";
-    }
-  | {
-      type: "requiredBearer";
-    }
-  | {
-      authorization_server?: string | null;
-      protected_resource_metadata_url?: string | null;
-      resource: string;
-      scopes_default?: string[];
-      type: "optionalOAuth";
-    }
-  | {
-      authorization_server?: string | null;
-      protected_resource_metadata_url?: string | null;
-      resource: string;
-      scopes_default?: string[];
-      type: "requiredOAuth";
-    };
-/**
- * Non-secret universe credential selected by this configured MCP server.
- * Token material remains in the credentials subsystem and is never returned.
- */
-export type McpServerCredential = {
-  grantId: string;
-  type: "authGrant";
-};
-/**
- * Who connects to the server and runs its tools. `runtime`, the default, means
- * Lightspeed does: each call runs once, under the approval policy, and is recorded.
- * With `provider` the model provider does, so the endpoint must be publicly reachable
- * and tools run at least once: a retried generation re-sends the request, so a tool
- * can run again with its side effects, and the transcript shows at most one run.
- */
-export type RemoteMcpExecution = "provider" | "runtime";
-export type RemoteMcpExposure = "inject" | "search";
-export type McpServerStatus = "active" | "needsAuthConfig" | "unverified" | "disabled";
-/**
- * The result of one live MCP `tools/list` exchange. Operational connection
- * failures are data so management clients can render stable remediation;
- * ordinary API admission/not-found/internal failures remain API errors.
- */
-export type McpServerToolsDiscoverResponse =
-  | {
-      status: "success";
-      tools: McpAdvertisedToolView[];
-    }
-  | {
-      code: McpToolDiscoveryFailureCode;
-      message: string;
-      required_scopes?: string[];
-      status: "failure";
-    };
-export type McpToolDiscoveryFailureCode =
-  | "credentialAbsent"
-  | "grantNeedsReauth"
-  | "grantAudienceMismatch"
-  | "unauthorized"
-  | "forbidden"
-  | "additionalConsentRequired"
-  | "remoteRateLimited"
-  | "remoteFailure"
-  | "unreachable"
-  | "invalidResponse"
-  | "unsupportedProtocol"
-  | "paginationLimit"
-  | "responseTooLarge";
-export type ModelSource = "provider";
-export type ModelProviderCredentialStatus = "configured" | "missing" | "invalid" | "notRequired";
-export type ModelProviderCredentialSource = "none" | "universe" | "deployment";
-export type ProfileInstructions =
-  | {
-      text: string;
-      type: "text";
-    }
-  | {
-      blobRef: string;
-      type: "textRef";
-    };
-export type ApprovalDecisionFailureKind =
-  | (
-      | "invalidId"
-      | "unknown"
-      | "foreignRun"
-      | "alreadyDecided"
-      | "cancelled"
-      | "duplicate"
-      | "invalidNote"
-      | "rejected"
-    )
-  | "internal";
-export type ApprovalDecisionStatus = ("decided" | "failed") | "pending";
 export type SkillCatalogAvailability = "available" | "stale" | "unavailable";
 export type SkillCatalogSource =
   | {
@@ -1405,208 +1567,14 @@ export type TranscriptionFailureKind =
 export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
 /**
- * The whole configuration of one trigger, replaced with an expected
- * revision.
- */
-export type BotTriggerInput = {
-  coalesce?: BotCoalescePolicy | null;
-  deliver?: BotDeliverPolicy | null;
-  enabled?: boolean;
-  /**
-   * CEL over `{event, data, headers}`; a non-matching event is refused
-   * and never stored. Fails closed.
-   */
-  filter?: string | null;
-  /**
-   * Chat triggers with `pairing: code`: set a specific pairing code
-   * (8–64 chars) instead of the server-minted one. Absent keeps the
-   * stored code, so an edit never has to send it back.
-   */
-  pairingCode?: string | null;
-  route?: BotTriggerRoute | null;
-  /**
-   * Idle-close policy for sessions this trigger routes to: absent inherits the
-   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-   * chat default).
-   */
-  sessionCloseAfterMs?: number | null;
-  triggerId: BotTriggerId;
-} & BotTriggerInput1;
-export type BotTriggerInput1 =
-  | {
-      /**
-       * One-shot instant; the trigger disables itself after firing.
-       */
-      atMs?: number | null;
-      /**
-       * Classic 5-field cron or an `@macro`; exclusive with `atMs`.
-       */
-      cron?: string | null;
-      kind: "schedule";
-      /**
-       * What the fired event asks the session to do.
-       */
-      summary: string;
-      /**
-       * IANA timezone for cron evaluation; default `UTC`.
-       */
-      timezone?: string;
-    }
-  | {
-      kind: "webhook";
-      preset?: WebhookPreset | null;
-      verification?: WebhookVerification;
-    }
-  | {
-      cursor: PollCursorSpec;
-      intervalMs: number;
-      /**
-       * Dot path to the item array in the payload; absent = the payload
-       * is the item list (or one item).
-       */
-      items?: string | null;
-      kind: "poll";
-      source: PollSource;
-    }
-  | {
-      from?: BotId[] | null;
-      kind: "bot";
-    }
-  | {
-      access?: ChatAccess;
-      /**
-       * The universe's channel account this connection serves.
-       */
-      accountId: string;
-      activation?: ChatActivation;
-      kind: "chat";
-      matchScope?: ChatScope | null;
-      pairing?: ChatPairing & string;
-      /**
-       * Lower wins among matching chat triggers on one account.
-       */
-      priority?: number;
-    };
-export type ChannelMediaKind = "image" | "audio" | "document";
-export type CredentialProviderConfigInput =
-  | {
-      apiBaseUrl?: string | null;
-      appId: string;
-      type: "githubApp";
-    }
-  | {
-      endpoint?: ModelEndpointConfig | null;
-      type: "modelApiKey";
-    }
-  | {
-      audience?: string | null;
-      endpoint?: ModelEndpointConfig | null;
-      grantId: string;
-      type: "modelOAuth";
-    }
-  | {
-      endpoint: ModelEndpointConfig;
-      type: "modelEndpoint";
-    };
-export type SessionJobCancelScopeView = "job" | "dependents";
-export type SessionJobDependencyPolicyView = "allSucceeded" | "allTerminal";
-export type MethodAccess =
-  | {
-      kind: "connection";
-    }
-  | {
-      action: UniverseAction;
-      kind: "universe";
-    }
-  | {
-      kind: "service";
-    }
-  | {
-      kind: "deployment";
-    };
-/**
- * What a public method does, independent of its RPC spelling. This classifies
- * the runtime's own work and the role an external gate should require.
- */
-export type UniverseAction =
-  | (
-      | "read"
-      | "createSession"
-      | "controlSession"
-      | "configureSession"
-      | "stopSession"
-      | "closeSession"
-      | "deleteSession"
-      | "setSessionRetention"
-      | "createProfile"
-      | "manageProfile"
-      | "createBot"
-      | "manageBot"
-      | "invokeBot"
-      | "createWorkspace"
-    )
-  | "shareSession"
-  | "useResource"
-  | "configureResource";
-/**
- * The API family of a method, published for external authorization gates.
- * `initialize` and `universe/watch` have no single family.
- */
-export type MethodGroup =
-  | (
-      | "vfs"
-      | "profiles"
-      | "transcriptions"
-      | "models"
-      | "mcp"
-      | "bots"
-      | "deployment/universes"
-      | "deployment/sessions"
-    )
-  | "session"
-  | "session/delete"
-  | "blobs/put"
-  | "environments"
-  | "channels"
-  | "channels/inbound"
-  | "credentials"
-  | "credentials/lease"
-  | "deployment/environment-providers"
-  | "deployment/channels";
-/**
- * Where a method names the session it acts on, so a gate can decide per
- * session without a hand-written table. A creation method may name one that
- * does not exist yet.
- */
-export type MethodTarget = "sessionId";
-export type ProfileSource =
-  | {
-      kind: "named";
-      profileId: ProfileId;
-    }
-  | {
-      kind: "inline";
-      profile: InlineAgentProfile;
-    };
-/**
- * Universe roles as gates built on this contract name them. Core holds no
- * roles; this is metadata only.
- */
-export type RecommendedRole = "viewer" | "contributor" | "operator" | "admin";
-export type RunStartSource = {
-  items: InputItem[];
-  type: "input";
-};
-export type SessionEventDirection = "forward" | "backward";
-/**
  * Collections whose list rows can be watched. Each publishes its API family.
  */
 export type WatchKind = "session" | "bot" | "environment" | "workspace";
 
 /**
- * All JSON-RPC wire types of the Lightspeed agent API.
+ * Logical operation inputs and direct response types for Lightspeed clients.
  */
-export interface LightspeedAgentAPI {
+export interface LightspeedHTTPAPI {
   [k: string]: unknown;
 }
 /**
@@ -1626,37 +1594,6 @@ export interface ToolView {
   kind: ToolKindView;
   parallelism?: ToolParallelismView & string;
   toolId: string;
-}
-export interface AgentApiError {
-  deletedUniverse?: DeletedUniverseView | null;
-  kind: AgentApiErrorKind;
-  message: string;
-  /**
-   * Present for modelDefaultUnset; clients need not parse the message.
-   */
-  modelDefaultSlot?: ModelDefaultSlot | null;
-  /**
-   * Present for operationPending on a call that took a submission id, including
-   * one the server allocated. Retrying with it cannot land the same work twice.
-   */
-  submissionId?: string | null;
-}
-/**
- * Permanent resource inventory and attribution for a deleted universe.
- */
-export interface DeletedUniverseView {
-  createdAtMs: number;
-  deletedAtMs: number;
-  deletingAtMs: number;
-  displayName?: string | null;
-  handle: string;
-  requestedBy: Attribution;
-  summary: unknown;
-  universeId: string;
-}
-export interface AgentApiOutcomeOfBlobHasResponse {
-  notifications?: AgentNotification[];
-  result: BlobHasResponse;
 }
 /**
  * Display fields materialized with the session log.
@@ -2085,270 +2022,29 @@ export interface VfsWorkspaceView {
   updatedAtMs: number;
   workspaceId: string;
 }
-export interface SessionView {
-  /**
-   * The audience of the session's root: whether it is shared with the
-   * universe, and who created it.
-   */
-  access: ResourceAccessSummary;
-  activeContext: ContextView;
-  /**
-   * The universe environment selected by the session event log.
-   */
-  activeEnvironmentId?: string | null;
-  /**
-   * The currently executing run, always present when one exists — the
-   * paged `runs` window can omit it behind newer queued runs, so control
-   * surfaces (steering, status) must read it from here.
-   */
-  activeRun?: RunSummaryView | null;
-  activeTools?: ActiveToolsView;
-  /**
-   * What the session is doing now: idle, working on a run, or waiting for
-   * an approval. Lists carry the same value.
-   */
-  activity: SessionActivity;
-  closedAtMs?: number | null;
-  /**
-   * The stored sparse config document, exactly as last put (model and
-   * feature versions materialized at admission). Effective tool reality
-   * is visible via `active_tools`.
-   */
+export interface AgentProfile {
   config?: SessionConfig | null;
-  configRevision: number;
   createdAtMs: number;
+  description?: string | null;
   displayName?: string | null;
+  instructions?: ProfileInstructions | null;
   /**
-   * Set by `session/read` when the session is still open but its workflow
-   * execution has stopped. Nothing is running and the rest of the view is
-   * the stored log, so `activity` can still say what it last did. Lists do not check
-   * the execution, so a list and a read of the same session can differ.
-   */
-  executionFailure?: SessionExecutionFailureView | null;
-  id: string;
-  /**
-   * Immutable workflow integration. A lifecycle controller indicates external
-   * session ownership; a tools-only integration does not.
-   */
-  integration?: SessionIntegrationInput | null;
-  /**
-   * True only when the session's integration names a lifecycle controller.
-   */
-  lifecycleControlled: boolean;
-  /**
-   * Whether the session has opened or closed. What it is doing while open is
-   * `activity`, and whether its workflow is still there is `executionFailure`.
-   */
-  lifecycleStatus: SessionLifecycleStatus;
-  /**
-   * Descriptive key/value metadata; empty when none was set.
+   * Descriptive metadata defaults copied to a session when it is created
+   * from this profile. Explicit `session/start` metadata wins key by key.
+   * Applying the profile to an existing session does not change metadata.
    */
   metadata?: {
     [k: string]: string;
   };
+  profileId: ProfileId;
   /**
-   * Sub-agent lineage; absent for root sessions.
+   * Creation-time session retention default. Absence keeps the tree until
+   * manual deletion. Applying a profile to an existing session does not
+   * change retention.
    */
-  origin?: SessionOriginView | null;
-  retention: SessionRetentionView;
-  runs?: RunSummaryView[];
-  updatedAtMs: number;
-}
-export interface ContextView {
-  compaction?: ContextCompactionView | null;
-  entries?: ContextEntryView[];
+  retention?: ProfileSessionRetention | null;
   revision: number;
-}
-/**
- * Resolved automatic policy and the currently pending standalone operation.
- */
-export interface ContextCompactionView {
-  compactThresholdTokens?: number | null;
-  /**
-   * Standalone when the context already holds a window from a native standalone
-   * compaction, whatever was requested.
-   */
-  effectiveMode: ContextCompactionMode;
-  /**
-   * Native APIs are preferred where supported; summaries use the same model route.
-   */
-  effectiveStrategy: ContextCompactionStrategy;
-  /**
-   * The active run's input capacity, or the declared limit. While idle with none
-   * declared, what the last generation recorded, so a session that has not run yet
-   * shows no reported capacity: that is resolved for each run as it is prepared.
-   */
-  inputLimitTokens?: number | null;
-  observedTokens?: number | null;
-  pending: boolean;
-  queued: boolean;
-  recoveryAttempts: number;
-  requestedMode: ContextCompactionMode;
-  thresholdSource: ContextCompactionThresholdSource;
-}
-/**
- * A session context entry, faithful to the stored harness entry: keyed,
- * kind-tagged, ref-backed. Keys are a stable extension point — clients
- * reconstruct derived surfaces (e.g. the prompted instruction set via the
- * `instructions.100.prompts` key prefix) by filtering on `key` and fetching
- * original bytes through `blobs/read`. `text` contains complete message and
- * visible reasoning text; tool and catalog bodies use bounded text previews.
- */
-export interface ContextEntryView {
-  /**
-   * Sources this assistant message cites, derived from its own native
-   * payload. Empty for every other entry kind.
-   */
-  citations?: CitationView[];
-  content: ContentRefView;
-  display?: ProviderContextDisplayView | null;
-  id: string;
-  key?: string | null;
-  kind: ContextEntryKindView;
-  /**
-   * Application-supplied display origin, independent of role and insertion source.
-   * `user:<id>` identifies platform composer input; `event` marks bot deliveries.
-   * Other values are allowed; omission means unknown. Not an authorization identity.
-   */
-  origin?: string | null;
-  preview?: string | null;
-  /**
-   * Immutable artifact recording this entry's origin or construction.
-   */
-  provenanceRef?: string | null;
-  /**
-   * Native item identity derived from the payload, when present.
-   */
-  providerItemId?: string | null;
-  /**
-   * Where the entry came from: run input, a steering batch, model output,
-   * a tool result, reasoning state, a context edit, or the runtime. Lets
-   * transcripts render steering distinctly from the run's first input.
-   */
-  source?: ContextEntrySourceView | null;
-  /**
-   * For a catalog entry that a newer version has updated: that newer
-   * entry. Present only on state views (`session/read`), where the whole
-   * active context is known.
-   */
-  supersededBy?: string | null;
-  /**
-   * For a catalog entry: the earlier version of the same keyed catalog
-   * that this entry updates. The earlier entry stays in context until a
-   * rewrite drops it.
-   */
-  supersedes?: string | null;
-  text?: string | null;
-  /**
-   * True when a tool or catalog body's `text` is a bounded prefix. Fetch
-   * its original content through `blobs/read`. Messages and reasoning are full.
-   */
-  textTruncated?: boolean;
-  tokenEstimate?: TokenEstimateView | null;
-}
-/**
- * A source the assistant cited, in the same shape for every provider. The
- * exact provider output stays in a separate opaque context entry for replay.
- */
-export interface CitationView {
-  citedText?: string | null;
-  title?: string | null;
-  url: string;
-}
-/**
- * Immutable content and its encoding. A reference can name plain text,
- * provider-native JSON, or media; it does not imply a UTF-8 text payload.
- */
-export interface ContentRefView {
-  blobRef: string;
-  /**
-   * The model-facing name of provider-native media (an admitted image or
-   * PDF): `media:` plus the first twelve hex characters of `blobRef`.
-   * The model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to
-   * media it was shown; resolve it against the media of the same session.
-   * Absent for text and other content.
-   */
-  mediaHandle?: string | null;
-  mime?: string | null;
-  providerKind?: string | null;
-}
-export interface ProviderContextDisplayView {
-  arguments?: string | null;
-  error?: string | null;
-  isError?: boolean;
-  output?: string | null;
-  status: ToolItemStatus;
-  summary: ToolCallDisplayView;
-  toolName: string;
-}
-export interface ToolCallDisplayView {
-  detail?: string | null;
-  group: ToolCallDisplayGroup;
-  target?: string | null;
-  verb: string;
-}
-export interface TokenEstimateView {
-  quality: TokenEstimateQualityView;
-  tokens: number;
-}
-/**
- * Bounded run metadata projected from reducer state. Transcript entries and
- * tool payloads are available only from `session/runs/read` or the event
- * stream.
- */
-export interface RunSummaryView {
-  acceptedAtMs: number;
-  /**
-   * Why a failed run failed. The message is cut to a preview here, and
-   * `session/runs/read` has all of it.
-   */
-  failure?: RunFailureView | null;
-  finishedAtMs?: number | null;
-  id: string;
-  pendingApprovals?: PendingApprovalView[];
-  source: RunSummarySourceView;
-  startedAtMs?: number | null;
-  status: RunStatus;
-  /**
-   * Provider usage so far. A summary of a run old enough to be read back from the
-   * session's log has none; `session/runs/read` still totals it.
-   */
-  usage?: LlmUsageView | null;
-}
-/**
- * Why a run failed. `kind` is the harness's classification; `message` is free text
- * for display, and the provider's own message for `requestRejected`.
- */
-export interface RunFailureView {
-  kind: RunFailureKindView;
-  message: string;
-  messageTruncated?: boolean;
-}
-export interface PendingApprovalView {
-  approvalId: string;
-  requestedAtMs: number;
-  subject: ApprovalSubjectView;
-}
-/**
- * Provider-reported token usage for generations and compactions, or their sum. Every
- * field is optional because providers report different subsets; counts
- * that a provider reports separately (Anthropic's cache read/write) are
- * folded into `input_tokens` so the field always means "prompt tokens
- * billed on this request, cached or not".
- */
-export interface LlmUsageView {
-  /**
-   * Prompt tokens written into the provider's prompt cache (Anthropic).
-   */
-  cacheWriteInputTokens?: number | null;
-  /**
-   * Prompt tokens served from the provider's prompt cache.
-   */
-  cachedInputTokens?: number | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
-  reasoningTokens?: number | null;
-  totalTokens?: number | null;
+  updatedAtMs: number;
 }
 /**
  * Session configuration document.
@@ -2716,6 +2412,2921 @@ export interface ModelConfig {
   model: string;
   providerId: string;
 }
+/**
+ * Root-session retention policy supplied by a profile at session creation.
+ */
+export interface ProfileSessionRetention {
+  /**
+   * Positive close-relative automatic-deletion duration.
+   */
+  deleteAfterCloseMs: number;
+}
+export interface AgentProfileInput {
+  config?: SessionConfig | null;
+  description?: string | null;
+  displayName?: string | null;
+  instructions?: ProfileInstructions | null;
+  /**
+   * Descriptive metadata defaults copied to a session when it is created
+   * from this profile. Explicit `session/start` metadata wins key by key.
+   * Applying the profile to an existing session does not change metadata.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  profileId: ProfileId;
+  /**
+   * Creation-time session retention default. Absence keeps the tree until
+   * manual deletion. Applying a profile to an existing session does not
+   * change retention.
+   */
+  retention?: ProfileSessionRetention | null;
+}
+export interface AgentProfileSummary {
+  description?: string | null;
+  displayName?: string | null;
+  profileId: ProfileId;
+  revision: number;
+  updatedAtMs: number;
+}
+export interface ApprovalDecisionFailure {
+  kind: ApprovalDecisionFailureKind;
+  message: string;
+}
+export interface ApprovalDecisionInput {
+  approvalId: string;
+  decision: ApprovalDecisionKind;
+  note?: string | null;
+}
+export interface ApprovalDecisionResult {
+  approvalId: string;
+  failure?: ApprovalDecisionFailure | null;
+  status: ApprovalDecisionStatus;
+}
+/**
+ * Descriptive source, independent of the attachment's immutable content identity.
+ */
+export interface AttachmentSourceView {
+  id: string;
+  kind: string;
+  path: string;
+}
+export interface BlobHasItem {
+  blobRef: string;
+  exists: boolean;
+}
+export interface BlobHasParams {
+  blobRefs?: string[];
+}
+export interface BlobHasResponse {
+  blobs?: BlobHasItem[];
+}
+export interface BlobPutItem {
+  bytesBase64: string;
+}
+/**
+ * `blobs/put` is batch-native: pass one item to store a single blob. Results
+ * come back in request order. Uploads are eligible for collection after the
+ * deployment's grace period unless retained by a durable resource. Reads do
+ * not extend retention; admitting an existing ref refreshes its grace.
+ */
+export interface BlobPutParams {
+  blobs?: BlobPutItem[];
+}
+export interface BlobPutResponse {
+  blobs?: BlobPutResult[];
+}
+export interface BlobPutResult {
+  blobRef: string;
+  bytes: number;
+}
+export interface BlobReadParams {
+  blobRef: string;
+}
+export interface BlobUploadParams {
+  blobRef: string;
+}
+export interface BotActiveDeliverySnapshot {
+  deliveryId: string;
+  runId?: string | null;
+  seqs: number[];
+  sessionId: string;
+  startedAtMs: number;
+}
+export interface BotBufferSnapshot {
+  firstAtMs: number;
+  flushAtMs: number;
+  key: string;
+  lastAtMs: number;
+  seqs: number[];
+}
+export interface BotCloseParams {
+  botId: BotId;
+}
+export interface BotCloseResponse {
+  bot: BotView;
+}
+/**
+ * The mutable configuration of a bot, replaced whole with an expected
+ * revision. The bot id, event counter, and lifecycle columns live on the
+ * record, not here.
+ */
+export interface BotView {
+  botId: BotId;
+  breaker?: BotBreaker | null;
+  /**
+   * Standing instructions appended to the profile's instructions — the
+   * bot's job description.
+   */
+  brief?: string | null;
+  /**
+   * Terminal: set once by `bots/close`; a closed bot keeps its record
+   * and history but refuses events and cannot be re-enabled.
+   */
+  closedAtMs?: number | null;
+  /**
+   * Sessions the controller force-closed on the way out; `bots/delete`
+   * erases them.
+   */
+  closedSessions?: string[];
+  createdAtMs: number;
+  /**
+   * One line other bots read in the directory.
+   */
+  description?: string | null;
+  /**
+   * Mutable label for humans; the bot id stays the identity.
+   */
+  displayName?: string | null;
+  /**
+   * Capability grant: `bot_emit` — events to itself or another bot's
+   * inbox. Emitting bots are rate-capped.
+   */
+  emit?: boolean;
+  /**
+   * Reversible pause: sessions and chat context stay, nothing is
+   * delivered.
+   */
+  enabled?: boolean;
+  /**
+   * Highest `#N` admitted so far.
+   */
+  eventSeq: number;
+  profileId: ProfileId;
+  revision: number;
+  /**
+   * Close routed (`perKey` / `perEvent`) sessions idle longer than this;
+   * absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
+   */
+  routedSessionCloseAfterMs?: number | null;
+  /**
+   * Budget: runs started per UTC day (sub-agent descendants count);
+   * absent means unlimited.
+   */
+  runsPerDay?: number | null;
+  /**
+   * Capability grant: the mutating self-configuration tools
+   * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
+   */
+  selfConfig?: boolean;
+  updatedAtMs: number;
+}
+/**
+ * Coalescing window: events sharing a route flush as one delivery.
+ */
+export interface BotCoalescePolicy {
+  debounceMs: number;
+  maxCount: number;
+  maxWaitMs: number;
+}
+/**
+ * The controller's live snapshot (its `bot_state` query).
+ */
+export interface BotControllerSnapshot {
+  activeDeliveries?: BotActiveDeliverySnapshot[];
+  appliedProfileRevision?: number | null;
+  buffers?: BotBufferSnapshot[];
+  closed: boolean;
+  controllerStatus: BotControllerStatus;
+  descendantsToday?: number;
+  duplicateEvents?: number;
+  enabled: boolean;
+  eventsProcessed?: number;
+  lastError?: string | null;
+  mainSessionId: string;
+  pendingDeliveries?: number;
+  recentDeliveries?: BotRecentDeliverySnapshot[];
+  /**
+   * UTC day (`YYYY-MM-DD`) the budget counters belong to.
+   */
+  runDay?: string | null;
+  runsToday?: number;
+  sessions?: BotSessionSnapshot[];
+  setupStatus: BotSetupStatus;
+}
+export interface BotRecentDeliverySnapshot {
+  deliveryId: string;
+  finishedAtMs: number;
+  outcome: BotEventOutcome;
+  runId?: string | null;
+  seqs: number[];
+  sessionId: string;
+  summary?: string | null;
+  usage?: LlmUsageView | null;
+}
+/**
+ * Provider-reported token usage for generations and compactions, or their sum. Every
+ * field is optional because providers report different subsets; counts
+ * that a provider reports separately (Anthropic's cache read/write) are
+ * folded into `input_tokens` so the field always means "prompt tokens
+ * billed on this request, cached or not".
+ */
+export interface LlmUsageView {
+  /**
+   * Prompt tokens written into the provider's prompt cache (Anthropic).
+   */
+  cacheWriteInputTokens?: number | null;
+  /**
+   * Prompt tokens served from the provider's prompt cache.
+   */
+  cachedInputTokens?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  totalTokens?: number | null;
+}
+export interface BotSessionSnapshot {
+  /**
+   * A delivery lane or sidecar is running on it.
+   */
+  busy: boolean;
+  generation: number;
+  kind: BotSessionKind;
+  label: string;
+  lastActiveAtMs?: number | null;
+  sessionId: string;
+}
+export interface BotCreateParams {
+  bot: BotInput;
+  /**
+   * Triggers created with the bot in one go; a failure rolls the bot
+   * back.
+   */
+  triggers?: BotTriggerInput[];
+}
+/**
+ * The mutable configuration of a bot, replaced whole with an expected
+ * revision. The bot id, event counter, and lifecycle columns live on the
+ * record, not here.
+ */
+export interface BotInput {
+  botId: BotId;
+  breaker?: BotBreaker | null;
+  /**
+   * Standing instructions appended to the profile's instructions — the
+   * bot's job description.
+   */
+  brief?: string | null;
+  /**
+   * One line other bots read in the directory.
+   */
+  description?: string | null;
+  /**
+   * Mutable label for humans; the bot id stays the identity.
+   */
+  displayName?: string | null;
+  /**
+   * Capability grant: `bot_emit` — events to itself or another bot's
+   * inbox. Emitting bots are rate-capped.
+   */
+  emit?: boolean;
+  /**
+   * Reversible pause: sessions and chat context stay, nothing is
+   * delivered.
+   */
+  enabled?: boolean;
+  profileId: ProfileId;
+  /**
+   * Close routed (`perKey` / `perEvent`) sessions idle longer than this;
+   * absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
+   */
+  routedSessionCloseAfterMs?: number | null;
+  /**
+   * Budget: runs started per UTC day (sub-agent descendants count);
+   * absent means unlimited.
+   */
+  runsPerDay?: number | null;
+  /**
+   * Capability grant: the mutating self-configuration tools
+   * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
+   */
+  selfConfig?: boolean;
+}
+export interface BotDeliverPolicy {
+  whenBusy?: BotWhenBusy & string;
+}
+/**
+ * Leased credential for an HTTP poll source; the value never appears in
+ * the trigger document.
+ */
+export interface PollHttpAuth {
+  audience?: string | null;
+  grantId: string;
+  /**
+   * Header carrying the credential; default `authorization`.
+   */
+  header?: string | null;
+  /**
+   * Scheme prefix; default `Bearer`, empty sends the token raw.
+   */
+  scheme?: string | null;
+}
+/**
+ * Who may take a turn and who may issue control commands, by provider
+ * handle (Telegram user id, WhatsApp JID). Handle allowlists on the
+ * trigger replace any platform membership lookup.
+ */
+export interface ChatAccess {
+  /**
+   * Handles allowed to take a turn when `turn` is `listed`.
+   */
+  allowed?: string[];
+  /**
+   * Handles allowed to issue `/activation` and `/status`; empty denies
+   * control commands to everyone.
+   */
+  controllers?: string[];
+  turn?: ChatTurnAccess & string;
+}
+/**
+ * When the bot acts in a conversation.
+ */
+export interface ChatActivation {
+  group?: ChatGroupActivation | null;
+  mentionNames?: string[];
+  triggerPrefixes?: string[];
+}
+export interface BotCreateResponse {
+  bot: BotView;
+  /**
+   * Secrets of the triggers created with the bot, by trigger id; a
+   * trigger that has none is left out.
+   */
+  triggerSecrets?: {
+    [k: string]: BotTriggerSecretsView;
+  };
+  triggers?: BotTriggerView[];
+}
+/**
+ * What lets an outsider reach a trigger: whoever holds the ingest path can
+ * post events to the bot, and whoever holds the pairing code can connect a
+ * conversation to it. Kept apart from [`BotTriggerView`] so that reading or
+ * listing triggers never discloses either; only bot-management methods
+ * return this.
+ */
+export interface BotTriggerSecretsView {
+  /**
+   * Webhook triggers: the ingest path including its URL token.
+   */
+  ingestPath?: string | null;
+  /**
+   * Chat triggers with `pairing: code`: the code a conversation sends
+   * once to connect.
+   */
+  pairingCode?: string | null;
+}
+/**
+ * Poll cursor state: Lightspeed-owned, operator-visible, reset by a spec
+ * edit. Absent until the baseline poll.
+ */
+export interface PollCursorState {
+  baselinedAtMs?: number | null;
+  consecutiveFailures?: number;
+  ids?: string[];
+  lastPolledAtMs?: number | null;
+  watermark?: unknown;
+}
+export interface BotDeleteParams {
+  botId: BotId;
+}
+export interface BotDeleteResponse {
+  bot: BotView;
+  /**
+   * Sessions deleted along with the bot.
+   */
+  deletedSessions?: string[];
+}
+export interface BotEventAdmitParams {
+  botId: BotId;
+  event: BotEventInput;
+}
+/**
+ * A manually admitted event: what an operator posts through
+ * `bots/events/admit`.
+ */
+export interface BotEventInput {
+  correlationId?: string | null;
+  data?: unknown;
+  /**
+   * Dedupe identity; generated when absent.
+   */
+  eventId?: string | null;
+  headers?: {
+    [k: string]: string;
+  };
+  kind: string;
+  links?: string[];
+  occurredAtMs?: number | null;
+  summary: string;
+}
+export interface BotEventAdmitResponse {
+  /**
+   * The event id was already stored; the existing row is returned and
+   * the controller is woken again.
+   */
+  duplicate: boolean;
+  event: BotEventView;
+}
+/**
+ * The envelope document stored in the CAS and shown to the session as
+ * untrusted input.
+ */
+export interface BotEventDocument {
+  correlationId?: string | null;
+  data?: unknown;
+  headers?: {
+    [k: string]: string;
+  };
+  hops?: number;
+  inReplyTo?: BotEventReplyRef | null;
+  kind: string;
+  links?: string[];
+  occurredAtMs: number;
+  sender?: BotEventSender | null;
+  source: string;
+  summary: string;
+  version: number;
+}
+/**
+ * Sender of a bot-originated event, as the receiver sees it.
+ */
+export interface BotEventSender {
+  bot: BotId;
+}
+export interface BotEventListParams {
+  botId: BotId;
+  /**
+   * Opaque cursor from a previous page.
+   */
+  cursor?: string | null;
+  /**
+   * Page size; server-clamped.
+   */
+  limit?: number | null;
+}
+export interface BotEventListResponse {
+  /**
+   * Newest first.
+   */
+  events?: BotEventView[];
+  nextCursor?: string | null;
+}
+export interface BotEventReadParams {
+  botId: BotId;
+  seq: number;
+}
+export interface BotEventReadResponse {
+  document: BotEventDocument;
+  event: BotEventView;
+}
+export interface BotEventReplayParams {
+  botId: BotId;
+  seq: number;
+}
+export interface BotEventReplayResponse {
+  /**
+   * The fresh replay event, routed like the original.
+   */
+  event: BotEventView;
+}
+export interface BotFilterTestParams {
+  botId: BotId;
+  /**
+   * CEL over `{event, data, headers}`.
+   */
+  filter: string;
+  /**
+   * How many recent stored events to sample when no payload is given.
+   */
+  limit?: number | null;
+  /**
+   * A document to test instead of stored events: `{kind?, data?,
+   * headers?}`.
+   */
+  payload?: {
+    [k: string]: unknown;
+  };
+}
+export interface BotFilterTestResponse {
+  errors: number;
+  matched: number;
+  results?: BotFilterTestResult[];
+  sampled: number;
+}
+export interface BotFilterTestResult {
+  error?: string | null;
+  matched: boolean;
+  seq?: number | null;
+}
+export interface BotListParams {
+  /**
+   * Only bots this actor created.
+   */
+  createdBy?: string | null;
+}
+export interface BotListResponse {
+  bots?: BotListItem[];
+}
+export interface BotPutParams {
+  bot: BotInput;
+  /**
+   * Checked only when the bot already exists; absent replaces (or
+   * creates) unconditionally.
+   */
+  expectedRevision?: number | null;
+}
+export interface BotPutResponse {
+  bot: BotView;
+}
+export interface BotReadParams {
+  botId: BotId;
+}
+export interface BotReadResponse {
+  /**
+   * The bot's audience, always the universe, and who created it.
+   */
+  access: ResourceAccessSummary;
+  bot: BotView;
+  status?: BotListStatus & string;
+}
+export interface BotSessionRotateParams {
+  botId: BotId;
+  /**
+   * One of the bot's sessions (main or routed); the controller closes it
+   * at its next idle boundary and continues on a successor generation.
+   */
+  sessionId: string;
+}
+export interface BotSessionRotateResponse {
+  accepted: boolean;
+}
+export interface BotStateReadParams {
+  botId: BotId;
+}
+export interface BotStateReadResponse {
+  state: BotStateView;
+}
+export interface BotStateView {
+  /**
+   * Absent when the controller workflow is not running (a bot that never
+   * received an event, or a closed bot whose workflow completed).
+   */
+  controller?: BotControllerSnapshot | null;
+  /**
+   * The bot's sessions and their sub-agents, most recently updated
+   * first, each with what it is doing now. Bounded at 2,000 sessions;
+   * the least recently updated fall off a larger tree.
+   */
+  sessions?: SessionSummaryView[];
+}
+export interface BotTriggerDeleteParams {
+  botId: BotId;
+  triggerId: BotTriggerId;
+}
+export interface BotTriggerDeleteResponse {
+  trigger: BotTriggerView;
+}
+export interface BotTriggerListParams {
+  botId: BotId;
+}
+export interface BotTriggerListResponse {
+  triggers?: BotTriggerView[];
+}
+export interface BotTriggerPutParams {
+  botId: BotId;
+  /**
+   * Checked only when the trigger already exists; absent replaces (or
+   * creates) unconditionally.
+   */
+  expectedRevision?: number | null;
+  trigger: BotTriggerInput;
+}
+export interface BotTriggerPutResponse {
+  /**
+   * The trigger's secrets as stored after this write, minted or kept.
+   */
+  secrets?: BotTriggerSecretsView;
+  trigger: BotTriggerView;
+}
+export interface BotTriggerReadParams {
+  botId: BotId;
+  triggerId: BotTriggerId;
+}
+export interface BotTriggerReadResponse {
+  trigger: BotTriggerView;
+}
+export interface BotTriggerSecretsReadParams {
+  botId: BotId;
+  triggerId: BotTriggerId;
+}
+/**
+ * The secrets of one trigger; both fields are absent for a trigger that
+ * has none.
+ */
+export interface BotTriggerSecretsReadResponse {
+  /**
+   * Webhook triggers: the ingest path including its URL token.
+   */
+  ingestPath?: string | null;
+  /**
+   * Chat triggers with `pairing: code`: the code a conversation sends
+   * once to connect.
+   */
+  pairingCode?: string | null;
+}
+/**
+ * How the direct runtime connection authenticated. All runtime tokens have
+ * full authority; permissions belong to the external gate.
+ */
+export interface CallerAccess {
+  /**
+   * True only for explicitly unauthenticated local development access.
+   */
+  single: boolean;
+  /**
+   * Configured token name, absent for unauthenticated access.
+   */
+  tokenName?: string | null;
+}
+export interface ChannelAccountCreateParams {
+  account: ChannelAccountInput;
+}
+/**
+ * A provider account served by the connector host. Secret material stays
+ * in the referenced grant; this document is routing identity and
+ * operational configuration.
+ */
+export interface ChannelAccountInput {
+  accountId: ChannelAccountId;
+  /**
+   * Retrievable credential grant holding the provider token (a Telegram bot
+   * token); the connector host leases it. Absent for providers whose
+   * credential is a session state directory (WhatsApp).
+   */
+  credentialGrantId?: string | null;
+  displayName: string;
+  enabled?: boolean;
+  provider: ChannelProvider;
+  /**
+   * Provider-native account identity: the Telegram bot username or
+   * numeric id, the WhatsApp phone number. Unique per universe and
+   * provider.
+   */
+  providerAccountId: string;
+  settings?: ChannelAccountSettings;
+}
+export interface ChannelAccountSettings {
+  /**
+   * WhatsApp: print the pairing QR code on the connector's terminal.
+   */
+  printQr?: boolean | null;
+  [k: string]: unknown;
+}
+export interface ChannelAccountCreateResponse {
+  account: ChannelAccountView;
+}
+/**
+ * A provider account served by the connector host. Secret material stays
+ * in the referenced grant; this document is routing identity and
+ * operational configuration.
+ */
+export interface ChannelAccountView {
+  accountId: ChannelAccountId;
+  createdAtMs: number;
+  /**
+   * Retrievable credential grant holding the provider token (a Telegram bot
+   * token); the connector host leases it. Absent for providers whose
+   * credential is a session state directory (WhatsApp).
+   */
+  credentialGrantId?: string | null;
+  displayName: string;
+  enabled?: boolean;
+  provider: ChannelProvider;
+  /**
+   * Provider-native account identity: the Telegram bot username or
+   * numeric id, the WhatsApp phone number. Unique per universe and
+   * provider.
+   */
+  providerAccountId: string;
+  revision: number;
+  settings?: ChannelAccountSettings;
+  updatedAtMs: number;
+}
+export interface ChannelAccountDeleteParams {
+  accountId: ChannelAccountId;
+}
+export interface ChannelAccountDeleteResponse {
+  account: ChannelAccountView;
+}
+export interface ChannelAccountListParams {
+  provider?: ChannelProvider | null;
+}
+export interface ChannelAccountListResponse {
+  accounts?: ChannelAccountView[];
+}
+export interface ChannelAccountPutParams {
+  account: ChannelAccountInput;
+  expectedRevision?: number | null;
+}
+export interface ChannelAccountPutResponse {
+  account: ChannelAccountView;
+}
+export interface ChannelAccountReadParams {
+  accountId: ChannelAccountId;
+}
+export interface ChannelAccountReadResponse {
+  account: ChannelAccountView;
+}
+export interface ChannelConversationReadParams {
+  accountId: ChannelAccountId;
+  chatId: string;
+  threadId?: string | null;
+}
+export interface ChannelConversationReadResponse {
+  /**
+   * Absent when no conversation workflow exists for the chat yet.
+   */
+  conversation?: ChannelConversationSnapshot | null;
+}
+/**
+ * The conversation workflow's live snapshot, for debugging.
+ */
+export interface ChannelConversationSnapshot {
+  activeDeliveries: number;
+  botId: string;
+  deliveredCount: number;
+  deniedInboundCount: number;
+  droppedInboundCount: number;
+  duplicateInboundCount: number;
+  emittedCount: number;
+  failedDeliveryCount: number;
+  inboundCount: number;
+  label: string;
+  protocolErrors?: string[];
+  triggerId: string;
+  typing: boolean;
+}
+/**
+ * One normalized provider message, as the connector host hands it to the
+ * core. Provider and account come from the admitting account.
+ */
+export interface ChannelInbound {
+  chatId: string;
+  isDirect: boolean;
+  isReplyToBot: boolean;
+  media?: ChannelInboundMedia[];
+  mentionedBot: boolean;
+  messageId: string;
+  /**
+   * Provider handle of the sender (Telegram user id, WhatsApp JID).
+   */
+  senderId: string;
+  senderName: string;
+  text: string;
+  threadId?: string | null;
+  timestampMs: number;
+}
+/**
+ * A provider-owned attachment reference; never bytes. The connector
+ * downloads it when the conversation workflow asks (`prepare_channel_media`).
+ */
+export interface ChannelInboundMedia {
+  byteSize?: number | null;
+  /**
+   * Provider file handle (a Telegram file id, a sealed WhatsApp locator).
+   */
+  fileId: string;
+  kind: ChannelMediaKind;
+  mime: string;
+  name?: string | null;
+}
+export interface ChannelInboundAdmitParams {
+  accountId: ChannelAccountId;
+  inbound: ChannelInbound;
+}
+export interface ChannelInboundAdmitResponse {
+  /**
+   * The bot serving the conversation, when decided.
+   */
+  botId?: BotId | null;
+  decision: ChannelInboundDecision;
+  triggerId?: BotTriggerId | null;
+}
+export interface ChannelPairingDeleteParams {
+  accountId: ChannelAccountId;
+  chatId: string;
+}
+export interface ChannelPairingDeleteResponse {
+  pairing: ChannelPairingView;
+}
+/**
+ * A conversation's route: the chat is identified by `(accountId, chatId)`
+ * and owned by the paired trigger.
+ */
+export interface ChannelPairingView {
+  accountId: ChannelAccountId;
+  botId: BotId;
+  chatId: string;
+  pairedAtMs: number;
+  pairedVia: ChannelPairedVia;
+  triggerId: BotTriggerId;
+}
+export interface ChannelPairingListParams {
+  accountId?: ChannelAccountId | null;
+  botId?: BotId | null;
+}
+export interface ChannelPairingListResponse {
+  pairings?: ChannelPairingView[];
+}
+/**
+ * A source the assistant cited, in the same shape for every provider. The
+ * exact provider output stays in a separate opaque context entry for replay.
+ */
+export interface CitationView {
+  citedText?: string | null;
+  title?: string | null;
+  url: string;
+}
+export interface ConnectionParams {}
+/**
+ * Connection discovery through the resource HTTP API.
+ */
+export interface ConnectionResponse {
+  caller: CallerAccess;
+  capabilities: ServerCapabilities;
+  contractRevision: string;
+  /**
+   * Default URL universe for a gateway configured with a single universe.
+   */
+  defaultUniverse?: string | null;
+  protocolVersion: string;
+  runtime: RuntimeKind;
+  serverInfo: ServerInfo;
+}
+export interface ServerCapabilities {
+  eventLog?: boolean;
+  historyRead: boolean;
+  localExecution: boolean;
+  notifications: boolean;
+}
+export interface ServerInfo {
+  /**
+   * The environment daemon build this release ships. Descriptive: the
+   * gateway admits any daemon that speaks `envd.protocolVersion`,
+   * whatever commit it was built from.
+   */
+  envd: EnvironmentDaemonInfo;
+  /**
+   * Full git commit this server was built from.
+   */
+  gitSha: string;
+  name: string;
+  /**
+   * Release version with the git commit as SemVer build metadata, for
+   * example `0.1.0+2093b949…`.
+   */
+  version: string;
+}
+/**
+ * The environment daemon (`lightspeed-envd`) that belongs to a server
+ * release. Download locations and checksums are not here: the deployment
+ * publishes them in its discovery document, outside the authenticated API.
+ */
+export interface EnvironmentDaemonInfo {
+  gitSha: string;
+  /**
+   * The envd protocol version (data plane and registration channel)
+   * the gateway speaks. A daemon registers only when it reports exactly
+   * this number.
+   */
+  protocolVersion: number;
+  /**
+   * Rust target triples the daemon is published for.
+   */
+  targets: string[];
+  version: string;
+}
+/**
+ * Immutable content and its encoding. A reference can name plain text,
+ * provider-native JSON, or media; it does not imply a UTF-8 text payload.
+ */
+export interface ContentRefView {
+  blobRef: string;
+  /**
+   * The model-facing name of provider-native media (an admitted image or
+   * PDF): `media:` plus the first twelve hex characters of `blobRef`.
+   * The model writes it as a URL (`![…](media:3f9a2c1d4e7b)`) to refer to
+   * media it was shown; resolve it against the media of the same session.
+   * Absent for text and other content.
+   */
+  mediaHandle?: string | null;
+  mime?: string | null;
+  providerKind?: string | null;
+}
+export interface ContextAppendEntry {
+  item: InputItem;
+  /**
+   * Stable client-chosen context key, which names one entry. Re-sending
+   * the key with the same content is a no-op, so a retry lands once. With
+   * different content the earlier entry leaves active context and the new
+   * one goes last under a new id; a catalog keeps the earlier version
+   * rendered and supersedes it instead.
+   * `run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.
+   */
+  key: string;
+}
+export interface ContextAppendParams {
+  entries: ContextAppendEntry[];
+  sessionId: string;
+}
+export interface ContextAppendResponse {
+  contextRevision: number;
+  results: ContextAppendResult[];
+}
+export interface ContextAppendResult {
+  entry?: ContextEntryInputView | null;
+  failure?: InputAdmissionFailureView | null;
+  key: string;
+  status: ContextAppendStatus;
+}
+export interface ContextEntryInputView {
+  content: ContentRefView;
+  kind: ContextEntryKindView;
+  /**
+   * Application-supplied display origin, independent of role and insertion source.
+   * `user:<id>` identifies platform composer input; `event` marks bot deliveries.
+   * Other values are allowed; omission means unknown. Not an authorization identity.
+   */
+  origin?: string | null;
+  preview?: string | null;
+  /**
+   * Immutable artifact recording this entry's origin or construction.
+   */
+  provenanceRef?: string | null;
+  tokenEstimate?: TokenEstimateView | null;
+}
+export interface TokenEstimateView {
+  quality: TokenEstimateQualityView;
+  tokens: number;
+}
+export interface InputAdmissionFailureView {
+  kind: InputAdmissionFailureKind;
+  message: string;
+}
+export interface ContextCompactParams {
+  sessionId: string;
+}
+export interface ContextCompactResponse {
+  session: SessionMutationView;
+}
+/**
+ * Compact acknowledgement returned by session mutations. Call
+ * `session/read` when the complete current-state summary is needed.
+ */
+export interface SessionMutationView {
+  activity: SessionActivity;
+  configRevision: number;
+  contextRevision: number;
+  headCursor?: EventCursor | null;
+  id: string;
+  lifecycleStatus: SessionLifecycleStatus;
+}
+export interface EventCursor {
+  seq: number;
+}
+/**
+ * Resolved automatic policy and the currently pending standalone operation.
+ */
+export interface ContextCompactionView {
+  compactThresholdTokens?: number | null;
+  /**
+   * Standalone when the context already holds a window from a native standalone
+   * compaction, whatever was requested.
+   */
+  effectiveMode: ContextCompactionMode;
+  /**
+   * Native APIs are preferred where supported; summaries use the same model route.
+   */
+  effectiveStrategy: ContextCompactionStrategy;
+  /**
+   * The active run's input capacity, or the declared limit. While idle with none
+   * declared, what the last generation recorded, so a session that has not run yet
+   * shows no reported capacity: that is resolved for each run as it is prepared.
+   */
+  inputLimitTokens?: number | null;
+  observedTokens?: number | null;
+  pending: boolean;
+  queued: boolean;
+  recoveryAttempts: number;
+  requestedMode: ContextCompactionMode;
+  thresholdSource: ContextCompactionThresholdSource;
+}
+/**
+ * A session context entry, faithful to the stored harness entry: keyed,
+ * kind-tagged, ref-backed. Keys are a stable extension point — clients
+ * reconstruct derived surfaces (e.g. the prompted instruction set via the
+ * `instructions.100.prompts` key prefix) by filtering on `key` and fetching
+ * original bytes through `blobs/read`. `text` contains complete message and
+ * visible reasoning text; tool and catalog bodies use bounded text previews.
+ */
+export interface ContextEntryView {
+  /**
+   * Sources this assistant message cites, derived from its own native
+   * payload. Empty for every other entry kind.
+   */
+  citations?: CitationView[];
+  content: ContentRefView;
+  display?: ProviderContextDisplayView | null;
+  id: string;
+  key?: string | null;
+  kind: ContextEntryKindView;
+  /**
+   * Application-supplied display origin, independent of role and insertion source.
+   * `user:<id>` identifies platform composer input; `event` marks bot deliveries.
+   * Other values are allowed; omission means unknown. Not an authorization identity.
+   */
+  origin?: string | null;
+  preview?: string | null;
+  /**
+   * Immutable artifact recording this entry's origin or construction.
+   */
+  provenanceRef?: string | null;
+  /**
+   * Native item identity derived from the payload, when present.
+   */
+  providerItemId?: string | null;
+  /**
+   * Where the entry came from: run input, a steering batch, model output,
+   * a tool result, reasoning state, a context edit, or the runtime. Lets
+   * transcripts render steering distinctly from the run's first input.
+   */
+  source?: ContextEntrySourceView | null;
+  /**
+   * For a catalog entry that a newer version has updated: that newer
+   * entry. Present only on state views (`session/read`), where the whole
+   * active context is known.
+   */
+  supersededBy?: string | null;
+  /**
+   * For a catalog entry: the earlier version of the same keyed catalog
+   * that this entry updates. The earlier entry stays in context until a
+   * rewrite drops it.
+   */
+  supersedes?: string | null;
+  text?: string | null;
+  /**
+   * True when a tool or catalog body's `text` is a bounded prefix. Fetch
+   * its original content through `blobs/read`. Messages and reasoning are full.
+   */
+  textTruncated?: boolean;
+  tokenEstimate?: TokenEstimateView | null;
+}
+export interface ProviderContextDisplayView {
+  arguments?: string | null;
+  error?: string | null;
+  isError?: boolean;
+  output?: string | null;
+  status: ToolItemStatus;
+  summary: ToolCallDisplayView;
+  toolName: string;
+}
+export interface ToolCallDisplayView {
+  detail?: string | null;
+  group: ToolCallDisplayGroup;
+  target?: string | null;
+  verb: string;
+}
+export interface ContextRemoveParams {
+  /**
+   * Active context keys to remove. Removing a key that is already absent
+   * is a per-key no-op (`absent`), so retries are idempotent. Keys under
+   * reserved namespaces (`run`, `run.*`, `runtime`, `runtime.*`) are rejected
+   * request-level.
+   */
+  keys: string[];
+  sessionId: string;
+}
+export interface ContextRemoveResponse {
+  contextRevision: number;
+  results: ContextRemoveResult[];
+}
+export interface ContextRemoveResult {
+  failure?: InputAdmissionFailureView | null;
+  key: string;
+  status: ContextRemoveStatus;
+}
+export interface ContextReplaceEntry {
+  /**
+   * The active entry to replace, by the `id` that `session/read` lists in
+   * `activeContext`. Only tool results and user messages can be replaced,
+   * and the entry keeps its kind: a tool result takes only text.
+   */
+  entryId: string;
+  item: InputItem;
+}
+export interface ContextReplaceParams {
+  entries: ContextReplaceEntry[];
+  sessionId: string;
+}
+export interface ContextReplaceResponse {
+  contextRevision: number;
+  results: ContextReplaceResult[];
+}
+export interface ContextReplaceResult {
+  entryId: string;
+  failure?: InputAdmissionFailureView | null;
+  status: ContextReplaceStatus;
+}
+export interface ContextView {
+  compaction?: ContextCompactionView | null;
+  entries?: ContextEntryView[];
+  revision: number;
+}
+/**
+ * Register an OAuth client configuration. `client_secret` is the second
+ * deliberate inbound-plaintext path after `credentials/grants/import`: it is
+ * encrypted on receipt and never returned by any method. `Debug` output
+ * redacts it; request logging must never echo these params.
+ */
+export interface CredentialClientCreateParams {
+  audience?: string | null;
+  authorizationEndpoint: string;
+  authorizationResponseIssParameterSupported?: boolean;
+  authorizationServerIssuer?: string | null;
+  authorizationServerScopesSupported?: string[];
+  clientId?: string | null;
+  clientSecret?: string | null;
+  displayName?: string | null;
+  providerId?: string | null;
+  providerKind: CredentialProviderKind;
+  remoteClientId: string;
+  scopesDefault?: string[];
+  tokenEndpoint: string;
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod | null;
+}
+export interface CredentialClientCreateResponse {
+  client: OAuthClientView;
+}
+export interface OAuthClientView {
+  audience?: string | null;
+  authorizationEndpoint: string;
+  authorizationResponseIssParameterSupported?: boolean;
+  authorizationServerIssuer?: string | null;
+  authorizationServerScopesSupported?: string[];
+  clientId: string;
+  createdAtMs: number;
+  displayName?: string | null;
+  hasClientSecret: boolean;
+  providerId: string;
+  providerKind: CredentialProviderKind;
+  remoteClientId: string;
+  scopesDefault?: string[];
+  tokenEndpoint: string;
+  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
+  updatedAtMs: number;
+}
+export interface CredentialClientDeleteParams {
+  clientId: string;
+}
+export interface CredentialClientDeleteResponse {
+  client: OAuthClientView;
+}
+export interface CredentialClientListParams {}
+export interface CredentialClientListResponse {
+  clients?: OAuthClientView[];
+}
+export interface CredentialClientReadParams {
+  clientId: string;
+}
+export interface CredentialClientReadResponse {
+  client: OAuthClientView;
+}
+export interface CredentialFlowStartParams {
+  audience?: string | null;
+  clientId: string;
+  exposure?: CredentialGrantExposure & string;
+  scopes?: string[] | null;
+}
+export interface CredentialFlowStartResponse {
+  /**
+   * Authorization URL the user must open. It embeds the one-time `state`;
+   * treat it as sensitive and do not log it server-side.
+   */
+  authorizeUrl: string;
+  expiresAtMs: number;
+  flowId: string;
+}
+export interface CredentialFlowStatusParams {
+  flowId: string;
+}
+export interface CredentialFlowStatusResponse {
+  flow: CredentialFlowView;
+}
+export interface CredentialFlowView {
+  clientId: string;
+  createdAtMs: number;
+  error?: string | null;
+  expiresAtMs: number;
+  flowId: string;
+  grantId?: string | null;
+  providerId: string;
+  status: CredentialFlowStatus;
+  updatedAtMs: number;
+}
+export interface CredentialGitHubInstallationGrantParams {
+  displayName?: string | null;
+  exposure?: CredentialGrantExposure & string;
+  grantId?: string | null;
+  installationId: number;
+  providerId: string;
+}
+export interface CredentialGitHubInstallationGrantResponse {
+  grant: CredentialGrantView;
+}
+export interface CredentialGrantView {
+  audience?: string | null;
+  createdAtMs: number;
+  /**
+   * Who created the grant. Attribution only; it confers no access.
+   */
+  createdBy: Attribution;
+  displayName?: string | null;
+  expiresAtMs?: number | null;
+  exposure: CredentialGrantExposure;
+  grantId: string;
+  hasAccessToken: boolean;
+  hasRefreshToken: boolean;
+  lastLeasedAtMs?: number | null;
+  leaseCount: number;
+  /**
+   * Non-secret provider-specific metadata (for GitHub App installation
+   * grants: installation id, account, permissions, repository selection).
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  providerId: string;
+  providerKind: CredentialProviderKind;
+  scopes?: string[];
+  status: CredentialGrantStatus;
+  subjectHint?: string | null;
+  updatedAtMs: number;
+}
+export interface CredentialGitHubInstallationListParams {
+  providerId: string;
+}
+export interface CredentialGitHubInstallationListResponse {
+  installations?: GitHubInstallationView[];
+}
+export interface GitHubInstallationView {
+  accountLogin?: string | null;
+  installationId: number;
+  /**
+   * Fine-grained permission map as GitHub reports it.
+   */
+  permissions?: {
+    [k: string]: unknown;
+  };
+  repositorySelection?: string | null;
+}
+/**
+ * Import a new token credential as a credential grant, under the given id or an
+ * allocated one; an id already in use is a conflict. Together with
+ * [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
+ * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
+ * logging must never echo these params.
+ */
+export interface CredentialGrantImportParams {
+  audience?: string | null;
+  displayName?: string | null;
+  expiresAtMs?: number | null;
+  exposure?: CredentialGrantExposure & string;
+  grantId?: string | null;
+  /**
+   * Non-secret, caller-defined metadata stored on the grant and returned
+   * by reads (for example which product a pasted subscription token
+   * belongs to). Must be a JSON object; never put secret material here.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  providerId?: string | null;
+  scopes?: string[];
+  subjectHint?: string | null;
+  token: string;
+}
+export interface CredentialGrantImportResponse {
+  grant: CredentialGrantView;
+}
+/**
+ * Request a current access-token lease for a retrievable grant. Callers must
+ * cache only in memory until shortly before `expiresAtMs` (or for at most
+ * five minutes when it is absent), re-lease after target 401/403 responses,
+ * and never persist the token or place it in a workflow payload.
+ */
+export interface CredentialGrantLeaseParams {
+  audience?: string | null;
+  grantId: string;
+}
+export interface CredentialGrantLeaseResponse {
+  expiresAtMs?: number | null;
+  grantId: string;
+  providerKind: CredentialProviderKind;
+  token: string;
+}
+export interface CredentialGrantListParams {
+  status?: CredentialGrantStatus | null;
+}
+export interface CredentialGrantListResponse {
+  grants?: CredentialGrantView[];
+}
+/**
+ * Declare a token credential (`staticToken`): its id, its settings and the
+ * token it holds. A credential that is missing is created. One that exists
+ * has its settings replaced by these (an absent field is unset) and, when it
+ * holds a different token, that token replaced, so MCP servers, headers,
+ * bot polls and environment variables referencing the id use the new value
+ * from their next request or process. Declaring it again changes nothing.
+ *
+ * `token` is encrypted on receipt and never returned; `Debug` output redacts
+ * it and request logging must never echo these params.
+ */
+export interface CredentialGrantPutParams {
+  audience?: string | null;
+  displayName?: string | null;
+  /**
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  /**
+   * When the token expires. Absent means it does not expire.
+   */
+  expiresAtMs?: number | null;
+  /**
+   * Whether the plain token may be leased to a service or bound into an
+   * environment. It cannot be changed afterwards.
+   */
+  exposure?: CredentialGrantExposure & string;
+  grantId: string;
+  /**
+   * Non-secret, caller-defined metadata. Must be a JSON object; never put
+   * secret material here.
+   */
+  metadata?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Label recorded on the credential; `static` when absent. It cannot be
+   * changed afterwards.
+   */
+  providerId?: string | null;
+  scopes?: string[];
+  subjectHint?: string | null;
+  token: string;
+}
+export interface CredentialGrantPutResponse {
+  /**
+   * False when the credential already existed.
+   */
+  created: boolean;
+  /**
+   * The credential as declared: as it is now, or as it would be for a
+   * dry run.
+   */
+  grant: CredentialGrantView;
+  /**
+   * True when an existing credential held a different token.
+   */
+  tokenReplaced: boolean;
+}
+export interface CredentialGrantReadParams {
+  grantId: string;
+}
+export interface CredentialGrantReadResponse {
+  grant: CredentialGrantView;
+}
+export interface CredentialGrantRevokeParams {
+  grantId: string;
+}
+export interface CredentialGrantRevokeResponse {
+  grant: CredentialGrantView;
+}
+export interface ModelEndpointConfig {
+  apiKinds: string[];
+  baseUrl: string;
+  /**
+   * Extra request headers sent on every request to the endpoint, alongside
+   * the provider's own credential. Names are case-insensitive and stored
+   * lowercased; transport headers and `authorization` are reserved.
+   * `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
+   * accept only a `credential` value.
+   */
+  headers?: {
+    [k: string]: RequestHeader;
+  };
+}
+/**
+ * Register a credential provider. `credential` (for GitHub Apps: the private
+ * key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+ * on receipt and never returned by any method. `Debug` output redacts it;
+ * request logging must never echo these params.
+ */
+export interface CredentialProviderCreateParams {
+  config: CredentialProviderConfigInput;
+  credential?: string | null;
+  displayName?: string | null;
+  providerId?: string | null;
+}
+export interface CredentialProviderCreateResponse {
+  provider: CredentialProviderView;
+}
+export interface CredentialProviderView {
+  config: CredentialProviderConfigView;
+  createdAtMs: number;
+  displayName?: string | null;
+  hasCredential: boolean;
+  providerId: string;
+  providerKind: CredentialProviderKind;
+  status: CredentialProviderStatus;
+  updatedAtMs: number;
+}
+export interface CredentialProviderDeleteParams {
+  providerId: string;
+}
+export interface CredentialProviderDeleteResponse {
+  provider: CredentialProviderView;
+}
+export interface CredentialProviderListParams {}
+export interface CredentialProviderListResponse {
+  providers?: CredentialProviderView[];
+}
+/**
+ * Declare a provider: its id, its configuration and its credential. A
+ * provider that is missing is created. One that exists is rewritten in place
+ * as if it were created again under the same id, where it differs: the new
+ * settings are validated before anything changes, so a rejected declaration
+ * leaves the provider as it was, and sessions and environment variables
+ * referencing the id keep working throughout. Declaring it again changes
+ * nothing. `credential` is encrypted on receipt and never returned; `Debug`
+ * output redacts it.
+ */
+export interface CredentialProviderPutParams {
+  config: CredentialProviderConfigInput;
+  /**
+   * The provider's credential, for the kinds that take one. Absent leaves
+   * the provider without a credential.
+   */
+  credential?: string | null;
+  displayName?: string | null;
+  /**
+   * Report what the declaration would do without doing it.
+   */
+  dryRun?: boolean;
+  providerId: string;
+}
+export interface CredentialProviderPutResponse {
+  /**
+   * False when the provider already existed.
+   */
+  created: boolean;
+  /**
+   * True when an existing provider held a different credential, or gained
+   * or lost one.
+   */
+  credentialReplaced: boolean;
+  /**
+   * The provider as declared: as it is now, or as it would be for a dry
+   * run.
+   */
+  provider: CredentialProviderView;
+}
+export interface CredentialProviderReadParams {
+  providerId: string;
+}
+export interface CredentialProviderReadResponse {
+  provider: CredentialProviderView;
+}
+export interface DeclaredUniverseMember {
+  /**
+   * Select by verified email, or by issuer and subject, never both.
+   */
+  email?: string | null;
+  issuer?: string | null;
+  role: UniverseMemberRole;
+  subject?: string | null;
+}
+export interface DeletedSessionView {
+  deletedAtMs: number;
+  displayName?: string | null;
+  sessionId: string;
+}
+/**
+ * Permanent resource inventory and attribution for a deleted universe.
+ */
+export interface DeletedUniverseView {
+  createdAtMs: number;
+  deletedAtMs: number;
+  deletingAtMs: number;
+  displayName?: string | null;
+  handle: string;
+  requestedBy: Attribution;
+  summary: unknown;
+  universeId: string;
+}
+export interface DeploymentChannelAccountListParams {
+  /**
+   * Include disabled accounts; by default only enabled ones are listed.
+   */
+  includeDisabled?: boolean;
+  provider?: ChannelProvider | null;
+}
+export interface DeploymentChannelAccountListResponse {
+  accounts?: DeploymentChannelAccountView[];
+}
+/**
+ * One channel account of any universe, for the connector host's discovery
+ * pass.
+ */
+export interface DeploymentChannelAccountView {
+  accountId: ChannelAccountId;
+  createdAtMs: number;
+  /**
+   * Retrievable credential grant holding the provider token (a Telegram bot
+   * token); the connector host leases it. Absent for providers whose
+   * credential is a session state directory (WhatsApp).
+   */
+  credentialGrantId?: string | null;
+  displayName: string;
+  enabled?: boolean;
+  provider: ChannelProvider;
+  /**
+   * Provider-native account identity: the Telegram bot username or
+   * numeric id, the WhatsApp phone number. Unique per universe and
+   * provider.
+   */
+  providerAccountId: string;
+  revision: number;
+  settings?: ChannelAccountSettings;
+  universeId: string;
+  updatedAtMs: number;
+}
+export interface DeploymentDeletedSessionsListParams {
+  /**
+   * Exclusive session ID cursor; each page contains at most 100 entries.
+   */
+  after?: string | null;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+export interface DeploymentDeletedSessionsListResponse {
+  nextAfter?: string | null;
+  sessions: DeletedSessionView[];
+}
+export interface DeploymentDeletedUniversesListParams {
+  /**
+   * Opaque exclusive cursor; each page contains at most 100 entries.
+   */
+  after?: string | null;
+}
+export interface DeploymentDeletedUniversesListResponse {
+  nextAfter?: string | null;
+  universes: DeletedUniverseView[];
+}
+export interface DeploymentEnvironmentProviderDeleteParams {
+  providerId: string;
+}
+export interface DeploymentEnvironmentProviderDeleteResponse {
+  provider: DeploymentEnvironmentProviderView;
+}
+export interface DeploymentEnvironmentProviderView {
+  /**
+   * `ws://`, `wss://` or `unix://` URL of the provider controller.
+   */
+  controllerEndpoint: string;
+  createdAtMs: number;
+  /**
+   * Operator-configured `ws://` or `wss://` base of the provider's data
+   * routes; absent derives it from the controller endpoint.
+   */
+  dataRouteBase?: string | null;
+  displayName?: string | null;
+  /**
+   * The data route base Lightspeed dials: `dataRouteBase`, or the
+   * controller endpoint's origin followed by `/routes`. Absent only when it
+   * cannot be derived.
+   */
+  effectiveDataRouteBase?: string | null;
+  /**
+   * A bearer credential is stored and presented to the controller and
+   * data routes; without one no `Authorization` header is sent.
+   */
+  hasCredential: boolean;
+  providerId: string;
+  updatedAtMs: number;
+}
+export interface DeploymentEnvironmentProviderListParams {}
+export interface DeploymentEnvironmentProviderListResponse {
+  providers: DeploymentEnvironmentProviderView[];
+}
+/**
+ * Register or replace a provider. `credential` is the optional bearer
+ * token Lightspeed presents to the provider's controller and data routes:
+ * it is sealed on receipt and never returned by any method. `Debug` output
+ * redacts it; request logging must never echo these params.
+ */
+export interface DeploymentEnvironmentProviderPutParams {
+  /**
+   * Remove the stored credential. Excludes `credential`.
+   */
+  clearCredential?: boolean;
+  /**
+   * `ws://`, `wss://` or `unix://` URL of the provider controller.
+   */
+  controllerEndpoint: string;
+  /**
+   * A new bearer credential; omit to keep the stored one. A provider needs
+   * none. Excludes `clearCredential`.
+   */
+  credential?: string | null;
+  /**
+   * `ws://` or `wss://` base of the provider's data routes; omit to derive
+   * it from the controller endpoint. Required for a `unix://` controller,
+   * and must not be `ws://` for a `wss://` controller.
+   */
+  dataRouteBase?: string | null;
+  displayName?: string | null;
+  providerId: string;
+}
+export interface DeploymentEnvironmentProviderPutResponse {
+  provider: DeploymentEnvironmentProviderView;
+}
+export interface DeploymentEnvironmentProviderReadParams {
+  providerId: string;
+}
+export interface DeploymentEnvironmentProviderReadResponse {
+  provider: DeploymentEnvironmentProviderView;
+}
+export interface DeploymentProviderBindingDeleteParams {
+  providerId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+export interface DeploymentProviderBindingDeleteResponse {
+  binding: EnvironmentProviderBindingView;
+}
+/**
+ * A universe's binding to a deployment provider. Creates, templates and
+ * data routes of the provider need it enabled.
+ */
+export interface EnvironmentProviderBindingView {
+  createdAtMs: number;
+  enabled: boolean;
+  providerId: string;
+  updatedAtMs: number;
+}
+/**
+ * Create or replace a universe's binding to a deployment provider.
+ */
+export interface DeploymentProviderBindingPutParams {
+  /**
+   * Admits creates, template listing and data routes for the universe.
+   */
+  enabled: boolean;
+  providerId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+export interface DeploymentProviderBindingPutResponse {
+  binding: EnvironmentProviderBindingView;
+}
+export interface DeploymentSessionPurgeParams {
+  sessionId: string;
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+export interface DeploymentSessionPurgeResponse {
+  /**
+   * Includes soft-deleted delegated descendants.
+   * Empty when the target has already been permanently deleted.
+   */
+  deletedSessionIds: string[];
+}
+/**
+ * Patch desired Platform configuration. Absent fields retain their values.
+ */
+export interface DeploymentUniverseConfigurationPutParams {
+  /**
+   * Exact issuer-qualified directory groups. Omit to leave unchanged;
+   * an empty list clears declared group grants.
+   */
+  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
+  /**
+   * Runtime-owned name. Named universes are adopted automatically by Platform.
+   */
+  displayName?: string | null;
+  /**
+   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
+   * an empty list clears declared members. Email selectors require verified email.
+   */
+  members?: DeclaredUniverseMember[] | null;
+  universe: string;
+}
+export interface UniverseDirectoryGroupMapping {
+  group: string;
+  issuer: string;
+  role: UniverseMemberRole;
+}
+export interface DeploymentUniverseCreateParams {
+  /**
+   * The new universe's handle: 1-63 lowercase letters, digits and
+   * hyphens, starting and ending with a letter or digit, and not in the
+   * form of a UUID. Omit it to have one derived from the UUID. Ignored
+   * when the universe already exists.
+   */
+  handle?: string | null;
+  universeId: string;
+}
+export interface DeploymentUniverseCreateResponse {
+  /**
+   * False when the universe already existed (create is idempotent).
+   */
+  created: boolean;
+  universe: DeploymentUniverseView;
+}
+/**
+ * Per-universe stats view. Counts are cheap aggregates computed at read
+ * time, not maintained counters — approximate under concurrent writes.
+ */
+export interface DeploymentUniverseView {
+  blobBytes: number;
+  createdAtMs: number;
+  deletion?: UniverseDeletion | null;
+  /**
+   * Exact issuer-qualified directory groups. Omit to leave unchanged;
+   * an empty list clears declared group grants.
+   */
+  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
+  /**
+   * Runtime-owned name. Named universes are adopted automatically by Platform.
+   */
+  displayName?: string | null;
+  /**
+   * The universe's deployment-unique name. Requests may address the
+   * universe by it wherever they may by UUID.
+   */
+  handle: string;
+  /**
+   * Most recent session activity (`max(sessions.updated_at_ms)`); absent
+   * when the universe has no sessions.
+   */
+  lastActivityAtMs?: number | null;
+  /**
+   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
+   * an empty list clears declared members. Email selectors require verified email.
+   */
+  members?: DeclaredUniverseMember[] | null;
+  profiles: number;
+  sessions: number;
+  universeId: string;
+  workspaces: number;
+}
+export interface UniverseDeletion {
+  detail?: string | null;
+  requestedBy: Attribution;
+  startedAtMs: number;
+  step: UniverseDeletionStep;
+}
+export interface DeploymentUniverseDeleteParams {
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+export interface DeploymentUniverseDeleteResponse {
+  state: UniverseDeletionState;
+  universeId: string;
+}
+/**
+ * Rename a universe. The UUID and resources remain unchanged; the previous
+ * handle is released, so requests and URLs using it stop reaching this
+ * universe.
+ */
+export interface DeploymentUniverseHandlePutParams {
+  /**
+   * The new handle: 1-63 lowercase letters, digits and hyphens, starting
+   * and ending with a letter or digit, and not in the form of a UUID.
+   */
+  handle: string;
+  /**
+   * The universe's UUID or current handle.
+   */
+  universe: string;
+}
+export interface DeploymentUniverseListParams {}
+export interface DeploymentUniverseListResponse {
+  universes?: DeploymentUniverseView[];
+}
+export interface DeploymentUniverseReadParams {
+  /**
+   * The universe's UUID or handle.
+   */
+  universe: string;
+}
+export interface DeploymentUniverseReadResponse {
+  universe: DeploymentUniverseView;
+}
+export interface EnvironmentCloseParams {
+  environmentId: string;
+}
+export interface EnvironmentCloseResponse {
+  environment: EnvironmentView;
+}
+export interface EnvironmentCreateParams {
+  displayName?: string | null;
+  /**
+   * The id profiles and bindings use for the environment. Omit it to have
+   * one allocated. An id already in use is a conflict.
+   */
+  environmentId?: string | null;
+  /**
+   * Idle policy passed to the provider in place of the template's `idle`.
+   * The provider runs the idle clock; it cannot be changed after create.
+   */
+  idle?: EnvironmentIdlePolicyView | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * The provider to create the environment with; the universe needs an
+   * enabled binding to it.
+   */
+  providerId: string;
+  /**
+   * Stable caller-generated retry identity, unique inside the universe.
+   * Retrying with identical inputs returns the same environment.
+   */
+  requestId: string;
+  /**
+   * The provider template to create the environment from.
+   */
+  templateId: string;
+}
+export interface EnvironmentCreateResponse {
+  environment: EnvironmentView;
+}
+export interface EnvironmentCredentialBindParams {
+  envName: string;
+  environmentId: string;
+  source: EnvironmentCredentialSourceView;
+}
+export interface EnvironmentCredentialBindResponse {
+  credential: EnvironmentCredentialView;
+}
+export interface EnvironmentCredentialView {
+  createdAtMs: number;
+  envName: string;
+  environmentId: string;
+  source: EnvironmentCredentialSourceView;
+  updatedAtMs: number;
+}
+export interface EnvironmentCredentialListParams {
+  environmentId: string;
+}
+export interface EnvironmentCredentialListResponse {
+  credentials?: EnvironmentCredentialView[];
+}
+export interface EnvironmentCredentialUnbindParams {
+  envName: string;
+  environmentId: string;
+}
+export interface EnvironmentCredentialUnbindResponse {
+  credential: EnvironmentCredentialView;
+}
+export interface EnvironmentExternalCreateParams {
+  displayName?: string | null;
+  /**
+   * `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
+   * Lightspeed.
+   */
+  endpoint: string;
+  /**
+   * The id profiles and bindings use for the environment. Omit it to have
+   * one allocated. An id already in use is a conflict.
+   */
+  environmentId?: string | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Stable caller-generated retry identity, unique inside the universe.
+   */
+  requestId: string;
+}
+export interface EnvironmentExternalCreateResponse {
+  environment: EnvironmentView;
+}
+export interface EnvironmentIngressPutParams {
+  /**
+   * Ensure (`true`) or remove (`false`) the provider's public ingress.
+   */
+  enabled: boolean;
+  environmentId: string;
+}
+export interface EnvironmentIngressPutResponse {
+  environment: EnvironmentView;
+}
+export interface EnvironmentJobCancelParams {
+  force?: boolean;
+  jobs: SessionJobHandleInput[];
+  scope?: SessionJobCancelScopeView & string;
+}
+export interface SessionJobHandleInput {
+  environmentId: string;
+  jobId: string;
+}
+export interface EnvironmentJobCancelResponse {
+  jobs?: SessionJobCancelEntryView[];
+}
+export interface SessionJobCancelEntryView {
+  error?: string | null;
+  handle?: SessionJobHandleView | null;
+  summary?: SessionJobSummaryView | null;
+}
+export interface SessionJobHandleView {
+  environmentId: string;
+  jobId: string;
+}
+/**
+ * What a job is and how it ended. Instants are the environment's wall
+ * clock.
+ */
+export interface SessionJobSummaryView {
+  /**
+   * When a cancel reached the job while it ran.
+   */
+  cancelRequestedAtMs?: number | null;
+  createdAtMs: number;
+  dependencies?: string[];
+  /**
+   * Run time from start to finish, immune to clock jumps.
+   */
+  durationMs?: number | null;
+  /**
+   * How the job's root process ended, once it ran and exited.
+   */
+  exit?: SessionJobExitView | null;
+  failure?: string | null;
+  finishedAtMs?: number | null;
+  jobId: string;
+  name?: string | null;
+  /**
+   * True when the job's root process exited while descendants it spawned
+   * were still running; the host terminated them best-effort at job
+   * completion.
+   */
+  orphanedDescendants?: boolean;
+  queueKey?: string | null;
+  queuedAtMs?: number | null;
+  /**
+   * The start request that created the job; part of its identity.
+   */
+  requestId: string;
+  startedAtMs?: number | null;
+  status: SessionJobStatusView;
+  /**
+   * Set when Lightspeed stopped the running job.
+   */
+  stoppedBy?: SessionJobStoppedByView | null;
+}
+export interface EnvironmentJobCreateParams {
+  environmentId: string;
+  jobs: SessionJobStartSpecInput[];
+  requestId: string;
+}
+export interface SessionJobStartSpecInput {
+  argv: string[];
+  cwd?: string | null;
+  dependencyPolicy?: SessionJobDependencyPolicyView & string;
+  dependsOn?: SessionJobDependencyInput[];
+  env?: {
+    [k: string]: string;
+  };
+  jobId?: string | null;
+  name?: string | null;
+  queueKey?: string | null;
+  stdin?: string | null;
+  timeoutMs?: number | null;
+}
+export interface SessionJobDependencyInput {
+  jobId?: string | null;
+  name?: string | null;
+}
+export interface EnvironmentJobCreateResponse {
+  environmentId: string;
+  jobGroupId: string;
+  jobs?: SessionJobStartedView[];
+}
+export interface SessionJobStartedView {
+  dependencies?: string[];
+  handle: SessionJobHandleView;
+  jobId: string;
+  name?: string | null;
+  promiseId?: string | null;
+  queueKey?: string | null;
+  status: SessionJobStatusView;
+}
+export interface EnvironmentJobReadParams {
+  /**
+   * Byte offset to read each job's output from: a previous entry's
+   * `outputNext`. Omitted with `tailBytes` omitted reads from the start.
+   */
+  after?: number | null;
+  jobs: SessionJobHandleInput[];
+  /**
+   * Most output bytes per job; omit for the server's default page.
+   */
+  maxBytes?: number | null;
+  /**
+   * Read each job's last `tailBytes` of output instead; excludes `after`.
+   */
+  tailBytes?: number | null;
+}
+export interface EnvironmentJobReadResponse {
+  jobs?: SessionJobReadEntryView[];
+}
+/**
+ * One job's summary and output page, or why it could not be read: an
+ * entry with `error` and no summary names a job the environment does not
+ * know (never created, or garbage-collected).
+ */
+export interface SessionJobReadEntryView {
+  error?: string | null;
+  handle?: SessionJobHandleView | null;
+  /**
+   * Output in offset order.
+   */
+  outputChunks?: SessionJobOutputChunkView[];
+  /**
+   * Output bytes the job produced so far; final once it is terminal.
+   */
+  outputEnd: number;
+  /**
+   * Output ranges between the requested start and `outputNext` that
+   * cannot be returned.
+   */
+  outputGaps?: SessionJobOutputGapView[];
+  /**
+   * Byte offset to continue reading from: pass it as `after`.
+   */
+  outputNext: number;
+  summary?: SessionJobSummaryView | null;
+}
+export interface SessionJobOutputChunkView {
+  dataBase64: string;
+  /**
+   * Byte offset of the chunk's first byte in the job's combined output.
+   */
+  offset: number;
+  stream: SessionJobOutputStreamView;
+}
+/**
+ * Output bytes in `[offset, offset + omittedBytes)` that cannot be
+ * returned.
+ */
+export interface SessionJobOutputGapView {
+  offset: number;
+  omittedBytes: number;
+  reason: SessionJobOutputGapReasonView;
+}
+export interface EnvironmentListParams {
+  /**
+   * Exclusive environment id cursor: a previous page's `nextAfter`.
+   */
+  after?: string | null;
+  /**
+   * Also list closed environments; they are omitted by default.
+   */
+  includeClosed?: boolean;
+  /**
+   * Most environments per page; omit for 100.
+   */
+  limit?: number | null;
+  /**
+   * Only environments carrying every listed metadata pair (AND
+   * semantics); the same filter `session/list` accepts.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Only provisioned environments of this provider.
+   */
+  providerId?: string | null;
+  /**
+   * Only registered environments admitted by this registration key.
+   */
+  registrationKeyId?: string | null;
+  /**
+   * Only environments in this lifecycle state. `closed` lists closed
+   * environments without `includeClosed`.
+   */
+  state?: EnvironmentStateView | null;
+}
+export interface EnvironmentListResponse {
+  /**
+   * Environments in environment id order.
+   */
+  environments?: EnvironmentView[];
+  /**
+   * Pass as `after` to read the next page; absent on the last page.
+   */
+  nextAfter?: string | null;
+}
+export interface EnvironmentPowerPutParams {
+  environmentId: string;
+  /**
+   * Power state to move the target to; one of its template's
+   * `powerStates`.
+   */
+  power: EnvironmentPowerStateView;
+}
+export interface EnvironmentPowerPutResponse {
+  environment: EnvironmentView;
+}
+export interface EnvironmentProviderBindingListParams {}
+export interface EnvironmentProviderBindingListResponse {
+  bindings: EnvironmentProviderBindingView[];
+}
+export interface EnvironmentProviderBindingReadParams {
+  providerId: string;
+}
+export interface EnvironmentProviderBindingReadResponse {
+  binding: EnvironmentProviderBindingView;
+}
+export interface EnvironmentReadParams {
+  environmentId: string;
+}
+export interface EnvironmentReadResponse {
+  environment: EnvironmentView;
+}
+/**
+ * Declare a fixed machine as an environment before its daemon registers.
+ * The first daemon the key admits under `name` becomes this environment and
+ * keeps its id; from then on only that daemon's identity reconnects to it.
+ */
+export interface EnvironmentRegisteredPutParams {
+  displayName?: string | null;
+  /**
+   * The id profiles and bindings use for the environment.
+   */
+  environmentId: string;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * The name the daemon registers under: 1 to 128 bytes without control
+   * characters, unique among the open environments of the key. It cannot
+   * be changed afterwards.
+   */
+  name: string;
+  /**
+   * The persistent registration key whose daemons may fill it. It cannot
+   * be changed afterwards.
+   */
+  registrationKeyId: string;
+}
+export interface EnvironmentRegisteredPutResponse {
+  /**
+   * False when the environment was already declared.
+   */
+  created: boolean;
+  environment: EnvironmentView;
+}
+/**
+ * Forget the daemon bound to a declared environment so that another
+ * identity may bind to it.
+ */
+export interface EnvironmentRegisteredReleaseParams {
+  environmentId: string;
+}
+export interface EnvironmentRegisteredReleaseResponse {
+  environment: EnvironmentView;
+  /**
+   * False when no daemon was bound.
+   */
+  released: boolean;
+}
+export interface EnvironmentRegistrationKeyCreateParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
+  /**
+   * Group name for the environments this key admits.
+   */
+  displayName: string;
+  /**
+   * Disconnect grace for ephemeral environments; omit for the default.
+   */
+  ephemeralDisconnectGraceMs?: number | null;
+  expiresAtMs?: number | null;
+  /**
+   * Immutable once the key exists.
+   */
+  identityMode: EnvironmentIdentityModeView;
+  /**
+   * Non-closed environments the key may have at once; omit for unlimited.
+   */
+  maxActiveEnvironments?: number | null;
+  /**
+   * Persistent keys only: close environments whose daemon has been away
+   * longer than this; omit to keep them open.
+   */
+  offlineCloseAfterMs?: number | null;
+  /**
+   * The key's id within the universe: 1-128 ASCII letters, digits,
+   * underscores, hyphens, dots or colons, starting with a letter or digit.
+   * Omit it to have one allocated.
+   */
+  registrationKeyId?: string | null;
+}
+export interface EnvironmentRegistrationKeyCreateResponse {
+  registrationKey: EnvironmentRegistrationKeyView;
+  /**
+   * The plaintext secret, returned only here.
+   */
+  secret: EnvironmentRegistrationSecretView;
+}
+export interface EnvironmentRegistrationKeyView {
+  /**
+   * Non-closed environments admitted by this key.
+   */
+  activeEnvironmentCount: number;
+  createdAtMs: number;
+  /**
+   * The key admits only daemons whose registration name matches one of
+   * its declared environments.
+   */
+  declaredOnly?: boolean;
+  /**
+   * The group name shown wherever registered environments are listed.
+   */
+  displayName: string;
+  /**
+   * Effective disconnect grace for ephemeral environments.
+   */
+  ephemeralDisconnectGraceMs: number;
+  expiresAtMs?: number | null;
+  identityMode: EnvironmentIdentityModeView;
+  /**
+   * First characters of the key's live secret, for identification only.
+   */
+  keyPrefix: string;
+  lastRegisteredAtMs?: number | null;
+  maxActiveEnvironments?: number | null;
+  /**
+   * Persistent keys only: environments whose daemon has been away longer
+   * than this are closed; absent keeps them open.
+   */
+  offlineCloseAfterMs?: number | null;
+  /**
+   * Environments ever admitted by this key, closed included.
+   */
+  registeredEnvironmentCount: number;
+  registrationKeyId: string;
+  revokedAtMs?: number | null;
+  status: EnvironmentRegistrationKeyStatusView;
+  updatedAtMs: number;
+}
+export interface EnvironmentRegistrationKeyListParams {}
+export interface EnvironmentRegistrationKeyListResponse {
+  registrationKeys?: EnvironmentRegistrationKeyView[];
+}
+/**
+ * Declare a registration key whose secret the caller supplies: its id, its
+ * complete policy and the secret it answers to. An absent policy field is
+ * unset.
+ */
+export interface EnvironmentRegistrationKeyPutParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
+  /**
+   * Group name for the environments this key admits.
+   */
+  displayName: string;
+  /**
+   * Disconnect grace for ephemeral environments; omit for the default.
+   */
+  ephemeralDisconnectGraceMs?: number | null;
+  expiresAtMs?: number | null;
+  /**
+   * Immutable once the key exists.
+   */
+  identityMode: EnvironmentIdentityModeView;
+  /**
+   * Non-closed environments the key may have at once; omit for unlimited.
+   */
+  maxActiveEnvironments?: number | null;
+  /**
+   * Persistent keys only: close environments whose daemon has been away
+   * longer than this; omit to keep them open.
+   */
+  offlineCloseAfterMs?: number | null;
+  registrationKeyId: string;
+  /**
+   * The secret daemons register with: `lsrk_` followed by 32 random bytes
+   * encoded as base64url without padding. Generate it with a
+   * cryptographic random source.
+   */
+  secret: EnvironmentRegistrationSecretView;
+}
+export interface EnvironmentRegistrationKeyPutResponse {
+  /**
+   * False when the key already existed.
+   */
+  created: boolean;
+  registrationKey: EnvironmentRegistrationKeyView;
+  /**
+   * True when an existing key answered to a different secret, which is
+   * now retired.
+   */
+  secretReplaced: boolean;
+}
+export interface EnvironmentRegistrationKeyReadParams {
+  registrationKeyId: string;
+}
+export interface EnvironmentRegistrationKeyReadResponse {
+  registrationKey: EnvironmentRegistrationKeyView;
+}
+export interface EnvironmentRegistrationKeyRevokeParams {
+  /**
+   * Also close every non-closed environment the key admitted.
+   */
+  closeEnvironments?: boolean;
+  registrationKeyId: string;
+}
+export interface EnvironmentRegistrationKeyRevokeResponse {
+  /**
+   * Environments closed by this call.
+   */
+  closedEnvironmentIds?: string[];
+  registrationKey: EnvironmentRegistrationKeyView;
+}
+export interface EnvironmentRegistrationKeyRotateParams {
+  registrationKeyId: string;
+}
+export interface EnvironmentRegistrationKeyRotateResponse {
+  registrationKey: EnvironmentRegistrationKeyView;
+  /**
+   * The new plaintext secret, returned only here.
+   */
+  secret: EnvironmentRegistrationSecretView;
+}
+/**
+ * The complete editable policy of a registration key; an absent field is
+ * unset. The identity mode is immutable.
+ */
+export interface EnvironmentRegistrationKeyUpdateParams {
+  /**
+   * Persistent keys only: admit only daemons whose registration name
+   * matches an environment declared under this key.
+   */
+  declaredOnly?: boolean;
+  /**
+   * Group name for the environments this key admits.
+   */
+  displayName: string;
+  /**
+   * Disconnect grace for ephemeral environments; omit for the default.
+   */
+  ephemeralDisconnectGraceMs?: number | null;
+  expiresAtMs?: number | null;
+  /**
+   * Non-closed environments the key may have at once; omit for unlimited.
+   */
+  maxActiveEnvironments?: number | null;
+  /**
+   * Persistent keys only: close environments whose daemon has been away
+   * longer than this; omit to keep them open.
+   */
+  offlineCloseAfterMs?: number | null;
+  registrationKeyId: string;
+}
+export interface EnvironmentRegistrationKeyUpdateResponse {
+  registrationKey: EnvironmentRegistrationKeyView;
+}
+export interface EnvironmentTemplateListParams {
+  /**
+   * Only this provider's templates; omit for every enabled binding.
+   */
+  providerId?: string | null;
+}
+export interface EnvironmentTemplateListResponse {
+  templates: EnvironmentTemplateView[];
+}
+export interface EnvironmentTemplateView {
+  deprecated: boolean;
+  description?: string | null;
+  displayName: string;
+  /**
+   * Idle policy targets get when `environments/create` names none.
+   */
+  idle?: EnvironmentIdlePolicyView | null;
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Power states `environments/power/put` can move targets of this
+   * template to; empty without power control.
+   */
+  powerStates: EnvironmentPowerStateView[];
+  providerId: string;
+  /**
+   * `environments/ingress/put` can enable public ingress on targets of
+   * this template.
+   */
+  publicIngress: boolean;
+  /**
+   * Compute targets of this template get; absent when the provider does
+   * not fix it.
+   */
+  resources?: EnvironmentTemplateResourcesView | null;
+  templateId: string;
+}
+/**
+ * A template's compute, in provider-neutral units. Each field is absent
+ * when the provider does not fix it.
+ */
+export interface EnvironmentTemplateResourcesView {
+  diskBytes?: number | null;
+  memoryBytes?: number | null;
+  vcpus?: number | null;
+}
+export interface EnvironmentTemplateReadParams {
+  providerId: string;
+  templateId: string;
+}
+export interface EnvironmentTemplateReadResponse {
+  template: EnvironmentTemplateView;
+}
+/**
+ * Replace an environment's display name and caller metadata.
+ */
+export interface EnvironmentUpdateParams {
+  /**
+   * The new display name; omit to clear it.
+   */
+  displayName?: string | null;
+  environmentId: string;
+  /**
+   * The complete new caller metadata; omit or `{}` to clear it.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+}
+export interface EnvironmentUpdateResponse {
+  environment: EnvironmentView;
+}
+export interface EventJoinsView {
+  runId?: string | null;
+  /**
+   * Client submission identifier, when present. Run and steering acceptance
+   * events expose this join so clients can match local input to its accepted
+   * run or steering identifier without comparing message text.
+   */
+  submissionId?: string | null;
+  toolBatchId?: string | null;
+  toolCallId?: string | null;
+  turnId?: string | null;
+}
+/**
+ * Stable public HTTP error body. Service error details are retained as typed
+ * extensions; the runtime redacts internal failures before constructing it.
+ */
+export interface HttpProblem {
+  deletedUniverse?: DeletedUniverseView | null;
+  detail: string;
+  kind: AgentApiErrorKind;
+  modelDefaultSlot?: ModelDefaultSlot | null;
+  status: number;
+  submissionId?: string | null;
+  title: string;
+  type: string;
+}
+export interface InlineAgentProfile {
+  config?: SessionConfig | null;
+  description?: string | null;
+  displayName?: string | null;
+  instructions?: ProfileInstructions | null;
+  /**
+   * Descriptive metadata defaults copied to a session when it is created
+   * from this profile. Explicit `session/start` metadata wins key by key.
+   * Applying the profile to an existing session does not change metadata.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Creation-time session retention default. Absence keeps the tree until
+   * manual deletion. Applying a profile to an existing session does not
+   * change retention.
+   */
+  retention?: ProfileSessionRetention | null;
+}
+export interface McpAdvertisedToolView {
+  annotations?: McpToolAnnotationsView | null;
+  description?: string | null;
+  name: string;
+  title?: string | null;
+}
+/**
+ * Narrow projection of standard MCP `ToolAnnotations`. All values are
+ * untrusted hints and never authorization facts.
+ */
+export interface McpToolAnnotationsView {
+  destructiveHint?: boolean | null;
+  idempotentHint?: boolean | null;
+  openWorldHint?: boolean | null;
+  readOnlyHint?: boolean | null;
+}
+export interface McpOAuthDiscoveryView {
+  authorizationServers?: string[];
+  resource: string;
+  /**
+   * Scopes advertised by current protected-resource/authorization-server
+   * metadata. Advisory only; clients must not silently expand consent.
+   */
+  scopesSupported?: string[];
+}
+/**
+ * Read-only authentication discovery for a prospective MCP endpoint. A
+ * missing OAuth result is deliberately inconclusive: the server may be
+ * public, use bearer auth, or expose OAuth metadata only through an explicit
+ * URL. No catalog or auth records are created by this probe.
+ */
+export interface McpServerAuthDiscoverParams {
+  serverUrl: string;
+}
+export interface McpServerAuthDiscoverResponse {
+  oauth?: McpOAuthDiscoveryView | null;
+}
+export interface McpServerDeleteParams {
+  serverId: string;
+}
+export interface McpServerDeleteResponse {
+  server: McpServerView;
+}
+export interface McpServerView {
+  allowPrivateNetwork: boolean;
+  allowedTools?: string[] | null;
+  approval: RemoteMcpApprovalPolicy;
+  authPolicy: McpServerAuthPolicy;
+  createdAtMs: number;
+  credential?: McpServerCredential | null;
+  defaultServerLabel: string;
+  deferLoading?: boolean | null;
+  description?: string | null;
+  displayName?: string | null;
+  execution: RemoteMcpExecution;
+  exposure: RemoteMcpExposure;
+  /**
+   * Extra request headers, keyed by lowercased name. Credential headers
+   * show only the credential id; the token is never returned.
+   */
+  headers?: {
+    [k: string]: RequestHeader;
+  };
+  revision: number;
+  serverId: string;
+  serverUrl: string;
+  status: McpServerStatus;
+  updatedAtMs: number;
+}
+/**
+ * Full MCP server document as submitted by clients.
+ */
+export interface McpServerInput {
+  allowPrivateNetwork?: boolean;
+  allowedTools?: string[] | null;
+  /**
+   * Approval policy for every session linking this server.
+   */
+  approval?: RemoteMcpApprovalPolicy & string;
+  authPolicy?: McpServerAuthPolicy;
+  credential?: McpServerCredential | null;
+  defaultServerLabel: string;
+  /**
+   * Provider-side deferred loading of tool definitions where supported.
+   */
+  deferLoading?: boolean | null;
+  description?: string | null;
+  displayName?: string | null;
+  execution?: RemoteMcpExecution & string;
+  exposure?: RemoteMcpExposure & string;
+  /**
+   * Extra request headers sent on every request to the server, alongside
+   * any `Authorization` the auth policy produces. Names are
+   * case-insensitive and stored lowercased; transport headers,
+   * `authorization` and `x-lightspeed-*` are reserved. `api-key` and
+   * `x-api-key` carry a secret and accept only a `credential` value.
+   * Requires `runtime` execution.
+   */
+  headers?: {
+    [k: string]: RequestHeader;
+  };
+  serverId: string;
+  serverUrl: string;
+  status?: McpServerStatus & string;
+}
+export interface McpServerListParams {
+  status?: McpServerStatus | null;
+}
+export interface McpServerListResponse {
+  servers?: McpServerView[];
+}
+export interface McpServerPutParams {
+  /**
+   * Checked only when the server already exists; absent replaces (or
+   * creates) unconditionally.
+   */
+  expectedRevision?: number | null;
+  server: McpServerInput;
+}
+export interface McpServerPutResponse {
+  server: McpServerView;
+}
+export interface McpServerReadParams {
+  serverId: string;
+}
+export interface McpServerReadResponse {
+  server: McpServerView;
+}
+/**
+ * Live, non-persisting tool discovery for a configured MCP server.
+ */
+export interface McpServerToolsDiscoverParams {
+  serverId: string;
+}
+export interface ModelCapabilitiesView {
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
+  /**
+   * Omitted when the provider model-list API does not report this fact.
+   */
+  parallelToolUse?: boolean | null;
+  /**
+   * Known provider effort values. Prefer provider-reported capabilities;
+   * Lightspeed may enrich important built-in model families when the
+   * provider's model-list API omits this metadata.
+   */
+  reasoningEfforts?: string[] | null;
+}
+/**
+ * Persisted universe defaults. Revision zero means no update has been made.
+ * Clearing a slot still advances the revision, so setup cannot undo a clear.
+ */
+export interface ModelDefaults {
+  agentRun?: ModelConfig | null;
+  revision: number;
+  speechToText?: ModelConfig | null;
+}
+export interface ModelDefaultsPutParams {
+  /**
+   * Write only if the defaults are still at this revision, as returned by
+   * read or put; zero for a universe with no updates. Omit it to write
+   * whatever the current revision is.
+   */
+  expectedRevision?: number | null;
+  /**
+   * Complete selection, or explicit null to clear this slot. Required.
+   */
+  model: ModelConfig | null;
+  slot: ModelDefaultSlot;
+}
+export interface ModelDefaultsReadParams {}
+export interface ModelDefaultsResponse {
+  defaults: ModelDefaults;
+}
+/**
+ * Direct provider model discovery. Results may be served from a brief
+ * process-local cache; clients refresh by calling this method.
+ */
+export interface ModelListParams {
+  /**
+   * Apply Lightspeed's small, conservative selectable-model policy. It
+   * keeps supported file-transcription routes and filters clearly unrelated
+   * OpenAI families from agent suggestions (embeddings, moderation, image/video,
+   * speech synthesis, and realtime). Agent suggestions also have an age limit.
+   * Clients select routes by API kind for their intended use. This is an ID
+   * policy, not a provider capability claim.
+   */
+  selectableOnly?: boolean;
+}
+export interface ModelListResponse {
+  models?: ModelView[];
+  providers?: ModelProviderDiscoveryView[];
+}
+/**
+ * A model route returned directly by a provider API.
+ */
+export interface ModelView {
+  /**
+   * Canonical Lightspeed provider API kind, e.g. `openai:responses`.
+   */
+  apiKind: string;
+  capabilities: ModelCapabilitiesView;
+  /**
+   * Provider-reported model creation time. Omitted when the provider does
+   * not expose one; this is distinct from the discovery fetch time.
+   */
+  createdAtMs?: number | null;
+  displayName: string;
+  fetchedAtMs: number;
+  model: string;
+  providerId: string;
+  /**
+   * Always `provider`; there is no maintained model catalog.
+   */
+  source: ModelSource;
+}
+/**
+ * Best-effort status for one provider. A provider failure does not discard
+ * models discovered from other providers.
+ */
+export interface ModelProviderDiscoveryView {
+  apiKinds: string[];
+  /**
+   * Whether a usable credential exists for this provider — a stable signal
+   * for clients (no string matching on `error`).
+   */
+  credential: ModelProviderCredentialStatus;
+  /**
+   * Where the credential used for this universe comes from.
+   */
+  credentialSource: ModelProviderCredentialSource;
+  /**
+   * Sanitized Lightspeed error; never a credential, request header, or raw
+   * upstream response body.
+   */
+  error?: string | null;
+  fetchedAtMs?: number | null;
+  providerId: string;
+}
+export interface PendingApprovalView {
+  approvalId: string;
+  requestedAtMs: number;
+  subject: ApprovalSubjectView;
+}
+export interface ProfileApplyParams {
+  expectedConfigRevision?: number | null;
+  expectedToolsRevision?: number | null;
+  profile: ProfileSource;
+  sessionId: string;
+}
+export interface ProfileApplyResponse {
+  applied?: ProfileApplySummary;
+  session: SessionView;
+}
+export interface ProfileApplySummary {
+  activeEnvironmentChanged: boolean;
+  configChanged: boolean;
+  instructionsChanged: boolean;
+}
+export interface SessionView {
+  /**
+   * The audience of the session's root: whether it is shared with the
+   * universe, and who created it.
+   */
+  access: ResourceAccessSummary;
+  activeContext: ContextView;
+  /**
+   * The universe environment selected by the session event log.
+   */
+  activeEnvironmentId?: string | null;
+  /**
+   * The currently executing run, always present when one exists — the
+   * paged `runs` window can omit it behind newer queued runs, so control
+   * surfaces (steering, status) must read it from here.
+   */
+  activeRun?: RunSummaryView | null;
+  activeTools?: ActiveToolsView;
+  /**
+   * What the session is doing now: idle, working on a run, or waiting for
+   * an approval. Lists carry the same value.
+   */
+  activity: SessionActivity;
+  closedAtMs?: number | null;
+  /**
+   * The stored sparse config document, exactly as last put (model and
+   * feature versions materialized at admission). Effective tool reality
+   * is visible via `active_tools`.
+   */
+  config?: SessionConfig | null;
+  configRevision: number;
+  createdAtMs: number;
+  displayName?: string | null;
+  /**
+   * Set by `session/read` when the session is still open but its workflow
+   * execution has stopped. Nothing is running and the rest of the view is
+   * the stored log, so `activity` can still say what it last did. Lists do not check
+   * the execution, so a list and a read of the same session can differ.
+   */
+  executionFailure?: SessionExecutionFailureView | null;
+  id: string;
+  /**
+   * Immutable workflow integration. A lifecycle controller indicates external
+   * session ownership; a tools-only integration does not.
+   */
+  integration?: SessionIntegrationInput | null;
+  /**
+   * True only when the session's integration names a lifecycle controller.
+   */
+  lifecycleControlled: boolean;
+  /**
+   * Whether the session has opened or closed. What it is doing while open is
+   * `activity`, and whether its workflow is still there is `executionFailure`.
+   */
+  lifecycleStatus: SessionLifecycleStatus;
+  /**
+   * Descriptive key/value metadata; empty when none was set.
+   */
+  metadata?: {
+    [k: string]: string;
+  };
+  /**
+   * Sub-agent lineage; absent for root sessions.
+   */
+  origin?: SessionOriginView | null;
+  retention: SessionRetentionView;
+  runs?: RunSummaryView[];
+  updatedAtMs: number;
+}
+/**
+ * Bounded run metadata projected from reducer state. Transcript entries and
+ * tool payloads are available only from `session/runs/read` or the event
+ * stream.
+ */
+export interface RunSummaryView {
+  acceptedAtMs: number;
+  /**
+   * Why a failed run failed. The message is cut to a preview here, and
+   * `session/runs/read` has all of it.
+   */
+  failure?: RunFailureView | null;
+  finishedAtMs?: number | null;
+  id: string;
+  pendingApprovals?: PendingApprovalView[];
+  source: RunSummarySourceView;
+  startedAtMs?: number | null;
+  status: RunStatus;
+  /**
+   * Provider usage so far. A summary of a run old enough to be read back from the
+   * session's log has none; `session/runs/read` still totals it.
+   */
+  usage?: LlmUsageView | null;
+}
+/**
+ * Why a run failed. `kind` is the harness's classification; `message` is free text
+ * for display, and the provider's own message for `requestRejected`.
+ */
+export interface RunFailureView {
+  kind: RunFailureKindView;
+  message: string;
+  messageTruncated?: boolean;
+}
 export interface SessionIntegrationInput {
   lifecycleController?: WorkflowEndpointInput | null;
   tools: WorkflowToolDeclarationInput[];
@@ -2759,85 +5370,87 @@ export interface WorkflowStartRefInput {
   recipeRef: string;
   recipeRevision: number;
 }
-export interface SessionEventView {
-  cursor: EventCursor;
-  joins: EventJoinsView;
-  kind: SessionEventKindView;
-  observedAtMs: number;
+export interface ProfileCreateParams {
+  profile: AgentProfileInput;
+}
+export interface ProfileCreateResponse {
+  profile: AgentProfile;
+}
+export interface ProfileDeleteParams {
+  profileId: ProfileId;
+}
+export interface ProfileDeleteResponse {
+  profile: AgentProfile;
+}
+export interface ProfileListParams {}
+export interface ProfileListResponse {
+  profiles?: AgentProfileSummary[];
+}
+export interface ProfilePutParams {
+  /**
+   * Checked only when the profile already exists; absent replaces (or
+   * creates) unconditionally.
+   */
+  expectedRevision?: number | null;
+  profile: AgentProfileInput;
+}
+export interface ProfilePutResponse {
+  profile: AgentProfile;
+}
+export interface ProfileReadParams {
+  profileId: ProfileId;
+}
+export interface ProfileReadResponse {
+  profile: AgentProfile;
+}
+export interface RunApprovalsDecideParams {
+  decisions: ApprovalDecisionInput[];
+  runId: string;
   sessionId: string;
 }
-export interface EventCursor {
-  seq: number;
+export interface RunApprovalsDecideResponse {
+  results: ApprovalDecisionResult[];
+  run: RunSummaryView;
 }
-export interface EventJoinsView {
-  runId?: string | null;
-  /**
-   * Client submission identifier, when present. Run and steering acceptance
-   * events expose this join so clients can match local input to its accepted
-   * run or steering identifier without comparing message text.
-   */
-  submissionId?: string | null;
-  toolBatchId?: string | null;
-  toolCallId?: string | null;
-  turnId?: string | null;
+export interface RunCancelParams {
+  runId: string;
+  sessionId: string;
 }
-export interface ContextEntryInputView {
-  content: ContentRefView;
-  kind: ContextEntryKindView;
-  /**
-   * Application-supplied display origin, independent of role and insertion source.
-   * `user:<id>` identifies platform composer input; `event` marks bot deliveries.
-   * Other values are allowed; omission means unknown. Not an authorization identity.
-   */
-  origin?: string | null;
-  preview?: string | null;
-  /**
-   * Immutable artifact recording this entry's origin or construction.
-   */
-  provenanceRef?: string | null;
-  tokenEstimate?: TokenEstimateView | null;
+export interface RunCancelResponse {
+  run: RunSummaryView;
 }
-export interface ToolCallEventView {
-  arguments?: string | null;
-  argumentsRef: string;
-  callId: string;
-  display?: ToolCallDisplayView | null;
+export interface RunLimitsConfig {
   /**
-   * Admitted registry identity, absent when the model used an unavailable name.
+   * Model turns this run may start, at least 1, in place of the session's `maxTurns`.
    */
-  toolId?: string | null;
-  toolName: string;
+  maxTurns?: number | null;
+}
+export interface RunListParams {
+  /**
+   * Exclusive upper run-id bound from a previous page.
+   */
+  cursor?: string | null;
+  limit?: number | null;
+  sessionId: string;
+}
+export interface RunListResponse {
+  hasOlderRuns: boolean;
+  nextCursor?: string | null;
+  runs?: RunSummaryView[];
+}
+export interface RunReadParams {
+  runId: string;
+  sessionId: string;
 }
 /**
- * A file a completed tool call supplied, linked by name rather than shown to the
- * model. Media a call supplied is in `media` on the call and in context entries.
+ * The projection of one run. A run past the server's detail limit keeps its opening
+ * events, so its input renders, and its most recent whole turns, and reports the gap
+ * in `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and
+ * reasoning text is complete. Tool and catalog previews are bounded; their full bodies
+ * remain available through `blobs/read`.
  */
-export interface ToolAttachmentView {
-  /**
-   * Full immutable blob identity; read through the universe-scoped blob API.
-   */
-  blobRef: string;
-  /**
-   * Model-facing alias, resolved against recorded attachments.
-   */
-  handle: string;
-  mime?: string | null;
-  name: string;
-  source?: AttachmentSourceView | null;
-}
-/**
- * Descriptive source, independent of the attachment's immutable content identity.
- */
-export interface AttachmentSourceView {
-  id: string;
-  kind: string;
-  path: string;
-}
-export interface ToolEffectView {
-  data?: {
-    [k: string]: string;
-  };
-  kind: string;
+export interface RunReadResponse {
+  run: RunView;
 }
 export interface RunView {
   /**
@@ -2950,6 +5563,29 @@ export interface ToolCallView {
   truncated?: boolean;
 }
 /**
+ * A file a completed tool call supplied, linked by name rather than shown to the
+ * model. Media a call supplied is in `media` on the call and in context entries.
+ */
+export interface ToolAttachmentView {
+  /**
+   * Full immutable blob identity; read through the universe-scoped blob API.
+   */
+  blobRef: string;
+  /**
+   * Model-facing alias, resolved against recorded attachments.
+   */
+  handle: string;
+  mime?: string | null;
+  name: string;
+  source?: AttachmentSourceView | null;
+}
+export interface ToolEffectView {
+  data?: {
+    [k: string]: string;
+  };
+  kind: string;
+}
+/**
  * One media item a tool call handed the model.
  */
 export interface ToolCallMediaView {
@@ -2962,3436 +5598,6 @@ export interface ToolCallMediaView {
   kind: MediaKind;
   mime: string;
   name?: string | null;
-}
-export interface BlobHasResponse {
-  blobs?: BlobHasItem[];
-}
-export interface BlobHasItem {
-  blobRef: string;
-  exists: boolean;
-}
-export interface AgentApiOutcomeOfBlobPutResponse {
-  notifications?: AgentNotification[];
-  result: BlobPutResponse;
-}
-export interface BlobPutResponse {
-  blobs?: BlobPutResult[];
-}
-export interface BlobPutResult {
-  blobRef: string;
-  bytes: number;
-}
-export interface AgentApiOutcomeOfBlobReadResponse {
-  notifications?: AgentNotification[];
-  result: BlobReadResponse;
-}
-export interface BlobReadResponse {
-  blobRef: string;
-  bytes: number;
-  bytesBase64: string;
-}
-export interface AgentApiOutcomeOfBotCloseResponse {
-  notifications?: AgentNotification[];
-  result: BotCloseResponse;
-}
-export interface BotCloseResponse {
-  bot: BotView;
-}
-/**
- * The mutable configuration of a bot, replaced whole with an expected
- * revision. The bot id, event counter, and lifecycle columns live on the
- * record, not here.
- */
-export interface BotView {
-  botId: BotId;
-  breaker?: BotBreaker | null;
-  /**
-   * Standing instructions appended to the profile's instructions — the
-   * bot's job description.
-   */
-  brief?: string | null;
-  /**
-   * Terminal: set once by `bots/close`; a closed bot keeps its record
-   * and history but refuses events and cannot be re-enabled.
-   */
-  closedAtMs?: number | null;
-  /**
-   * Sessions the controller force-closed on the way out; `bots/delete`
-   * erases them.
-   */
-  closedSessions?: string[];
-  createdAtMs: number;
-  /**
-   * One line other bots read in the directory.
-   */
-  description?: string | null;
-  /**
-   * Mutable label for humans; the bot id stays the identity.
-   */
-  displayName?: string | null;
-  /**
-   * Capability grant: `bot_emit` — events to itself or another bot's
-   * inbox. Emitting bots are rate-capped.
-   */
-  emit?: boolean;
-  /**
-   * Reversible pause: sessions and chat context stay, nothing is
-   * delivered.
-   */
-  enabled?: boolean;
-  /**
-   * Highest `#N` admitted so far.
-   */
-  eventSeq: number;
-  profileId: ProfileId;
-  revision: number;
-  /**
-   * Close routed (`perKey` / `perEvent`) sessions idle longer than this;
-   * absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
-   */
-  routedSessionCloseAfterMs?: number | null;
-  /**
-   * Budget: runs started per UTC day (sub-agent descendants count);
-   * absent means unlimited.
-   */
-  runsPerDay?: number | null;
-  /**
-   * Capability grant: the mutating self-configuration tools
-   * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
-   */
-  selfConfig?: boolean;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfBotCreateResponse {
-  notifications?: AgentNotification[];
-  result: BotCreateResponse;
-}
-export interface BotCreateResponse {
-  bot: BotView;
-  /**
-   * Secrets of the triggers created with the bot, by trigger id; a
-   * trigger that has none is left out.
-   */
-  triggerSecrets?: {
-    [k: string]: BotTriggerSecretsView;
-  };
-  triggers?: BotTriggerView[];
-}
-/**
- * What lets an outsider reach a trigger: whoever holds the ingest path can
- * post events to the bot, and whoever holds the pairing code can connect a
- * conversation to it. Kept apart from [`BotTriggerView`] so that reading or
- * listing triggers never discloses either; only bot-management methods
- * return this.
- */
-export interface BotTriggerSecretsView {
-  /**
-   * Webhook triggers: the ingest path including its URL token.
-   */
-  ingestPath?: string | null;
-  /**
-   * Chat triggers with `pairing: code`: the code a conversation sends
-   * once to connect.
-   */
-  pairingCode?: string | null;
-}
-/**
- * Coalescing window: events sharing a route flush as one delivery.
- */
-export interface BotCoalescePolicy {
-  debounceMs: number;
-  maxCount: number;
-  maxWaitMs: number;
-}
-/**
- * Poll cursor state: Lightspeed-owned, operator-visible, reset by a spec
- * edit. Absent until the baseline poll.
- */
-export interface PollCursorState {
-  baselinedAtMs?: number | null;
-  consecutiveFailures?: number;
-  ids?: string[];
-  lastPolledAtMs?: number | null;
-  watermark?: unknown;
-}
-export interface BotDeliverPolicy {
-  whenBusy?: BotWhenBusy & string;
-}
-/**
- * Leased credential for an HTTP poll source; the value never appears in
- * the trigger document.
- */
-export interface PollHttpAuth {
-  audience?: string | null;
-  grantId: string;
-  /**
-   * Header carrying the credential; default `authorization`.
-   */
-  header?: string | null;
-  /**
-   * Scheme prefix; default `Bearer`, empty sends the token raw.
-   */
-  scheme?: string | null;
-}
-/**
- * Who may take a turn and who may issue control commands, by provider
- * handle (Telegram user id, WhatsApp JID). Handle allowlists on the
- * trigger replace any platform membership lookup.
- */
-export interface ChatAccess {
-  /**
-   * Handles allowed to take a turn when `turn` is `listed`.
-   */
-  allowed?: string[];
-  /**
-   * Handles allowed to issue `/activation` and `/status`; empty denies
-   * control commands to everyone.
-   */
-  controllers?: string[];
-  turn?: ChatTurnAccess & string;
-}
-/**
- * When the bot acts in a conversation.
- */
-export interface ChatActivation {
-  group?: ChatGroupActivation | null;
-  mentionNames?: string[];
-  triggerPrefixes?: string[];
-}
-export interface AgentApiOutcomeOfBotDeleteResponse {
-  notifications?: AgentNotification[];
-  result: BotDeleteResponse;
-}
-export interface BotDeleteResponse {
-  bot: BotView;
-  /**
-   * Sessions deleted along with the bot.
-   */
-  deletedSessions?: string[];
-}
-export interface AgentApiOutcomeOfBotEventAdmitResponse {
-  notifications?: AgentNotification[];
-  result: BotEventAdmitResponse;
-}
-export interface BotEventAdmitResponse {
-  /**
-   * The event id was already stored; the existing row is returned and
-   * the controller is woken again.
-   */
-  duplicate: boolean;
-  event: BotEventView;
-}
-export interface AgentApiOutcomeOfBotEventListResponse {
-  notifications?: AgentNotification[];
-  result: BotEventListResponse;
-}
-export interface BotEventListResponse {
-  /**
-   * Newest first.
-   */
-  events?: BotEventView[];
-  nextCursor?: string | null;
-}
-export interface AgentApiOutcomeOfBotEventReadResponse {
-  notifications?: AgentNotification[];
-  result: BotEventReadResponse;
-}
-export interface BotEventReadResponse {
-  document: BotEventDocument;
-  event: BotEventView;
-}
-/**
- * The envelope document stored in the CAS and shown to the session as
- * untrusted input.
- */
-export interface BotEventDocument {
-  correlationId?: string | null;
-  data?: unknown;
-  headers?: {
-    [k: string]: string;
-  };
-  hops?: number;
-  inReplyTo?: BotEventReplyRef | null;
-  kind: string;
-  links?: string[];
-  occurredAtMs: number;
-  sender?: BotEventSender | null;
-  source: string;
-  summary: string;
-  version: number;
-}
-/**
- * Sender of a bot-originated event, as the receiver sees it.
- */
-export interface BotEventSender {
-  bot: BotId;
-}
-export interface AgentApiOutcomeOfBotEventReplayResponse {
-  notifications?: AgentNotification[];
-  result: BotEventReplayResponse;
-}
-export interface BotEventReplayResponse {
-  /**
-   * The fresh replay event, routed like the original.
-   */
-  event: BotEventView;
-}
-export interface AgentApiOutcomeOfBotFilterTestResponse {
-  notifications?: AgentNotification[];
-  result: BotFilterTestResponse;
-}
-export interface BotFilterTestResponse {
-  errors: number;
-  matched: number;
-  results?: BotFilterTestResult[];
-  sampled: number;
-}
-export interface BotFilterTestResult {
-  error?: string | null;
-  matched: boolean;
-  seq?: number | null;
-}
-export interface AgentApiOutcomeOfBotListResponse {
-  notifications?: AgentNotification[];
-  result: BotListResponse;
-}
-export interface BotListResponse {
-  bots?: BotListItem[];
-}
-export interface AgentApiOutcomeOfBotPutResponse {
-  notifications?: AgentNotification[];
-  result: BotPutResponse;
-}
-export interface BotPutResponse {
-  bot: BotView;
-}
-export interface AgentApiOutcomeOfBotReadResponse {
-  notifications?: AgentNotification[];
-  result: BotReadResponse;
-}
-export interface BotReadResponse {
-  /**
-   * The bot's audience, always the universe, and who created it.
-   */
-  access: ResourceAccessSummary;
-  bot: BotView;
-  status?: BotListStatus & string;
-}
-export interface AgentApiOutcomeOfBotSessionRotateResponse {
-  notifications?: AgentNotification[];
-  result: BotSessionRotateResponse;
-}
-export interface BotSessionRotateResponse {
-  accepted: boolean;
-}
-export interface AgentApiOutcomeOfBotStateReadResponse {
-  notifications?: AgentNotification[];
-  result: BotStateReadResponse;
-}
-export interface BotStateReadResponse {
-  state: BotStateView;
-}
-export interface BotStateView {
-  /**
-   * Absent when the controller workflow is not running (a bot that never
-   * received an event, or a closed bot whose workflow completed).
-   */
-  controller?: BotControllerSnapshot | null;
-  /**
-   * The bot's sessions and their sub-agents, most recently updated
-   * first, each with what it is doing now. Bounded at 2,000 sessions;
-   * the least recently updated fall off a larger tree.
-   */
-  sessions?: SessionSummaryView[];
-}
-/**
- * The controller's live snapshot (its `bot_state` query).
- */
-export interface BotControllerSnapshot {
-  activeDeliveries?: BotActiveDeliverySnapshot[];
-  appliedProfileRevision?: number | null;
-  buffers?: BotBufferSnapshot[];
-  closed: boolean;
-  controllerStatus: BotControllerStatus;
-  descendantsToday?: number;
-  duplicateEvents?: number;
-  enabled: boolean;
-  eventsProcessed?: number;
-  lastError?: string | null;
-  mainSessionId: string;
-  pendingDeliveries?: number;
-  recentDeliveries?: BotRecentDeliverySnapshot[];
-  /**
-   * UTC day (`YYYY-MM-DD`) the budget counters belong to.
-   */
-  runDay?: string | null;
-  runsToday?: number;
-  sessions?: BotSessionSnapshot[];
-  setupStatus: BotSetupStatus;
-}
-export interface BotActiveDeliverySnapshot {
-  deliveryId: string;
-  runId?: string | null;
-  seqs: number[];
-  sessionId: string;
-  startedAtMs: number;
-}
-export interface BotBufferSnapshot {
-  firstAtMs: number;
-  flushAtMs: number;
-  key: string;
-  lastAtMs: number;
-  seqs: number[];
-}
-export interface BotRecentDeliverySnapshot {
-  deliveryId: string;
-  finishedAtMs: number;
-  outcome: BotEventOutcome;
-  runId?: string | null;
-  seqs: number[];
-  sessionId: string;
-  summary?: string | null;
-  usage?: LlmUsageView | null;
-}
-export interface BotSessionSnapshot {
-  /**
-   * A delivery lane or sidecar is running on it.
-   */
-  busy: boolean;
-  generation: number;
-  kind: BotSessionKind;
-  label: string;
-  lastActiveAtMs?: number | null;
-  sessionId: string;
-}
-export interface AgentApiOutcomeOfBotTriggerDeleteResponse {
-  notifications?: AgentNotification[];
-  result: BotTriggerDeleteResponse;
-}
-export interface BotTriggerDeleteResponse {
-  trigger: BotTriggerView;
-}
-export interface AgentApiOutcomeOfBotTriggerListResponse {
-  notifications?: AgentNotification[];
-  result: BotTriggerListResponse;
-}
-export interface BotTriggerListResponse {
-  triggers?: BotTriggerView[];
-}
-export interface AgentApiOutcomeOfBotTriggerPutResponse {
-  notifications?: AgentNotification[];
-  result: BotTriggerPutResponse;
-}
-export interface BotTriggerPutResponse {
-  /**
-   * The trigger's secrets as stored after this write, minted or kept.
-   */
-  secrets?: BotTriggerSecretsView;
-  trigger: BotTriggerView;
-}
-export interface AgentApiOutcomeOfBotTriggerReadResponse {
-  notifications?: AgentNotification[];
-  result: BotTriggerReadResponse;
-}
-export interface BotTriggerReadResponse {
-  trigger: BotTriggerView;
-}
-export interface AgentApiOutcomeOfBotTriggerSecretsReadResponse {
-  notifications?: AgentNotification[];
-  result: BotTriggerSecretsReadResponse;
-}
-/**
- * The secrets of one trigger; both fields are absent for a trigger that
- * has none.
- */
-export interface BotTriggerSecretsReadResponse {
-  /**
-   * Webhook triggers: the ingest path including its URL token.
-   */
-  ingestPath?: string | null;
-  /**
-   * Chat triggers with `pairing: code`: the code a conversation sends
-   * once to connect.
-   */
-  pairingCode?: string | null;
-}
-export interface AgentApiOutcomeOfChannelAccountCreateResponse {
-  notifications?: AgentNotification[];
-  result: ChannelAccountCreateResponse;
-}
-export interface ChannelAccountCreateResponse {
-  account: ChannelAccountView;
-}
-/**
- * A provider account served by the connector host. Secret material stays
- * in the referenced grant; this document is routing identity and
- * operational configuration.
- */
-export interface ChannelAccountView {
-  accountId: ChannelAccountId;
-  createdAtMs: number;
-  /**
-   * Retrievable credential grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  revision: number;
-  settings?: ChannelAccountSettings;
-  updatedAtMs: number;
-}
-export interface ChannelAccountSettings {
-  /**
-   * WhatsApp: print the pairing QR code on the connector's terminal.
-   */
-  printQr?: boolean | null;
-  [k: string]: unknown;
-}
-export interface AgentApiOutcomeOfChannelAccountDeleteResponse {
-  notifications?: AgentNotification[];
-  result: ChannelAccountDeleteResponse;
-}
-export interface ChannelAccountDeleteResponse {
-  account: ChannelAccountView;
-}
-export interface AgentApiOutcomeOfChannelAccountListResponse {
-  notifications?: AgentNotification[];
-  result: ChannelAccountListResponse;
-}
-export interface ChannelAccountListResponse {
-  accounts?: ChannelAccountView[];
-}
-export interface AgentApiOutcomeOfChannelAccountPutResponse {
-  notifications?: AgentNotification[];
-  result: ChannelAccountPutResponse;
-}
-export interface ChannelAccountPutResponse {
-  account: ChannelAccountView;
-}
-export interface AgentApiOutcomeOfChannelAccountReadResponse {
-  notifications?: AgentNotification[];
-  result: ChannelAccountReadResponse;
-}
-export interface ChannelAccountReadResponse {
-  account: ChannelAccountView;
-}
-export interface AgentApiOutcomeOfChannelConversationReadResponse {
-  notifications?: AgentNotification[];
-  result: ChannelConversationReadResponse;
-}
-export interface ChannelConversationReadResponse {
-  /**
-   * Absent when no conversation workflow exists for the chat yet.
-   */
-  conversation?: ChannelConversationSnapshot | null;
-}
-/**
- * The conversation workflow's live snapshot, for debugging.
- */
-export interface ChannelConversationSnapshot {
-  activeDeliveries: number;
-  botId: string;
-  deliveredCount: number;
-  deniedInboundCount: number;
-  droppedInboundCount: number;
-  duplicateInboundCount: number;
-  emittedCount: number;
-  failedDeliveryCount: number;
-  inboundCount: number;
-  label: string;
-  protocolErrors?: string[];
-  triggerId: string;
-  typing: boolean;
-}
-export interface AgentApiOutcomeOfChannelInboundAdmitResponse {
-  notifications?: AgentNotification[];
-  result: ChannelInboundAdmitResponse;
-}
-export interface ChannelInboundAdmitResponse {
-  /**
-   * The bot serving the conversation, when decided.
-   */
-  botId?: BotId | null;
-  decision: ChannelInboundDecision;
-  triggerId?: BotTriggerId | null;
-}
-export interface AgentApiOutcomeOfChannelPairingDeleteResponse {
-  notifications?: AgentNotification[];
-  result: ChannelPairingDeleteResponse;
-}
-export interface ChannelPairingDeleteResponse {
-  pairing: ChannelPairingView;
-}
-/**
- * A conversation's route: the chat is identified by `(accountId, chatId)`
- * and owned by the paired trigger.
- */
-export interface ChannelPairingView {
-  accountId: ChannelAccountId;
-  botId: BotId;
-  chatId: string;
-  pairedAtMs: number;
-  pairedVia: ChannelPairedVia;
-  triggerId: BotTriggerId;
-}
-export interface AgentApiOutcomeOfChannelPairingListResponse {
-  notifications?: AgentNotification[];
-  result: ChannelPairingListResponse;
-}
-export interface ChannelPairingListResponse {
-  pairings?: ChannelPairingView[];
-}
-export interface AgentApiOutcomeOfContextAppendResponse {
-  notifications?: AgentNotification[];
-  result: ContextAppendResponse;
-}
-export interface ContextAppendResponse {
-  contextRevision: number;
-  results: ContextAppendResult[];
-}
-export interface ContextAppendResult {
-  entry?: ContextEntryInputView | null;
-  failure?: InputAdmissionFailureView | null;
-  key: string;
-  status: ContextAppendStatus;
-}
-export interface InputAdmissionFailureView {
-  kind: InputAdmissionFailureKind;
-  message: string;
-}
-export interface AgentApiOutcomeOfContextCompactResponse {
-  notifications?: AgentNotification[];
-  result: ContextCompactResponse;
-}
-export interface ContextCompactResponse {
-  session: SessionMutationView;
-}
-/**
- * Compact acknowledgement returned by session mutations. Call
- * `session/read` when the complete current-state summary is needed.
- */
-export interface SessionMutationView {
-  activity: SessionActivity;
-  configRevision: number;
-  contextRevision: number;
-  headCursor?: EventCursor | null;
-  id: string;
-  lifecycleStatus: SessionLifecycleStatus;
-}
-export interface AgentApiOutcomeOfContextRemoveResponse {
-  notifications?: AgentNotification[];
-  result: ContextRemoveResponse;
-}
-export interface ContextRemoveResponse {
-  contextRevision: number;
-  results: ContextRemoveResult[];
-}
-export interface ContextRemoveResult {
-  failure?: InputAdmissionFailureView | null;
-  key: string;
-  status: ContextRemoveStatus;
-}
-export interface AgentApiOutcomeOfContextReplaceResponse {
-  notifications?: AgentNotification[];
-  result: ContextReplaceResponse;
-}
-export interface ContextReplaceResponse {
-  contextRevision: number;
-  results: ContextReplaceResult[];
-}
-export interface ContextReplaceResult {
-  entryId: string;
-  failure?: InputAdmissionFailureView | null;
-  status: ContextReplaceStatus;
-}
-export interface AgentApiOutcomeOfCredentialClientCreateResponse {
-  notifications?: AgentNotification[];
-  result: CredentialClientCreateResponse;
-}
-export interface CredentialClientCreateResponse {
-  client: OAuthClientView;
-}
-export interface OAuthClientView {
-  audience?: string | null;
-  authorizationEndpoint: string;
-  authorizationResponseIssParameterSupported?: boolean;
-  authorizationServerIssuer?: string | null;
-  authorizationServerScopesSupported?: string[];
-  clientId: string;
-  createdAtMs: number;
-  displayName?: string | null;
-  hasClientSecret: boolean;
-  providerId: string;
-  providerKind: CredentialProviderKind;
-  remoteClientId: string;
-  scopesDefault?: string[];
-  tokenEndpoint: string;
-  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfCredentialClientDeleteResponse {
-  notifications?: AgentNotification[];
-  result: CredentialClientDeleteResponse;
-}
-export interface CredentialClientDeleteResponse {
-  client: OAuthClientView;
-}
-export interface AgentApiOutcomeOfCredentialClientListResponse {
-  notifications?: AgentNotification[];
-  result: CredentialClientListResponse;
-}
-export interface CredentialClientListResponse {
-  clients?: OAuthClientView[];
-}
-export interface AgentApiOutcomeOfCredentialClientReadResponse {
-  notifications?: AgentNotification[];
-  result: CredentialClientReadResponse;
-}
-export interface CredentialClientReadResponse {
-  client: OAuthClientView;
-}
-export interface AgentApiOutcomeOfCredentialFlowStartResponse {
-  notifications?: AgentNotification[];
-  result: CredentialFlowStartResponse;
-}
-export interface CredentialFlowStartResponse {
-  /**
-   * Authorization URL the user must open. It embeds the one-time `state`;
-   * treat it as sensitive and do not log it server-side.
-   */
-  authorizeUrl: string;
-  expiresAtMs: number;
-  flowId: string;
-}
-export interface AgentApiOutcomeOfCredentialFlowStatusResponse {
-  notifications?: AgentNotification[];
-  result: CredentialFlowStatusResponse;
-}
-export interface CredentialFlowStatusResponse {
-  flow: CredentialFlowView;
-}
-export interface CredentialFlowView {
-  clientId: string;
-  createdAtMs: number;
-  error?: string | null;
-  expiresAtMs: number;
-  flowId: string;
-  grantId?: string | null;
-  providerId: string;
-  status: CredentialFlowStatus;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGitHubInstallationGrantResponse;
-}
-export interface CredentialGitHubInstallationGrantResponse {
-  grant: CredentialGrantView;
-}
-export interface CredentialGrantView {
-  audience?: string | null;
-  createdAtMs: number;
-  /**
-   * Who created the grant. Attribution only; it confers no access.
-   */
-  createdBy: Attribution;
-  displayName?: string | null;
-  expiresAtMs?: number | null;
-  exposure: CredentialGrantExposure;
-  grantId: string;
-  hasAccessToken: boolean;
-  hasRefreshToken: boolean;
-  lastLeasedAtMs?: number | null;
-  leaseCount: number;
-  /**
-   * Non-secret provider-specific metadata (for GitHub App installation
-   * grants: installation id, account, permissions, repository selection).
-   */
-  metadata?: {
-    [k: string]: unknown;
-  };
-  providerId: string;
-  providerKind: CredentialProviderKind;
-  scopes?: string[];
-  status: CredentialGrantStatus;
-  subjectHint?: string | null;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfCredentialGitHubInstallationListResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGitHubInstallationListResponse;
-}
-export interface CredentialGitHubInstallationListResponse {
-  installations?: GitHubInstallationView[];
-}
-export interface GitHubInstallationView {
-  accountLogin?: string | null;
-  installationId: number;
-  /**
-   * Fine-grained permission map as GitHub reports it.
-   */
-  permissions?: {
-    [k: string]: unknown;
-  };
-  repositorySelection?: string | null;
-}
-export interface AgentApiOutcomeOfCredentialGrantImportResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGrantImportResponse;
-}
-export interface CredentialGrantImportResponse {
-  grant: CredentialGrantView;
-}
-export interface AgentApiOutcomeOfCredentialGrantLeaseResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGrantLeaseResponse;
-}
-export interface CredentialGrantLeaseResponse {
-  expiresAtMs?: number | null;
-  grantId: string;
-  providerKind: CredentialProviderKind;
-  token: string;
-}
-export interface AgentApiOutcomeOfCredentialGrantListResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGrantListResponse;
-}
-export interface CredentialGrantListResponse {
-  grants?: CredentialGrantView[];
-}
-export interface AgentApiOutcomeOfCredentialGrantPutResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGrantPutResponse;
-}
-export interface CredentialGrantPutResponse {
-  /**
-   * False when the credential already existed.
-   */
-  created: boolean;
-  /**
-   * The credential as declared: as it is now, or as it would be for a
-   * dry run.
-   */
-  grant: CredentialGrantView;
-  /**
-   * True when an existing credential held a different token.
-   */
-  tokenReplaced: boolean;
-}
-export interface AgentApiOutcomeOfCredentialGrantReadResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGrantReadResponse;
-}
-export interface CredentialGrantReadResponse {
-  grant: CredentialGrantView;
-}
-export interface AgentApiOutcomeOfCredentialGrantRevokeResponse {
-  notifications?: AgentNotification[];
-  result: CredentialGrantRevokeResponse;
-}
-export interface CredentialGrantRevokeResponse {
-  grant: CredentialGrantView;
-}
-export interface AgentApiOutcomeOfCredentialProviderCreateResponse {
-  notifications?: AgentNotification[];
-  result: CredentialProviderCreateResponse;
-}
-export interface CredentialProviderCreateResponse {
-  provider: CredentialProviderView;
-}
-export interface CredentialProviderView {
-  config: CredentialProviderConfigView;
-  createdAtMs: number;
-  displayName?: string | null;
-  hasCredential: boolean;
-  providerId: string;
-  providerKind: CredentialProviderKind;
-  status: CredentialProviderStatus;
-  updatedAtMs: number;
-}
-export interface ModelEndpointConfig {
-  apiKinds: string[];
-  baseUrl: string;
-  /**
-   * Extra request headers sent on every request to the endpoint, alongside
-   * the provider's own credential. Names are case-insensitive and stored
-   * lowercased; transport headers and `authorization` are reserved.
-   * `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
-   * accept only a `credential` value.
-   */
-  headers?: {
-    [k: string]: RequestHeader;
-  };
-}
-export interface AgentApiOutcomeOfCredentialProviderDeleteResponse {
-  notifications?: AgentNotification[];
-  result: CredentialProviderDeleteResponse;
-}
-export interface CredentialProviderDeleteResponse {
-  provider: CredentialProviderView;
-}
-export interface AgentApiOutcomeOfCredentialProviderListResponse {
-  notifications?: AgentNotification[];
-  result: CredentialProviderListResponse;
-}
-export interface CredentialProviderListResponse {
-  providers?: CredentialProviderView[];
-}
-export interface AgentApiOutcomeOfCredentialProviderPutResponse {
-  notifications?: AgentNotification[];
-  result: CredentialProviderPutResponse;
-}
-export interface CredentialProviderPutResponse {
-  /**
-   * False when the provider already existed.
-   */
-  created: boolean;
-  /**
-   * True when an existing provider held a different credential, or gained
-   * or lost one.
-   */
-  credentialReplaced: boolean;
-  /**
-   * The provider as declared: as it is now, or as it would be for a dry
-   * run.
-   */
-  provider: CredentialProviderView;
-}
-export interface AgentApiOutcomeOfCredentialProviderReadResponse {
-  notifications?: AgentNotification[];
-  result: CredentialProviderReadResponse;
-}
-export interface CredentialProviderReadResponse {
-  provider: CredentialProviderView;
-}
-export interface AgentApiOutcomeOfDeploymentChannelAccountListResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentChannelAccountListResponse;
-}
-export interface DeploymentChannelAccountListResponse {
-  accounts?: DeploymentChannelAccountView[];
-}
-/**
- * One channel account of any universe, for the connector host's discovery
- * pass.
- */
-export interface DeploymentChannelAccountView {
-  accountId: ChannelAccountId;
-  createdAtMs: number;
-  /**
-   * Retrievable credential grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  revision: number;
-  settings?: ChannelAccountSettings;
-  universeId: string;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfDeploymentDeletedSessionsListResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentDeletedSessionsListResponse;
-}
-export interface DeploymentDeletedSessionsListResponse {
-  nextAfter?: string | null;
-  sessions: DeletedSessionView[];
-}
-export interface DeletedSessionView {
-  deletedAtMs: number;
-  displayName?: string | null;
-  sessionId: string;
-}
-export interface AgentApiOutcomeOfDeploymentDeletedUniversesListResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentDeletedUniversesListResponse;
-}
-export interface DeploymentDeletedUniversesListResponse {
-  nextAfter?: string | null;
-  universes: DeletedUniverseView[];
-}
-export interface AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentEnvironmentProviderDeleteResponse;
-}
-export interface DeploymentEnvironmentProviderDeleteResponse {
-  provider: DeploymentEnvironmentProviderView;
-}
-export interface DeploymentEnvironmentProviderView {
-  /**
-   * `ws://`, `wss://` or `unix://` URL of the provider controller.
-   */
-  controllerEndpoint: string;
-  createdAtMs: number;
-  /**
-   * Operator-configured `ws://` or `wss://` base of the provider's data
-   * routes; absent derives it from the controller endpoint.
-   */
-  dataRouteBase?: string | null;
-  displayName?: string | null;
-  /**
-   * The data route base Lightspeed dials: `dataRouteBase`, or the
-   * controller endpoint's origin followed by `/routes`. Absent only when it
-   * cannot be derived.
-   */
-  effectiveDataRouteBase?: string | null;
-  /**
-   * A bearer credential is stored and presented to the controller and
-   * data routes; without one no `Authorization` header is sent.
-   */
-  hasCredential: boolean;
-  providerId: string;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentEnvironmentProviderListResponse;
-}
-export interface DeploymentEnvironmentProviderListResponse {
-  providers: DeploymentEnvironmentProviderView[];
-}
-export interface AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentEnvironmentProviderPutResponse;
-}
-export interface DeploymentEnvironmentProviderPutResponse {
-  provider: DeploymentEnvironmentProviderView;
-}
-export interface AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentEnvironmentProviderReadResponse;
-}
-export interface DeploymentEnvironmentProviderReadResponse {
-  provider: DeploymentEnvironmentProviderView;
-}
-export interface AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentProviderBindingDeleteResponse;
-}
-export interface DeploymentProviderBindingDeleteResponse {
-  binding: EnvironmentProviderBindingView;
-}
-/**
- * A universe's binding to a deployment provider. Creates, templates and
- * data routes of the provider need it enabled.
- */
-export interface EnvironmentProviderBindingView {
-  createdAtMs: number;
-  enabled: boolean;
-  providerId: string;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfDeploymentProviderBindingPutResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentProviderBindingPutResponse;
-}
-export interface DeploymentProviderBindingPutResponse {
-  binding: EnvironmentProviderBindingView;
-}
-export interface AgentApiOutcomeOfDeploymentSessionPurgeResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentSessionPurgeResponse;
-}
-export interface DeploymentSessionPurgeResponse {
-  /**
-   * Includes soft-deleted delegated descendants.
-   * Empty when the target has already been permanently deleted.
-   */
-  deletedSessionIds: string[];
-}
-export interface AgentApiOutcomeOfDeploymentUniverseCreateResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentUniverseCreateResponse;
-}
-export interface DeploymentUniverseCreateResponse {
-  /**
-   * False when the universe already existed (create is idempotent).
-   */
-  created: boolean;
-  universe: DeploymentUniverseView;
-}
-/**
- * Per-universe stats view. Counts are cheap aggregates computed at read
- * time, not maintained counters — approximate under concurrent writes.
- */
-export interface DeploymentUniverseView {
-  blobBytes: number;
-  createdAtMs: number;
-  deletion?: UniverseDeletion | null;
-  /**
-   * Exact issuer-qualified directory groups. Omit to leave unchanged;
-   * an empty list clears declared group grants.
-   */
-  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
-  /**
-   * Runtime-owned name. Named universes are adopted automatically by Platform.
-   */
-  displayName?: string | null;
-  /**
-   * The universe's deployment-unique name. Requests may address the
-   * universe by it wherever they may by UUID.
-   */
-  handle: string;
-  /**
-   * Most recent session activity (`max(sessions.updated_at_ms)`); absent
-   * when the universe has no sessions.
-   */
-  lastActivityAtMs?: number | null;
-  /**
-   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
-   * an empty list clears declared members. Email selectors require verified email.
-   */
-  members?: DeclaredUniverseMember[] | null;
-  profiles: number;
-  sessions: number;
-  universeId: string;
-  workspaces: number;
-}
-export interface UniverseDeletion {
-  detail?: string | null;
-  requestedBy: Attribution;
-  startedAtMs: number;
-  step: UniverseDeletionStep;
-}
-export interface UniverseDirectoryGroupMapping {
-  group: string;
-  issuer: string;
-  role: UniverseMemberRole;
-}
-export interface DeclaredUniverseMember {
-  /**
-   * Select by verified email, or by issuer and subject, never both.
-   */
-  email?: string | null;
-  issuer?: string | null;
-  role: UniverseMemberRole;
-  subject?: string | null;
-}
-export interface AgentApiOutcomeOfDeploymentUniverseDeleteResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentUniverseDeleteResponse;
-}
-export interface DeploymentUniverseDeleteResponse {
-  state: UniverseDeletionState;
-  universeId: string;
-}
-export interface AgentApiOutcomeOfDeploymentUniverseListResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentUniverseListResponse;
-}
-export interface DeploymentUniverseListResponse {
-  universes?: DeploymentUniverseView[];
-}
-export interface AgentApiOutcomeOfDeploymentUniverseReadResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentUniverseReadResponse;
-}
-export interface DeploymentUniverseReadResponse {
-  universe: DeploymentUniverseView;
-}
-export interface AgentApiOutcomeOfEnvironmentCloseResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentCloseResponse;
-}
-export interface EnvironmentCloseResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentCreateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentCreateResponse;
-}
-export interface EnvironmentCreateResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentCredentialBindResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentCredentialBindResponse;
-}
-export interface EnvironmentCredentialBindResponse {
-  credential: EnvironmentCredentialView;
-}
-export interface EnvironmentCredentialView {
-  createdAtMs: number;
-  envName: string;
-  environmentId: string;
-  source: EnvironmentCredentialSourceView;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfEnvironmentCredentialListResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentCredentialListResponse;
-}
-export interface EnvironmentCredentialListResponse {
-  credentials?: EnvironmentCredentialView[];
-}
-export interface AgentApiOutcomeOfEnvironmentCredentialUnbindResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentCredentialUnbindResponse;
-}
-export interface EnvironmentCredentialUnbindResponse {
-  credential: EnvironmentCredentialView;
-}
-export interface AgentApiOutcomeOfEnvironmentExternalCreateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentExternalCreateResponse;
-}
-export interface EnvironmentExternalCreateResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentIngressPutResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentIngressPutResponse;
-}
-export interface EnvironmentIngressPutResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentJobCancelResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentJobCancelResponse;
-}
-export interface EnvironmentJobCancelResponse {
-  jobs?: SessionJobCancelEntryView[];
-}
-export interface SessionJobCancelEntryView {
-  error?: string | null;
-  handle?: SessionJobHandleView | null;
-  summary?: SessionJobSummaryView | null;
-}
-export interface SessionJobHandleView {
-  environmentId: string;
-  jobId: string;
-}
-/**
- * What a job is and how it ended. Instants are the environment's wall
- * clock.
- */
-export interface SessionJobSummaryView {
-  /**
-   * When a cancel reached the job while it ran.
-   */
-  cancelRequestedAtMs?: number | null;
-  createdAtMs: number;
-  dependencies?: string[];
-  /**
-   * Run time from start to finish, immune to clock jumps.
-   */
-  durationMs?: number | null;
-  /**
-   * How the job's root process ended, once it ran and exited.
-   */
-  exit?: SessionJobExitView | null;
-  failure?: string | null;
-  finishedAtMs?: number | null;
-  jobId: string;
-  name?: string | null;
-  /**
-   * True when the job's root process exited while descendants it spawned
-   * were still running; the host terminated them best-effort at job
-   * completion.
-   */
-  orphanedDescendants?: boolean;
-  queueKey?: string | null;
-  queuedAtMs?: number | null;
-  /**
-   * The start request that created the job; part of its identity.
-   */
-  requestId: string;
-  startedAtMs?: number | null;
-  status: SessionJobStatusView;
-  /**
-   * Set when Lightspeed stopped the running job.
-   */
-  stoppedBy?: SessionJobStoppedByView | null;
-}
-export interface AgentApiOutcomeOfEnvironmentJobCreateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentJobCreateResponse;
-}
-export interface EnvironmentJobCreateResponse {
-  environmentId: string;
-  jobGroupId: string;
-  jobs?: SessionJobStartedView[];
-}
-export interface SessionJobStartedView {
-  dependencies?: string[];
-  handle: SessionJobHandleView;
-  jobId: string;
-  name?: string | null;
-  promiseId?: string | null;
-  queueKey?: string | null;
-  status: SessionJobStatusView;
-}
-export interface AgentApiOutcomeOfEnvironmentJobReadResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentJobReadResponse;
-}
-export interface EnvironmentJobReadResponse {
-  jobs?: SessionJobReadEntryView[];
-}
-/**
- * One job's summary and output page, or why it could not be read: an
- * entry with `error` and no summary names a job the environment does not
- * know (never created, or garbage-collected).
- */
-export interface SessionJobReadEntryView {
-  error?: string | null;
-  handle?: SessionJobHandleView | null;
-  /**
-   * Output in offset order.
-   */
-  outputChunks?: SessionJobOutputChunkView[];
-  /**
-   * Output bytes the job produced so far; final once it is terminal.
-   */
-  outputEnd: number;
-  /**
-   * Output ranges between the requested start and `outputNext` that
-   * cannot be returned.
-   */
-  outputGaps?: SessionJobOutputGapView[];
-  /**
-   * Byte offset to continue reading from: pass it as `after`.
-   */
-  outputNext: number;
-  summary?: SessionJobSummaryView | null;
-}
-export interface SessionJobOutputChunkView {
-  dataBase64: string;
-  /**
-   * Byte offset of the chunk's first byte in the job's combined output.
-   */
-  offset: number;
-  stream: SessionJobOutputStreamView;
-}
-/**
- * Output bytes in `[offset, offset + omittedBytes)` that cannot be
- * returned.
- */
-export interface SessionJobOutputGapView {
-  offset: number;
-  omittedBytes: number;
-  reason: SessionJobOutputGapReasonView;
-}
-export interface AgentApiOutcomeOfEnvironmentListResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentListResponse;
-}
-export interface EnvironmentListResponse {
-  /**
-   * Environments in environment id order.
-   */
-  environments?: EnvironmentView[];
-  /**
-   * Pass as `after` to read the next page; absent on the last page.
-   */
-  nextAfter?: string | null;
-}
-export interface AgentApiOutcomeOfEnvironmentPowerPutResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentPowerPutResponse;
-}
-export interface EnvironmentPowerPutResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentProviderBindingListResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentProviderBindingListResponse;
-}
-export interface EnvironmentProviderBindingListResponse {
-  bindings: EnvironmentProviderBindingView[];
-}
-export interface AgentApiOutcomeOfEnvironmentProviderBindingReadResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentProviderBindingReadResponse;
-}
-export interface EnvironmentProviderBindingReadResponse {
-  binding: EnvironmentProviderBindingView;
-}
-export interface AgentApiOutcomeOfEnvironmentReadResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentReadResponse;
-}
-export interface EnvironmentReadResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentRegisteredPutResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegisteredPutResponse;
-}
-export interface EnvironmentRegisteredPutResponse {
-  /**
-   * False when the environment was already declared.
-   */
-  created: boolean;
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegisteredReleaseResponse;
-}
-export interface EnvironmentRegisteredReleaseResponse {
-  environment: EnvironmentView;
-  /**
-   * False when no daemon was bound.
-   */
-  released: boolean;
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyCreateResponse;
-}
-export interface EnvironmentRegistrationKeyCreateResponse {
-  registrationKey: EnvironmentRegistrationKeyView;
-  /**
-   * The plaintext secret, returned only here.
-   */
-  secret: EnvironmentRegistrationSecretView;
-}
-export interface EnvironmentRegistrationKeyView {
-  /**
-   * Non-closed environments admitted by this key.
-   */
-  activeEnvironmentCount: number;
-  createdAtMs: number;
-  /**
-   * The key admits only daemons whose registration name matches one of
-   * its declared environments.
-   */
-  declaredOnly?: boolean;
-  /**
-   * The group name shown wherever registered environments are listed.
-   */
-  displayName: string;
-  /**
-   * Effective disconnect grace for ephemeral environments.
-   */
-  ephemeralDisconnectGraceMs: number;
-  expiresAtMs?: number | null;
-  identityMode: EnvironmentIdentityModeView;
-  /**
-   * First characters of the key's live secret, for identification only.
-   */
-  keyPrefix: string;
-  lastRegisteredAtMs?: number | null;
-  maxActiveEnvironments?: number | null;
-  /**
-   * Persistent keys only: environments whose daemon has been away longer
-   * than this are closed; absent keeps them open.
-   */
-  offlineCloseAfterMs?: number | null;
-  /**
-   * Environments ever admitted by this key, closed included.
-   */
-  registeredEnvironmentCount: number;
-  registrationKeyId: string;
-  revokedAtMs?: number | null;
-  status: EnvironmentRegistrationKeyStatusView;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyListResponse;
-}
-export interface EnvironmentRegistrationKeyListResponse {
-  registrationKeys?: EnvironmentRegistrationKeyView[];
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyPutResponse;
-}
-export interface EnvironmentRegistrationKeyPutResponse {
-  /**
-   * False when the key already existed.
-   */
-  created: boolean;
-  registrationKey: EnvironmentRegistrationKeyView;
-  /**
-   * True when an existing key answered to a different secret, which is
-   * now retired.
-   */
-  secretReplaced: boolean;
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyReadResponse;
-}
-export interface EnvironmentRegistrationKeyReadResponse {
-  registrationKey: EnvironmentRegistrationKeyView;
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyRevokeResponse;
-}
-export interface EnvironmentRegistrationKeyRevokeResponse {
-  /**
-   * Environments closed by this call.
-   */
-  closedEnvironmentIds?: string[];
-  registrationKey: EnvironmentRegistrationKeyView;
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyRotateResponse;
-}
-export interface EnvironmentRegistrationKeyRotateResponse {
-  registrationKey: EnvironmentRegistrationKeyView;
-  /**
-   * The new plaintext secret, returned only here.
-   */
-  secret: EnvironmentRegistrationSecretView;
-}
-export interface AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentRegistrationKeyUpdateResponse;
-}
-export interface EnvironmentRegistrationKeyUpdateResponse {
-  registrationKey: EnvironmentRegistrationKeyView;
-}
-export interface AgentApiOutcomeOfEnvironmentTemplateListResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentTemplateListResponse;
-}
-export interface EnvironmentTemplateListResponse {
-  templates: EnvironmentTemplateView[];
-}
-export interface EnvironmentTemplateView {
-  deprecated: boolean;
-  description?: string | null;
-  displayName: string;
-  /**
-   * Idle policy targets get when `environments/create` names none.
-   */
-  idle?: EnvironmentIdlePolicyView | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Power states `environments/power/put` can move targets of this
-   * template to; empty without power control.
-   */
-  powerStates: EnvironmentPowerStateView[];
-  providerId: string;
-  /**
-   * `environments/ingress/put` can enable public ingress on targets of
-   * this template.
-   */
-  publicIngress: boolean;
-  /**
-   * Compute targets of this template get; absent when the provider does
-   * not fix it.
-   */
-  resources?: EnvironmentTemplateResourcesView | null;
-  templateId: string;
-}
-/**
- * A template's compute, in provider-neutral units. Each field is absent
- * when the provider does not fix it.
- */
-export interface EnvironmentTemplateResourcesView {
-  diskBytes?: number | null;
-  memoryBytes?: number | null;
-  vcpus?: number | null;
-}
-export interface AgentApiOutcomeOfEnvironmentTemplateReadResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentTemplateReadResponse;
-}
-export interface EnvironmentTemplateReadResponse {
-  template: EnvironmentTemplateView;
-}
-export interface AgentApiOutcomeOfEnvironmentUpdateResponse {
-  notifications?: AgentNotification[];
-  result: EnvironmentUpdateResponse;
-}
-export interface EnvironmentUpdateResponse {
-  environment: EnvironmentView;
-}
-export interface AgentApiOutcomeOfInitializeResponse {
-  notifications?: AgentNotification[];
-  result: InitializeResponse;
-}
-export interface InitializeResponse {
-  caller: CallerAccess;
-  capabilities: ServerCapabilities;
-  protocolVersion: string;
-  serverInfo: ServerInfo;
-}
-/**
- * How the direct runtime connection authenticated. All runtime tokens have
- * full authority; permissions belong to the external gate.
- */
-export interface CallerAccess {
-  /**
-   * True only for explicitly unauthenticated local development access.
-   */
-  single: boolean;
-  /**
-   * Configured token name, absent for unauthenticated access.
-   */
-  tokenName?: string | null;
-}
-export interface ServerCapabilities {
-  eventLog?: boolean;
-  historyRead: boolean;
-  localExecution: boolean;
-  notifications: boolean;
-}
-export interface ServerInfo {
-  /**
-   * The environment daemon build this release ships. Descriptive: the
-   * gateway admits any daemon that speaks `envd.protocolVersion`,
-   * whatever commit it was built from.
-   */
-  envd: EnvironmentDaemonInfo;
-  /**
-   * Full git commit this server was built from.
-   */
-  gitSha: string;
-  name: string;
-  /**
-   * Release version with the git commit as SemVer build metadata, for
-   * example `0.1.0+2093b949…`.
-   */
-  version: string;
-}
-/**
- * The environment daemon (`lightspeed-envd`) that belongs to a server
- * release. Download locations and checksums are not here: the deployment
- * publishes them in its discovery document, outside the authenticated API.
- */
-export interface EnvironmentDaemonInfo {
-  gitSha: string;
-  /**
-   * The envd protocol version (data plane and registration channel)
-   * the gateway speaks. A daemon registers only when it reports exactly
-   * this number.
-   */
-  protocolVersion: number;
-  /**
-   * Rust target triples the daemon is published for.
-   */
-  targets: string[];
-  version: string;
-}
-export interface AgentApiOutcomeOfMcpServerAuthDiscoverResponse {
-  notifications?: AgentNotification[];
-  result: McpServerAuthDiscoverResponse;
-}
-export interface McpServerAuthDiscoverResponse {
-  oauth?: McpOAuthDiscoveryView | null;
-}
-export interface McpOAuthDiscoveryView {
-  authorizationServers?: string[];
-  resource: string;
-  /**
-   * Scopes advertised by current protected-resource/authorization-server
-   * metadata. Advisory only; clients must not silently expand consent.
-   */
-  scopesSupported?: string[];
-}
-export interface AgentApiOutcomeOfMcpServerDeleteResponse {
-  notifications?: AgentNotification[];
-  result: McpServerDeleteResponse;
-}
-export interface McpServerDeleteResponse {
-  server: McpServerView;
-}
-export interface McpServerView {
-  allowPrivateNetwork: boolean;
-  allowedTools?: string[] | null;
-  approval: RemoteMcpApprovalPolicy;
-  authPolicy: McpServerAuthPolicy;
-  createdAtMs: number;
-  credential?: McpServerCredential | null;
-  defaultServerLabel: string;
-  deferLoading?: boolean | null;
-  description?: string | null;
-  displayName?: string | null;
-  execution: RemoteMcpExecution;
-  exposure: RemoteMcpExposure;
-  /**
-   * Extra request headers, keyed by lowercased name. Credential headers
-   * show only the credential id; the token is never returned.
-   */
-  headers?: {
-    [k: string]: RequestHeader;
-  };
-  revision: number;
-  serverId: string;
-  serverUrl: string;
-  status: McpServerStatus;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfMcpServerListResponse {
-  notifications?: AgentNotification[];
-  result: McpServerListResponse;
-}
-export interface McpServerListResponse {
-  servers?: McpServerView[];
-}
-export interface AgentApiOutcomeOfMcpServerPutResponse {
-  notifications?: AgentNotification[];
-  result: McpServerPutResponse;
-}
-export interface McpServerPutResponse {
-  server: McpServerView;
-}
-export interface AgentApiOutcomeOfMcpServerReadResponse {
-  notifications?: AgentNotification[];
-  result: McpServerReadResponse;
-}
-export interface McpServerReadResponse {
-  server: McpServerView;
-}
-export interface AgentApiOutcomeOfMcpServerToolsDiscoverResponse {
-  notifications?: AgentNotification[];
-  result: McpServerToolsDiscoverResponse;
-}
-export interface McpAdvertisedToolView {
-  annotations?: McpToolAnnotationsView | null;
-  description?: string | null;
-  name: string;
-  title?: string | null;
-}
-/**
- * Narrow projection of standard MCP `ToolAnnotations`. All values are
- * untrusted hints and never authorization facts.
- */
-export interface McpToolAnnotationsView {
-  destructiveHint?: boolean | null;
-  idempotentHint?: boolean | null;
-  openWorldHint?: boolean | null;
-  readOnlyHint?: boolean | null;
-}
-export interface AgentApiOutcomeOfModelDefaultsResponse {
-  notifications?: AgentNotification[];
-  result: ModelDefaultsResponse;
-}
-export interface ModelDefaultsResponse {
-  defaults: ModelDefaults;
-}
-/**
- * Persisted universe defaults. Revision zero means no update has been made.
- * Clearing a slot still advances the revision, so setup cannot undo a clear.
- */
-export interface ModelDefaults {
-  agentRun?: ModelConfig | null;
-  revision: number;
-  speechToText?: ModelConfig | null;
-}
-export interface AgentApiOutcomeOfModelListResponse {
-  notifications?: AgentNotification[];
-  result: ModelListResponse;
-}
-export interface ModelListResponse {
-  models?: ModelView[];
-  providers?: ModelProviderDiscoveryView[];
-}
-/**
- * A model route returned directly by a provider API.
- */
-export interface ModelView {
-  /**
-   * Canonical Lightspeed provider API kind, e.g. `openai:responses`.
-   */
-  apiKind: string;
-  capabilities: ModelCapabilitiesView;
-  /**
-   * Provider-reported model creation time. Omitted when the provider does
-   * not expose one; this is distinct from the discovery fetch time.
-   */
-  createdAtMs?: number | null;
-  displayName: string;
-  fetchedAtMs: number;
-  model: string;
-  providerId: string;
-  /**
-   * Always `provider`; there is no maintained model catalog.
-   */
-  source: ModelSource;
-}
-export interface ModelCapabilitiesView {
-  maxInputTokens?: number | null;
-  maxOutputTokens?: number | null;
-  /**
-   * Omitted when the provider model-list API does not report this fact.
-   */
-  parallelToolUse?: boolean | null;
-  /**
-   * Known provider effort values. Prefer provider-reported capabilities;
-   * Lightspeed may enrich important built-in model families when the
-   * provider's model-list API omits this metadata.
-   */
-  reasoningEfforts?: string[] | null;
-}
-/**
- * Best-effort status for one provider. A provider failure does not discard
- * models discovered from other providers.
- */
-export interface ModelProviderDiscoveryView {
-  apiKinds: string[];
-  /**
-   * Whether a usable credential exists for this provider — a stable signal
-   * for clients (no string matching on `error`).
-   */
-  credential: ModelProviderCredentialStatus;
-  /**
-   * Where the credential used for this universe comes from.
-   */
-  credentialSource: ModelProviderCredentialSource;
-  /**
-   * Sanitized Lightspeed error; never a credential, request header, or raw
-   * upstream response body.
-   */
-  error?: string | null;
-  fetchedAtMs?: number | null;
-  providerId: string;
-}
-export interface AgentApiOutcomeOfProfileApplyResponse {
-  notifications?: AgentNotification[];
-  result: ProfileApplyResponse;
-}
-export interface ProfileApplyResponse {
-  applied?: ProfileApplySummary;
-  session: SessionView;
-}
-export interface ProfileApplySummary {
-  activeEnvironmentChanged: boolean;
-  configChanged: boolean;
-  instructionsChanged: boolean;
-}
-export interface AgentApiOutcomeOfProfileCreateResponse {
-  notifications?: AgentNotification[];
-  result: ProfileCreateResponse;
-}
-export interface ProfileCreateResponse {
-  profile: AgentProfile;
-}
-export interface AgentProfile {
-  config?: SessionConfig | null;
-  createdAtMs: number;
-  description?: string | null;
-  displayName?: string | null;
-  instructions?: ProfileInstructions | null;
-  /**
-   * Descriptive metadata defaults copied to a session when it is created
-   * from this profile. Explicit `session/start` metadata wins key by key.
-   * Applying the profile to an existing session does not change metadata.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  profileId: ProfileId;
-  /**
-   * Creation-time session retention default. Absence keeps the tree until
-   * manual deletion. Applying a profile to an existing session does not
-   * change retention.
-   */
-  retention?: ProfileSessionRetention | null;
-  revision: number;
-  updatedAtMs: number;
-}
-/**
- * Root-session retention policy supplied by a profile at session creation.
- */
-export interface ProfileSessionRetention {
-  /**
-   * Positive close-relative automatic-deletion duration.
-   */
-  deleteAfterCloseMs: number;
-}
-export interface AgentApiOutcomeOfProfileDeleteResponse {
-  notifications?: AgentNotification[];
-  result: ProfileDeleteResponse;
-}
-export interface ProfileDeleteResponse {
-  profile: AgentProfile;
-}
-export interface AgentApiOutcomeOfProfileListResponse {
-  notifications?: AgentNotification[];
-  result: ProfileListResponse;
-}
-export interface ProfileListResponse {
-  profiles?: AgentProfileSummary[];
-}
-export interface AgentProfileSummary {
-  description?: string | null;
-  displayName?: string | null;
-  profileId: ProfileId;
-  revision: number;
-  updatedAtMs: number;
-}
-export interface AgentApiOutcomeOfProfilePutResponse {
-  notifications?: AgentNotification[];
-  result: ProfilePutResponse;
-}
-export interface ProfilePutResponse {
-  profile: AgentProfile;
-}
-export interface AgentApiOutcomeOfProfileReadResponse {
-  notifications?: AgentNotification[];
-  result: ProfileReadResponse;
-}
-export interface ProfileReadResponse {
-  profile: AgentProfile;
-}
-export interface AgentApiOutcomeOfRunApprovalsDecideResponse {
-  notifications?: AgentNotification[];
-  result: RunApprovalsDecideResponse;
-}
-export interface RunApprovalsDecideResponse {
-  results: ApprovalDecisionResult[];
-  run: RunSummaryView;
-}
-export interface ApprovalDecisionResult {
-  approvalId: string;
-  failure?: ApprovalDecisionFailure | null;
-  status: ApprovalDecisionStatus;
-}
-export interface ApprovalDecisionFailure {
-  kind: ApprovalDecisionFailureKind;
-  message: string;
-}
-export interface AgentApiOutcomeOfRunCancelResponse {
-  notifications?: AgentNotification[];
-  result: RunCancelResponse;
-}
-export interface RunCancelResponse {
-  run: RunSummaryView;
-}
-export interface AgentApiOutcomeOfRunListResponse {
-  notifications?: AgentNotification[];
-  result: RunListResponse;
-}
-export interface RunListResponse {
-  hasOlderRuns: boolean;
-  nextCursor?: string | null;
-  runs?: RunSummaryView[];
-}
-export interface AgentApiOutcomeOfRunReadResponse {
-  notifications?: AgentNotification[];
-  result: RunReadResponse;
-}
-/**
- * The projection of one run. A run past the server's detail limit keeps its opening
- * events, so its input renders, and its most recent whole turns, and reports the gap
- * in `earlierEventsOmitted`; `session/events/read` has the rest. Inline message and
- * reasoning text is complete. Tool and catalog previews are bounded; their full bodies
- * remain available through `blobs/read`.
- */
-export interface RunReadResponse {
-  run: RunView;
-}
-export interface AgentApiOutcomeOfRunStartResponse {
-  notifications?: AgentNotification[];
-  result: RunStartResponse;
-}
-export interface RunStartResponse {
-  run: RunSummaryView;
-}
-export interface AgentApiOutcomeOfRunSteerResponse {
-  notifications?: AgentNotification[];
-  result: RunSteerResponse;
-}
-export interface RunSteerResponse {
-  run: RunSummaryView;
-  /**
-   * Identifier of the accepted steering batch within the session.
-   */
-  steeringId: string;
-}
-export interface AgentApiOutcomeOfSessionCloseResponse {
-  notifications?: AgentNotification[];
-  result: SessionCloseResponse;
-}
-export interface SessionCloseResponse {
-  session: SessionMutationView;
-}
-export interface AgentApiOutcomeOfSessionConfigPutResponse {
-  notifications?: AgentNotification[];
-  result: SessionConfigPutResponse;
-}
-export interface SessionConfigPutResponse {
-  session: SessionMutationView;
-}
-export interface AgentApiOutcomeOfSessionDeleteResponse {
-  notifications?: AgentNotification[];
-  result: SessionDeleteResponse;
-}
-export interface SessionDeleteResponse {
-  deletedSessionCount: number;
-  session: SessionSummaryView;
-}
-export interface AgentApiOutcomeOfSessionEnvironmentActivateResponse {
-  notifications?: AgentNotification[];
-  result: SessionEnvironmentActivateResponse;
-}
-export interface SessionEnvironmentActivateResponse {
-  session: SessionView;
-}
-export interface AgentApiOutcomeOfSessionEnvironmentDeactivateResponse {
-  notifications?: AgentNotification[];
-  result: SessionEnvironmentDeactivateResponse;
-}
-export interface SessionEnvironmentDeactivateResponse {
-  session: SessionView;
-}
-export interface AgentApiOutcomeOfSessionEventsReadResponse {
-  notifications?: AgentNotification[];
-  result: SessionEventsReadResponse;
-}
-export interface SessionEventsReadResponse {
-  /**
-   * No more events in the requested direction at the time of this read.
-   * This does not imply that the session is closed.
-   */
-  complete: boolean;
-  /**
-   * Events are always chronological, including backward pages. A page may
-   * begin inside a run or tool batch; clients must retain continuation state.
-   */
-  events?: SessionEventView[];
-  /**
-   * Backward reads fence the head before reading. The initial backward
-   * page's head is the starting `after` cursor for live forward reads.
-   * An empty backward read returns sequence zero.
-   */
-  headCursor?: EventCursor | null;
-  /**
-   * Forward: pass as `after`. Backward: pass as `before` to fetch older
-   * history; absent when the beginning is reached. Never use a backward
-   * continuation to advance a forward live cursor.
-   */
-  nextCursor?: EventCursor | null;
-}
-export interface AgentApiOutcomeOfSessionListResponse {
-  notifications?: AgentNotification[];
-  result: SessionListResponse;
-}
-export interface SessionListResponse {
-  /**
-   * Present when more sessions exist past this page. Ordering is most
-   * recently updated first; pages can drift under concurrent activity.
-   */
-  nextCursor?: string | null;
-  sessions?: SessionSummaryView[];
-}
-export interface AgentApiOutcomeOfSessionMetadataPutResponse {
-  notifications?: AgentNotification[];
-  result: SessionMetadataPutResponse;
-}
-export interface SessionMetadataPutResponse {
-  session: SessionSummaryView;
-}
-export interface AgentApiOutcomeOfSessionReadResponse {
-  notifications?: AgentNotification[];
-  result: SessionReadResponse;
-}
-export interface SessionReadResponse {
-  hasOlderRuns: boolean;
-  /**
-   * Exclusive upper run-id bound for `session/runs/list`.
-   */
-  nextRunCursor?: string | null;
-  session: SessionView;
-}
-export interface AgentApiOutcomeOfSessionRenameResponse {
-  notifications?: AgentNotification[];
-  result: SessionRenameResponse;
-}
-export interface SessionRenameResponse {
-  session: SessionSummaryView;
-}
-export interface AgentApiOutcomeOfSessionRestartResponse {
-  notifications?: AgentNotification[];
-  result: SessionRestartResponse;
-}
-export interface SessionRestartResponse {
-  /**
-   * A new execution started. False when one was already running.
-   */
-  restarted: boolean;
-  session: SessionMutationView;
-}
-export interface AgentApiOutcomeOfSessionRetentionPutResponse {
-  notifications?: AgentNotification[];
-  result: SessionRetentionPutResponse;
-}
-export interface SessionRetentionPutResponse {
-  session: SessionSummaryView;
-}
-export interface AgentApiOutcomeOfSessionShareResponse {
-  notifications?: AgentNotification[];
-  result: SessionShareResponse;
-}
-export interface SessionShareResponse {
-  access: ResourceAccessSummary;
-}
-export interface AgentApiOutcomeOfSessionStartResponse {
-  notifications?: AgentNotification[];
-  result: SessionStartResponse;
-}
-export interface SessionStartResponse {
-  session: SessionMutationView;
-}
-export interface AgentApiOutcomeOfSkillListResponse {
-  notifications?: AgentNotification[];
-  result: SkillListResponse;
-}
-export interface SkillListResponse {
-  catalogs: SkillCatalogView[];
-}
-/**
- * An independent catalog instance; sources are never merged or used as fallbacks.
- */
-export interface SkillCatalogView {
-  availability: SkillCatalogAvailability;
-  catalogRef?: string | null;
-  skills: SkillListItem[];
-  source: SkillCatalogSource;
-  warnings: string[];
-}
-export interface SkillListItem {
-  description: string;
-  enabled: boolean;
-  /**
-   * Where to read the instructions and resolve supporting files.
-   */
-  location: SkillLocationView;
-  name: string;
-  shortDescription?: string | null;
-  skillId: string;
-}
-/**
- * Readable paths within the owning catalog's filesystem domain.
- */
-export interface SkillLocationView {
-  skillDirPath: string;
-  skillDocPath: string;
-}
-export interface AgentApiOutcomeOfTranscriptionResponse {
-  notifications?: AgentNotification[];
-  result: TranscriptionResponse;
-}
-export interface TranscriptionResponse {
-  transcription: TranscriptionView;
-}
-export interface TranscriptionView {
-  audio: TranscriptionAudio;
-  createdAtMs: number;
-  createdBy: Attribution;
-  failure?: TranscriptionFailure | null;
-  model: ModelConfig;
-  status: TranscriptionStatus;
-  text?: string | null;
-  /**
-   * Plain UTF-8 transcript blob, usable as ordinary textRef input.
-   * Unsubmitted content can be swept after the ordinary CAS grace period.
-   */
-  transcriptRef?: string | null;
-  transcriptionId: string;
-}
-/**
- * Immutable audio input in this universe's content store.
- */
-export interface TranscriptionAudio {
-  blobRef: string;
-  mime: string;
-  name: string;
-}
-export interface TranscriptionFailure {
-  kind: TranscriptionFailureKind;
-  message: string;
-}
-export interface AgentApiOutcomeOfUniverseWatchResponse {
-  notifications?: AgentNotification[];
-  result: UniverseWatchResponse;
-}
-/**
- * Final response when a watch reaches its lifetime. Reconnect and refetch on
- * watch/reset; notifications are lossy hints and have no durable resume cursor.
- */
-export interface UniverseWatchResponse {}
-export interface AgentApiOutcomeOfVfsSnapshotCommitResponse {
-  notifications?: AgentNotification[];
-  result: VfsSnapshotCommitResponse;
-}
-export interface VfsSnapshotCommitResponse {
-  bytes: number;
-  files: number;
-  snapshotRef: string;
-}
-export interface AgentApiOutcomeOfVfsSnapshotReadResponse {
-  notifications?: AgentNotification[];
-  result: VfsSnapshotReadResponse;
-}
-export interface VfsSnapshotReadResponse {
-  bytes: number;
-  files: number;
-  manifest: unknown;
-  snapshotRef: string;
-}
-export interface AgentApiOutcomeOfVfsWorkspaceCreateResponse {
-  notifications?: AgentNotification[];
-  result: VfsWorkspaceCreateResponse;
-}
-export interface VfsWorkspaceCreateResponse {
-  workspace: VfsWorkspaceView;
-}
-export interface AgentApiOutcomeOfVfsWorkspaceDeleteResponse {
-  notifications?: AgentNotification[];
-  result: VfsWorkspaceDeleteResponse;
-}
-export interface VfsWorkspaceDeleteResponse {
-  workspace: VfsWorkspaceView;
-}
-export interface AgentApiOutcomeOfVfsWorkspaceListResponse {
-  notifications?: AgentNotification[];
-  result: VfsWorkspaceListResponse;
-}
-export interface VfsWorkspaceListResponse {
-  workspaces?: VfsWorkspaceView[];
-}
-export interface AgentApiOutcomeOfVfsWorkspaceReadResponse {
-  notifications?: AgentNotification[];
-  result: VfsWorkspaceReadResponse;
-}
-export interface VfsWorkspaceReadResponse {
-  workspace: VfsWorkspaceView;
-}
-export interface AgentApiOutcomeOfVfsWorkspaceUpdateResponse {
-  notifications?: AgentNotification[];
-  result: VfsWorkspaceUpdateResponse;
-}
-export interface VfsWorkspaceUpdateResponse {
-  workspace: VfsWorkspaceView;
-}
-export interface AgentProfileInput {
-  config?: SessionConfig | null;
-  description?: string | null;
-  displayName?: string | null;
-  instructions?: ProfileInstructions | null;
-  /**
-   * Descriptive metadata defaults copied to a session when it is created
-   * from this profile. Explicit `session/start` metadata wins key by key.
-   * Applying the profile to an existing session does not change metadata.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  profileId: ProfileId;
-  /**
-   * Creation-time session retention default. Absence keeps the tree until
-   * manual deletion. Applying a profile to an existing session does not
-   * change retention.
-   */
-  retention?: ProfileSessionRetention | null;
-}
-export interface ApprovalDecisionInput {
-  approvalId: string;
-  decision: ApprovalDecisionKind;
-  note?: string | null;
-}
-export interface BlobHasParams {
-  blobRefs?: string[];
-}
-export interface BlobPutItem {
-  bytesBase64: string;
-}
-/**
- * `blobs/put` is batch-native: pass one item to store a single blob. Results
- * come back in request order. Uploads are eligible for collection after the
- * deployment's grace period unless retained by a durable resource. Reads do
- * not extend retention; admitting an existing ref refreshes its grace.
- */
-export interface BlobPutParams {
-  blobs?: BlobPutItem[];
-}
-export interface BlobReadParams {
-  blobRef: string;
-}
-export interface BotCloseParams {
-  botId: BotId;
-}
-export interface BotCreateParams {
-  bot: BotInput;
-  /**
-   * Triggers created with the bot in one go; a failure rolls the bot
-   * back.
-   */
-  triggers?: BotTriggerInput[];
-}
-/**
- * The mutable configuration of a bot, replaced whole with an expected
- * revision. The bot id, event counter, and lifecycle columns live on the
- * record, not here.
- */
-export interface BotInput {
-  botId: BotId;
-  breaker?: BotBreaker | null;
-  /**
-   * Standing instructions appended to the profile's instructions — the
-   * bot's job description.
-   */
-  brief?: string | null;
-  /**
-   * One line other bots read in the directory.
-   */
-  description?: string | null;
-  /**
-   * Mutable label for humans; the bot id stays the identity.
-   */
-  displayName?: string | null;
-  /**
-   * Capability grant: `bot_emit` — events to itself or another bot's
-   * inbox. Emitting bots are rate-capped.
-   */
-  emit?: boolean;
-  /**
-   * Reversible pause: sessions and chat context stay, nothing is
-   * delivered.
-   */
-  enabled?: boolean;
-  profileId: ProfileId;
-  /**
-   * Close routed (`perKey` / `perEvent`) sessions idle longer than this;
-   * absent keeps them open. A trigger's `sessionCloseAfterMs` overrides it.
-   */
-  routedSessionCloseAfterMs?: number | null;
-  /**
-   * Budget: runs started per UTC day (sub-agent descendants count);
-   * absent means unlimited.
-   */
-  runsPerDay?: number | null;
-  /**
-   * Capability grant: the mutating self-configuration tools
-   * (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
-   */
-  selfConfig?: boolean;
-}
-export interface BotDeleteParams {
-  botId: BotId;
-}
-export interface BotEventAdmitParams {
-  botId: BotId;
-  event: BotEventInput;
-}
-/**
- * A manually admitted event: what an operator posts through
- * `bots/events/admit`.
- */
-export interface BotEventInput {
-  correlationId?: string | null;
-  data?: unknown;
-  /**
-   * Dedupe identity; generated when absent.
-   */
-  eventId?: string | null;
-  headers?: {
-    [k: string]: string;
-  };
-  kind: string;
-  links?: string[];
-  occurredAtMs?: number | null;
-  summary: string;
-}
-export interface BotEventListParams {
-  botId: BotId;
-  /**
-   * Opaque cursor from a previous page.
-   */
-  cursor?: string | null;
-  /**
-   * Page size; server-clamped.
-   */
-  limit?: number | null;
-}
-export interface BotEventReadParams {
-  botId: BotId;
-  seq: number;
-}
-export interface BotEventReplayParams {
-  botId: BotId;
-  seq: number;
-}
-export interface BotFilterTestParams {
-  botId: BotId;
-  /**
-   * CEL over `{event, data, headers}`.
-   */
-  filter: string;
-  /**
-   * How many recent stored events to sample when no payload is given.
-   */
-  limit?: number | null;
-  /**
-   * A document to test instead of stored events: `{kind?, data?,
-   * headers?}`.
-   */
-  payload?: {
-    [k: string]: unknown;
-  };
-}
-export interface BotListParams {
-  /**
-   * Only bots this actor created.
-   */
-  createdBy?: string | null;
-}
-export interface BotPutParams {
-  bot: BotInput;
-  /**
-   * Checked only when the bot already exists; absent replaces (or
-   * creates) unconditionally.
-   */
-  expectedRevision?: number | null;
-}
-export interface BotReadParams {
-  botId: BotId;
-}
-export interface BotSessionRotateParams {
-  botId: BotId;
-  /**
-   * One of the bot's sessions (main or routed); the controller closes it
-   * at its next idle boundary and continues on a successor generation.
-   */
-  sessionId: string;
-}
-export interface BotStateReadParams {
-  botId: BotId;
-}
-export interface BotTriggerDeleteParams {
-  botId: BotId;
-  triggerId: BotTriggerId;
-}
-export interface BotTriggerListParams {
-  botId: BotId;
-}
-export interface BotTriggerPutParams {
-  botId: BotId;
-  /**
-   * Checked only when the trigger already exists; absent replaces (or
-   * creates) unconditionally.
-   */
-  expectedRevision?: number | null;
-  trigger: BotTriggerInput;
-}
-export interface BotTriggerReadParams {
-  botId: BotId;
-  triggerId: BotTriggerId;
-}
-export interface BotTriggerSecretsReadParams {
-  botId: BotId;
-  triggerId: BotTriggerId;
-}
-export interface ChannelAccountCreateParams {
-  account: ChannelAccountInput;
-}
-/**
- * A provider account served by the connector host. Secret material stays
- * in the referenced grant; this document is routing identity and
- * operational configuration.
- */
-export interface ChannelAccountInput {
-  accountId: ChannelAccountId;
-  /**
-   * Retrievable credential grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  settings?: ChannelAccountSettings;
-}
-export interface ChannelAccountDeleteParams {
-  accountId: ChannelAccountId;
-}
-export interface ChannelAccountListParams {
-  provider?: ChannelProvider | null;
-}
-export interface ChannelAccountPutParams {
-  account: ChannelAccountInput;
-  expectedRevision?: number | null;
-}
-export interface ChannelAccountReadParams {
-  accountId: ChannelAccountId;
-}
-export interface ChannelConversationReadParams {
-  accountId: ChannelAccountId;
-  chatId: string;
-  threadId?: string | null;
-}
-/**
- * One normalized provider message, as the connector host hands it to the
- * core. Provider and account come from the admitting account.
- */
-export interface ChannelInbound {
-  chatId: string;
-  isDirect: boolean;
-  isReplyToBot: boolean;
-  media?: ChannelInboundMedia[];
-  mentionedBot: boolean;
-  messageId: string;
-  /**
-   * Provider handle of the sender (Telegram user id, WhatsApp JID).
-   */
-  senderId: string;
-  senderName: string;
-  text: string;
-  threadId?: string | null;
-  timestampMs: number;
-}
-/**
- * A provider-owned attachment reference; never bytes. The connector
- * downloads it when the conversation workflow asks (`prepare_channel_media`).
- */
-export interface ChannelInboundMedia {
-  byteSize?: number | null;
-  /**
-   * Provider file handle (a Telegram file id, a sealed WhatsApp locator).
-   */
-  fileId: string;
-  kind: ChannelMediaKind;
-  mime: string;
-  name?: string | null;
-}
-export interface ChannelInboundAdmitParams {
-  accountId: ChannelAccountId;
-  inbound: ChannelInbound;
-}
-export interface ChannelPairingDeleteParams {
-  accountId: ChannelAccountId;
-  chatId: string;
-}
-export interface ChannelPairingListParams {
-  accountId?: ChannelAccountId | null;
-  botId?: BotId | null;
-}
-export interface ClientCapabilities {
-  experimentalApi?: boolean;
-}
-export interface ClientInfo {
-  name: string;
-  version?: string | null;
-}
-export interface ContextAppendEntry {
-  item: InputItem;
-  /**
-   * Stable client-chosen context key, which names one entry. Re-sending
-   * the key with the same content is a no-op, so a retry lands once. With
-   * different content the earlier entry leaves active context and the new
-   * one goes last under a new id; a catalog keeps the earlier version
-   * rendered and supersedes it instead.
-   * `run`, `run.*`, `runtime`, and `runtime.*` are reserved for the runtime.
-   */
-  key: string;
-}
-export interface ContextAppendParams {
-  entries: ContextAppendEntry[];
-  sessionId: string;
-}
-export interface ContextCompactParams {
-  sessionId: string;
-}
-export interface ContextRemoveParams {
-  /**
-   * Active context keys to remove. Removing a key that is already absent
-   * is a per-key no-op (`absent`), so retries are idempotent. Keys under
-   * reserved namespaces (`run`, `run.*`, `runtime`, `runtime.*`) are rejected
-   * request-level.
-   */
-  keys: string[];
-  sessionId: string;
-}
-export interface ContextReplaceEntry {
-  /**
-   * The active entry to replace, by the `id` that `session/read` lists in
-   * `activeContext`. Only tool results and user messages can be replaced,
-   * and the entry keeps its kind: a tool result takes only text.
-   */
-  entryId: string;
-  item: InputItem;
-}
-export interface ContextReplaceParams {
-  entries: ContextReplaceEntry[];
-  sessionId: string;
-}
-/**
- * Register an OAuth client configuration. `client_secret` is the second
- * deliberate inbound-plaintext path after `credentials/grants/import`: it is
- * encrypted on receipt and never returned by any method. `Debug` output
- * redacts it; request logging must never echo these params.
- */
-export interface CredentialClientCreateParams {
-  audience?: string | null;
-  authorizationEndpoint: string;
-  authorizationResponseIssParameterSupported?: boolean;
-  authorizationServerIssuer?: string | null;
-  authorizationServerScopesSupported?: string[];
-  clientId?: string | null;
-  clientSecret?: string | null;
-  displayName?: string | null;
-  providerId?: string | null;
-  providerKind: CredentialProviderKind;
-  remoteClientId: string;
-  scopesDefault?: string[];
-  tokenEndpoint: string;
-  tokenEndpointAuthMethod?: TokenEndpointAuthMethod | null;
-}
-export interface CredentialClientDeleteParams {
-  clientId: string;
-}
-export interface CredentialClientListParams {}
-export interface CredentialClientReadParams {
-  clientId: string;
-}
-export interface CredentialFlowStartParams {
-  audience?: string | null;
-  clientId: string;
-  exposure?: CredentialGrantExposure & string;
-  scopes?: string[] | null;
-}
-export interface CredentialFlowStatusParams {
-  flowId: string;
-}
-export interface CredentialGitHubInstallationGrantParams {
-  displayName?: string | null;
-  exposure?: CredentialGrantExposure & string;
-  grantId?: string | null;
-  installationId: number;
-  providerId: string;
-}
-export interface CredentialGitHubInstallationListParams {
-  providerId: string;
-}
-/**
- * Import a new token credential as a credential grant, under the given id or an
- * allocated one; an id already in use is a conflict. Together with
- * [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
- * `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
- * logging must never echo these params.
- */
-export interface CredentialGrantImportParams {
-  audience?: string | null;
-  displayName?: string | null;
-  expiresAtMs?: number | null;
-  exposure?: CredentialGrantExposure & string;
-  grantId?: string | null;
-  /**
-   * Non-secret, caller-defined metadata stored on the grant and returned
-   * by reads (for example which product a pasted subscription token
-   * belongs to). Must be a JSON object; never put secret material here.
-   */
-  metadata?: {
-    [k: string]: unknown;
-  };
-  providerId?: string | null;
-  scopes?: string[];
-  subjectHint?: string | null;
-  token: string;
-}
-/**
- * Request a current access-token lease for a retrievable grant. Callers must
- * cache only in memory until shortly before `expiresAtMs` (or for at most
- * five minutes when it is absent), re-lease after target 401/403 responses,
- * and never persist the token or place it in a workflow payload.
- */
-export interface CredentialGrantLeaseParams {
-  audience?: string | null;
-  grantId: string;
-}
-export interface CredentialGrantListParams {
-  status?: CredentialGrantStatus | null;
-}
-/**
- * Declare a token credential (`staticToken`): its id, its settings and the
- * token it holds. A credential that is missing is created. One that exists
- * has its settings replaced by these (an absent field is unset) and, when it
- * holds a different token, that token replaced, so MCP servers, headers,
- * bot polls and environment variables referencing the id use the new value
- * from their next request or process. Declaring it again changes nothing.
- *
- * `token` is encrypted on receipt and never returned; `Debug` output redacts
- * it and request logging must never echo these params.
- */
-export interface CredentialGrantPutParams {
-  audience?: string | null;
-  displayName?: string | null;
-  /**
-   * Report what the declaration would do without doing it.
-   */
-  dryRun?: boolean;
-  /**
-   * When the token expires. Absent means it does not expire.
-   */
-  expiresAtMs?: number | null;
-  /**
-   * Whether the plain token may be leased to a service or bound into an
-   * environment. It cannot be changed afterwards.
-   */
-  exposure?: CredentialGrantExposure & string;
-  grantId: string;
-  /**
-   * Non-secret, caller-defined metadata. Must be a JSON object; never put
-   * secret material here.
-   */
-  metadata?: {
-    [k: string]: unknown;
-  };
-  /**
-   * Label recorded on the credential; `static` when absent. It cannot be
-   * changed afterwards.
-   */
-  providerId?: string | null;
-  scopes?: string[];
-  subjectHint?: string | null;
-  token: string;
-}
-export interface CredentialGrantReadParams {
-  grantId: string;
-}
-export interface CredentialGrantRevokeParams {
-  grantId: string;
-}
-/**
- * Register a credential provider. `credential` (for GitHub Apps: the private
- * key PEM) is the third deliberate inbound-plaintext path: it is encrypted
- * on receipt and never returned by any method. `Debug` output redacts it;
- * request logging must never echo these params.
- */
-export interface CredentialProviderCreateParams {
-  config: CredentialProviderConfigInput;
-  credential?: string | null;
-  displayName?: string | null;
-  providerId?: string | null;
-}
-export interface CredentialProviderDeleteParams {
-  providerId: string;
-}
-export interface CredentialProviderListParams {}
-/**
- * Declare a provider: its id, its configuration and its credential. A
- * provider that is missing is created. One that exists is rewritten in place
- * as if it were created again under the same id, where it differs: the new
- * settings are validated before anything changes, so a rejected declaration
- * leaves the provider as it was, and sessions and environment variables
- * referencing the id keep working throughout. Declaring it again changes
- * nothing. `credential` is encrypted on receipt and never returned; `Debug`
- * output redacts it.
- */
-export interface CredentialProviderPutParams {
-  config: CredentialProviderConfigInput;
-  /**
-   * The provider's credential, for the kinds that take one. Absent leaves
-   * the provider without a credential.
-   */
-  credential?: string | null;
-  displayName?: string | null;
-  /**
-   * Report what the declaration would do without doing it.
-   */
-  dryRun?: boolean;
-  providerId: string;
-}
-export interface CredentialProviderReadParams {
-  providerId: string;
-}
-export interface DeploymentChannelAccountListParams {
-  /**
-   * Include disabled accounts; by default only enabled ones are listed.
-   */
-  includeDisabled?: boolean;
-  provider?: ChannelProvider | null;
-}
-export interface DeploymentDeletedSessionsListParams {
-  /**
-   * Exclusive session ID cursor; each page contains at most 100 entries.
-   */
-  after?: string | null;
-  /**
-   * The universe's UUID or handle.
-   */
-  universe: string;
-}
-export interface DeploymentDeletedUniversesListParams {
-  /**
-   * Opaque exclusive cursor; each page contains at most 100 entries.
-   */
-  after?: string | null;
-}
-export interface DeploymentEnvironmentProviderDeleteParams {
-  providerId: string;
-}
-export interface DeploymentEnvironmentProviderListParams {}
-/**
- * Register or replace a provider. `credential` is the optional bearer
- * token Lightspeed presents to the provider's controller and data routes:
- * it is sealed on receipt and never returned by any method. `Debug` output
- * redacts it; request logging must never echo these params.
- */
-export interface DeploymentEnvironmentProviderPutParams {
-  /**
-   * Remove the stored credential. Excludes `credential`.
-   */
-  clearCredential?: boolean;
-  /**
-   * `ws://`, `wss://` or `unix://` URL of the provider controller.
-   */
-  controllerEndpoint: string;
-  /**
-   * A new bearer credential; omit to keep the stored one. A provider needs
-   * none. Excludes `clearCredential`.
-   */
-  credential?: string | null;
-  /**
-   * `ws://` or `wss://` base of the provider's data routes; omit to derive
-   * it from the controller endpoint. Required for a `unix://` controller,
-   * and must not be `ws://` for a `wss://` controller.
-   */
-  dataRouteBase?: string | null;
-  displayName?: string | null;
-  providerId: string;
-}
-export interface DeploymentEnvironmentProviderReadParams {
-  providerId: string;
-}
-export interface DeploymentProviderBindingDeleteParams {
-  providerId: string;
-  /**
-   * The universe's UUID or handle.
-   */
-  universe: string;
-}
-/**
- * Create or replace a universe's binding to a deployment provider.
- */
-export interface DeploymentProviderBindingPutParams {
-  /**
-   * Admits creates, template listing and data routes for the universe.
-   */
-  enabled: boolean;
-  providerId: string;
-  /**
-   * The universe's UUID or handle.
-   */
-  universe: string;
-}
-export interface DeploymentSessionPurgeParams {
-  sessionId: string;
-  /**
-   * The universe's UUID or handle.
-   */
-  universe: string;
-}
-/**
- * Patch desired Platform configuration. Absent fields retain their values.
- */
-export interface DeploymentUniverseConfigurationPutParams {
-  /**
-   * Exact issuer-qualified directory groups. Omit to leave unchanged;
-   * an empty list clears declared group grants.
-   */
-  directoryGroupMappings?: UniverseDirectoryGroupMapping[] | null;
-  /**
-   * Runtime-owned name. Named universes are adopted automatically by Platform.
-   */
-  displayName?: string | null;
-  /**
-   * Declared grants, independent of manual memberships. Omit to leave unmanaged;
-   * an empty list clears declared members. Email selectors require verified email.
-   */
-  members?: DeclaredUniverseMember[] | null;
-  universe: string;
-}
-export interface DeploymentUniverseCreateParams {
-  /**
-   * The new universe's handle: 1-63 lowercase letters, digits and
-   * hyphens, starting and ending with a letter or digit, and not in the
-   * form of a UUID. Omit it to have one derived from the UUID. Ignored
-   * when the universe already exists.
-   */
-  handle?: string | null;
-  universeId: string;
-}
-export interface DeploymentUniverseDeleteParams {
-  /**
-   * The universe's UUID or handle.
-   */
-  universe: string;
-}
-/**
- * Rename a universe. The UUID and resources remain unchanged; the previous
- * handle is released, so requests and URLs using it stop reaching this
- * universe.
- */
-export interface DeploymentUniverseHandlePutParams {
-  /**
-   * The new handle: 1-63 lowercase letters, digits and hyphens, starting
-   * and ending with a letter or digit, and not in the form of a UUID.
-   */
-  handle: string;
-  /**
-   * The universe's UUID or current handle.
-   */
-  universe: string;
-}
-export interface DeploymentUniverseListParams {}
-export interface DeploymentUniverseReadParams {
-  /**
-   * The universe's UUID or handle.
-   */
-  universe: string;
-}
-export interface EnvironmentCloseParams {
-  environmentId: string;
-}
-export interface EnvironmentCreateParams {
-  displayName?: string | null;
-  /**
-   * The id profiles and bindings use for the environment. Omit it to have
-   * one allocated. An id already in use is a conflict.
-   */
-  environmentId?: string | null;
-  /**
-   * Idle policy passed to the provider in place of the template's `idle`.
-   * The provider runs the idle clock; it cannot be changed after create.
-   */
-  idle?: EnvironmentIdlePolicyView | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * The provider to create the environment with; the universe needs an
-   * enabled binding to it.
-   */
-  providerId: string;
-  /**
-   * Stable caller-generated retry identity, unique inside the universe.
-   * Retrying with identical inputs returns the same environment.
-   */
-  requestId: string;
-  /**
-   * The provider template to create the environment from.
-   */
-  templateId: string;
-}
-export interface EnvironmentCredentialBindParams {
-  envName: string;
-  environmentId: string;
-  source: EnvironmentCredentialSourceView;
-}
-export interface EnvironmentCredentialListParams {
-  environmentId: string;
-}
-export interface EnvironmentCredentialUnbindParams {
-  envName: string;
-  environmentId: string;
-}
-export interface EnvironmentExternalCreateParams {
-  displayName?: string | null;
-  /**
-   * `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
-   * Lightspeed.
-   */
-  endpoint: string;
-  /**
-   * The id profiles and bindings use for the environment. Omit it to have
-   * one allocated. An id already in use is a conflict.
-   */
-  environmentId?: string | null;
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Stable caller-generated retry identity, unique inside the universe.
-   */
-  requestId: string;
-}
-export interface EnvironmentIngressPutParams {
-  /**
-   * Ensure (`true`) or remove (`false`) the provider's public ingress.
-   */
-  enabled: boolean;
-  environmentId: string;
-}
-export interface EnvironmentJobCancelParams {
-  force?: boolean;
-  jobs: SessionJobHandleInput[];
-  scope?: SessionJobCancelScopeView & string;
-}
-export interface SessionJobHandleInput {
-  environmentId: string;
-  jobId: string;
-}
-export interface EnvironmentJobCreateParams {
-  environmentId: string;
-  jobs: SessionJobStartSpecInput[];
-  requestId: string;
-}
-export interface SessionJobStartSpecInput {
-  argv: string[];
-  cwd?: string | null;
-  dependencyPolicy?: SessionJobDependencyPolicyView & string;
-  dependsOn?: SessionJobDependencyInput[];
-  env?: {
-    [k: string]: string;
-  };
-  jobId?: string | null;
-  name?: string | null;
-  queueKey?: string | null;
-  stdin?: string | null;
-  timeoutMs?: number | null;
-}
-export interface SessionJobDependencyInput {
-  jobId?: string | null;
-  name?: string | null;
-}
-export interface EnvironmentJobReadParams {
-  /**
-   * Byte offset to read each job's output from: a previous entry's
-   * `outputNext`. Omitted with `tailBytes` omitted reads from the start.
-   */
-  after?: number | null;
-  jobs: SessionJobHandleInput[];
-  /**
-   * Most output bytes per job; omit for the server's default page.
-   */
-  maxBytes?: number | null;
-  /**
-   * Read each job's last `tailBytes` of output instead; excludes `after`.
-   */
-  tailBytes?: number | null;
-}
-export interface EnvironmentListParams {
-  /**
-   * Exclusive environment id cursor: a previous page's `nextAfter`.
-   */
-  after?: string | null;
-  /**
-   * Also list closed environments; they are omitted by default.
-   */
-  includeClosed?: boolean;
-  /**
-   * Most environments per page; omit for 100.
-   */
-  limit?: number | null;
-  /**
-   * Only environments carrying every listed metadata pair (AND
-   * semantics); the same filter `session/list` accepts.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Only provisioned environments of this provider.
-   */
-  providerId?: string | null;
-  /**
-   * Only registered environments admitted by this registration key.
-   */
-  registrationKeyId?: string | null;
-  /**
-   * Only environments in this lifecycle state. `closed` lists closed
-   * environments without `includeClosed`.
-   */
-  state?: EnvironmentStateView | null;
-}
-export interface EnvironmentPowerPutParams {
-  environmentId: string;
-  /**
-   * Power state to move the target to; one of its template's
-   * `powerStates`.
-   */
-  power: EnvironmentPowerStateView;
-}
-export interface EnvironmentProviderBindingListParams {}
-export interface EnvironmentProviderBindingReadParams {
-  providerId: string;
-}
-export interface EnvironmentReadParams {
-  environmentId: string;
-}
-/**
- * Declare a fixed machine as an environment before its daemon registers.
- * The first daemon the key admits under `name` becomes this environment and
- * keeps its id; from then on only that daemon's identity reconnects to it.
- */
-export interface EnvironmentRegisteredPutParams {
-  displayName?: string | null;
-  /**
-   * The id profiles and bindings use for the environment.
-   */
-  environmentId: string;
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * The name the daemon registers under: 1 to 128 bytes without control
-   * characters, unique among the open environments of the key. It cannot
-   * be changed afterwards.
-   */
-  name: string;
-  /**
-   * The persistent registration key whose daemons may fill it. It cannot
-   * be changed afterwards.
-   */
-  registrationKeyId: string;
-}
-/**
- * Forget the daemon bound to a declared environment so that another
- * identity may bind to it.
- */
-export interface EnvironmentRegisteredReleaseParams {
-  environmentId: string;
-}
-export interface EnvironmentRegistrationKeyCreateParams {
-  /**
-   * Persistent keys only: admit only daemons whose registration name
-   * matches an environment declared under this key.
-   */
-  declaredOnly?: boolean;
-  /**
-   * Group name for the environments this key admits.
-   */
-  displayName: string;
-  /**
-   * Disconnect grace for ephemeral environments; omit for the default.
-   */
-  ephemeralDisconnectGraceMs?: number | null;
-  expiresAtMs?: number | null;
-  /**
-   * Immutable once the key exists.
-   */
-  identityMode: EnvironmentIdentityModeView;
-  /**
-   * Non-closed environments the key may have at once; omit for unlimited.
-   */
-  maxActiveEnvironments?: number | null;
-  /**
-   * Persistent keys only: close environments whose daemon has been away
-   * longer than this; omit to keep them open.
-   */
-  offlineCloseAfterMs?: number | null;
-  /**
-   * The key's id within the universe: 1-128 ASCII letters, digits,
-   * underscores, hyphens, dots or colons, starting with a letter or digit.
-   * Omit it to have one allocated.
-   */
-  registrationKeyId?: string | null;
-}
-export interface EnvironmentRegistrationKeyListParams {}
-/**
- * Declare a registration key whose secret the caller supplies: its id, its
- * complete policy and the secret it answers to. An absent policy field is
- * unset.
- */
-export interface EnvironmentRegistrationKeyPutParams {
-  /**
-   * Persistent keys only: admit only daemons whose registration name
-   * matches an environment declared under this key.
-   */
-  declaredOnly?: boolean;
-  /**
-   * Group name for the environments this key admits.
-   */
-  displayName: string;
-  /**
-   * Disconnect grace for ephemeral environments; omit for the default.
-   */
-  ephemeralDisconnectGraceMs?: number | null;
-  expiresAtMs?: number | null;
-  /**
-   * Immutable once the key exists.
-   */
-  identityMode: EnvironmentIdentityModeView;
-  /**
-   * Non-closed environments the key may have at once; omit for unlimited.
-   */
-  maxActiveEnvironments?: number | null;
-  /**
-   * Persistent keys only: close environments whose daemon has been away
-   * longer than this; omit to keep them open.
-   */
-  offlineCloseAfterMs?: number | null;
-  registrationKeyId: string;
-  /**
-   * The secret daemons register with: `lsrk_` followed by 32 random bytes
-   * encoded as base64url without padding. Generate it with a
-   * cryptographic random source.
-   */
-  secret: EnvironmentRegistrationSecretView;
-}
-export interface EnvironmentRegistrationKeyReadParams {
-  registrationKeyId: string;
-}
-export interface EnvironmentRegistrationKeyRevokeParams {
-  /**
-   * Also close every non-closed environment the key admitted.
-   */
-  closeEnvironments?: boolean;
-  registrationKeyId: string;
-}
-export interface EnvironmentRegistrationKeyRotateParams {
-  registrationKeyId: string;
-}
-/**
- * The complete editable policy of a registration key; an absent field is
- * unset. The identity mode is immutable.
- */
-export interface EnvironmentRegistrationKeyUpdateParams {
-  /**
-   * Persistent keys only: admit only daemons whose registration name
-   * matches an environment declared under this key.
-   */
-  declaredOnly?: boolean;
-  /**
-   * Group name for the environments this key admits.
-   */
-  displayName: string;
-  /**
-   * Disconnect grace for ephemeral environments; omit for the default.
-   */
-  ephemeralDisconnectGraceMs?: number | null;
-  expiresAtMs?: number | null;
-  /**
-   * Non-closed environments the key may have at once; omit for unlimited.
-   */
-  maxActiveEnvironments?: number | null;
-  /**
-   * Persistent keys only: close environments whose daemon has been away
-   * longer than this; omit to keep them open.
-   */
-  offlineCloseAfterMs?: number | null;
-  registrationKeyId: string;
-}
-export interface EnvironmentTemplateListParams {
-  /**
-   * Only this provider's templates; omit for every enabled binding.
-   */
-  providerId?: string | null;
-}
-export interface EnvironmentTemplateReadParams {
-  providerId: string;
-  templateId: string;
-}
-/**
- * Replace an environment's display name and caller metadata.
- */
-export interface EnvironmentUpdateParams {
-  /**
-   * The new display name; omit to clear it.
-   */
-  displayName?: string | null;
-  environmentId: string;
-  /**
-   * The complete new caller metadata; omit or `{}` to clear it.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-}
-export interface InitializeParams {
-  capabilities?: ClientCapabilities | null;
-  clientInfo?: ClientInfo | null;
-}
-export interface InlineAgentProfile {
-  config?: SessionConfig | null;
-  description?: string | null;
-  displayName?: string | null;
-  instructions?: ProfileInstructions | null;
-  /**
-   * Descriptive metadata defaults copied to a session when it is created
-   * from this profile. Explicit `session/start` metadata wins key by key.
-   * Applying the profile to an existing session does not change metadata.
-   */
-  metadata?: {
-    [k: string]: string;
-  };
-  /**
-   * Creation-time session retention default. Absence keeps the tree until
-   * manual deletion. Applying a profile to an existing session does not
-   * change retention.
-   */
-  retention?: ProfileSessionRetention | null;
-}
-export interface JsonRpcError {
-  code: number;
-  data?: AgentApiError | null;
-  message: string;
-}
-/**
- * Read-only authentication discovery for a prospective MCP endpoint. A
- * missing OAuth result is deliberately inconclusive: the server may be
- * public, use bearer auth, or expose OAuth metadata only through an explicit
- * URL. No catalog or auth records are created by this probe.
- */
-export interface McpServerAuthDiscoverParams {
-  serverUrl: string;
-}
-export interface McpServerDeleteParams {
-  serverId: string;
-}
-/**
- * Full MCP server document as submitted by clients.
- */
-export interface McpServerInput {
-  allowPrivateNetwork?: boolean;
-  allowedTools?: string[] | null;
-  /**
-   * Approval policy for every session linking this server.
-   */
-  approval?: RemoteMcpApprovalPolicy & string;
-  authPolicy?: McpServerAuthPolicy;
-  credential?: McpServerCredential | null;
-  defaultServerLabel: string;
-  /**
-   * Provider-side deferred loading of tool definitions where supported.
-   */
-  deferLoading?: boolean | null;
-  description?: string | null;
-  displayName?: string | null;
-  execution?: RemoteMcpExecution & string;
-  exposure?: RemoteMcpExposure & string;
-  /**
-   * Extra request headers sent on every request to the server, alongside
-   * any `Authorization` the auth policy produces. Names are
-   * case-insensitive and stored lowercased; transport headers,
-   * `authorization` and `x-lightspeed-*` are reserved. `api-key` and
-   * `x-api-key` carry a secret and accept only a `credential` value.
-   * Requires `runtime` execution.
-   */
-  headers?: {
-    [k: string]: RequestHeader;
-  };
-  serverId: string;
-  serverUrl: string;
-  status?: McpServerStatus & string;
-}
-export interface McpServerListParams {
-  status?: McpServerStatus | null;
-}
-export interface McpServerPutParams {
-  /**
-   * Checked only when the server already exists; absent replaces (or
-   * creates) unconditionally.
-   */
-  expectedRevision?: number | null;
-  server: McpServerInput;
-}
-export interface McpServerReadParams {
-  serverId: string;
-}
-/**
- * Live, non-persisting tool discovery for a configured MCP server.
- */
-export interface McpServerToolsDiscoverParams {
-  serverId: string;
-}
-export interface ModelDefaultsPutParams {
-  /**
-   * Write only if the defaults are still at this revision, as returned by
-   * read or put; zero for a universe with no updates. Omit it to write
-   * whatever the current revision is.
-   */
-  expectedRevision?: number | null;
-  /**
-   * Complete selection, or explicit null to clear this slot. Required.
-   */
-  model: ModelConfig | null;
-  slot: ModelDefaultSlot;
-}
-export interface ModelDefaultsReadParams {}
-/**
- * Direct provider model discovery. Results may be served from a brief
- * process-local cache; clients refresh by calling this method.
- */
-export interface ModelListParams {
-  /**
-   * Apply Lightspeed's small, conservative selectable-model policy. It
-   * keeps supported file-transcription routes and filters clearly unrelated
-   * OpenAI families from agent suggestions (embeddings, moderation, image/video,
-   * speech synthesis, and realtime). Agent suggestions also have an age limit.
-   * Clients select routes by API kind for their intended use. This is an ID
-   * policy, not a provider capability claim.
-   */
-  selectableOnly?: boolean;
-}
-export interface ProfileApplyParams {
-  expectedConfigRevision?: number | null;
-  expectedToolsRevision?: number | null;
-  profile: ProfileSource;
-  sessionId: string;
-}
-export interface ProfileCreateParams {
-  profile: AgentProfileInput;
-}
-export interface ProfileDeleteParams {
-  profileId: ProfileId;
-}
-export interface ProfileListParams {}
-export interface ProfilePutParams {
-  /**
-   * Checked only when the profile already exists; absent replaces (or
-   * creates) unconditionally.
-   */
-  expectedRevision?: number | null;
-  profile: AgentProfileInput;
-}
-export interface ProfileReadParams {
-  profileId: ProfileId;
-}
-export interface RunApprovalsDecideParams {
-  decisions: ApprovalDecisionInput[];
-  runId: string;
-  sessionId: string;
-}
-export interface RunCancelParams {
-  runId: string;
-  sessionId: string;
-}
-export interface RunLimitsConfig {
-  /**
-   * Model turns this run may start, at least 1, in place of the session's `maxTurns`.
-   */
-  maxTurns?: number | null;
-}
-export interface RunListParams {
-  /**
-   * Exclusive upper run-id bound from a previous page.
-   */
-  cursor?: string | null;
-  limit?: number | null;
-  sessionId: string;
-}
-export interface RunReadParams {
-  runId: string;
-  sessionId: string;
 }
 export interface RunStartConfig {
   generation?: GenerationConfig | null;
@@ -6429,6 +5635,9 @@ export interface RunStartParams {
 export interface RunTerminalNotificationInput {
   token: string;
 }
+export interface RunStartResponse {
+  run: RunSummaryView;
+}
 export interface RunSteerParams {
   /**
    * Steering input, same vocabulary as run input. Delivered to the model
@@ -6452,6 +5661,13 @@ export interface RunSteerParams {
    */
   submissionId?: string | null;
 }
+export interface RunSteerResponse {
+  run: RunSummaryView;
+  /**
+   * Identifier of the accepted steering batch within the session.
+   */
+  steeringId: string;
+}
 export interface SessionCloseParams {
   /**
    * Cancel the active run and drop queued runs instead of rejecting on
@@ -6462,6 +5678,9 @@ export interface SessionCloseParams {
    */
   force?: boolean;
   sessionId: string;
+}
+export interface SessionCloseResponse {
+  session: SessionMutationView;
 }
 /**
  * Replace the session config with a complete document. Anything omitted
@@ -6477,6 +5696,9 @@ export interface SessionConfigPutParams {
    */
   expectedConfigRevision?: number | null;
   sessionId: string;
+}
+export interface SessionConfigPutResponse {
+  session: SessionMutationView;
 }
 export interface SessionDeleteParams {
   /**
@@ -6496,11 +5718,39 @@ export interface SessionDeleteParams {
    */
   softDelete?: boolean;
 }
+export interface SessionDeleteResponse {
+  deletedSessionCount: number;
+  session: SessionSummaryView;
+}
 export interface SessionEnvironmentActivateParams {
   environmentId: string;
   sessionId: string;
 }
+export interface SessionEnvironmentActivateResponse {
+  session: SessionView;
+}
 export interface SessionEnvironmentDeactivateParams {
+  sessionId: string;
+}
+export interface SessionEnvironmentDeactivateResponse {
+  session: SessionView;
+}
+export interface ToolCallEventView {
+  arguments?: string | null;
+  argumentsRef: string;
+  callId: string;
+  display?: ToolCallDisplayView | null;
+  /**
+   * Admitted registry identity, absent when the model used an unavailable name.
+   */
+  toolId?: string | null;
+  toolName: string;
+}
+export interface SessionEventView {
+  cursor: EventCursor;
+  joins: EventJoinsView;
+  kind: SessionEventKindView;
+  observedAtMs: number;
   sessionId: string;
 }
 export interface SessionEventsReadParams {
@@ -6524,6 +5774,30 @@ export interface SessionEventsReadParams {
    * Values above the server cap are clamped, not rejected.
    */
   waitMs?: number | null;
+}
+export interface SessionEventsReadResponse {
+  /**
+   * No more events in the requested direction at the time of this read.
+   * This does not imply that the session is closed.
+   */
+  complete: boolean;
+  /**
+   * Events are always chronological, including backward pages. A page may
+   * begin inside a run or tool batch; clients must retain continuation state.
+   */
+  events?: SessionEventView[];
+  /**
+   * Backward reads fence the head before reading. The initial backward
+   * page's head is the starting `after` cursor for live forward reads.
+   * An empty backward read returns sequence zero.
+   */
+  headCursor?: EventCursor | null;
+  /**
+   * Forward: pass as `after`. Backward: pass as `before` to fetch older
+   * history; absent when the beginning is reached. Never use a backward
+   * continuation to advance a forward live cursor.
+   */
+  nextCursor?: EventCursor | null;
 }
 /**
  * Filters for `session/list`. An unknown field is refused, so a misspelled
@@ -6573,6 +5847,14 @@ export interface SessionListParams {
    */
   visibleTo?: string | null;
 }
+export interface SessionListResponse {
+  /**
+   * Present when more sessions exist past this page. Ordering is most
+   * recently updated first; pages can drift under concurrent activity.
+   */
+  nextCursor?: string | null;
+  sessions?: SessionSummaryView[];
+}
 /**
  * Replace a session's metadata with a complete map (the same bounds as
  * `session/start`). Record-only: it does not touch the event log or
@@ -6587,6 +5869,9 @@ export interface SessionMetadataPutParams {
   };
   sessionId: string;
 }
+export interface SessionMetadataPutResponse {
+  session: SessionSummaryView;
+}
 export interface SessionReadParams {
   /**
    * Newest run summaries to include. Values above the server maximum are
@@ -6595,6 +5880,14 @@ export interface SessionReadParams {
   runLimit?: number | null;
   sessionId: string;
 }
+export interface SessionReadResponse {
+  hasOlderRuns: boolean;
+  /**
+   * Exclusive upper run-id bound for `session/runs/list`.
+   */
+  nextRunCursor?: string | null;
+  session: SessionView;
+}
 export interface SessionRenameParams {
   /**
    * New display name; absent clears it. Cannot contain NUL.
@@ -6602,8 +5895,18 @@ export interface SessionRenameParams {
   displayName?: string | null;
   sessionId: string;
 }
+export interface SessionRenameResponse {
+  session: SessionSummaryView;
+}
 export interface SessionRestartParams {
   sessionId: string;
+}
+export interface SessionRestartResponse {
+  /**
+   * A new execution started. False when one was already running.
+   */
+  restarted: boolean;
+  session: SessionMutationView;
 }
 export interface SessionRetentionPutParams {
   /**
@@ -6612,8 +5915,14 @@ export interface SessionRetentionPutParams {
   deleteAfterCloseMs: number | null;
   sessionId: string;
 }
+export interface SessionRetentionPutResponse {
+  session: SessionSummaryView;
+}
 export interface SessionShareParams {
   sessionId: string;
+}
+export interface SessionShareResponse {
+  access: ResourceAccessSummary;
 }
 export interface SessionStartParams {
   /**
@@ -6656,13 +5965,77 @@ export interface SessionStartParams {
   profile?: ProfileSource | null;
   sessionId?: string | null;
 }
+export interface SessionStartResponse {
+  session: SessionMutationView;
+}
+/**
+ * An independent catalog instance; sources are never merged or used as fallbacks.
+ */
+export interface SkillCatalogView {
+  availability: SkillCatalogAvailability;
+  catalogRef?: string | null;
+  skills: SkillListItem[];
+  source: SkillCatalogSource;
+  warnings: string[];
+}
+export interface SkillListItem {
+  description: string;
+  enabled: boolean;
+  /**
+   * Where to read the instructions and resolve supporting files.
+   */
+  location: SkillLocationView;
+  name: string;
+  shortDescription?: string | null;
+  skillId: string;
+}
+/**
+ * Readable paths within the owning catalog's filesystem domain.
+ */
+export interface SkillLocationView {
+  skillDirPath: string;
+  skillDocPath: string;
+}
 export interface SkillListParams {
   sessionId: string;
+}
+export interface SkillListResponse {
+  catalogs: SkillCatalogView[];
+}
+/**
+ * Immutable audio input in this universe's content store.
+ */
+export interface TranscriptionAudio {
+  blobRef: string;
+  mime: string;
+  name: string;
 }
 export interface TranscriptionCancelParams {
   transcriptionId: string;
 }
+export interface TranscriptionFailure {
+  kind: TranscriptionFailureKind;
+  message: string;
+}
 export interface TranscriptionReadParams {
+  transcriptionId: string;
+}
+export interface TranscriptionResponse {
+  transcription: TranscriptionView;
+}
+export interface TranscriptionView {
+  audio: TranscriptionAudio;
+  createdAtMs: number;
+  createdBy: Attribution;
+  failure?: TranscriptionFailure | null;
+  model: ModelConfig;
+  status: TranscriptionStatus;
+  text?: string | null;
+  /**
+   * Plain UTF-8 transcript blob, usable as ordinary textRef input.
+   * Unsubmitted content can be swept after the ordinary CAS grace period.
+   */
+  transcriptRef?: string | null;
   transcriptionId: string;
 }
 export interface TranscriptionStartParams {
@@ -6688,10 +6061,26 @@ export interface UniverseWatchParams {
    */
   visibleTo?: string | null;
 }
+/**
+ * Final response when a watch reaches its lifetime. Reconnect and refetch on
+ * watch/reset; notifications are lossy hints and have no durable resume cursor.
+ */
+export interface UniverseWatchResponse {}
 export interface VfsSnapshotCommitParams {
   manifest: unknown;
 }
+export interface VfsSnapshotCommitResponse {
+  bytes: number;
+  files: number;
+  snapshotRef: string;
+}
 export interface VfsSnapshotReadParams {
+  snapshotRef: string;
+}
+export interface VfsSnapshotReadResponse {
+  bytes: number;
+  files: number;
+  manifest: unknown;
   snapshotRef: string;
 }
 export interface VfsWorkspaceCreateParams {
@@ -6703,8 +6092,14 @@ export interface VfsWorkspaceCreateParams {
   snapshotRef?: string | null;
   workspaceId?: string | null;
 }
+export interface VfsWorkspaceCreateResponse {
+  workspace: VfsWorkspaceView;
+}
 export interface VfsWorkspaceDeleteParams {
   workspaceId: string;
+}
+export interface VfsWorkspaceDeleteResponse {
+  workspace: VfsWorkspaceView;
 }
 /**
  * Read a file from a workspace's current head, by path.
@@ -6714,12 +6109,21 @@ export interface VfsWorkspaceFileReadParams {
   workspaceId: string;
 }
 export interface VfsWorkspaceListParams {}
+export interface VfsWorkspaceListResponse {
+  workspaces?: VfsWorkspaceView[];
+}
 export interface VfsWorkspaceReadParams {
   workspaceId: string;
+}
+export interface VfsWorkspaceReadResponse {
+  workspace: VfsWorkspaceView;
 }
 export interface VfsWorkspaceUpdateParams {
   displayName?: string | null;
   expectedRevision?: number | null;
   snapshotRef: string;
   workspaceId: string;
+}
+export interface VfsWorkspaceUpdateResponse {
+  workspace: VfsWorkspaceView;
 }

@@ -110,7 +110,7 @@ function useIntroduction(
     if (!controlMain || !requested || !isMain || !ready || !mainSessionId || sent.current || introduced.has(introductionKey)) return;
     sent.current = true;
     introduced.add(introductionKey);
-    void api("POST", `/api/v1/universes/${universeId}/sessions/${mainSessionId}/messages`, {
+    void api("POST", `/api/ui/universes/${universeId}/sessions/${mainSessionId}/messages`, {
       text: INTRODUCTION_PROMPT,
       submissionId: crypto.randomUUID(),
     }).catch(() => undefined);

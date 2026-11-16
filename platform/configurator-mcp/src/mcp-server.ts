@@ -1,4 +1,4 @@
-import type { CallerAccess, LightspeedClient, MethodParams } from "@lightspeed-ai/sdk";
+import type { CallerAccess, LightspeedClient, OperationParams } from "@lightspeed-ai/sdk";
 import {
   ProtocolError,
   ProtocolErrorCode,
@@ -130,7 +130,7 @@ function callLightspeed(
 ): Promise<unknown> {
   return client.call(
     descriptor.method,
-    args as MethodParams<typeof descriptor.method>,
+    args as OperationParams<typeof descriptor.method>,
     { signal },
   );
 }

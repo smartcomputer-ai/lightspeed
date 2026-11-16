@@ -65,7 +65,7 @@ it("submits a requested handle independently from the display name", async () =>
   await input("new-universe-handle", "chosen");
   await input("new-universe-name", "Different Name");
   await submit();
-  expect(api).toHaveBeenCalledWith("POST", "/api/v1/universes", { name: "Different Name", handle: "chosen" });
+  expect(api).toHaveBeenCalledWith("POST", "/api/ui/universes", { name: "Different Name", handle: "chosen" });
 });
 it("adopts under the runtime handle, which the dialog shows but cannot change", async () => {
   const orphan = { universeId: "id", handle: "runtime-handle", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
@@ -75,7 +75,7 @@ it("adopts under the runtime handle, which the dialog shows but cannot change", 
   expect(field.readOnly).toBe(true);
   expect(field.value).toBe("runtime-handle");
   await submit();
-  expect(api).toHaveBeenCalledWith("POST", "/api/v1/universes/adopt", { lightspeedUniverseId: "id", name: "My display name" });
+  expect(api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "id", name: "My display name" });
 });
 
 it("suggests a valid handle for a name that ends on a separator at the length limit", async () => {
@@ -86,9 +86,9 @@ it("suggests a valid handle for a name that ends on a separator at the length li
 
 it("syncs cached handles only when the administrator requests it", async () => {
   api.mockImplementation(async (method, path) => {
-    if (method === "GET" && path === "/api/v1/universes") return [];
-    if (method === "GET" && path === "/api/v1/universes/reconcile") return { platform: [], orphans: [] };
-    if (method === "POST" && path === "/api/v1/universes/sync-handles") return { updated: 2, skipped: 1 };
+    if (method === "GET" && path === "/api/ui/universes") return [];
+    if (method === "GET" && path === "/api/ui/universes/reconcile") return { platform: [], orphans: [] };
+    if (method === "POST" && path === "/api/ui/universes/sync-handles") return { updated: 2, skipped: 1 };
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   await render(<AdminUniversesPage />);
@@ -96,7 +96,7 @@ it("syncs cached handles only when the administrator requests it", async () => {
   const button = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Sync from runtime")!;
   await act(async () => button.click());
   await vi.waitFor(() => expect(container.querySelector('[role="status"]')?.textContent).toContain("2 updated"));
-  expect(api.mock.calls.filter(([method]) => method === "POST")).toEqual([["POST", "/api/v1/universes/sync-handles", {}]]);
+  expect(api.mock.calls.filter(([method]) => method === "POST")).toEqual([["POST", "/api/ui/universes/sync-handles", {}]]);
   expect(container.querySelector('[role="status"]')?.textContent).toContain("1 missing from the runtime and skipped");
 });
 
@@ -109,6 +109,6 @@ it("uses the returned handle for the cached universe and navigates to its new UR
   await input("universe-handle", "new-handle");
   await submit();
   await vi.waitFor(() => expect(container.querySelector("[data-location]")?.textContent).toBe("/u/new-handle/settings/general"));
-  expect(api).toHaveBeenCalledWith("PUT", "/api/v1/universes/platform-id/handle", { handle: "new-handle" });
+  expect(api).toHaveBeenCalledWith("PUT", "/api/ui/universes/platform-id/handle", { handle: "new-handle" });
   expect(client.getQueryData<Universe[]>(["universes"])?.[0]).toMatchObject({ id: "platform-id", lightspeedUniverseId: "runtime-id", handle: "new-handle" });
 });

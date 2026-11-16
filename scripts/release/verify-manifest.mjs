@@ -57,7 +57,7 @@ if (value.platformUpgradeFrom !== metadata.LIGHTSPEED_PLATFORM_UPGRADE_FROM) {
 }
 if (!value.rustVersion.includes(metadata.LIGHTSPEED_RELEASE_RUST_VERSION)) fail("unexpected Rust version");
 const contractHash = crypto.createHash("sha256");
-for (const contract of ["api.schema.json", "methods.json", "openrpc.json", "api-reference.md"]) {
+for (const contract of ["api.schema.json", "http.json", "openapi.json", "api-reference.md"]) {
   contractHash.update(fs.readFileSync(path.join("dist/contracts", contract)));
 }
 if (value.contractRevision !== `sha256:${contractHash.digest("hex")}`) fail("contract checksum mismatch");

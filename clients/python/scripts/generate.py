@@ -23,7 +23,7 @@ def snake_case(name: str) -> str:
 
 
 def reference(schema: dict) -> str:
-    return schema["$ref"].removeprefix("#/definitions/")
+    return schema["$ref"].removeprefix("api.schema.json").removeprefix("#/definitions/")
 
 
 def model_types(schema: Path) -> str:
@@ -125,8 +125,7 @@ def docstring(summary: str, description: str, arguments: dict[str, str]) -> list
 def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fields: dict) -> list[str]:
     method = entry["method"]
     params = reference(entry["params"]["schema"])
-    result = reference(entry["result"]["schema"])
-    data = reference(schema[result]["properties"]["result"])
+    data = "bytes" if entry["result"]["type"] == "bytes" else "Api." + reference(entry["result"]["schema"])
     required = schema[params].get("required", [])
     properties = schema[params].get("properties", {})
     if any(target not in required for target in targets):
@@ -146,7 +145,7 @@ def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fiel
     }
     lines = [
         "",
-        f"    async def {name}(self, {', '.join(args)}) -> Api.{data}:",
+        f"    async def {name}(self, {', '.join(args)}) -> {data}:",
         *docstring(entry["summary"], entry["description"], described),
         "        params: dict[str, Any] = {}",
     ]
@@ -155,7 +154,7 @@ def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fiel
         if key not in required:
             lines.append(f"        if {variable} is not UNSET:")
         lines.append(f"{' ' * (8 if key in required else 12)}params[{key!r}] = {variable}")
-    lines.append(f"        return cast(Api.{data}, (await self._invoke({method!r}, params, headers))['result'])")
+    lines.append(f"        return cast({data}, await self._invoke({method!r}, params, headers))")
     return lines
 
 
@@ -167,12 +166,13 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         BANNER.rstrip(),
         "from __future__ import annotations",
         "",
-        "from typing import Any, Literal, cast, overload",
+        "from typing import Any, Literal, Never, cast, overload",
+        "from collections.abc import AsyncIterator",
         "",
         "from . import types as Api",
         "from ._options import UNSET, HeadersInput, Unset",
         "",
-        "METHODS = (",
+        "OPERATIONS = (",
         *(f"    {method!r}," for method in methods),
         ")",
         "",
@@ -180,7 +180,7 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         *(f"    {method!r}," for method in manifest.get("notifications", [])),
         ")",
         "",
-        "METHOD_INFO = {",
+        "OPERATION_INFO = {",
     ]
     for method, entry in methods.items():
         info = {key: entry[key] for key in ("scope", "access", "summary", "description", "streaming", "notifications")}
@@ -191,24 +191,25 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         "}", "", "", "class GeneratedClient:",
         "    async def _invoke(",
         "        self, method: str, params: dict[str, Any], headers: HeadersInput | None = None",
-        "    ) -> dict[str, Any]:",
+        "        , body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None",
+        "    ) -> Any:",
         "        raise NotImplementedError",
         "",
     ])
     for method, entry in methods.items():
         params = reference(entry["params"]["schema"])
-        result = reference(entry["result"]["schema"])
+        result = "Never" if entry["transfer"] == "sse" else "bytes" if entry["result"]["type"] == "bytes" else "Api." + reference(entry["result"]["schema"])
         lines.extend([
             "    @overload",
             f"    async def call(self, method: Literal[{method!r}], params: Api.{params},",
-            f"                   *, headers: HeadersInput | None = None) -> Api.{result}: ...",
+            f"                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> {result}: ...",
         ])
     lines.extend([
         "",
         "    async def call(self, method: str, params: object,",
-        "                   *, headers: HeadersInput | None = None) -> Any:",
-        '        """Call a gateway method and return its result and notifications."""',
-        "        return await self._invoke(method, cast(dict[str, Any], params), headers)",
+        "                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Any:",
+        '        """Call an HTTP operation and return its direct DTO or bytes."""',
+        "        return await self._invoke(method, cast(dict[str, Any], params), headers, body, content_length)",
     ])
     for method, name, *targets in helpers:
         lines.extend(render_helper(methods[method], snake_case(name), targets, schema, fields))
@@ -220,13 +221,25 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="Fail if committed output differs")
     args = parser.parse_args()
     models = model_types(CONTRACT / "api.schema.json")
-    manifest = json.loads((CONTRACT / "methods.json").read_text())
+    contract = json.loads((CONTRACT / "http.json").read_text())
+    entries = [{**entry, "method": entry["operationId"], "streaming": entry["transfer"] == "sse", "notifications": list((entry.get("events") or {}).get("events", {}))} for entry in contract["operations"]]
+    manifest = {"methods": entries, "notifications": list(dict.fromkeys(event for entry in entries for event in entry["notifications"]))}
     schema = json.loads((CONTRACT / "api.schema.json").read_text())["definitions"]
+    http_contract = json.loads((CONTRACT / "http.json").read_text())
+    http_operations = {
+        operation["operationId"]: {
+            key: value for key, value in operation.items() if key not in ("body", "responses")
+        }
+        for operation in http_contract["operations"]
+    }
     generated = {
         "types.py": BANNER + models,
         "_generated.py": render_client(models, manifest, schema),
         "workflow_types.py": BANNER + model_types(WORKFLOW_CONTRACT / "workflow.schema.json"),
         "_workflow_manifest.py": render_workflow_manifest(),
+        "_http.py": BANNER + "from typing import Any\n\n"
+        + f"HTTP_CONTRACT_REVISION = {http_contract['contractRevision']!r}\n"
+        + "HTTP_OPERATIONS: dict[str, Any] = " + pprint.pformat(http_operations, sort_dicts=False) + "\n",
     }
     for filename, content in generated.items():
         path = OUTPUT / filename

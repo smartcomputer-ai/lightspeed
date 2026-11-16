@@ -46,7 +46,7 @@ impl SecretSourceArgs {
 /// The kinds of key whose secret can be supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretKind {
-    /// For configuring runtime RPC authentication.
+    /// For configuring runtime HTTP authentication.
     RuntimeToken,
     /// For `environment registration-key put`.
     RegistrationKey,

@@ -4,7 +4,7 @@ import type { NativeConnection } from "@temporalio/worker";
 import { CoreClient } from "../src/core/client.js";
 import { AccountRunner, whatsAppAuthDir, type WorkerLike } from "../src/host/account-runner.js";
 import type { ProviderConnector } from "../src/providers/connector.js";
-import { UNIVERSE_A, account, fakeRpc } from "./fixtures.js";
+import { UNIVERSE_A, account, fakeHttp } from "./fixtures.js";
 
 function fakeWorker() {
   let state = "INITIALIZED";
@@ -56,7 +56,7 @@ function fakeConnector(options: { failAfterStart?: Error } = {}) {
 }
 
 const deps = () => ({
-  core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: fakeRpc(() => ({})).fetch }),
+  core: new CoreClient({ apiToken: "connector-test-runtime-token-1234567890", endpoint: "http://core.test/api/v1", fetch: fakeHttp(() => ({})).fetch }),
   temporal: { connection: {} as NativeConnection, namespace: "default" },
   whatsapp: null,
   ingressMaxPerMinute: 120,

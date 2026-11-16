@@ -1,4 +1,3 @@
-import { proxyWatch } from "../watch.js";
 import { UniverseHandleCacheConflict } from "../universe-handles.js";
 import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
 import { Hono } from "hono";
@@ -6,7 +5,7 @@ import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import {
   LightspeedClient,
-  LightspeedRpcError,
+  LightspeedApiError,
   type AgentProfileInput,
   type CredentialFlowStatusResponse,
   type CredentialGrantImportParams,
@@ -469,12 +468,6 @@ export function gatewayRoutes(ctx: AppContext) {
   const uploadLimits = ctx.env.workspaceUploadLimits ?? DEFAULT_WORKSPACE_UPLOAD_LIMITS;
   const uploadSchema = workspaceUploadSchemaFor(uploadLimits);
 
-  app.get("/:id/watch", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => proxyWatch(engineClientFor(ctx, access), c.req.raw.signal));
-  });
-
   app.get("/:id/profiles", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -483,7 +476,7 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("profiles/list", {});
-      return c.json(response.result.profiles ?? []);
+      return c.json(response.profiles ?? []);
     });
   });
 
@@ -497,7 +490,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("profiles/read", {
         profileId: c.req.param("profileId"),
       });
-      return c.json(response.result.profile);
+      return c.json(response.profile);
     });
   });
 
@@ -527,7 +520,7 @@ export function gatewayRoutes(ctx: AppContext) {
         profile: document as unknown as AgentProfileInput,
         expectedRevision: revision,
       });
-      return c.json({ profile: response.result.profile });
+      return c.json({ profile: response.profile });
     });
   });
 
@@ -572,8 +565,8 @@ export function gatewayRoutes(ctx: AppContext) {
         ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       });
       return c.json({
-        sessions: response.result.sessions ?? [],
-        nextCursor: response.result.nextCursor ?? null,
+        sessions: response.sessions ?? [],
+        nextCursor: response.nextCursor ?? null,
       });
     });
   });
@@ -588,7 +581,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -599,7 +592,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await engineClientFor(ctx, access).call("session/context/compact", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -621,9 +614,9 @@ export function gatewayRoutes(ctx: AppContext) {
         force: body.data.force ?? false,
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -639,9 +632,9 @@ export function gatewayRoutes(ctx: AppContext) {
         sessionId: c.req.param("sessionId"),
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -660,7 +653,7 @@ export function gatewayRoutes(ctx: AppContext) {
         softDelete: true,
         cascade: c.req.query("cascade") === "true",
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -698,7 +691,7 @@ export function gatewayRoutes(ctx: AppContext) {
         limit: Math.min(limit, 500),
         waitMs: Math.min(waitMs, 30_000),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -731,9 +724,9 @@ export function gatewayRoutes(ctx: AppContext) {
         ...(input.access ? { access: input.access } : {}),
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -748,7 +741,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await engineClientFor(ctx, access).call("session/share", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -772,7 +765,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const current = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -796,7 +789,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const current = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -818,9 +811,9 @@ export function gatewayRoutes(ctx: AppContext) {
         expectedConfigRevision: body.data.expectedConfigRevision,
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -838,7 +831,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      const active = (response.result.session.activeContext.entries ?? [])
+      const active = (response.session.activeContext.entries ?? [])
         .filter((entry) => entry.kind.type === "instructions")
         .map((entry) => ({
           key: entry.key ?? null,
@@ -849,11 +842,11 @@ export function gatewayRoutes(ctx: AppContext) {
       let text: string | null = null;
       if (custom) {
         const blob = await client.call("blobs/read", { blobRef: custom.blobRef });
-        text = Buffer.from(blob.result.bytesBase64, "base64").toString("utf8");
+        text = Buffer.from(blob).toString("utf8");
       }
       return c.json({
         text,
-        contextRevision: response.result.session.activeContext.revision,
+        contextRevision: response.session.activeContext.revision,
         active,
       });
     });
@@ -880,7 +873,7 @@ export function gatewayRoutes(ctx: AppContext) {
             : {},
         },
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -895,7 +888,7 @@ export function gatewayRoutes(ctx: AppContext) {
         sessionId: c.req.param("sessionId"),
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -909,7 +902,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("session/environments/deactivate", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -941,7 +934,7 @@ export function gatewayRoutes(ctx: AppContext) {
         submissionId: input.submissionId,
         ...(config ? { config } : {}),
       });
-      const run = response.result.run;
+      const run = response.run;
       return c.json({ run: { id: run.id, status: run.status } });
     });
   });
@@ -954,7 +947,7 @@ export function gatewayRoutes(ctx: AppContext) {
         sessionId: c.req.param("sessionId"),
         runId: c.req.param("runId"),
       });
-      return c.json(response.result.run);
+      return c.json(response.run);
     });
   });
 
@@ -972,7 +965,7 @@ export function gatewayRoutes(ctx: AppContext) {
         sessionId: c.req.param("sessionId"),
         runId: c.req.param("runId"),
       });
-      const run = response.result.run;
+      const run = response.run;
       return c.json({ run: { id: run.id, status: run.status, startedAtMs: run.startedAtMs } });
     });
   });
@@ -999,9 +992,9 @@ export function gatewayRoutes(ctx: AppContext) {
           items: messageInputItems(body.data.text, body.data.attachments, `user:${c.get("session").user.id}`),
           ...(body.data.submissionId ? { submissionId: body.data.submissionId } : {}),
         });
-        const run = response.result.run;
+        const run = response.run;
         return c.json({
-          steeringId: response.result.steeringId,
+          steeringId: response.steeringId,
           run: { id: run.id, status: run.status },
         });
       } catch (error) {
@@ -1009,7 +1002,7 @@ export function gatewayRoutes(ctx: AppContext) {
         // admission waits. Only these pre-submit failures prove no steering
         // was sent. In particular, "run ended before steering reached it"
         // can follow submission and must retain the uncertain-outcome UI.
-        if (error instanceof LightspeedRpcError && error.kind === "rejected"
+        if (error instanceof LightspeedApiError && error.kind === "rejected"
           && (error.message === `run is already terminal: ${runId}`
             || error.message === `run is not accepting steering: ${runId}`)) {
           return c.json({ error: error.message, kind: "steering_not_submitted" }, 409);
@@ -1035,7 +1028,7 @@ export function gatewayRoutes(ctx: AppContext) {
         runId: c.req.param("runId"),
         decisions: body.data.decisions,
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1047,7 +1040,7 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("vfs/workspaces/list", {});
-      return c.json(response.result.workspaces ?? []);
+      return c.json(response.workspaces ?? []);
     });
   });
 
@@ -1060,7 +1053,7 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("mcp/servers/list", {});
-      return c.json(response.result.servers ?? []);
+      return c.json(response.servers ?? []);
     });
   });
 
@@ -1077,7 +1070,7 @@ export function gatewayRoutes(ctx: AppContext) {
         serverId: c.req.param("serverId"),
       };
       const response = await client.call("mcp/servers/tools/discover", params);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1097,7 +1090,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const params: McpServerAuthDiscoverParams = body.data;
       const response = await client.call("mcp/servers/auth/discover", params);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1115,7 +1108,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("blobs/put", { blobs: [body.data] });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1129,7 +1122,7 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("blobs/put", { blobs: [body.data] });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
   app.post("/:id/transcriptions", async (c) => {
@@ -1139,7 +1132,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("transcriptions/start", body.data);
-      return c.json(response.result.transcription);
+      return c.json(response.transcription);
     });
   });
   app.get("/:id/transcriptions/:transcriptionId", async (c) => {
@@ -1147,7 +1140,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) return c.json({ error: "not found" }, 404);
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("transcriptions/read", { transcriptionId: c.req.param("transcriptionId") });
-      return c.json(response.result.transcription);
+      return c.json(response.transcription);
     });
   });
   app.post("/:id/transcriptions/:transcriptionId/cancel", async (c) => {
@@ -1155,7 +1148,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) return c.json({ error: "not found" }, 404);
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("transcriptions/cancel", { transcriptionId: c.req.param("transcriptionId") });
-      return c.json(response.result.transcription);
+      return c.json(response.transcription);
     });
   });
 
@@ -1164,7 +1157,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!access) return c.json({ error: "not found" }, 404);
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("models/defaults/read", {});
-      return c.json(response.result.defaults);
+      return c.json(response.defaults);
     });
   });
 
@@ -1175,7 +1168,7 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
       const response = await engineClientFor(ctx, access).call("models/defaults/put", body.data);
-      return c.json(response.result.defaults);
+      return c.json(response.defaults);
     });
   });
 
@@ -1190,7 +1183,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const params: ModelListParams = { selectableOnly: true };
       const response = await client.call("models/list", params);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1204,7 +1197,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const params: CredentialGrantListParams = { status: "active" };
       const response = await client.call("credentials/grants/list", params);
-      return c.json(response.result.grants ?? []);
+      return c.json(response.grants ?? []);
     });
   });
 
@@ -1222,14 +1215,14 @@ export function gatewayRoutes(ctx: AppContext) {
         client.call("credentials/grants/list", {}),
       ]);
       return c.json({
-        providers: (providers.result.providers ?? [])
+        providers: (providers.providers ?? [])
           .filter((provider) =>
             provider.config.type === "modelApiKey" ||
             provider.config.type === "modelOAuth" ||
             provider.config.type === "modelEndpoint"
           )
           .map(modelProviderCredentialView),
-        grants: grants.result.grants ?? [],
+        grants: grants.grants ?? [],
       });
     });
   });
@@ -1252,7 +1245,7 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const client = engineClientFor(ctx, access);
       const response = await client.call("credentials/providers/create", params);
-      return c.json(modelProviderCredentialView(response.result.provider), 201);
+      return c.json(modelProviderCredentialView(response.provider), 201);
     });
   });
 
@@ -1266,7 +1259,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("credentials/providers/delete", {
         providerId: c.req.param("providerId"),
       });
-      return c.json(modelProviderCredentialView(response.result.provider));
+      return c.json(modelProviderCredentialView(response.provider));
     });
   });
 
@@ -1301,10 +1294,10 @@ export function gatewayRoutes(ctx: AppContext) {
       if (body.data.replace) {
         // Creates the row when there is nothing to replace yet.
         const put = await client.call("credentials/providers/put", { ...params, providerId });
-        return c.json(modelProviderCredentialView(put.result.provider), put.result.created ? 201 : 200);
+        return c.json(modelProviderCredentialView(put.provider), put.created ? 201 : 200);
       }
       const response = await client.call("credentials/providers/create", params);
-      return c.json(modelProviderCredentialView(response.result.provider), 201);
+      return c.json(modelProviderCredentialView(response.provider), 201);
     });
   });
 
@@ -1319,7 +1312,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const response = await client.call("credentials/grants/list", {});
       return c.json(
-        (response.result.grants ?? []).filter((grant) => isSubscriptionGrant(grant)),
+        (response.grants ?? []).filter((grant) => isSubscriptionGrant(grant)),
       );
     });
   });
@@ -1354,7 +1347,7 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const client = engineClientFor(ctx, access);
       const response = await client.call("credentials/grants/import", params);
-      return c.json({ grant: response.result.grant, shape: parsed.shape }, 201);
+      return c.json({ grant: response.grant, shape: parsed.shape }, 201);
     });
   });
 
@@ -1368,7 +1361,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("credentials/grants/revoke", {
         grantId: c.req.param("grantId"),
       });
-      return c.json(response.result.grant);
+      return c.json(response.grant);
     });
   });
 
@@ -1386,10 +1379,10 @@ export function gatewayRoutes(ctx: AppContext) {
         client.call("credentials/grants/list", {}),
       ]);
       return c.json({
-        apps: (providers.result.providers ?? []).filter(
+        apps: (providers.providers ?? []).filter(
           (provider) => provider.config.type === "githubApp",
         ),
-        grants: (grants.result.grants ?? []).filter(
+        grants: (grants.grants ?? []).filter(
           (grant) => grant.providerKind === "gitHubApp",
         ),
       });
@@ -1418,7 +1411,7 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const client = engineClientFor(ctx, access);
       const response = await client.call("credentials/providers/create", params);
-      return c.json(response.result.provider, 201);
+      return c.json(response.provider, 201);
     });
   });
 
@@ -1432,7 +1425,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("credentials/providers/delete", {
         providerId: c.req.param("providerId"),
       });
-      return c.json(response.result.provider);
+      return c.json(response.provider);
     });
   });
 
@@ -1449,7 +1442,7 @@ export function gatewayRoutes(ctx: AppContext) {
         providerId: c.req.param("providerId"),
       };
       const response = await client.call("credentials/github/installations/list", params);
-      return c.json(response.result.installations ?? []);
+      return c.json(response.installations ?? []);
     });
   });
 
@@ -1480,7 +1473,7 @@ export function gatewayRoutes(ctx: AppContext) {
         };
         const client = engineClientFor(ctx, access);
         const response = await client.call("credentials/github/installations/grant", params);
-        return c.json(response.result.grant, 201);
+        return c.json(response.grant, 201);
       });
     },
   );
@@ -1503,20 +1496,20 @@ export function gatewayRoutes(ctx: AppContext) {
             grantId: body.data.grantId,
           });
           return c.json(
-            { error: credentialIdConflictMessage(body.data.grantId, existing.result.grant.status) },
+            { error: credentialIdConflictMessage(body.data.grantId, existing.grant.status) },
             409,
           );
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
+          if (!(error instanceof LightspeedApiError && error.kind === "notFound")) {
             throw error;
           }
         }
       }
       try {
         const response = await client.call("credentials/grants/import", params);
-        return c.json(response.result.grant, 201);
+        return c.json(response.grant, 201);
       } catch (error) {
-        if (body.data.grantId && error instanceof LightspeedRpcError && error.kind === "conflict") {
+        if (body.data.grantId && error instanceof LightspeedApiError && error.kind === "conflict") {
           return c.json(
             { error: credentialIdConflictMessage(body.data.grantId) },
             409,
@@ -1547,11 +1540,11 @@ export function gatewayRoutes(ctx: AppContext) {
             grantId: body.data.grantId,
           });
           return c.json(
-            { error: credentialIdConflictMessage(body.data.grantId, existing.result.grant.status) },
+            { error: credentialIdConflictMessage(body.data.grantId, existing.grant.status) },
             409,
           );
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
+          if (!(error instanceof LightspeedApiError && error.kind === "notFound")) {
             throw error;
           }
         }
@@ -1561,9 +1554,9 @@ export function gatewayRoutes(ctx: AppContext) {
           "credentials/grants/import",
           environmentSecretGrantParams(body.data),
         );
-        return c.json(response.result.grant, 201);
+        return c.json(response.grant, 201);
       } catch (error) {
-        if (body.data.grantId && error instanceof LightspeedRpcError && error.kind === "conflict") {
+        if (body.data.grantId && error instanceof LightspeedApiError && error.kind === "conflict") {
           return c.json(
             { error: credentialIdConflictMessage(body.data.grantId) },
             409,
@@ -1589,8 +1582,8 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const current = await client.call("credentials/grants/read", { grantId: c.req.param("grantId") });
-      const response = await client.call("credentials/grants/put", credentialReplaceParams(current.result.grant, body.data));
-      return c.json(response.result.grant);
+      const response = await client.call("credentials/grants/put", credentialReplaceParams(current.grant, body.data));
+      return c.json(response.grant);
     });
   });
 
@@ -1604,7 +1597,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("credentials/grants/revoke", {
         grantId: c.req.param("grantId"),
       });
-      return c.json(response.result.grant);
+      return c.json(response.grant);
     });
   });
 
@@ -1623,7 +1616,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("mcp/servers/put", {
         server: input as unknown as McpServerInput,
       });
-      return c.json(response.result.server, 201);
+      return c.json(response.server, 201);
     });
   });
 
@@ -1648,7 +1641,7 @@ export function gatewayRoutes(ctx: AppContext) {
         server: server as unknown as McpServerInput,
         expectedRevision: revision,
       });
-      return c.json(response.result.server);
+      return c.json(response.server);
     });
   });
 
@@ -1689,8 +1682,8 @@ export function gatewayRoutes(ctx: AppContext) {
         audience: body.data.audience,
       });
       return c.json({
-        ...response.result,
-        serverRevision: server.result.server.revision,
+        ...response,
+        serverRevision: server.server.revision,
       }, 201);
     });
   });
@@ -1705,7 +1698,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("credentials/flows/read", {
         flowId: c.req.param("flowId"),
       });
-      return c.json(response.result.flow);
+      return c.json(response.flow);
     });
   });
 
@@ -1726,8 +1719,8 @@ export function gatewayRoutes(ctx: AppContext) {
       const flowResponse = await client.call("credentials/flows/read", {
         flowId: c.req.param("flowId"),
       });
-      const flow = flowResponse.result.flow;
-      const flowError = mcpOAuthFlowCompletionError(flowResponse.result);
+      const flow = flowResponse.flow;
+      const flowError = mcpOAuthFlowCompletionError(flowResponse);
       if (flowError) {
         return c.json({ error: flowError }, 409);
       }
@@ -1735,7 +1728,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const serverResponse = await client.call("mcp/servers/read", {
         serverId: c.req.param("serverId"),
       });
-      const current = serverResponse.result.server;
+      const current = serverResponse.server;
       if (
         current.authPolicy.type !== "optionalOAuth" &&
         current.authPolicy.type !== "requiredOAuth"
@@ -1754,7 +1747,7 @@ export function gatewayRoutes(ctx: AppContext) {
         server: mcpServerInputWithOAuthGrant(current, grantId),
         expectedRevision: body.data.expectedRevision,
       });
-      return c.json(response.result.server);
+      return c.json(response.server);
     });
   });
 
@@ -1768,7 +1761,7 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("environments/provider-bindings/list", {});
-      return c.json(response.result.bindings);
+      return c.json(response.bindings);
     });
   });
 
@@ -1782,20 +1775,20 @@ export function gatewayRoutes(ctx: AppContext) {
       const providerId = c.req.query("providerId");
       if (providerId) {
         const response = await client.call("environments/templates/list", { providerId });
-        return c.json(response.result.templates);
+        return c.json(response.templates);
       }
       // One call per enabled provider so an unreachable provider drops only
       // its own templates instead of failing the whole listing.
       const bindings = await client.call("environments/provider-bindings/list", {});
       const results = await Promise.allSettled(
-        bindings.result.bindings
+        bindings.bindings
           .filter((binding) => binding.enabled)
           .map((binding) => client.call("environments/templates/list", {
             providerId: binding.providerId,
           })),
       );
       return c.json(results.flatMap((result) =>
-        result.status === "fulfilled" ? result.value.result.templates : []
+        result.status === "fulfilled" ? result.value.templates : []
       ));
     });
   });
@@ -1818,8 +1811,8 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const response = await client.call("environments/list", params);
       return c.json({
-        environments: response.result.environments ?? [],
-        nextAfter: response.result.nextAfter ?? null,
+        environments: response.environments ?? [],
+        nextAfter: response.nextAfter ?? null,
       });
     });
   });
@@ -1834,7 +1827,7 @@ export function gatewayRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("environments/registration-keys/list", {});
-      return c.json(response.result.registrationKeys ?? []);
+      return c.json(response.registrationKeys ?? []);
     });
   });
 
@@ -1856,13 +1849,13 @@ export function gatewayRoutes(ctx: AppContext) {
           "environments/registration-keys/create",
           body.data as EnvironmentRegistrationKeyCreateParams,
         );
-        return c.json(response.result, 201);
+        return c.json(response, 201);
       } catch (error) {
         if (registrationKeyId && isConflict(error)) {
           const holder = await client
             .call("environments/registration-keys/read", { registrationKeyId })
             .catch(() => null);
-          const revoked = holder?.result.registrationKey.status === "revoked";
+          const revoked = holder?.registrationKey.status === "revoked";
           return c.json({ error: keyIdConflictMessage(registrationKeyId, revoked) }, 409);
         }
         throw error;
@@ -1885,7 +1878,7 @@ export function gatewayRoutes(ctx: AppContext) {
         registrationKeyId: c.req.param("keyId"),
         closeEnvironments: body.data.closeEnvironments ?? false,
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1906,7 +1899,7 @@ export function gatewayRoutes(ctx: AppContext) {
         ...body.data,
       };
       const response = await client.call("environments/registration-keys/update", params);
-      return c.json(response.result.registrationKey);
+      return c.json(response.registrationKey);
     });
   });
 
@@ -1922,7 +1915,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("environments/registration-keys/rotate", {
         registrationKeyId: c.req.param("keyId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1941,7 +1934,7 @@ export function gatewayRoutes(ctx: AppContext) {
         "environments/create",
         body.data as EnvironmentCreateParams,
       );
-      return c.json(response.result.environment, 201);
+      return c.json(response.environment, 201);
     });
   });
 
@@ -1960,7 +1953,7 @@ export function gatewayRoutes(ctx: AppContext) {
         environmentId: c.req.param("environmentId"),
         enabled: body.data.enabled,
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -1979,7 +1972,7 @@ export function gatewayRoutes(ctx: AppContext) {
         environmentId: c.req.param("environmentId"),
         power: body.data.power,
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -2000,7 +1993,7 @@ export function gatewayRoutes(ctx: AppContext) {
         ...(body.data.displayName ? { displayName: body.data.displayName } : {}),
         metadata: body.data.metadata ?? {},
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -2024,7 +2017,7 @@ export function gatewayRoutes(ctx: AppContext) {
         displayName: body.data.displayName,
       };
       const response = await client.call("environments/external/create", params);
-      return c.json(response.result.environment, 201);
+      return c.json(response.environment, 201);
     });
   });
 
@@ -2044,7 +2037,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const params: EnvironmentRegisteredPutParams = body.data;
       const response = await client.call("environments/registered/put", params);
-      return c.json(response.result.environment, response.result.created ? 201 : 200);
+      return c.json(response.environment, response.created ? 201 : 200);
     });
   });
 
@@ -2060,7 +2053,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("environments/registered/release", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -2083,7 +2076,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("environments/credentials/list", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.credentials ?? []);
+      return c.json(response.credentials ?? []);
     });
   });
 
@@ -2103,7 +2096,7 @@ export function gatewayRoutes(ctx: AppContext) {
       });
       const conflict = conflictingAnthropicEnv(
         body.data.envName,
-        (existing.result.credentials ?? []).map((credential) => credential.envName),
+        (existing.credentials ?? []).map((credential) => credential.envName),
       );
       if (conflict) {
         return c.json(
@@ -2118,7 +2111,7 @@ export function gatewayRoutes(ctx: AppContext) {
         envName: body.data.envName,
         source: body.data.source,
       });
-      return c.json(response.result.credential, 201);
+      return c.json(response.credential, 201);
     });
   });
 
@@ -2133,7 +2126,7 @@ export function gatewayRoutes(ctx: AppContext) {
         environmentId: c.req.param("environmentId"),
         envName: c.req.param("envName"),
       });
-      return c.json(response.result.credential);
+      return c.json(response.credential);
     });
   });
 
@@ -2147,7 +2140,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("environments/read", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -2161,7 +2154,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("environments/close", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -2175,7 +2168,7 @@ export function gatewayRoutes(ctx: AppContext) {
       if (!body.ok) return body.response;
       const client = engineClientFor(ctx, access);
       const workspaceId = c.req.param("workspaceId");
-      const { workspace } = (await client.call("vfs/workspaces/read", { workspaceId })).result;
+      const { workspace } = (await client.call("vfs/workspaces/read", { workspaceId }));
       if (workspace.revision !== body.data.expectedRevision)
         return c.json({ error: "Workspace changed. Close this dialog and try again." }, 409);
       const response = await client.call("vfs/workspaces/update", {
@@ -2184,7 +2177,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
         displayName: body.data.displayName,
       });
-      return c.json(response.result);
+      return c.json(response);
     }),
   );
 
@@ -2197,7 +2190,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await engineClientFor(ctx, access).call("vfs/workspaces/delete", {
         workspaceId: c.req.param("workspaceId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     }),
   );
 
@@ -2213,11 +2206,11 @@ export function gatewayRoutes(ctx: AppContext) {
         workspaceId: c.req.param("workspaceId"),
       });
       const snapshot = await client.call("vfs/snapshots/read", {
-        snapshotRef: workspace.result.workspace.headSnapshotRef,
+        snapshotRef: workspace.workspace.headSnapshotRef,
       });
       return c.json({
-        workspace: workspace.result.workspace,
-        manifest: snapshot.result.manifest,
+        workspace: workspace.workspace,
+        manifest: snapshot.manifest,
         uploadLimits,
       });
     });
@@ -2247,7 +2240,7 @@ export function gatewayRoutes(ctx: AppContext) {
         const workspaceId = c.req.param("workspaceId");
         const { workspace } = (
           await client.call("vfs/workspaces/read", { workspaceId })
-        ).result;
+        );
         if (workspace.revision !== body.data.expectedRevision) {
           return c.json(
             { error: "Workspace changed since it was loaded — reload and retry" },
@@ -2258,7 +2251,7 @@ export function gatewayRoutes(ctx: AppContext) {
           snapshotRef: workspace.headSnapshotRef,
         });
         const { manifest, files } = prepareWorkspaceUpload(
-          asManifest(snapshot.result.manifest),
+          asManifest(snapshot.manifest),
           body.data,
         );
         for (const { input, entry } of files) {
@@ -2266,7 +2259,7 @@ export function gatewayRoutes(ctx: AppContext) {
             await client.call("blobs/put", {
               blobs: [{ bytesBase64: input.contentBase64 }],
             })
-          ).result.blobs?.[0];
+          ).blobs?.[0];
           if (!stored) throw new Error("Blob upload returned nothing");
           entry.blob_ref = stored.blobRef;
         }
@@ -2293,7 +2286,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const workspaceId = c.req.param("workspaceId");
       const { workspace } = (
         await client.call("vfs/workspaces/read", { workspaceId })
-      ).result;
+      );
       if (workspace.revision !== body.data.expectedRevision)
         return c.json(
           { error: "Workspace changed. Close this dialog and try again." },
@@ -2303,7 +2296,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
       });
       const manifest = renameWorkspaceEntry(
-        asManifest(snapshot.result.manifest), body.data.path, body.data.name,
+        asManifest(snapshot.manifest), body.data.path, body.data.name,
       );
       return c.json(
         await commitHead(client, workspaceId, manifest, body.data.expectedRevision),
@@ -2323,7 +2316,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const workspaceId = c.req.param("workspaceId");
       const { workspace } = (
         await client.call("vfs/workspaces/read", { workspaceId })
-      ).result;
+      );
       if (workspace.revision !== body.data.expectedRevision)
         return c.json(
           { error: "Workspace changed. Reload and try the move again." },
@@ -2333,7 +2326,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
       });
       const manifest = moveWorkspaceEntry(
-        asManifest(snapshot.result.manifest), body.data.path, body.data.destination,
+        asManifest(snapshot.manifest), body.data.path, body.data.destination,
       );
       return c.json(
         await commitHead(client, workspaceId, manifest, body.data.expectedRevision),
@@ -2362,7 +2355,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const workspaceId = c.req.param("workspaceId");
       const { workspace } = (
         await client.call("vfs/workspaces/read", { workspaceId })
-      ).result;
+      );
       if (workspace.revision !== parsed.data.expectedRevision)
         return c.json(
           {
@@ -2374,7 +2367,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
       });
       const manifest = removeWorkspaceEntry(
-        asManifest(snapshot.result.manifest),
+        asManifest(snapshot.manifest),
         parsed.data.path,
       );
       return c.json(
@@ -2397,29 +2390,21 @@ export function gatewayRoutes(ctx: AppContext) {
         await client.call("vfs/workspaces/read", {
           workspaceId: c.req.param("workspaceId"),
         })
-      ).result;
+      );
       const snapshot = await client.call("vfs/snapshots/read", {
         snapshotRef: workspace.headSnapshotRef,
       });
       return workspaceDownload(
-        asManifest(snapshot.result.manifest),
+        asManifest(snapshot.manifest),
         c.req.query("path") ?? "",
         workspace.workspaceId,
         async (blobRef) => {
           const blob = await client.call("blobs/read", { blobRef });
-          return new Uint8Array(Buffer.from(blob.result.bytesBase64, "base64"));
+          return new Uint8Array(blob);
         },
       );
     }),
   );
-
-  app.get("/:id/workspaces/:workspaceId/files/:path{.+}", (c) => withGateway(c, async () => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access) return c.json({ error: "not found" }, 404);
-    return c.json((await engineClientFor(ctx, access).call("vfs/workspaces/files/read", {
-      workspaceId: c.req.param("workspaceId"), path: c.req.param("path"),
-    })).result);
-  }));
 
   app.get("/:id/blobs/:blobRef", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
@@ -2431,7 +2416,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await engineClientFor(ctx, access).call("blobs/read", {
         blobRef: c.req.param("blobRef"),
       });
-      return c.json(response.result);
+      return c.json({ blobRef: c.req.param("blobRef"), bytes: response.byteLength, bytesBase64: Buffer.from(response).toString("base64") });
     });
   });
 
@@ -2461,7 +2446,7 @@ export function gatewayRoutes(ctx: AppContext) {
         return manifest;
       }
       const put = await client.call("blobs/put", { blobs: [{ bytesBase64 }] });
-      const stored = put.result.blobs?.[0];
+      const stored = put.blobs?.[0];
       if (!stored) {
         return c.json({ error: "engine error: blob upload returned nothing" }, 502);
       }
@@ -2490,16 +2475,16 @@ export function gatewayRoutes(ctx: AppContext) {
       expectedRevision: number,
     ): Promise<VfsManifest | Response> {
       const workspace = await client.call("vfs/workspaces/read", { workspaceId });
-      if (workspace.result.workspace.revision !== expectedRevision) {
+      if (workspace.workspace.revision !== expectedRevision) {
         return c.json(
           { error: "workspace changed since it was loaded — reload and retry" },
           409,
         );
       }
       const snapshot = await client.call("vfs/snapshots/read", {
-        snapshotRef: workspace.result.workspace.headSnapshotRef,
+        snapshotRef: workspace.workspace.headSnapshotRef,
       });
-      return asManifest(snapshot.result.manifest);
+      return asManifest(snapshot.manifest);
     }
   });
 
@@ -2516,16 +2501,16 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const workspaceId = c.req.param("workspaceId");
       const workspace = await client.call("vfs/workspaces/read", { workspaceId });
-      if (workspace.result.workspace.revision !== expectedRevision) {
+      if (workspace.workspace.revision !== expectedRevision) {
         return c.json(
           { error: "workspace changed since it was loaded — reload and retry" },
           409,
         );
       }
       const snapshot = await client.call("vfs/snapshots/read", {
-        snapshotRef: workspace.result.workspace.headSnapshotRef,
+        snapshotRef: workspace.workspace.headSnapshotRef,
       });
-      const manifest = asManifest(snapshot.result.manifest);
+      const manifest = asManifest(snapshot.manifest);
       if (!removeFile(manifest, c.req.param("path"))) {
         return c.json({ error: "file not found" }, 404);
       }
@@ -2555,7 +2540,7 @@ export function gatewayRoutes(ctx: AppContext) {
         workspaceId,
         displayName: body.data.displayName ?? null,
       });
-      return c.json(response.result.workspace, 201);
+      return c.json(response.workspace, 201);
     });
   });
 
@@ -2620,7 +2605,7 @@ export function credentialIdConflictMessage(grantId: string, status?: string): s
 }
 
 function isConflict(error: unknown): boolean {
-  return error instanceof LightspeedRpcError && error.kind === "conflict";
+  return error instanceof LightspeedApiError && error.kind === "conflict";
 }
 
 /// The engine deliberately namespaces model credentials as
@@ -2653,10 +2638,10 @@ async function commitHead(
   const commit = await client.call("vfs/snapshots/commit", { manifest });
   const updated = await client.call("vfs/workspaces/update", {
     workspaceId,
-    snapshotRef: commit.result.snapshotRef,
+    snapshotRef: commit.snapshotRef,
     expectedRevision,
   });
-  return { workspace: updated.result.workspace };
+  return { workspace: updated.workspace };
 }
 
 /// Maps gateway failures onto API responses: engine notFound/conflict pass
@@ -2680,7 +2665,7 @@ export async function withGateway(
     }
     const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
     if (code === "23505") return c.json({ error: "record already exists" }, 409);
-    if (error instanceof LightspeedRpcError) {
+    if (error instanceof LightspeedApiError) {
       if (error.kind === "modelDefaultUnset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
       if (error.kind === "operationPending") return c.json({ error: error.message, kind: error.kind, submissionId: error.data?.submissionId }, 409);
       if (error.kind === "invalidRequest" || error.kind === "audioBlobTooLarge") return c.json({ error: error.message }, 400);

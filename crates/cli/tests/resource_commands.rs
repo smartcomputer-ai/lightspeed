@@ -1,4 +1,6 @@
 //! Drive the real command tree against a stateful, isolated runtime fixture.
+#[path = "../src/test_http.rs"]
+mod test_http;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -28,7 +30,7 @@ impl Runtime {
     ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("local fixture must bind");
         listener.set_nonblocking(true).unwrap();
-        let endpoint = format!("http://{}/rpc", listener.local_addr().unwrap());
+        let endpoint = format!("http://{}/api/v1", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -54,15 +56,15 @@ impl Runtime {
                     assert!(count > 0, "request ended before its body");
                     bytes.extend_from_slice(&buf[..count]);
                     if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
                         let size: usize = headers
                             .lines()
                             .find_map(|line| line.strip_prefix("content-length: "))
-                            .unwrap()
+                            .unwrap_or("0")
                             .parse()
                             .unwrap();
                         if bytes.len() >= end + 4 + size {
-                            break serde_json::from_slice(&bytes[end + 4..end + 4 + size]).unwrap();
+                            break test_http::decode(&headers, &bytes[end + 4..end + 4 + size]);
                         }
                     }
                 };
@@ -74,7 +76,7 @@ impl Runtime {
                     assert_ne!(params.run_limit, Some(0), "runLimit must be positive");
                 }
                 let result = if method == "initialize" {
-                    json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"single":false,"tokenName":"fixture"}})
+                    json!({"runtime":"runtime","contractRevision":"1","defaultUniverse":"00000000-0000-0000-0000-000000000001","serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "caller":{"single":false,"tokenName":"fixture"}})
                 } else {
                     Value::Null
                 };
@@ -83,14 +85,26 @@ impl Runtime {
                 } else {
                     handler(method, &request["params"])
                 };
-                let response = match outcome {
-                    Ok(result) => {
-                        json!({"id":request["id"],"result":{"result":result,"notifications":[]}})
+                let (status, response) = match outcome {
+                    Ok(result) => (200, result),
+                    Err(error) => {
+                        let detail = error["message"].as_str().unwrap_or("fixture error");
+                        let kind = error["kind"].as_str().unwrap_or("internal");
+                        let status = if kind == "notFound" {
+                            404
+                        } else if kind == "conflict" {
+                            409
+                        } else {
+                            400
+                        };
+                        (
+                            status,
+                            json!({"type":"about:blank","title":"Request failed","status":status,"detail":detail,"kind":kind}),
+                        )
                     }
-                    Err(error) => json!({"id":request["id"],"error":error}),
-                }
-                .to_string();
-                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).unwrap();
+                };
+                let response = response.to_string();
+                write!(socket,"HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).unwrap();
             }
         });
         Self {
@@ -110,7 +124,7 @@ impl Runtime {
                 self.directory.path().join("config"),
             )
             .env("LIGHTSPEED_API_URL", &self.endpoint)
-            .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
+            .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
             .env(
                 "LIGHTSPEED_UNIVERSE",
                 "00000000-0000-0000-0000-000000000001",
@@ -248,9 +262,9 @@ fn chat_resume_reports_empty_closed_or_deleted_sessions_without_creating_replace
                 session["lifecycleStatus"] = json!("closed");
                 Ok(json!({"session":session,"hasOlderRuns":false}))
             }
-            "session/read" if state == "deleted" => Err(
-                json!({"code":-32000,"message":"session deleted","data":{"kind":"notFound","message":"session deleted"}}),
-            ),
+            "session/read" if state == "deleted" => {
+                Err(json!({"kind":"notFound","message":"session deleted"}))
+            }
             _ => panic!("resume must not create a replacement: {method}"),
         });
         let output = runtime.run(&["chat", "--resume", "--json"]);
@@ -302,9 +316,7 @@ fn chat_upload_and_workspace_flags_preserve_other_attachments_and_plain_resume()
     let runtime = Runtime::start_api(move |method, params| {
         Ok(match method {
             "session/start" => {
-                return Err(
-                    json!({"code":-32000,"message":"exists","data":{"kind":"conflict","message":"exists"}}),
-                );
+                return Err(json!({"kind":"conflict","message":"exists"}));
             }
             "session/read" => {
                 json!({"session":stored.lock().unwrap().clone(),"hasOlderRuns":false})
@@ -843,9 +855,7 @@ fn model_defaults_commands_round_trip_routes_clear_explicitly_and_guard_revision
 fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
     let runtime = Runtime::start_api(|method, _params| {
         assert_eq!(method, "models/defaults/put");
-        Err(
-            json!({"code":-32009, "message":"defaults changed", "data":{"kind":"conflict","message":"defaults changed"}}),
-        )
+        Err(json!({"kind":"conflict","message":"defaults changed"}))
     });
     let output = runtime.run(&[
         "model",
@@ -923,7 +933,7 @@ fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
                 runtime.directory.path().join("config"),
             )
             .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-            .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
+            .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
             .env(
                 "LIGHTSPEED_UNIVERSE",
                 "00000000-0000-0000-0000-000000000001",
@@ -1009,9 +1019,7 @@ fn document_runtime() -> Runtime {
             "deployment/universes/read" => match &universe {
                 Some(universe) => json!({ "universe": universe }),
                 None => {
-                    return Err(
-                        json!({"code":-32004,"message":"unknown universe","data":{"kind":"notFound","message":"unknown universe"}}),
-                    );
+                    return Err(json!({"kind":"notFound","message":"unknown universe"}));
                 }
             },
             "deployment/universes/create" => {
@@ -1107,7 +1115,7 @@ fn run_documents(runtime: &Runtime, args: &[&str], secrets: &[(&str, &str)]) -> 
             runtime.directory.path().join("config"),
         )
         .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-        .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
+        .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .env_remove("TRACKER_TOKEN")
         .env_remove("RUNNERS_KEY");
@@ -1303,7 +1311,7 @@ fn the_document_schema_is_printed_without_a_connection() {
         .args(["config", "schema"])
         .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
         .env_remove("LIGHTSPEED_API_URL")
-        .env_remove("LIGHTSPEED_RPC_TOKEN")
+        .env_remove("LIGHTSPEED_API_TOKEN")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .output()
         .unwrap();
@@ -1334,7 +1342,7 @@ fn a_connection_from_the_environment_needs_no_home_directory() {
             .args(args)
             .env_clear()
             .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-            .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
+            .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
             .output()
             .unwrap()
     };

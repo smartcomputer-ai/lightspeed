@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -5,7 +6,7 @@ import { gatewayRoutes } from "./gateway.js";
 
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
+    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
     role: "admin",
     member: { userId: "user", role: "admin" },
   })),
@@ -17,14 +18,14 @@ let requests: Array<{ method: string; params: Record<string, unknown> }>;
 beforeEach(() => {
   requests = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    requests.push(rpc);
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    requests.push({ method: request.method, params: request.params });
     const result = {
       grant: { grantId: "authgrant_new", status: "active" },
-      credential: { environmentId: "build-box", envName: rpc.params?.envName },
+      credential: { environmentId: "build-box", envName: request.params?.envName },
       credentials: [],
     };
-    return Response.json({ id: rpc.id, result: { result, notifications: [] } });
+    return Response.json(result);
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -35,7 +36,7 @@ function post(path: string, body: unknown) {
     c.set("session", { user: { id: "user" } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   return app.request(`/universe${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

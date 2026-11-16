@@ -103,9 +103,9 @@ Both `full` and `runtime` default to authenticated runtime access. The launcher
 ensures the development universe and saves persistent CLI and Platform runtime
 tokens under `.lightspeed/cli/`. These files are owner-only. Run
 `lightspeed connect dev` from the checkout to import the handoff. Set
-`LIGHTSPEED_RPC_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_RPC_TOKEN` (or their `_FILE`
+`LIGHTSPEED_API_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_API_TOKEN` (or their `_FILE`
 variants) to supply tokens. Matching CLI and Platform secrets share the runtime
-identity `cli` (or `default` when supplied through `LIGHTSPEED_RPC_TOKEN`); no
+identity `cli` (or `default` when supplied through `LIGHTSPEED_API_TOKEN`); no
 duplicate named token is installed. Pass `--no-token-bootstrap` to require supplied or
 saved tokens instead of generating them. Explicit
 `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available.
@@ -122,7 +122,7 @@ cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty. Runtime tokens are full
 authority credentials and are never passed to agents. Bots and Channels core
 remain runtime components; removing Channels is separate work.
 
-The runtime uses three separate listeners: private RPC at `127.0.0.1:18080`,
+The runtime uses three separate listeners: private HTTP API at `127.0.0.1:18080`,
 public callbacks/webhooks at `127.0.0.1:18082`, and environment routes at
 `127.0.0.1:18083`. Override them with `LIGHTSPEED_GATEWAY_BIND`,
 `LIGHTSPEED_PUBLIC_BIND`, and `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`. The launcher
@@ -130,7 +130,7 @@ preflights each port and waits for each listener's health endpoint.
 `LIGHTSPEED_PUBLIC_BASE_URL` sets callback/webhook URLs;
 `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` sets the environment origin. Each defaults
 from its own bind. Worker `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` points to the
-environment listener, not private RPC.
+environment listener, not private HTTP API.
 
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.
@@ -206,7 +206,7 @@ clears the Lightspeed MinIO prefix. Platform applies its independently owned
 database migrations when the Platform backend starts.
 
 The runtime's schema is defined by the embedded migrations in
-`crates/store-pg/migrations/`. Runtime RPC tokens are loaded from configuration;
+`crates/store-pg/migrations/`. Runtime API tokens are loaded from configuration;
 there is no API-key table. The migrator keeps rejecting changed checksums and never resets data
 automatically. Use `./dev.sh reset` for disposable local development state.
 
@@ -233,7 +233,7 @@ export LIGHTSPEED_PG_UNIVERSE_ID=00000000-0000-0000-0000-000000000001
 export LIGHTSPEED_POSTGRES_URL=${LIGHTSPEED_TEST_POSTGRES_URL}
 export LIGHTSPEED_PLATFORM_DATABASE_URL=postgres://lightspeed:lightspeed@localhost:15432/lightspeed_platform
 export LIGHTSPEED_TASK_QUEUE=lightspeed-sessions
-export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
+export LIGHTSPEED_API_URL=http://127.0.0.1:18080/api/v1
 
 export LIGHTSPEED_OBJECT_STORE_BUCKET=lightspeed-dev
 export LIGHTSPEED_OBJECT_STORE_ENDPOINT=http://localhost:29000
@@ -266,7 +266,7 @@ cargo run -p temporal-runtime -- migrate
 cargo run -p temporal-runtime
 ```
 
-With no flags, the `lightspeed-runtime` binary runs every role — the JSON-RPC
+With no flags, the `lightspeed-runtime` binary runs every role — the HTTP API
 `gateway`, the `environment-gateway` (worker environment routes, the public
 daemon registration routes, and the environment reconcilers), plus the
 `sessions`, `bots`, and `channels` Temporal workers, each on its own task
@@ -349,8 +349,8 @@ postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
 
 Development saves persistent runtime tokens in protected files, configures the
-runtime with `LIGHTSPEED_RPC_TOKEN_CLI_FILE` and
-`LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE`, and gives Platform the latter file through
-`LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`. Every token has full authority and can name
+runtime with `LIGHTSPEED_API_TOKEN_CLI_FILE` and
+`LIGHTSPEED_API_TOKEN_PLATFORM_FILE`, and gives Platform the latter file through
+`LIGHTSPEED_PLATFORM_API_TOKEN_FILE`. Every token has full authority and can name
 an actor. See the [terminal guide](../../docs/documentation/using-lightspeed/cli.md)
 for token generation, replacement and local connection setup.

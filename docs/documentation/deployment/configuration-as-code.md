@@ -23,7 +23,7 @@ services; see [Configure a deployment](configuration.md).
 
 - Use a configured runtime token. It has full authority over the deployment;
   keep it in the operator or pipeline secret store, outside agent workspaces.
-- Connect with `LIGHTSPEED_API_URL` and `LIGHTSPEED_RPC_TOKEN`, or a saved CLI
+- Connect with `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_TOKEN`, or a saved CLI
   connection. See [Runtime access](../access-and-security/api-keys-and-service-access.md).
 - Documents configure universes. Runtime tokens belong in service configuration;
   `apiKeys` sections and `kind: deployment` documents are not supported.
@@ -94,7 +94,7 @@ document: `apply` does not read or change it.
 
 Each entry is the input of the API method that writes the resource, with the
 same field names. The
-[JSON-RPC reference](../../../crates/api/contract/api-reference.md) describes
+[HTTP API reference](../../../crates/api/contract/api-reference.md) describes
 the fields.
 
 | Section | Method an entry follows | Identified by |
@@ -358,10 +358,10 @@ spec:
           command: ["/usr/local/bin/lightspeed", "config", "apply", "-f", "/config"]
           env:
             - name: LIGHTSPEED_API_URL
-              value: http://lightspeed-runtime:18080/rpc
-            - name: LIGHTSPEED_RPC_TOKEN
+              value: http://lightspeed-runtime:18080/api/v1
+            - name: LIGHTSPEED_API_TOKEN
               valueFrom:
-                secretKeyRef: { name: lightspeed-config, key: rpc-token }
+                secretKeyRef: { name: lightspeed-config, key: api-token }
             - name: TRACKER_TOKEN
               valueFrom:
                 secretKeyRef: { name: lightspeed-config, key: tracker-token }
@@ -373,7 +373,7 @@ spec:
 ```
 
 The job takes its connection from `LIGHTSPEED_API_URL` and
-`LIGHTSPEED_RPC_TOKEN`. It needs no home directory and no saved connection, and
+`LIGHTSPEED_API_TOKEN`. It needs no home directory and no saved connection, and
 it writes nothing to the container's filesystem, so a read-only root
 filesystem works.
 

@@ -1,7 +1,7 @@
 # Lightspeed TypeScript SDK
 
 Start and inspect Lightspeed agent sessions from TypeScript. The SDK is a typed
-JSON-RPC client generated from the Lightspeed API contract, with helpers for
+HTTP client generated from the Lightspeed API contract, with helpers for
 starting runs, waiting for them to finish, inspecting what they did, and serving a
 browser UI.
 
@@ -26,7 +26,7 @@ npm install --save-exact @lightspeed-ai/sdk@<release-version>
 
 ## Start a session and run a task
 
-You need the gateway's `/rpc` URL, a
+You need the gateway's `/api/v1` URL, a
 [runtime token](https://ls.bot/docs/access-and-security/api-keys-and-service-access/), and a universe with a default model or a profile to start from.
 
 ```ts
@@ -34,7 +34,7 @@ import { LightspeedClient } from "@lightspeed-ai/sdk";
 
 const client = new LightspeedClient({
   endpoint: process.env.LIGHTSPEED_API_URL!,
-  token: process.env.LIGHTSPEED_RPC_TOKEN!,
+  token: process.env.LIGHTSPEED_RUNTIME_TOKEN!,
 });
 
 const { session } = await client.startSession({
@@ -67,7 +67,7 @@ and `submissionId` so a retry finds the same session and run. See
 
 | Option | Use |
 | --- | --- |
-| `endpoint` | The gateway's `/rpc` URL. |
+| `endpoint` | The HTTP API base URL, `/api/v1` for a direct runtime. |
 | `token` | Sent as the bearer credential. |
 | `universe` | The universe's UUID or handle; required for universe methods in authenticated mode. |
 | `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
@@ -94,16 +94,16 @@ A helper and its `call` do the same thing. Prefer the helper when there is one, 
 const { session } = await client.readSession(sessionId, { runLimit: 5 });
 await client.closeSession(sessionId, { force: true, signal });
 
-// call: one params object and one options object, and you get the whole envelope.
-const outcome = await client.call("session/read", { sessionId, runLimit: 5 }, { signal });
-console.log(outcome.result.session, outcome.notifications);
+// call: one params object and one options object, returning the same direct DTO.
+const result = await client.call("session/read", { sessionId, runLimit: 5 }, { signal });
+console.log(result.session);
 
 // Administration has no helper.
 const universes = await client.call("deployment/universes/list", {});
 ```
 
-Use `call` if you need the `notifications` returned with a method; helpers leave them out.
-The durable session event stream is the same either way. Both layers reject with the same
+Use `watch` for live list changes and `readEvents` for durable session events.
+Both layers reject with the same
 [errors](#handle-errors), and every option also accepts `signal` and `headers`.
 
 | Area | Helpers |
@@ -127,12 +127,13 @@ environment operations. A few helpers do more than wrap one method:
 - `startRun` and `steerRun` accept plain text and generate a submission ID if you give none.
 - `awaitRun` has no single method behind it. It follows events, checks run state, retries
   reads, and returns the finished run.
-- `putBlob`, `readBlobText`, and `readBlobBytes` handle the base64 encoding.
+- `putBlob` sends a JSON batch upload; `readBlobText` and `readBlobBytes` download raw bytes.
+- `uploadBlob` uploads bytes or a stream to an expected content digest. `openDownload` returns a streaming response that the caller consumes or cancels.
 
-`METHOD_INFO` describes every method, `CLIENT_HELPERS` maps each generated helper to its
+`OPERATION_INFO` describes every method, `CLIENT_HELPERS` maps each generated helper to its
 method, and the
 [API reference](https://github.com/smartcomputer-ai/lightspeed/blob/main/crates/api/contract/api-reference.md)
-covers them in full. Types are named by the API, and `MethodData<"session/read">` and
+covers them in full. Types are named by the API, and `OperationResult<"session/read">` and
 `SessionEventKindOf<"runFailed">` cover the common cases.
 
 ## Wait for a run
@@ -212,65 +213,28 @@ for Platform integration and live list updates.
 
 ## Serve a browser UI
 
-Mount `createRpcProxy` on your server. It holds the key, and the browser uses an
-ordinary client pointed at it:
+Use the shared HTTP route descriptors on your server. `HTTP_OPERATIONS` from
+`@lightspeed-ai/sdk/server` contains each operation's HTTP method, path, access
+classification, and parameter bindings. Register those routes in your framework,
+authenticate the caller, authorize the URL target, then stream requests to the
+runtime with the server's bearer token and actor attribution. The runtime validates
+request bodies; decode them in the proxy only when a policy needs to inspect or
+rewrite a field.
 
-```ts
-// On your server. This import is separate so it stays out of browser bundles.
-import { LightspeedClient } from "@lightspeed-ai/sdk";
-import { createRpcProxy } from "@lightspeed-ai/sdk/server";
+`prepareHttpRequest(operation, params, { endpoint, universe })` constructs a resource
+URL and partitions logical parameters between its query and body. Both SDKs use
+the same generated contract. Browser clients use a client pointed at your proxy's
+base URL with the selected `universe`.
 
-export const handler = createRpcProxy({
-  client: new LightspeedClient({
-    endpoint: process.env.LIGHTSPEED_API_URL!,
-    token: process.env.LIGHTSPEED_RPC_TOKEN!,
-  }),
-  methods: ["session/list", "session/read", "session/runs/list", "session/runs/read"],
-  authorize: async ({ request }) => {
-    const user = await getUser(request);
-    if (!user) return { deny: "unauthenticated" };
-    return { actor: user.id };
-  },
-});
-```
-
-```ts
-// In the browser.
-const client = new LightspeedClient({ endpoint: new URL("/api/lightspeed", location.origin) });
-```
-
-The handler takes a standard `Request` and returns a `Response`, so it fits Next, Hono,
-and similar frameworks.
-
-- **Only listed methods are forwarded.** Everything else is refused before `authorize`
-  runs, so add methods as your UI needs them. List them by API name, because that is what
-  reaches the proxy even when the browser calls a helper: `listSessions` needs
-  `session/list`, and `CLIENT_HELPERS` has the full mapping. Mutations such as
-  `session/runs/cancel` are worth checking per user.
-- **`authorize` decides every call.** It can deny, name the `actor`, or return `params`
-  to replace what the browser sent, for example to force a `metadata` filter onto
-  `session/list`. The params it receives are untrusted and not yet validated.
-- **The browser supplies no identity.** Its key, universe, and actor headers are ignored.
-  Only POST with a JSON body is accepted, and no CORS headers are sent, so serve the
-  proxy from the same origin as your page.
-- **Refusals look like any other API error.** A denial reaches the browser's client as a
-  `LightspeedRpcError` with kind `unauthenticated` or `forbidden`.
-
-The proxy must enforce both universe access and resource visibility. Runtime
-tokens can read all universes, and an actor header records attribution without
-restricting access. `blobs/read` is not tied to a session, so authorize blob access
-according to your application's policy before forwarding the request.
-
-A long `awaitRun` from the browser holds a request open for up to 30 seconds at a time.
-Some serverless hosts and proxies cut these off; the wait retries, but check your host's
-limit. The [run inspector example](https://github.com/smartcomputer-ai/lightspeed/tree/main/clients/typescript/examples/run-inspector)
-puts all of this together in a small working page.
+The [run inspector example](examples/run-inspector/README.md) demonstrates a small
+route allowlist, application login, server-owned credentials and streamed downloads.
+Platform adds its organization and role policies around these shared routes.
 
 ## Handle errors
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
+| `LightspeedApiError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `cause` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | The signal's reason | You aborted, or your timeout passed. Check `error.name` for `AbortError` or `TimeoutError`. |
 
@@ -303,3 +267,5 @@ committed output is stale.
 ## License
 
 Apache-2.0
+
+HTTP paths, query encoding, and response types are generated from `http.json`. Universe requests require the `universe` client option. Discover a single-mode runtime's default with `initialize()` and use its `defaultUniverse` when creating the scoped client. Errors expose an HTTP `status` and structured `kind`; `payload` retains the complete problem document.

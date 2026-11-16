@@ -23,7 +23,7 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
   const client = deploymentClient(env);
   const created = await client.call("deployment/universes/create", { universeId: testUniverseId, handle: "test" });
   // An existing Test universe keeps whatever handle it was renamed to.
-  const handle = created.result.universe.handle;
+  const handle = created.universe.handle;
   const [existing] = await db.select().from(schema.universes)
     .where(eq(schema.universes.lightspeedUniverseId, testUniverseId)).limit(1);
   if (existing?.gatewayUrl && existing.gatewayUrl !== env.lightspeedApiUrl) {

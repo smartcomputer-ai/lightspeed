@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from typing import Any, Literal, cast, overload
+from collections.abc import AsyncIterator
 
 from . import types as Api
 from ._options import UNSET, HeadersInput, Unset
 
-METHODS = (
+OPERATIONS = (
     'universe/watch',
     'vfs/workspaces/files/read',
     'initialize',
@@ -153,29 +154,25 @@ METHODS = (
     'deployment/environment-providers/bindings/put',
     'deployment/environment-providers/bindings/delete',
     'deployment/channels/accounts/list',
+    'blobs/upload',
 )
 
 NOTIFICATIONS = (
-    'session/changed',
-    'session/removed',
     'bots/changed',
     'bots/removed',
     'environments/changed',
     'environments/removed',
+    'session/changed',
+    'session/removed',
+    'watch/reset',
     'workspaces/changed',
     'workspaces/removed',
-    'watch/reset',
-    'session/started',
-    'session/event',
-    'session/runs/started',
-    'session/runs/completed',
-    'error',
 )
 
-METHOD_INFO = {
-    'universe/watch': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Watch universe list changes', 'description': 'Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.', 'streaming': True, 'notifications': ['session/changed', 'session/removed', 'bots/changed', 'bots/removed', 'environments/changed', 'environments/removed', 'workspaces/changed', 'workspaces/removed', 'watch/reset']},
+OPERATION_INFO = {
+    'universe/watch': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Watch universe list changes', 'description': 'Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.', 'streaming': True, 'notifications': ['bots/changed', 'bots/removed', 'environments/changed', 'environments/removed', 'session/changed', 'session/removed', 'watch/reset', 'workspaces/changed', 'workspaces/removed']},
     'vfs/workspaces/files/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a workspace file', 'description': 'Reads bytes at a path in the current workspace head.', 'streaming': False, 'notifications': []},
-    'initialize': {'scope': 'connection', 'access': {'kind': 'connection'}, 'summary': 'Inspect the Lightspeed protocol', 'description': 'Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.', 'streaming': False, 'notifications': []},
+    'initialize': {'scope': 'connection', 'access': {'kind': 'connection'}, 'summary': 'Inspect the Lightspeed protocol', 'description': 'Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.', 'streaming': False, 'notifications': []},
     'session/start': {'scope': 'universe', 'access': {'action': 'createSession', 'kind': 'universe'}, 'summary': 'Start a session', 'description': 'Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.', 'streaming': False, 'notifications': []},
     'session/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a session', 'description': 'Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.', 'streaming': False, 'notifications': []},
     'session/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List sessions', 'description': 'Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.', 'streaming': False, 'notifications': []},
@@ -241,7 +238,7 @@ METHOD_INFO = {
     'profiles/put': {'scope': 'universe', 'access': {'action': 'manageProfile', 'kind': 'universe'}, 'summary': 'Create or replace an agent profile', 'description': 'Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.', 'streaming': False, 'notifications': []},
     'profiles/delete': {'scope': 'universe', 'access': {'action': 'manageProfile', 'kind': 'universe'}, 'summary': 'Delete an agent profile', 'description': 'Deletes the catalog document; sessions previously created or configured from it retain their materialized state.', 'streaming': False, 'notifications': []},
     'blobs/put': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Store content-addressed blobs', 'description': 'Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.', 'streaming': False, 'notifications': []},
-    'blobs/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a content-addressed blob', 'description': 'Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.', 'streaming': False, 'notifications': []},
+    'blobs/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a content-addressed blob', 'description': 'Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.', 'streaming': False, 'notifications': []},
     'blobs/has': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Check blob availability', 'description': 'Checks a batch of content references without returning blob bodies, preserving request order.', 'streaming': False, 'notifications': []},
     'vfs/snapshots/commit': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Commit a VFS snapshot', 'description': 'Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.', 'streaming': False, 'notifications': []},
     'vfs/snapshots/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a VFS snapshot', 'description': 'Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.', 'streaming': False, 'notifications': []},
@@ -319,6 +316,7 @@ METHOD_INFO = {
     'deployment/environment-providers/bindings/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider binding', 'description': "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.", 'streaming': False, 'notifications': []},
     'deployment/environment-providers/bindings/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider binding', 'description': "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.", 'streaming': False, 'notifications': []},
     'deployment/channels/accounts/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List channel accounts across universes', 'description': "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.", 'streaming': False, 'notifications': []},
+    'blobs/upload': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Upload a content-addressed blob', 'description': "Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.", 'streaming': False, 'notifications': []},
 }
 
 CLIENT_HELPERS = {
@@ -372,466 +370,466 @@ CLIENT_HELPERS = {
 class GeneratedClient:
     async def _invoke(
         self, method: str, params: dict[str, Any], headers: HeadersInput | None = None
-    ) -> dict[str, Any]:
+        , body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None
+    ) -> Any:
         raise NotImplementedError
 
     @overload
     async def call(self, method: Literal['universe/watch'], params: Api.UniverseWatchParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfUniverseWatchResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.UniverseWatchResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/files/read'], params: Api.VfsWorkspaceFileReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBlobReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> bytes: ...
     @overload
-    async def call(self, method: Literal['initialize'], params: Api.InitializeParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfInitializeResponse: ...
+    async def call(self, method: Literal['initialize'], params: Api.ConnectionParams,
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ConnectionResponse: ...
     @overload
     async def call(self, method: Literal['session/start'], params: Api.SessionStartParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionStartResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionStartResponse: ...
     @overload
     async def call(self, method: Literal['session/read'], params: Api.SessionReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionReadResponse: ...
     @overload
     async def call(self, method: Literal['session/list'], params: Api.SessionListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionListResponse: ...
     @overload
     async def call(self, method: Literal['session/config/put'], params: Api.SessionConfigPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionConfigPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionConfigPutResponse: ...
     @overload
     async def call(self, method: Literal['session/rename'], params: Api.SessionRenameParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionRenameResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionRenameResponse: ...
     @overload
     async def call(self, method: Literal['session/metadata/put'], params: Api.SessionMetadataPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionMetadataPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionMetadataPutResponse: ...
     @overload
     async def call(self, method: Literal['session/retention/put'], params: Api.SessionRetentionPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionRetentionPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionRetentionPutResponse: ...
     @overload
     async def call(self, method: Literal['session/restart'], params: Api.SessionRestartParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionRestartResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionRestartResponse: ...
     @overload
     async def call(self, method: Literal['session/close'], params: Api.SessionCloseParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionCloseResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionCloseResponse: ...
     @overload
     async def call(self, method: Literal['session/delete'], params: Api.SessionDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionDeleteResponse: ...
     @overload
     async def call(self, method: Literal['session/share'], params: Api.SessionShareParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionShareResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionShareResponse: ...
     @overload
     async def call(self, method: Literal['session/events/read'], params: Api.SessionEventsReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionEventsReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionEventsReadResponse: ...
     @overload
     async def call(self, method: Literal['session/context/append'], params: Api.ContextAppendParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfContextAppendResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ContextAppendResponse: ...
     @overload
     async def call(self, method: Literal['session/context/remove'], params: Api.ContextRemoveParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfContextRemoveResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ContextRemoveResponse: ...
     @overload
     async def call(self, method: Literal['session/context/replace'], params: Api.ContextReplaceParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfContextReplaceResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ContextReplaceResponse: ...
     @overload
     async def call(self, method: Literal['session/context/compact'], params: Api.ContextCompactParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfContextCompactResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ContextCompactResponse: ...
     @overload
     async def call(self, method: Literal['session/runs/start'], params: Api.RunStartParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfRunStartResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.RunStartResponse: ...
     @overload
     async def call(self, method: Literal['session/runs/list'], params: Api.RunListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfRunListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.RunListResponse: ...
     @overload
     async def call(self, method: Literal['session/runs/read'], params: Api.RunReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfRunReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.RunReadResponse: ...
     @overload
     async def call(self, method: Literal['session/runs/cancel'], params: Api.RunCancelParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfRunCancelResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.RunCancelResponse: ...
     @overload
     async def call(self, method: Literal['session/runs/approvals/decide'], params: Api.RunApprovalsDecideParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfRunApprovalsDecideResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.RunApprovalsDecideResponse: ...
     @overload
     async def call(self, method: Literal['session/runs/steer'], params: Api.RunSteerParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfRunSteerResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.RunSteerResponse: ...
     @overload
     async def call(self, method: Literal['session/skills/list'], params: Api.SkillListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSkillListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SkillListResponse: ...
     @overload
     async def call(self, method: Literal['session/profiles/apply'], params: Api.ProfileApplyParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfProfileApplyResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileApplyResponse: ...
     @overload
     async def call(self, method: Literal['session/environments/activate'], params: Api.SessionEnvironmentActivateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionEnvironmentActivateResponse: ...
     @overload
     async def call(self, method: Literal['session/environments/deactivate'], params: Api.SessionEnvironmentDeactivateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionEnvironmentDeactivateResponse: ...
     @overload
     async def call(self, method: Literal['environments/credentials/bind'], params: Api.EnvironmentCredentialBindParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentCredentialBindResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentCredentialBindResponse: ...
     @overload
     async def call(self, method: Literal['environments/credentials/list'], params: Api.EnvironmentCredentialListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentCredentialListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentCredentialListResponse: ...
     @overload
     async def call(self, method: Literal['environments/credentials/unbind'], params: Api.EnvironmentCredentialUnbindParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentCredentialUnbindResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentCredentialUnbindResponse: ...
     @overload
     async def call(self, method: Literal['environments/create'], params: Api.EnvironmentCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentCreateResponse: ...
     @overload
     async def call(self, method: Literal['environments/read'], params: Api.EnvironmentReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentReadResponse: ...
     @overload
     async def call(self, method: Literal['environments/update'], params: Api.EnvironmentUpdateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentUpdateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentUpdateResponse: ...
     @overload
     async def call(self, method: Literal['environments/list'], params: Api.EnvironmentListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentListResponse: ...
     @overload
     async def call(self, method: Literal['environments/close'], params: Api.EnvironmentCloseParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentCloseResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentCloseResponse: ...
     @overload
     async def call(self, method: Literal['environments/external/create'], params: Api.EnvironmentExternalCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentExternalCreateResponse: ...
     @overload
     async def call(self, method: Literal['environments/registered/put'], params: Api.EnvironmentRegisteredPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegisteredPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegisteredPutResponse: ...
     @overload
     async def call(self, method: Literal['environments/registered/release'], params: Api.EnvironmentRegisteredReleaseParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegisteredReleaseResponse: ...
     @overload
     async def call(self, method: Literal['environments/ingress/put'], params: Api.EnvironmentIngressPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentIngressPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentIngressPutResponse: ...
     @overload
     async def call(self, method: Literal['environments/power/put'], params: Api.EnvironmentPowerPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentPowerPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentPowerPutResponse: ...
     @overload
     async def call(self, method: Literal['environments/provider-bindings/list'], params: Api.EnvironmentProviderBindingListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingListResponse: ...
     @overload
     async def call(self, method: Literal['environments/provider-bindings/read'], params: Api.EnvironmentProviderBindingReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentProviderBindingReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingReadResponse: ...
     @overload
     async def call(self, method: Literal['environments/templates/list'], params: Api.EnvironmentTemplateListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentTemplateListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentTemplateListResponse: ...
     @overload
     async def call(self, method: Literal['environments/templates/read'], params: Api.EnvironmentTemplateReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentTemplateReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentTemplateReadResponse: ...
     @overload
     async def call(self, method: Literal['environments/jobs/create'], params: Api.EnvironmentJobCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentJobCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentJobCreateResponse: ...
     @overload
     async def call(self, method: Literal['environments/jobs/read'], params: Api.EnvironmentJobReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentJobReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentJobReadResponse: ...
     @overload
     async def call(self, method: Literal['environments/jobs/cancel'], params: Api.EnvironmentJobCancelParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentJobCancelResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentJobCancelResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/create'], params: Api.EnvironmentRegistrationKeyCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyCreateResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/put'], params: Api.EnvironmentRegistrationKeyPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyPutResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/read'], params: Api.EnvironmentRegistrationKeyReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyReadResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/list'], params: Api.EnvironmentRegistrationKeyListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyListResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/update'], params: Api.EnvironmentRegistrationKeyUpdateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyUpdateResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/rotate'], params: Api.EnvironmentRegistrationKeyRotateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyRotateResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/revoke'], params: Api.EnvironmentRegistrationKeyRevokeParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyRevokeResponse: ...
     @overload
     async def call(self, method: Literal['transcriptions/start'], params: Api.TranscriptionStartParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfTranscriptionResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.TranscriptionResponse: ...
     @overload
     async def call(self, method: Literal['transcriptions/read'], params: Api.TranscriptionReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfTranscriptionResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.TranscriptionResponse: ...
     @overload
     async def call(self, method: Literal['transcriptions/cancel'], params: Api.TranscriptionCancelParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfTranscriptionResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.TranscriptionResponse: ...
     @overload
     async def call(self, method: Literal['models/defaults/read'], params: Api.ModelDefaultsReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfModelDefaultsResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ModelDefaultsResponse: ...
     @overload
     async def call(self, method: Literal['models/defaults/put'], params: Api.ModelDefaultsPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfModelDefaultsResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ModelDefaultsResponse: ...
     @overload
     async def call(self, method: Literal['models/list'], params: Api.ModelListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfModelListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ModelListResponse: ...
     @overload
     async def call(self, method: Literal['profiles/create'], params: Api.ProfileCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfProfileCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileCreateResponse: ...
     @overload
     async def call(self, method: Literal['profiles/read'], params: Api.ProfileReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfProfileReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileReadResponse: ...
     @overload
     async def call(self, method: Literal['profiles/list'], params: Api.ProfileListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfProfileListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileListResponse: ...
     @overload
     async def call(self, method: Literal['profiles/put'], params: Api.ProfilePutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfProfilePutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfilePutResponse: ...
     @overload
     async def call(self, method: Literal['profiles/delete'], params: Api.ProfileDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfProfileDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileDeleteResponse: ...
     @overload
     async def call(self, method: Literal['blobs/put'], params: Api.BlobPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBlobPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResponse: ...
     @overload
     async def call(self, method: Literal['blobs/read'], params: Api.BlobReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBlobReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> bytes: ...
     @overload
     async def call(self, method: Literal['blobs/has'], params: Api.BlobHasParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBlobHasResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobHasResponse: ...
     @overload
     async def call(self, method: Literal['vfs/snapshots/commit'], params: Api.VfsSnapshotCommitParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsSnapshotCommitResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsSnapshotCommitResponse: ...
     @overload
     async def call(self, method: Literal['vfs/snapshots/read'], params: Api.VfsSnapshotReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsSnapshotReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsSnapshotReadResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/create'], params: Api.VfsWorkspaceCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceCreateResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/read'], params: Api.VfsWorkspaceReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsWorkspaceReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceReadResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/list'], params: Api.VfsWorkspaceListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsWorkspaceListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceListResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/update'], params: Api.VfsWorkspaceUpdateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceUpdateResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/delete'], params: Api.VfsWorkspaceDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceDeleteResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/put'], params: Api.McpServerPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerPutResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/auth/discover'], params: Api.McpServerAuthDiscoverParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerAuthDiscoverResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerAuthDiscoverResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/tools/discover'], params: Api.McpServerToolsDiscoverParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerToolsDiscoverResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerToolsDiscoverResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/read'], params: Api.McpServerReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerReadResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/list'], params: Api.McpServerListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerListResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/delete'], params: Api.McpServerDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfMcpServerDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerDeleteResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/import'], params: Api.CredentialGrantImportParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantImportResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantImportResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/lease'], params: Api.CredentialGrantLeaseParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantLeaseResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantLeaseResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/read'], params: Api.CredentialGrantReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantReadResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/list'], params: Api.CredentialGrantListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/put'], params: Api.CredentialGrantPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantPutResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/revoke'], params: Api.CredentialGrantRevokeParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGrantRevokeResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantRevokeResponse: ...
     @overload
     async def call(self, method: Literal['credentials/clients/create'], params: Api.CredentialClientCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialClientCreateResponse: ...
     @overload
     async def call(self, method: Literal['credentials/clients/read'], params: Api.CredentialClientReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialClientReadResponse: ...
     @overload
     async def call(self, method: Literal['credentials/clients/list'], params: Api.CredentialClientListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialClientListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/clients/delete'], params: Api.CredentialClientDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialClientDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialClientDeleteResponse: ...
     @overload
     async def call(self, method: Literal['credentials/flows/start'], params: Api.CredentialFlowStartParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialFlowStartResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialFlowStartResponse: ...
     @overload
     async def call(self, method: Literal['credentials/flows/read'], params: Api.CredentialFlowStatusParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialFlowStatusResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialFlowStatusResponse: ...
     @overload
     async def call(self, method: Literal['credentials/providers/create'], params: Api.CredentialProviderCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderCreateResponse: ...
     @overload
     async def call(self, method: Literal['credentials/providers/put'], params: Api.CredentialProviderPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderPutResponse: ...
     @overload
     async def call(self, method: Literal['credentials/providers/read'], params: Api.CredentialProviderReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderReadResponse: ...
     @overload
     async def call(self, method: Literal['credentials/providers/list'], params: Api.CredentialProviderListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/providers/delete'], params: Api.CredentialProviderDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialProviderDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderDeleteResponse: ...
     @overload
     async def call(self, method: Literal['credentials/github/installations/list'], params: Api.CredentialGitHubInstallationListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGitHubInstallationListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGitHubInstallationListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/github/installations/grant'], params: Api.CredentialGitHubInstallationGrantParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGitHubInstallationGrantResponse: ...
     @overload
     async def call(self, method: Literal['bots/create'], params: Api.BotCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotCreateResponse: ...
     @overload
     async def call(self, method: Literal['bots/put'], params: Api.BotPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotPutResponse: ...
     @overload
     async def call(self, method: Literal['bots/read'], params: Api.BotReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotReadResponse: ...
     @overload
     async def call(self, method: Literal['bots/list'], params: Api.BotListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotListResponse: ...
     @overload
     async def call(self, method: Literal['bots/close'], params: Api.BotCloseParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotCloseResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotCloseResponse: ...
     @overload
     async def call(self, method: Literal['bots/delete'], params: Api.BotDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotDeleteResponse: ...
     @overload
     async def call(self, method: Literal['bots/state/read'], params: Api.BotStateReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotStateReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotStateReadResponse: ...
     @overload
     async def call(self, method: Literal['bots/sessions/rotate'], params: Api.BotSessionRotateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotSessionRotateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotSessionRotateResponse: ...
     @overload
     async def call(self, method: Literal['bots/triggers/put'], params: Api.BotTriggerPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotTriggerPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotTriggerPutResponse: ...
     @overload
     async def call(self, method: Literal['bots/triggers/read'], params: Api.BotTriggerReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotTriggerReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotTriggerReadResponse: ...
     @overload
     async def call(self, method: Literal['bots/triggers/list'], params: Api.BotTriggerListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotTriggerListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotTriggerListResponse: ...
     @overload
     async def call(self, method: Literal['bots/triggers/secrets/read'], params: Api.BotTriggerSecretsReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotTriggerSecretsReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotTriggerSecretsReadResponse: ...
     @overload
     async def call(self, method: Literal['bots/triggers/delete'], params: Api.BotTriggerDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotTriggerDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotTriggerDeleteResponse: ...
     @overload
     async def call(self, method: Literal['bots/events/admit'], params: Api.BotEventAdmitParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotEventAdmitResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotEventAdmitResponse: ...
     @overload
     async def call(self, method: Literal['bots/events/replay'], params: Api.BotEventReplayParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotEventReplayResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotEventReplayResponse: ...
     @overload
     async def call(self, method: Literal['bots/events/list'], params: Api.BotEventListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotEventListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotEventListResponse: ...
     @overload
     async def call(self, method: Literal['bots/events/read'], params: Api.BotEventReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotEventReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotEventReadResponse: ...
     @overload
     async def call(self, method: Literal['bots/filters/test'], params: Api.BotFilterTestParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfBotFilterTestResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotFilterTestResponse: ...
     @overload
     async def call(self, method: Literal['channels/accounts/create'], params: Api.ChannelAccountCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelAccountCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountCreateResponse: ...
     @overload
     async def call(self, method: Literal['channels/accounts/put'], params: Api.ChannelAccountPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelAccountPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountPutResponse: ...
     @overload
     async def call(self, method: Literal['channels/accounts/read'], params: Api.ChannelAccountReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelAccountReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountReadResponse: ...
     @overload
     async def call(self, method: Literal['channels/accounts/list'], params: Api.ChannelAccountListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelAccountListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountListResponse: ...
     @overload
     async def call(self, method: Literal['channels/accounts/delete'], params: Api.ChannelAccountDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelAccountDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountDeleteResponse: ...
     @overload
     async def call(self, method: Literal['channels/inbound/admit'], params: Api.ChannelInboundAdmitParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelInboundAdmitResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelInboundAdmitResponse: ...
     @overload
     async def call(self, method: Literal['channels/pairings/list'], params: Api.ChannelPairingListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelPairingListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelPairingListResponse: ...
     @overload
     async def call(self, method: Literal['channels/pairings/delete'], params: Api.ChannelPairingDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelPairingDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelPairingDeleteResponse: ...
     @overload
     async def call(self, method: Literal['channels/conversations/read'], params: Api.ChannelConversationReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfChannelConversationReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelConversationReadResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/deleted/list'], params: Api.DeploymentDeletedUniversesListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentDeletedUniversesListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentDeletedUniversesListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/sessions/deleted/list'], params: Api.DeploymentDeletedSessionsListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentDeletedSessionsListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentDeletedSessionsListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/sessions/purge'], params: Api.DeploymentSessionPurgeParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentSessionPurgeResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentSessionPurgeResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-provider-bindings/list'], params: Api.DeploymentUniverseReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/create'], params: Api.DeploymentUniverseCreateParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseCreateResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseCreateResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/list'], params: Api.DeploymentUniverseListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/read'], params: Api.DeploymentUniverseReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseReadResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/configuration/put'], params: Api.DeploymentUniverseConfigurationPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseReadResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/handle/put'], params: Api.DeploymentUniverseHandlePutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseReadResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/delete'], params: Api.DeploymentUniverseDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseDeleteResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/put'], params: Api.DeploymentEnvironmentProviderPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentEnvironmentProviderPutResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/list'], params: Api.DeploymentEnvironmentProviderListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentEnvironmentProviderListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/read'], params: Api.DeploymentEnvironmentProviderReadParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentEnvironmentProviderReadResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/delete'], params: Api.DeploymentEnvironmentProviderDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentEnvironmentProviderDeleteResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/bindings/put'], params: Api.DeploymentProviderBindingPutParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentProviderBindingPutResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentProviderBindingPutResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/bindings/delete'], params: Api.DeploymentProviderBindingDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentProviderBindingDeleteResponse: ...
     @overload
     async def call(self, method: Literal['deployment/channels/accounts/list'], params: Api.DeploymentChannelAccountListParams,
-                   *, headers: HeadersInput | None = None) -> Api.AgentApiOutcomeOfDeploymentChannelAccountListResponse: ...
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentChannelAccountListResponse: ...
+    @overload
+    async def call(self, method: Literal['blobs/upload'], params: Api.BlobUploadParams,
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResult: ...
 
     async def call(self, method: str, params: object,
-                   *, headers: HeadersInput | None = None) -> Any:
-        """Call a gateway method and return its result and notifications."""
-        return await self._invoke(method, cast(dict[str, Any], params), headers)
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Any:
+        """Call an HTTP operation and return its direct DTO or bytes."""
+        return await self._invoke(method, cast(dict[str, Any], params), headers, body, content_length)
 
-    async def initialize(self, *, capabilities: Api.ClientCapabilities | None | Unset = UNSET, client_info: Api.ClientInfo | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.InitializeResponse:
+    async def initialize(self, *, headers: HeadersInput | None = None) -> Api.ConnectionResponse:
         """Inspect the Lightspeed protocol
 
-        Returns protocol version, server identity, whether access is unauthenticated, and the
-        configured token name before universe selection. Requires authentication in authenticated
-        mode; no universe header is accepted.
+        Returns runtime identity, HTTP contract revision and configured-token attribution before
+        selecting a universe. Requires authentication in authenticated mode; universe target headers
+        are refused.
         """
         params: dict[str, Any] = {}
-        if capabilities is not UNSET:
-            params['capabilities'] = capabilities
-        if client_info is not UNSET:
-            params['clientInfo'] = client_info
-        return cast(Api.InitializeResponse, (await self._invoke('initialize', params, headers))['result'])
+        return cast(Api.ConnectionResponse, await self._invoke('initialize', params, headers))
 
     async def start_session(self, *, access: Api.AccessInput | None | Unset = UNSET, config: Api.SessionConfig | None | Unset = UNSET, delete_after_close_ms: int | None | Unset = UNSET, display_name: str | None | Unset = UNSET, integration: Api.SessionIntegrationInput | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, profile: Api.ProfileSource | None | Unset = UNSET, session_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionStartResponse:
         """Start a session
@@ -877,7 +875,7 @@ class GeneratedClient:
             params['profile'] = profile
         if session_id is not UNSET:
             params['sessionId'] = session_id
-        return cast(Api.SessionStartResponse, (await self._invoke('session/start', params, headers))['result'])
+        return cast(Api.SessionStartResponse, await self._invoke('session/start', params, headers))
 
     async def read_session(self, session_id: str, *, run_limit: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionReadResponse:
         """Read a session
@@ -893,7 +891,7 @@ class GeneratedClient:
         if run_limit is not UNSET:
             params['runLimit'] = run_limit
         params['sessionId'] = session_id
-        return cast(Api.SessionReadResponse, (await self._invoke('session/read', params, headers))['result'])
+        return cast(Api.SessionReadResponse, await self._invoke('session/read', params, headers))
 
     async def list_sessions(self, *, closed: bool | None | Unset = UNSET, cursor: str | None | Unset = UNSET, lifecycle_controlled: bool | None | Unset = UNSET, limit: int | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, parent: str | None | Unset = UNSET, subagent: bool | None | Unset = UNSET, trees: list[str] | Unset = UNSET, visible_to: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionListResponse:
         """List sessions
@@ -937,7 +935,7 @@ class GeneratedClient:
             params['trees'] = trees
         if visible_to is not UNSET:
             params['visibleTo'] = visible_to
-        return cast(Api.SessionListResponse, (await self._invoke('session/list', params, headers))['result'])
+        return cast(Api.SessionListResponse, await self._invoke('session/list', params, headers))
 
     async def rename_session(self, session_id: str, *, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionRenameResponse:
         """Rename a session
@@ -951,7 +949,7 @@ class GeneratedClient:
         if display_name is not UNSET:
             params['displayName'] = display_name
         params['sessionId'] = session_id
-        return cast(Api.SessionRenameResponse, (await self._invoke('session/rename', params, headers))['result'])
+        return cast(Api.SessionRenameResponse, await self._invoke('session/rename', params, headers))
 
     async def put_session_metadata(self, session_id: str, *, metadata: dict[str, str] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionMetadataPutResponse:
         """Replace session metadata
@@ -966,7 +964,7 @@ class GeneratedClient:
         if metadata is not UNSET:
             params['metadata'] = metadata
         params['sessionId'] = session_id
-        return cast(Api.SessionMetadataPutResponse, (await self._invoke('session/metadata/put', params, headers))['result'])
+        return cast(Api.SessionMetadataPutResponse, await self._invoke('session/metadata/put', params, headers))
 
     async def put_session_config(self, session_id: str, *, config: Api.SessionConfig, expected_config_revision: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionConfigPutResponse:
         """Replace session configuration
@@ -985,7 +983,7 @@ class GeneratedClient:
         if expected_config_revision is not UNSET:
             params['expectedConfigRevision'] = expected_config_revision
         params['sessionId'] = session_id
-        return cast(Api.SessionConfigPutResponse, (await self._invoke('session/config/put', params, headers))['result'])
+        return cast(Api.SessionConfigPutResponse, await self._invoke('session/config/put', params, headers))
 
     async def share_session(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SessionShareResponse:
         """Share a session with the universe
@@ -996,7 +994,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
-        return cast(Api.SessionShareResponse, (await self._invoke('session/share', params, headers))['result'])
+        return cast(Api.SessionShareResponse, await self._invoke('session/share', params, headers))
 
     async def restart_session(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SessionRestartResponse:
         """Restart a stopped session
@@ -1008,7 +1006,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
-        return cast(Api.SessionRestartResponse, (await self._invoke('session/restart', params, headers))['result'])
+        return cast(Api.SessionRestartResponse, await self._invoke('session/restart', params, headers))
 
     async def close_session(self, session_id: str, *, force: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionCloseResponse:
         """Close a session
@@ -1027,7 +1025,7 @@ class GeneratedClient:
         if force is not UNSET:
             params['force'] = force
         params['sessionId'] = session_id
-        return cast(Api.SessionCloseResponse, (await self._invoke('session/close', params, headers))['result'])
+        return cast(Api.SessionCloseResponse, await self._invoke('session/close', params, headers))
 
     async def delete_session(self, session_id: str, *, cascade: bool | Unset = UNSET, shared_only: bool | Unset = UNSET, soft_delete: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionDeleteResponse:
         """Delete closed sessions
@@ -1053,7 +1051,7 @@ class GeneratedClient:
             params['sharedOnly'] = shared_only
         if soft_delete is not UNSET:
             params['softDelete'] = soft_delete
-        return cast(Api.SessionDeleteResponse, (await self._invoke('session/delete', params, headers))['result'])
+        return cast(Api.SessionDeleteResponse, await self._invoke('session/delete', params, headers))
 
     async def list_runs(self, session_id: str, *, cursor: str | None | Unset = UNSET, limit: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.RunListResponse:
         """List session runs
@@ -1070,7 +1068,7 @@ class GeneratedClient:
         if limit is not UNSET:
             params['limit'] = limit
         params['sessionId'] = session_id
-        return cast(Api.RunListResponse, (await self._invoke('session/runs/list', params, headers))['result'])
+        return cast(Api.RunListResponse, await self._invoke('session/runs/list', params, headers))
 
     async def read_run(self, session_id: str, run_id: str, *, headers: HeadersInput | None = None) -> Api.RunReadResponse:
         """Read one session run
@@ -1081,7 +1079,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         params['runId'] = run_id
         params['sessionId'] = session_id
-        return cast(Api.RunReadResponse, (await self._invoke('session/runs/read', params, headers))['result'])
+        return cast(Api.RunReadResponse, await self._invoke('session/runs/read', params, headers))
 
     async def cancel_run(self, session_id: str, run_id: str, *, headers: HeadersInput | None = None) -> Api.RunCancelResponse:
         """Cancel a run
@@ -1093,7 +1091,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         params['runId'] = run_id
         params['sessionId'] = session_id
-        return cast(Api.RunCancelResponse, (await self._invoke('session/runs/cancel', params, headers))['result'])
+        return cast(Api.RunCancelResponse, await self._invoke('session/runs/cancel', params, headers))
 
     async def decide_approvals(self, session_id: str, run_id: str, *, decisions: list[Api.ApprovalDecisionInput], headers: HeadersInput | None = None) -> Api.RunApprovalsDecideResponse:
         """Decide pending run approvals
@@ -1106,7 +1104,7 @@ class GeneratedClient:
         params['decisions'] = decisions
         params['runId'] = run_id
         params['sessionId'] = session_id
-        return cast(Api.RunApprovalsDecideResponse, (await self._invoke('session/runs/approvals/decide', params, headers))['result'])
+        return cast(Api.RunApprovalsDecideResponse, await self._invoke('session/runs/approvals/decide', params, headers))
 
     async def append_context(self, session_id: str, *, entries: list[Api.ContextAppendEntry], headers: HeadersInput | None = None) -> Api.ContextAppendResponse:
         """Append keyed session context
@@ -1119,7 +1117,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         params['entries'] = entries
         params['sessionId'] = session_id
-        return cast(Api.ContextAppendResponse, (await self._invoke('session/context/append', params, headers))['result'])
+        return cast(Api.ContextAppendResponse, await self._invoke('session/context/append', params, headers))
 
     async def compact_context(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.ContextCompactResponse:
         """Compact session context
@@ -1131,7 +1129,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
-        return cast(Api.ContextCompactResponse, (await self._invoke('session/context/compact', params, headers))['result'])
+        return cast(Api.ContextCompactResponse, await self._invoke('session/context/compact', params, headers))
 
     async def apply_profile(self, session_id: str, *, expected_config_revision: int | None | Unset = UNSET, expected_tools_revision: int | None | Unset = UNSET, profile: Api.ProfileSource, headers: HeadersInput | None = None) -> Api.ProfileApplyResponse:
         """Apply a profile to a session
@@ -1147,7 +1145,7 @@ class GeneratedClient:
             params['expectedToolsRevision'] = expected_tools_revision
         params['profile'] = profile
         params['sessionId'] = session_id
-        return cast(Api.ProfileApplyResponse, (await self._invoke('session/profiles/apply', params, headers))['result'])
+        return cast(Api.ProfileApplyResponse, await self._invoke('session/profiles/apply', params, headers))
 
     async def list_session_skills(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SkillListResponse:
         """List available session skills
@@ -1158,7 +1156,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
-        return cast(Api.SkillListResponse, (await self._invoke('session/skills/list', params, headers))['result'])
+        return cast(Api.SkillListResponse, await self._invoke('session/skills/list', params, headers))
 
     async def activate_environment(self, session_id: str, environment_id: str, *, headers: HeadersInput | None = None) -> Api.SessionEnvironmentActivateResponse:
         """Activate a session environment
@@ -1169,7 +1167,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         params['environmentId'] = environment_id
         params['sessionId'] = session_id
-        return cast(Api.SessionEnvironmentActivateResponse, (await self._invoke('session/environments/activate', params, headers))['result'])
+        return cast(Api.SessionEnvironmentActivateResponse, await self._invoke('session/environments/activate', params, headers))
 
     async def deactivate_environment(self, session_id: str, *, headers: HeadersInput | None = None) -> Api.SessionEnvironmentDeactivateResponse:
         """Deactivate the session environment
@@ -1178,7 +1176,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['sessionId'] = session_id
-        return cast(Api.SessionEnvironmentDeactivateResponse, (await self._invoke('session/environments/deactivate', params, headers))['result'])
+        return cast(Api.SessionEnvironmentDeactivateResponse, await self._invoke('session/environments/deactivate', params, headers))
 
     async def create_profile(self, *, profile: Api.AgentProfileInput, headers: HeadersInput | None = None) -> Api.ProfileCreateResponse:
         """Create an agent profile
@@ -1188,7 +1186,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['profile'] = profile
-        return cast(Api.ProfileCreateResponse, (await self._invoke('profiles/create', params, headers))['result'])
+        return cast(Api.ProfileCreateResponse, await self._invoke('profiles/create', params, headers))
 
     async def read_profile(self, profile_id: Api.ProfileId, *, headers: HeadersInput | None = None) -> Api.ProfileReadResponse:
         """Read an agent profile
@@ -1197,7 +1195,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['profileId'] = profile_id
-        return cast(Api.ProfileReadResponse, (await self._invoke('profiles/read', params, headers))['result'])
+        return cast(Api.ProfileReadResponse, await self._invoke('profiles/read', params, headers))
 
     async def list_profiles(self, *, headers: HeadersInput | None = None) -> Api.ProfileListResponse:
         """List agent profiles
@@ -1205,7 +1203,7 @@ class GeneratedClient:
         Returns lightweight summaries of universe-scoped reusable profiles.
         """
         params: dict[str, Any] = {}
-        return cast(Api.ProfileListResponse, (await self._invoke('profiles/list', params, headers))['result'])
+        return cast(Api.ProfileListResponse, await self._invoke('profiles/list', params, headers))
 
     async def put_profile(self, *, expected_revision: int | None | Unset = UNSET, profile: Api.AgentProfileInput, headers: HeadersInput | None = None) -> Api.ProfilePutResponse:
         """Create or replace an agent profile
@@ -1221,7 +1219,7 @@ class GeneratedClient:
         if expected_revision is not UNSET:
             params['expectedRevision'] = expected_revision
         params['profile'] = profile
-        return cast(Api.ProfilePutResponse, (await self._invoke('profiles/put', params, headers))['result'])
+        return cast(Api.ProfilePutResponse, await self._invoke('profiles/put', params, headers))
 
     async def delete_profile(self, profile_id: Api.ProfileId, *, headers: HeadersInput | None = None) -> Api.ProfileDeleteResponse:
         """Delete an agent profile
@@ -1231,7 +1229,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['profileId'] = profile_id
-        return cast(Api.ProfileDeleteResponse, (await self._invoke('profiles/delete', params, headers))['result'])
+        return cast(Api.ProfileDeleteResponse, await self._invoke('profiles/delete', params, headers))
 
     async def list_models(self, *, selectable_only: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ModelListResponse:
         """Discover available models
@@ -1251,7 +1249,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         if selectable_only is not UNSET:
             params['selectableOnly'] = selectable_only
-        return cast(Api.ModelListResponse, (await self._invoke('models/list', params, headers))['result'])
+        return cast(Api.ModelListResponse, await self._invoke('models/list', params, headers))
 
     async def read_model_defaults(self, *, headers: HeadersInput | None = None) -> Api.ModelDefaultsResponse:
         """Read universe model defaults
@@ -1260,7 +1258,7 @@ class GeneratedClient:
         means no update has been made. Does not contact model providers.
         """
         params: dict[str, Any] = {}
-        return cast(Api.ModelDefaultsResponse, (await self._invoke('models/defaults/read', params, headers))['result'])
+        return cast(Api.ModelDefaultsResponse, await self._invoke('models/defaults/read', params, headers))
 
     async def create_environment(self, *, display_name: str | None | Unset = UNSET, environment_id: str | None | Unset = UNSET, idle: Api.EnvironmentIdlePolicyView | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, provider_id: str, request_id: str, template_id: str, headers: HeadersInput | None = None) -> Api.EnvironmentCreateResponse:
         """Create an environment
@@ -1293,7 +1291,7 @@ class GeneratedClient:
         params['providerId'] = provider_id
         params['requestId'] = request_id
         params['templateId'] = template_id
-        return cast(Api.EnvironmentCreateResponse, (await self._invoke('environments/create', params, headers))['result'])
+        return cast(Api.EnvironmentCreateResponse, await self._invoke('environments/create', params, headers))
 
     async def read_environment(self, environment_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentReadResponse:
         """Read an environment
@@ -1303,7 +1301,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['environmentId'] = environment_id
-        return cast(Api.EnvironmentReadResponse, (await self._invoke('environments/read', params, headers))['result'])
+        return cast(Api.EnvironmentReadResponse, await self._invoke('environments/read', params, headers))
 
     async def list_environments(self, *, after: str | None | Unset = UNSET, include_closed: bool | Unset = UNSET, limit: int | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, provider_id: str | None | Unset = UNSET, registration_key_id: str | None | Unset = UNSET, state: Api.EnvironmentStateView | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentListResponse:
         """List environments
@@ -1338,7 +1336,7 @@ class GeneratedClient:
             params['registrationKeyId'] = registration_key_id
         if state is not UNSET:
             params['state'] = state
-        return cast(Api.EnvironmentListResponse, (await self._invoke('environments/list', params, headers))['result'])
+        return cast(Api.EnvironmentListResponse, await self._invoke('environments/list', params, headers))
 
     async def close_environment(self, environment_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentCloseResponse:
         """Close an environment
@@ -1350,7 +1348,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['environmentId'] = environment_id
-        return cast(Api.EnvironmentCloseResponse, (await self._invoke('environments/close', params, headers))['result'])
+        return cast(Api.EnvironmentCloseResponse, await self._invoke('environments/close', params, headers))
 
     async def list_environment_templates(self, *, provider_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentTemplateListResponse:
         """List environment templates
@@ -1364,7 +1362,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         if provider_id is not UNSET:
             params['providerId'] = provider_id
-        return cast(Api.EnvironmentTemplateListResponse, (await self._invoke('environments/templates/list', params, headers))['result'])
+        return cast(Api.EnvironmentTemplateListResponse, await self._invoke('environments/templates/list', params, headers))
 
     async def create_workspace(self, *, display_name: str | None | Unset = UNSET, snapshot_ref: str | None | Unset = UNSET, workspace_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.VfsWorkspaceCreateResponse:
         """Create a mutable VFS workspace
@@ -1383,7 +1381,7 @@ class GeneratedClient:
             params['snapshotRef'] = snapshot_ref
         if workspace_id is not UNSET:
             params['workspaceId'] = workspace_id
-        return cast(Api.VfsWorkspaceCreateResponse, (await self._invoke('vfs/workspaces/create', params, headers))['result'])
+        return cast(Api.VfsWorkspaceCreateResponse, await self._invoke('vfs/workspaces/create', params, headers))
 
     async def read_workspace(self, workspace_id: str, *, headers: HeadersInput | None = None) -> Api.VfsWorkspaceReadResponse:
         """Read a VFS workspace
@@ -1392,7 +1390,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['workspaceId'] = workspace_id
-        return cast(Api.VfsWorkspaceReadResponse, (await self._invoke('vfs/workspaces/read', params, headers))['result'])
+        return cast(Api.VfsWorkspaceReadResponse, await self._invoke('vfs/workspaces/read', params, headers))
 
     async def list_workspaces(self, *, headers: HeadersInput | None = None) -> Api.VfsWorkspaceListResponse:
         """List VFS workspaces
@@ -1400,7 +1398,7 @@ class GeneratedClient:
         Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
         """
         params: dict[str, Any] = {}
-        return cast(Api.VfsWorkspaceListResponse, (await self._invoke('vfs/workspaces/list', params, headers))['result'])
+        return cast(Api.VfsWorkspaceListResponse, await self._invoke('vfs/workspaces/list', params, headers))
 
     async def delete_workspace(self, workspace_id: str, *, headers: HeadersInput | None = None) -> Api.VfsWorkspaceDeleteResponse:
         """Delete a VFS workspace
@@ -1410,9 +1408,9 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['workspaceId'] = workspace_id
-        return cast(Api.VfsWorkspaceDeleteResponse, (await self._invoke('vfs/workspaces/delete', params, headers))['result'])
+        return cast(Api.VfsWorkspaceDeleteResponse, await self._invoke('vfs/workspaces/delete', params, headers))
 
-    async def read_workspace_file(self, workspace_id: str, path: str, *, headers: HeadersInput | None = None) -> Api.BlobReadResponse:
+    async def read_workspace_file(self, workspace_id: str, path: str, *, headers: HeadersInput | None = None) -> bytes:
         """Read a workspace file
 
         Reads bytes at a path in the current workspace head.
@@ -1420,7 +1418,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         params['path'] = path
         params['workspaceId'] = workspace_id
-        return cast(Api.BlobReadResponse, (await self._invoke('vfs/workspaces/files/read', params, headers))['result'])
+        return cast(bytes, await self._invoke('vfs/workspaces/files/read', params, headers))
 
     async def read_mcp_server(self, server_id: str, *, headers: HeadersInput | None = None) -> Api.McpServerReadResponse:
         """Read an MCP server record
@@ -1430,7 +1428,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['serverId'] = server_id
-        return cast(Api.McpServerReadResponse, (await self._invoke('mcp/servers/read', params, headers))['result'])
+        return cast(Api.McpServerReadResponse, await self._invoke('mcp/servers/read', params, headers))
 
     async def list_mcp_servers(self, *, status: Api.McpServerStatus | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.McpServerListResponse:
         """List MCP server records
@@ -1440,7 +1438,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         if status is not UNSET:
             params['status'] = status
-        return cast(Api.McpServerListResponse, (await self._invoke('mcp/servers/list', params, headers))['result'])
+        return cast(Api.McpServerListResponse, await self._invoke('mcp/servers/list', params, headers))
 
     async def read_bot(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotReadResponse:
         """Read a bot
@@ -1449,7 +1447,7 @@ class GeneratedClient:
         """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
-        return cast(Api.BotReadResponse, (await self._invoke('bots/read', params, headers))['result'])
+        return cast(Api.BotReadResponse, await self._invoke('bots/read', params, headers))
 
     async def list_bots(self, *, created_by: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotListResponse:
         """List bots
@@ -1463,7 +1461,7 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         if created_by is not UNSET:
             params['createdBy'] = created_by
-        return cast(Api.BotListResponse, (await self._invoke('bots/list', params, headers))['result'])
+        return cast(Api.BotListResponse, await self._invoke('bots/list', params, headers))
 
     async def list_bot_events(self, bot_id: Api.BotId, *, cursor: str | None | Unset = UNSET, limit: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotEventListResponse:
         """List a bot's events
@@ -1480,7 +1478,7 @@ class GeneratedClient:
             params['cursor'] = cursor
         if limit is not UNSET:
             params['limit'] = limit
-        return cast(Api.BotEventListResponse, (await self._invoke('bots/events/list', params, headers))['result'])
+        return cast(Api.BotEventListResponse, await self._invoke('bots/events/list', params, headers))
 
     async def admit_bot_event(self, bot_id: Api.BotId, *, event: Api.BotEventInput, headers: HeadersInput | None = None) -> Api.BotEventAdmitResponse:
         """Admit an event manually
@@ -1491,4 +1489,4 @@ class GeneratedClient:
         params: dict[str, Any] = {}
         params['botId'] = bot_id
         params['event'] = event
-        return cast(Api.BotEventAdmitResponse, (await self._invoke('bots/events/admit', params, headers))['result'])
+        return cast(Api.BotEventAdmitResponse, await self._invoke('bots/events/admit', params, headers))

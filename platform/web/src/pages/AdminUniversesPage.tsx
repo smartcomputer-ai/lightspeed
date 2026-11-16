@@ -66,7 +66,7 @@ export function AdminUniversesPage() {
 
   const reconcile = useQuery({
     queryKey: ["universes-reconcile"],
-    queryFn: () => api<UniverseReconcile>("GET", "/api/v1/universes/reconcile"),
+    queryFn: () => api<UniverseReconcile>("GET", "/api/ui/universes/reconcile"),
     refetchInterval: 5000,
   });
   const engineStatus = new Map(
@@ -79,26 +79,26 @@ export function AdminUniversesPage() {
   };
 
   const syncHandles = useMutation({
-    mutationFn: () => api<UniverseHandleSyncResult>("POST", "/api/v1/universes/sync-handles", {}),
+    mutationFn: () => api<UniverseHandleSyncResult>("POST", "/api/ui/universes/sync-handles", {}),
     onSuccess: refresh,
   });
 
   const setStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "active" | "archived" }) =>
-      api<Universe>("PATCH", `/api/v1/universes/${id}`, { status }),
+      api<Universe>("PATCH", `/api/ui/universes/${id}`, { status }),
     onSuccess: refresh,
   });
   const purge = useMutation({
-    mutationFn: (universe: Universe) => api("DELETE", `/api/v1/universes/${universe.id}`, { handle: universe.handle }),
+    mutationFn: (universe: Universe) => api("DELETE", `/api/ui/universes/${universe.id}`, { handle: universe.handle }),
     onSuccess: refresh,
   });
   const recreate = useMutation({
-    mutationFn: (id: string) => api("POST", `/api/v1/universes/${id}/engine`, {}),
+    mutationFn: (id: string) => api("POST", `/api/ui/universes/${id}/engine`, {}),
     onSuccess: refresh,
   });
   const deleteOrphan = useMutation({
     mutationFn: (universe: EngineUniverse) =>
-      api("DELETE", `/api/v1/universes/engine/${universe.universeId}`, { handle: universe.handle }),
+      api("DELETE", `/api/ui/universes/engine/${universe.universeId}`, { handle: universe.handle }),
     onSuccess: refresh,
   });
 
@@ -350,7 +350,7 @@ export function AdoptDialog({
 
   const adopt = useMutation({
     mutationFn: () =>
-      api<Universe>("POST", "/api/v1/universes/adopt", {
+      api<Universe>("POST", "/api/ui/universes/adopt", {
         lightspeedUniverseId: orphan!.universeId,
         name: name.trim(),
       }),

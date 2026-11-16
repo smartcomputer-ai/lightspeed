@@ -473,7 +473,7 @@ pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> 
         .request::<Value, Value>("deployment/universes/read", json!({ "universe": handle }))
         .await;
     let universe_id = match read {
-        Ok(outcome) => outcome.result["universe"]["universeId"]
+        Ok(outcome) => outcome["universe"]["universeId"]
             .as_str()
             .map(str::to_owned),
         Err(error) if error.kind == api::AgentApiErrorKind::NotFound => None,

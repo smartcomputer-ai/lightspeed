@@ -26,6 +26,7 @@ export function createUpstreamClientFactory(
   return (auth) => {
     const clientOptions: LightspeedClientOptions = {
       endpoint: options.endpoint,
+      ...(auth.universeId ? { universe: auth.universeId } : {}),
     };
     const headers = upstreamHeaders(auth);
     if (headers !== undefined) {
@@ -47,13 +48,11 @@ export async function identifyCaller(
     ? auth : { mode: "authenticated", token: auth.token };
   const response = await factory(discoveryAuth).call(
     "initialize",
-    {
-      clientInfo: { name: "lightspeed-configurator-mcp", version: "0.0.0" },
-      capabilities: null,
-    },
+    {},
     { signal: requestSignal(signal, timeoutMs) },
   );
-  return response.result.caller;
+  if (auth.mode === "single" && response.defaultUniverse) auth.universeId = response.defaultUniverse;
+  return response.caller;
 }
 
 export function requestSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {

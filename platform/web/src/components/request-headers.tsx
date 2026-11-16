@@ -38,7 +38,7 @@ export function headerCredentialOptions(grants: CredentialGrantOption[]): Creden
 export function useHeaderCredentials(universeId: string): { grants: CredentialGrantOption[]; loading: boolean } {
   const credentialGrants = useQuery({
     queryKey: ["credential-grants", universeId],
-    queryFn: () => api<CredentialGrantOption[]>("GET", `/api/v1/universes/${universeId}/credential-grants`),
+    queryFn: () => api<CredentialGrantOption[]>("GET", `/api/ui/universes/${universeId}/credential-grants`),
   });
   return { grants: headerCredentialOptions(credentialGrants.data ?? []), loading: credentialGrants.isLoading };
 }

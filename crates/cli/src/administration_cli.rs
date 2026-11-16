@@ -76,8 +76,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                         api::METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST,
                         api::DeploymentDeletedUniversesListParams { after },
                     )
-                    .await?
-                    .result;
+                    .await?;
                 universes.extend(response.universes);
                 after = response.next_after;
                 if after.is_none() {
@@ -105,10 +104,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 )
                 .await;
             let (id, handle) = match read {
-                Ok(response) => (
-                    response.result.universe.universe_id,
-                    response.result.universe.handle,
-                ),
+                Ok(response) => (response.universe.universe_id, response.universe.handle),
                 Err(error) if error.kind == api::AgentApiErrorKind::Gone => {
                     let record = error
                         .deleted_universe
@@ -144,8 +140,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                         universe: id.clone(),
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if let Some(wait_ms) = wait {
                 let deadline =
                     tokio::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
@@ -185,8 +180,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
                     api::DeploymentUniverseListParams {},
                 )
-                .await?
-                .result;
+                .await?;
             // The selection may be a handle; the listing gives its UUID.
             let selected = active.active_universe();
             let is_active = |universe: &api::DeploymentUniverseView| {
@@ -251,8 +245,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                         handle,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if args.json {
                 print_json(&response)?;
             } else {
@@ -271,8 +264,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                         handle,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if args.json {
                 print_json(&response)?;
             } else {
@@ -288,8 +280,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_UNIVERSES_READ,
                     api::DeploymentUniverseReadParams { universe: target },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(args.json, &response.universe)?;
         }
     }
@@ -342,8 +333,7 @@ pub async fn models(args: ModelsArgs) -> Result<()> {
         .list_models(api::ModelListParams {
             selectable_only: !all,
         })
-        .await?
-        .result;
+        .await?;
     if json {
         print_json(&response)?;
     } else {

@@ -208,7 +208,7 @@ fn api_credential_flow_status(
 /// The gateway-hosted redirect URI for authorization callbacks.
 pub(super) fn oauth_redirect_uri(public_base_url: &str) -> String {
     format!(
-        "{}/credentials/callback",
+        "{}/ingress/credentials/callback",
         public_base_url.trim_end_matches('/')
     )
 }
@@ -218,7 +218,7 @@ pub(super) fn oauth_redirect_uri(public_base_url: &str) -> String {
 /// when the deployment has a public https base URL.
 pub(super) fn cimd_client_id_url(public_base_url: &str) -> String {
     format!(
-        "{}/credentials/client-metadata.json",
+        "{}/ingress/credentials/client-metadata.json",
         public_base_url.trim_end_matches('/')
     )
 }

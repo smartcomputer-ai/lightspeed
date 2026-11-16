@@ -54,14 +54,6 @@ pub struct ContentRefView {
     pub media_handle: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct BlobReadResponse {
-    pub blob_ref: String,
-    pub bytes_base64: String,
-    pub bytes: u64,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobHasParams {

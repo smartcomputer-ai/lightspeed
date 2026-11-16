@@ -7,7 +7,7 @@ function answer(body: BodyInit | null, init: ResponseInit) {
 }
 
 async function failure(): Promise<ApiError> {
-  const error: unknown = await api("GET", "/api/v1/universes").catch((caught: unknown) => caught);
+  const error: unknown = await api("GET", "/api/ui/universes").catch((caught: unknown) => caught);
   expect(error).toBeInstanceOf(ApiError);
   return error as ApiError;
 }
@@ -66,7 +66,7 @@ describe("api", () => {
 
   it("returns the parsed JSON of a successful answer", async () => {
     answer(JSON.stringify({ universes: [] }), { status: 200, headers: { "content-type": "application/json" } });
-    await expect(api("GET", "/api/v1/universes")).resolves.toEqual({ universes: [] });
+    await expect(api("GET", "/api/ui/universes")).resolves.toEqual({ universes: [] });
   });
 
   it("refuses a successful answer that is not JSON, naming its status and text", async () => {
@@ -82,6 +82,6 @@ describe("api", () => {
     ["only whitespace", "\n", 200],
   ])("returns null for a successful answer with %s", async (_name, body, status) => {
     answer(body, { status });
-    await expect(api("DELETE", "/api/v1/universes/u/sessions/s")).resolves.toBeNull();
+    await expect(api("DELETE", "/api/ui/universes/u/sessions/s")).resolves.toBeNull();
   });
 });

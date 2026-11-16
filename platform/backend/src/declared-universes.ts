@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { eq, or, isNull, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import { LightspeedRpcError, type DeploymentUniverseConfigurationPutParams } from "@lightspeed-ai/sdk";
+import { LightspeedApiError, type DeploymentUniverseConfigurationPutParams } from "@lightspeed-ai/sdk";
 import { roleAtLeast, universeRoleSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { AppContext } from "./context.js";
 import { deploymentClient } from "./runtime-client.js";
@@ -42,12 +42,12 @@ export async function declaredRole(ctx: AppContext, userId: string, configuratio
 /** Reconcile only the configured Runtime. A database lock serializes replicas,
  * including the inventory read, so an older snapshot cannot overwrite a newer one. */
 export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted: number; updated: number }> {
-  if (!ctx.env.lightspeedApiUrl || !ctx.env.lightspeedRpcToken) return { adopted: 0, updated: 0 };
+  if (!ctx.env.lightspeedApiUrl || !ctx.env.lightspeedApiToken) return { adopted: 0, updated: 0 };
   return ctx.db.transaction(async tx => {
     const locked = await tx.execute(sql`SELECT pg_try_advisory_xact_lock(731845920114) AS locked`);
     if (!locked.rows[0]?.locked) return { adopted: 0, updated: 0 };
     const response = await deploymentClient(ctx.env).call("deployment/universes/list", {}, { signal: AbortSignal.timeout(10000) });
-    const inventory = response.result.universes ?? [];
+    const inventory = response.universes ?? [];
     const rows = await tx.select({ universe: schema.universes, handle: schema.organization.slug }).from(schema.universes)
       .innerJoin(schema.organization, eq(schema.organization.id, schema.universes.organizationId))
       .where(or(isNull(schema.universes.gatewayUrl), eq(schema.universes.gatewayUrl, ctx.env.lightspeedApiUrl!)));
@@ -60,7 +60,7 @@ export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted:
       try {
         await deploymentClient(ctx.env).call("deployment/universes/read", { universe: row.universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(10000) });
       } catch (error) {
-        if (!(error instanceof LightspeedRpcError)) throw error;
+        if (!(error instanceof LightspeedApiError)) throw error;
         if (error.kind === "gone") await tx.delete(schema.organization).where(eq(schema.organization.id, row.universe.organizationId));
         else if (error.kind !== "notFound") throw error;
       }

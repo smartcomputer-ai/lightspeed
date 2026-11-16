@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
-LightspeedAgentApi: TypeAlias = Any
+LightspeedHttpApi: TypeAlias = Any
 """
-All JSON-RPC wire types of the Lightspeed agent API.
+Logical operation inputs and direct response types for Lightspeed clients.
 """
 
 
@@ -66,16 +66,6 @@ class AgentNotificationWorkspacesRemoved(TypedDict):
 class AgentNotificationWatchReset(TypedDict):
     method: Literal['watch/reset']
     params: dict[str, Any]
-
-
-class Params12(TypedDict):
-    message: str
-    sessionId: NotRequired[str | None]
-
-
-class AgentNotificationError(TypedDict):
-    method: Literal['error']
-    params: Params12
 
 
 ApprovalDecisionFailureKind: TypeAlias = (
@@ -204,10 +194,8 @@ class BlobReadParams(TypedDict):
     blobRef: str
 
 
-class BlobReadResponse(TypedDict):
+class BlobUploadParams(TypedDict):
     blobRef: str
-    bytes: int
-    bytesBase64: str
 
 
 class BotActiveDeliverySnapshot(TypedDict):
@@ -598,15 +586,6 @@ class CitationView(TypedDict):
     url: str
 
 
-class ClientCapabilities(TypedDict):
-    experimentalApi: NotRequired[bool]
-
-
-class ClientInfo(TypedDict):
-    name: str
-    version: NotRequired[str | None]
-
-
 class CodeModeFeature(TypedDict):
     """
     Grants JavaScript composition through `code_execute`. Available script tools
@@ -698,6 +677,10 @@ CompactionPolicy: TypeAlias = (
     | CompactionPolicyProviderTriggered
     | CompactionPolicyProviderStandalone
 )
+
+
+class ConnectionParams(TypedDict):
+    pass
 
 
 class ContentRefView(TypedDict):
@@ -1990,11 +1973,6 @@ class GitHubInstallationView(TypedDict):
     repositorySelection: NotRequired[str | None]
 
 
-class InitializeParams(TypedDict):
-    capabilities: NotRequired[ClientCapabilities | None]
-    clientInfo: NotRequired[ClientInfo | None]
-
-
 InputAdmissionFailureKind: TypeAlias = Literal[
     'unsupportedMedia', 'blobMissing', 'admissionRejected'
 ]
@@ -2767,6 +2745,9 @@ class RunSummaryView(TypedDict):
 
 class RunTerminalNotificationInput(TypedDict):
     token: str
+
+
+RuntimeKind: TypeAlias = Literal['runtime', 'platform']
 
 
 class ServerCapabilities(TypedDict):
@@ -3829,7 +3810,7 @@ UniverseAction: TypeAlias = (
     | Literal['configureResource']
 )
 """
-What a public method does, independent of its RPC spelling. This classifies
+What a public method does, independent of its operation ID. This classifies
 the runtime's own work and the role an external gate should require.
 """
 
@@ -4196,21 +4177,6 @@ class AccessInput(TypedDict):
 class ActiveToolsView(TypedDict):
     revision: int
     tools: NotRequired[list[ToolView]]
-
-
-class AgentApiError(TypedDict):
-    deletedUniverse: NotRequired[DeletedUniverseView | None]
-    kind: AgentApiErrorKind
-    message: str
-    modelDefaultSlot: NotRequired[ModelDefaultSlot | None]
-    """
-    Present for modelDefaultUnset; clients need not parse the message.
-    """
-    submissionId: NotRequired[str | None]
-    """
-    Present for operationPending on a call that took a submission id, including
-    one the server allocated. Retrying with it cannot land the same work twice.
-    """
 
 
 class Params6(TypedDict):
@@ -5012,6 +4978,23 @@ class ChatActivation(TypedDict):
     triggerPrefixes: NotRequired[list[str]]
 
 
+class ConnectionResponse(TypedDict):
+    """
+    Connection discovery through the resource HTTP API.
+    """
+
+    caller: CallerAccess
+    capabilities: ServerCapabilities
+    contractRevision: str
+    defaultUniverse: NotRequired[str | None]
+    """
+    Default URL universe for a gateway configured with a single universe.
+    """
+    protocolVersion: str
+    runtime: RuntimeKind
+    serverInfo: ServerInfo
+
+
 class ContextCompactResponse(TypedDict):
     session: SessionMutationView
 
@@ -5513,11 +5496,20 @@ class GenerationConfig(TypedDict):
     toolChoice: NotRequired[ToolChoice | None]
 
 
-class InitializeResponse(TypedDict):
-    caller: CallerAccess
-    capabilities: ServerCapabilities
-    protocolVersion: str
-    serverInfo: ServerInfo
+class HttpProblem(TypedDict):
+    """
+    Stable public HTTP error body. Service error details are retained as typed
+    extensions; the runtime redacts internal failures before constructing it.
+    """
+
+    deletedUniverse: NotRequired[DeletedUniverseView | None]
+    detail: str
+    kind: AgentApiErrorKind
+    modelDefaultSlot: NotRequired[ModelDefaultSlot | None]
+    status: int
+    submissionId: NotRequired[str | None]
+    title: str
+    type: str
 
 
 class InputItemMedia(TypedDict):
@@ -5541,12 +5533,6 @@ class InputItemMedia(TypedDict):
 InputItem: TypeAlias = (
     InputItemText | InputItemTextRef | InputItemMedia | InputItemCatalog
 )
-
-
-class JsonRpcError(TypedDict):
-    code: int
-    data: NotRequired[AgentApiError | None]
-    message: str
 
 
 class McpAdvertisedToolView(TypedDict):
@@ -7456,13 +7442,17 @@ class AgentNotificationBotsChanged(TypedDict):
     params: Params2
 
 
-class Params9(TypedDict):
-    event: SessionEventView
-
-
-class AgentNotificationSessionEvent(TypedDict):
-    method: Literal['session/event']
-    params: Params9
+AgentNotification: TypeAlias = (
+    AgentNotificationSessionChanged
+    | AgentNotificationSessionRemoved
+    | AgentNotificationBotsChanged
+    | AgentNotificationBotsRemoved
+    | AgentNotificationEnvironmentsChanged
+    | AgentNotificationEnvironmentsRemoved
+    | AgentNotificationWorkspacesChanged
+    | AgentNotificationWorkspacesRemoved
+    | AgentNotificationWatchReset
+)
 
 
 class AgentProfile(TypedDict):
@@ -7821,48 +7811,6 @@ class SessionView(TypedDict):
     updatedAtMs: int
 
 
-class Params8(TypedDict):
-    session: SessionView
-
-
-class AgentNotificationSessionStarted(TypedDict):
-    method: Literal['session/started']
-    params: Params8
-
-
-class Params10(TypedDict):
-    run: RunView
-    sessionId: str
-
-
-class AgentNotificationSessionRunsStarted(TypedDict):
-    method: Literal['session/runs/started']
-    params: Params10
-
-
-class AgentNotificationSessionRunsCompleted(TypedDict):
-    method: Literal['session/runs/completed']
-    params: Params10
-
-
-AgentNotification: TypeAlias = (
-    AgentNotificationSessionChanged
-    | AgentNotificationSessionRemoved
-    | AgentNotificationBotsChanged
-    | AgentNotificationBotsRemoved
-    | AgentNotificationEnvironmentsChanged
-    | AgentNotificationEnvironmentsRemoved
-    | AgentNotificationWorkspacesChanged
-    | AgentNotificationWorkspacesRemoved
-    | AgentNotificationWatchReset
-    | AgentNotificationSessionStarted
-    | AgentNotificationSessionEvent
-    | AgentNotificationSessionRunsStarted
-    | AgentNotificationSessionRunsCompleted
-    | AgentNotificationError
-)
-
-
 class ContextAppendResponse(TypedDict):
     contextRevision: int
     results: list[ContextAppendResult]
@@ -7907,698 +7855,3 @@ class SessionReadResponse(TypedDict):
     Exclusive upper run-id bound for `session/runs/list`.
     """
     session: SessionView
-
-
-class AgentApiOutcomeOfBlobHasResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BlobHasResponse
-
-
-class AgentApiOutcomeOfBlobPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BlobPutResponse
-
-
-class AgentApiOutcomeOfBlobReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BlobReadResponse
-
-
-class AgentApiOutcomeOfBotCloseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotCloseResponse
-
-
-class AgentApiOutcomeOfBotCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotCreateResponse
-
-
-class AgentApiOutcomeOfBotDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotDeleteResponse
-
-
-class AgentApiOutcomeOfBotEventAdmitResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventAdmitResponse
-
-
-class AgentApiOutcomeOfBotEventListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventListResponse
-
-
-class AgentApiOutcomeOfBotEventReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventReadResponse
-
-
-class AgentApiOutcomeOfBotEventReplayResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventReplayResponse
-
-
-class AgentApiOutcomeOfBotFilterTestResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotFilterTestResponse
-
-
-class AgentApiOutcomeOfBotListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotListResponse
-
-
-class AgentApiOutcomeOfBotPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotPutResponse
-
-
-class AgentApiOutcomeOfBotReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotReadResponse
-
-
-class AgentApiOutcomeOfBotSessionRotateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotSessionRotateResponse
-
-
-class AgentApiOutcomeOfBotStateReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotStateReadResponse
-
-
-class AgentApiOutcomeOfBotTriggerDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerDeleteResponse
-
-
-class AgentApiOutcomeOfBotTriggerListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerListResponse
-
-
-class AgentApiOutcomeOfBotTriggerPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerPutResponse
-
-
-class AgentApiOutcomeOfBotTriggerReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerReadResponse
-
-
-class AgentApiOutcomeOfBotTriggerSecretsReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerSecretsReadResponse
-
-
-class AgentApiOutcomeOfChannelAccountCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountCreateResponse
-
-
-class AgentApiOutcomeOfChannelAccountDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountDeleteResponse
-
-
-class AgentApiOutcomeOfChannelAccountListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountListResponse
-
-
-class AgentApiOutcomeOfChannelAccountPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountPutResponse
-
-
-class AgentApiOutcomeOfChannelAccountReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountReadResponse
-
-
-class AgentApiOutcomeOfChannelConversationReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelConversationReadResponse
-
-
-class AgentApiOutcomeOfChannelInboundAdmitResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelInboundAdmitResponse
-
-
-class AgentApiOutcomeOfChannelPairingDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelPairingDeleteResponse
-
-
-class AgentApiOutcomeOfChannelPairingListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelPairingListResponse
-
-
-class AgentApiOutcomeOfContextAppendResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextAppendResponse
-
-
-class AgentApiOutcomeOfContextCompactResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextCompactResponse
-
-
-class AgentApiOutcomeOfContextRemoveResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextRemoveResponse
-
-
-class AgentApiOutcomeOfContextReplaceResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextReplaceResponse
-
-
-class AgentApiOutcomeOfCredentialClientCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialClientCreateResponse
-
-
-class AgentApiOutcomeOfCredentialClientDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialClientDeleteResponse
-
-
-class AgentApiOutcomeOfCredentialClientListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialClientListResponse
-
-
-class AgentApiOutcomeOfCredentialClientReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialClientReadResponse
-
-
-class AgentApiOutcomeOfCredentialFlowStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialFlowStartResponse
-
-
-class AgentApiOutcomeOfCredentialFlowStatusResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialFlowStatusResponse
-
-
-class AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGitHubInstallationGrantResponse
-
-
-class AgentApiOutcomeOfCredentialGitHubInstallationListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGitHubInstallationListResponse
-
-
-class AgentApiOutcomeOfCredentialGrantImportResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGrantImportResponse
-
-
-class AgentApiOutcomeOfCredentialGrantLeaseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGrantLeaseResponse
-
-
-class AgentApiOutcomeOfCredentialGrantListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGrantListResponse
-
-
-class AgentApiOutcomeOfCredentialGrantPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGrantPutResponse
-
-
-class AgentApiOutcomeOfCredentialGrantReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGrantReadResponse
-
-
-class AgentApiOutcomeOfCredentialGrantRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialGrantRevokeResponse
-
-
-class AgentApiOutcomeOfCredentialProviderCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialProviderCreateResponse
-
-
-class AgentApiOutcomeOfCredentialProviderDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialProviderDeleteResponse
-
-
-class AgentApiOutcomeOfCredentialProviderListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialProviderListResponse
-
-
-class AgentApiOutcomeOfCredentialProviderPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialProviderPutResponse
-
-
-class AgentApiOutcomeOfCredentialProviderReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: CredentialProviderReadResponse
-
-
-class AgentApiOutcomeOfDeploymentChannelAccountListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentChannelAccountListResponse
-
-
-class AgentApiOutcomeOfDeploymentDeletedSessionsListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentDeletedSessionsListResponse
-
-
-class AgentApiOutcomeOfDeploymentDeletedUniversesListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentDeletedUniversesListResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderDeleteResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderListResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderPutResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderReadResponse
-
-
-class AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentProviderBindingDeleteResponse
-
-
-class AgentApiOutcomeOfDeploymentProviderBindingPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentProviderBindingPutResponse
-
-
-class AgentApiOutcomeOfDeploymentSessionPurgeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentSessionPurgeResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseCreateResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseDeleteResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseListResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentCloseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCloseResponse
-
-
-class AgentApiOutcomeOfEnvironmentCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentCredentialBindResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCredentialBindResponse
-
-
-class AgentApiOutcomeOfEnvironmentCredentialListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCredentialListResponse
-
-
-class AgentApiOutcomeOfEnvironmentCredentialUnbindResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCredentialUnbindResponse
-
-
-class AgentApiOutcomeOfEnvironmentExternalCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentExternalCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentIngressPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentIngressPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentJobCancelResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentJobCancelResponse
-
-
-class AgentApiOutcomeOfEnvironmentJobCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentJobCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentJobReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentJobReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentListResponse
-
-
-class AgentApiOutcomeOfEnvironmentPowerPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentPowerPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentProviderBindingListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentProviderBindingListResponse
-
-
-class AgentApiOutcomeOfEnvironmentProviderBindingReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentProviderBindingReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegisteredPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegisteredPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegisteredReleaseResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyListResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyRevokeResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyRotateResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyUpdateResponse
-
-
-class AgentApiOutcomeOfEnvironmentTemplateListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentTemplateListResponse
-
-
-class AgentApiOutcomeOfEnvironmentTemplateReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentTemplateReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentUpdateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentUpdateResponse
-
-
-class AgentApiOutcomeOfInitializeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: InitializeResponse
-
-
-class AgentApiOutcomeOfMcpServerAuthDiscoverResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerAuthDiscoverResponse
-
-
-class AgentApiOutcomeOfMcpServerDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerDeleteResponse
-
-
-class AgentApiOutcomeOfMcpServerListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerListResponse
-
-
-class AgentApiOutcomeOfMcpServerPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerPutResponse
-
-
-class AgentApiOutcomeOfMcpServerReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerReadResponse
-
-
-class AgentApiOutcomeOfMcpServerToolsDiscoverResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerToolsDiscoverResponse
-
-
-class AgentApiOutcomeOfModelDefaultsResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ModelDefaultsResponse
-
-
-class AgentApiOutcomeOfModelListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ModelListResponse
-
-
-class AgentApiOutcomeOfProfileApplyResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileApplyResponse
-
-
-class AgentApiOutcomeOfProfileCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileCreateResponse
-
-
-class AgentApiOutcomeOfProfileDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileDeleteResponse
-
-
-class AgentApiOutcomeOfProfileListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileListResponse
-
-
-class AgentApiOutcomeOfProfilePutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfilePutResponse
-
-
-class AgentApiOutcomeOfProfileReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileReadResponse
-
-
-class AgentApiOutcomeOfRunApprovalsDecideResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunApprovalsDecideResponse
-
-
-class AgentApiOutcomeOfRunCancelResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunCancelResponse
-
-
-class AgentApiOutcomeOfRunListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunListResponse
-
-
-class AgentApiOutcomeOfRunReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunReadResponse
-
-
-class AgentApiOutcomeOfRunStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunStartResponse
-
-
-class AgentApiOutcomeOfRunSteerResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunSteerResponse
-
-
-class AgentApiOutcomeOfSessionCloseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionCloseResponse
-
-
-class AgentApiOutcomeOfSessionConfigPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionConfigPutResponse
-
-
-class AgentApiOutcomeOfSessionDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionDeleteResponse
-
-
-class AgentApiOutcomeOfSessionEnvironmentActivateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionEnvironmentActivateResponse
-
-
-class AgentApiOutcomeOfSessionEnvironmentDeactivateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionEnvironmentDeactivateResponse
-
-
-class AgentApiOutcomeOfSessionEventsReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionEventsReadResponse
-
-
-class AgentApiOutcomeOfSessionListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionListResponse
-
-
-class AgentApiOutcomeOfSessionMetadataPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionMetadataPutResponse
-
-
-class AgentApiOutcomeOfSessionReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionReadResponse
-
-
-class AgentApiOutcomeOfSessionRenameResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionRenameResponse
-
-
-class AgentApiOutcomeOfSessionRestartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionRestartResponse
-
-
-class AgentApiOutcomeOfSessionRetentionPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionRetentionPutResponse
-
-
-class AgentApiOutcomeOfSessionShareResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionShareResponse
-
-
-class AgentApiOutcomeOfSessionStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionStartResponse
-
-
-class AgentApiOutcomeOfSkillListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SkillListResponse
-
-
-class AgentApiOutcomeOfTranscriptionResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: TranscriptionResponse
-
-
-class AgentApiOutcomeOfUniverseWatchResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: UniverseWatchResponse
-
-
-class AgentApiOutcomeOfVfsSnapshotCommitResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsSnapshotCommitResponse
-
-
-class AgentApiOutcomeOfVfsSnapshotReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsSnapshotReadResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceCreateResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceDeleteResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceListResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceReadResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceUpdateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceUpdateResponse

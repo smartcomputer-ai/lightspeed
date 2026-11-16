@@ -16,23 +16,29 @@ import type {
   SessionEventsReadResponse,
 } from "./generated/types.js";
 import type {
-  Method,
-  MethodParams,
-  MethodResult,
-} from "./generated/methods.js";
+  OperationId,
+  OperationParams,
+  OperationResult,
+} from "./generated/operations.js";
 import { LightspeedHelpers } from "./generated/helpers.js";
-import { METHOD_INFO } from "./generated/methods.js";
-import { LightspeedRpcError, LightspeedTransportError, type JsonRpcErrorPayload } from "./errors.js";
+import { OPERATION_INFO } from "./generated/operations.js";
+import { HTTP_OPERATIONS } from "./generated/http.js";
+import { prepareHttpRequest } from "./http-request.js";
+import type { HttpProblem } from "./generated/types.js";
+import { LightspeedApiError, LightspeedTransportError } from "./errors.js";
 
-export type RequestId = number | string;
 
 export interface CallOptions {
   headers?: HeadersInit;
   signal?: AbortSignal;
+  /** Raw bytes or stream for binary upload operations. */
+  body?: Uint8Array | ReadableStream<Uint8Array>;
+  /** Required for stream uploads; byte arrays determine their own length. */
+  contentLength?: number;
 }
 
 export interface LightspeedClientOptions {
-  /** The gateway's `/rpc` URL. */
+  /** The HTTP API base URL, ending in `/api/v1` for a direct runtime. */
   endpoint: string | URL;
   /** Sent as the bearer credential. Omit it only for a gateway in single mode. */
   token?: string;
@@ -47,11 +53,7 @@ export interface LightspeedClientOptions {
   actor?: string;
   fetch?: typeof fetch;
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
-  requestId?: () => RequestId;
 }
-
-/** A method's data, without the `AgentApiOutcome` envelope around it. */
-export type MethodData<M extends Method> = MethodResult<M>["result"];
 
 export type SessionEventType = SessionEventKindView["type"];
 
@@ -60,12 +62,6 @@ export type SessionEventKindOf<T extends SessionEventType> = Extract<
   SessionEventKindView,
   { type: T }
 >;
-
-interface JsonRpcResponse {
-  id?: RequestId;
-  result?: unknown;
-  error?: JsonRpcErrorPayload;
-}
 
 export interface WatchOptions extends CallOptions {
   /** Reconnect after stream completion or transient transport errors. Defaults to true. */
@@ -111,7 +107,7 @@ export interface AwaitRunResult {
   cursor: EventCursor | null;
 }
 
-const WATCH_METHODS: readonly string[] = METHOD_INFO["universe/watch"].notifications;
+const WATCH_EVENTS: readonly string[] = OPERATION_INFO["universe/watch"].notifications;
 
 const AWAIT_RUN_WAIT_MS = 30_000;
 const AWAIT_RUN_MIN_WAIT_MS = 1_000;
@@ -122,17 +118,14 @@ const AWAIT_RUN_READ_ATTEMPTS = 6;
 const AWAIT_RUN_RETRY_BASE_MS = 1_000;
 
 /**
- * A client for the Lightspeed API. `call` reaches every method and returns its
- * full envelope. Named helpers cover what most applications need, return just the
- * method's data, and take the IDs of their target as positional arguments.
+ * A client for the Lightspeed HTTP API. Calls and named helpers return direct DTOs.
+ * Named helpers take the IDs of their target as positional arguments.
  */
 export class LightspeedClient extends LightspeedHelpers {
   private readonly options: LightspeedClientOptions;
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly headers: LightspeedClientOptions["headers"];
-  private readonly requestId: (() => RequestId) | undefined;
-  private nextNumericRequestId = 1;
 
   constructor(endpoint: string | URL);
   constructor(options: LightspeedClientOptions);
@@ -148,7 +141,6 @@ export class LightspeedClient extends LightspeedHelpers {
     this.endpoint = resolved.endpoint.toString();
     this.fetchImpl = fetchImpl;
     this.headers = resolved.headers;
-    this.requestId = resolved.requestId;
   }
 
   /** A client like this one whose requests are attributed to `actor`. */
@@ -158,25 +150,18 @@ export class LightspeedClient extends LightspeedHelpers {
 
   /** Open one authenticated watch. Useful to proxy its body; cancel it on disconnect. */
   async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
-    const headers = await this.buildHeaders(options.headers);
-    headers.set("accept", "text/event-stream");
-    const { fetchImpl } = this;
-    let response: Response;
     const admission = new AbortController();
     const timer = setTimeout(() => admission.abort(), 15_000);
+    let response: Response;
     try {
-      response = await fetchImpl(this.endpoint, {
-        method: "POST", headers, body: JSON.stringify({ id: this.nextRequestId(), method: "universe/watch", params }),
+      response = await this.request("universe/watch", params, {
+        ...options,
         signal: options.signal ? AbortSignal.any([options.signal, admission.signal]) : admission.signal,
       });
-    } catch (error) {
-      options.signal?.throwIfAborted();
-      throw new LightspeedTransportError(`Watch connection failed: ${errorMessage(error)}`, { cause: error });
     } finally { clearTimeout(timer); }
-    if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
-      const body = await this.readBody(response, options.signal);
-      if (isRecord(body) && body.error) throw new LightspeedRpcError(body.error as JsonRpcErrorPayload);
-      throw new LightspeedTransportError("Watch response was not an event stream", { body });
+    if (!response.headers.get("content-type")?.startsWith("text/event-stream")) {
+      await response.body?.cancel();
+      throw new LightspeedTransportError("Watch response was not an event stream");
     }
     if (!response.body) throw new LightspeedTransportError("Watch response has no body");
     return response;
@@ -188,21 +173,20 @@ export class LightspeedClient extends LightspeedHelpers {
     while (!options.signal?.aborted) {
       try {
         const response = await this.openWatch(params, options);
-        for await (const data of readEventStream(response.body!)) {
-          let message: unknown;
-          try { message = JSON.parse(data); } catch { throw new LightspeedTransportError("Invalid watch JSON"); }
-          if (!isRecord(message)) throw new LightspeedTransportError("Invalid watch event");
-          if (message.error) throw new LightspeedRpcError(message.error as JsonRpcErrorPayload);
-          if ("result" in message) break;
-          if (typeof message.method !== "string" || !WATCH_METHODS.includes(message.method)) {
-            throw new LightspeedTransportError("Unknown watch notification", { body: message });
+        for await (const { event, data } of readEventStream(response.body!)) {
+          let params: unknown;
+          try { params = JSON.parse(data); } catch { throw new LightspeedTransportError("Invalid watch JSON"); }
+          if (!isRecord(params)) throw new LightspeedTransportError("Invalid watch event");
+          if (event === "watch/end") break;
+          if (!WATCH_EVENTS.includes(event)) {
+            throw new LightspeedTransportError("Unknown watch notification", { body: { event, params } });
           }
           attempts = 0;
-          yield message as unknown as AgentNotification;
+          yield { method: event, params } as AgentNotification;
         }
       } catch (error) {
         if (options.signal?.aborted) return;
-        if (error instanceof LightspeedRpcError || options.reconnect === false ||
+        if (error instanceof LightspeedApiError || options.reconnect === false ||
             (error instanceof LightspeedTransportError && !error.transient)) throw error;
       }
       if (options.reconnect === false) return;
@@ -211,56 +195,67 @@ export class LightspeedClient extends LightspeedHelpers {
     }
   }
 
-  async call<M extends Method>(
-    method: M,
-    params: MethodParams<M>,
+  async call<M extends OperationId>(
+    operation: M,
+    params: OperationParams<M>,
     options: CallOptions = {},
-  ): Promise<MethodResult<M>> {
-    if (METHOD_INFO[method].streaming) throw new LightspeedTransportError("Use watch() for universe/watch");
-    const id = this.nextRequestId();
-    const headers = await this.buildHeaders(options.headers);
-    if (METHOD_INFO[method].scope === "connection" || METHOD_INFO[method].scope === "deployment") {
-      headers.delete("x-lightspeed-universe");
+  ): Promise<OperationResult<M>> {
+    if (OPERATION_INFO[operation].streaming) throw new LightspeedTransportError("Use watch() for universe/watch");
+    const response = await this.request(operation, params, options);
+    if (HTTP_OPERATIONS[operation].transfer === "binaryDownload") {
+      try { return new Uint8Array(await response.arrayBuffer()) as OperationResult<M>; }
+      catch (cause) {
+        options.signal?.throwIfAborted();
+        throw new LightspeedTransportError("Download interrupted", { cause });
+      }
     }
-    const init: RequestInit = {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ id, method, params }),
-    };
-    if (options.signal) {
-      init.signal = options.signal;
-    }
+    return await this.readBody(response, options.signal) as OperationResult<M>;
+  }
 
+  /** Open a download without buffering it. The caller consumes or cancels its body. */
+  openDownload<M extends "blobs/read" | "vfs/workspaces/files/read">(
+    operation: M, params: OperationParams<M>, options: CallOptions = {},
+  ): Promise<Response> {
+    return this.request(operation, params, options);
+  }
+
+  /** Upload content-addressed bytes, checking the expected digest in the runtime. */
+  uploadBlob(blobRef: string, body: Uint8Array | ReadableStream<Uint8Array>, options: CallOptions = {}) {
+    return this.call("blobs/upload", { blobRef }, { ...options, body });
+  }
+
+  private async request<M extends OperationId>(operation: M, params: OperationParams<M>, options: CallOptions): Promise<Response> {
+    const request = prepareHttpRequest(operation, params, {
+      endpoint: this.endpoint, ...(this.options.universe === undefined ? {} : { universe: this.options.universe }),
+    });
+    const headers = await this.buildHeaders(options.headers);
+    const transfer = HTTP_OPERATIONS[operation].transfer;
+    headers.set("accept", transfer === "sse" ? "text/event-stream" : transfer === "binaryDownload" ? "application/octet-stream" : "application/json");
+    const init: RequestInit & { duplex?: "half" } = { method: request.method, headers };
+    if (options.signal) init.signal = options.signal;
+    if (transfer === "binaryUpload") {
+      const body = options.body;
+      if (!body) throw new TypeError("A binary upload requires body bytes or a stream");
+      const length = body instanceof Uint8Array ? body.byteLength : options.contentLength;
+      if (length === undefined || !Number.isSafeInteger(length) || length < 0) throw new TypeError("A binary upload requires a valid contentLength");
+      headers.set("content-type", "application/octet-stream");
+      headers.set("content-length", String(length));
+      init.body = body instanceof Uint8Array ? new Uint8Array(body) : body;
+      if (body instanceof ReadableStream) init.duplex = "half";
+    } else if (request.body !== undefined) {
+      headers.set("content-type", "application/json");
+        init.body = JSON.stringify(request.body);
+    }
     let response: Response;
     try {
-      // Called detached: browsers reject a fetch invoked as a method of another object.
       const { fetchImpl } = this;
-      response = await fetchImpl(this.endpoint, init);
-    } catch (error) {
+      response = await fetchImpl(request.url, init);
+    } catch (cause) {
       options.signal?.throwIfAborted();
-      throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(error)}`, {
-        cause: error,
-      });
+      throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(cause)}`, { cause });
     }
-
-    const body = await this.readBody(response, options.signal);
-    if (!isRecord(body)) {
-      throw new LightspeedTransportError("Lightspeed API response was not a JSON object", { body });
-    }
-
-    const rpcResponse = body as JsonRpcResponse;
-    if (rpcResponse.id !== undefined && rpcResponse.id !== id) {
-      throw new LightspeedTransportError("Lightspeed API response id did not match the request id", {
-        body,
-      });
-    }
-    if (rpcResponse.error) {
-      throw new LightspeedRpcError(rpcResponse.error);
-    }
-    if (!("result" in rpcResponse)) {
-      throw new LightspeedTransportError("Lightspeed API response was missing result", { body });
-    }
-    return rpcResponse.result as MethodResult<M>;
+    if (!response.ok) await this.readBody(response, options.signal);
+    return response;
   }
 
   /**
@@ -281,7 +276,7 @@ export class LightspeedClient extends LightspeedHelpers {
     if ("config" in options) {
       params.config = options.config ?? null;
     }
-    const { result } = await this.call("session/runs/start", params, callOptions(options));
+    const result = await this.call("session/runs/start", params, callOptions(options));
     return result;
   }
 
@@ -299,7 +294,7 @@ export class LightspeedClient extends LightspeedHelpers {
       submissionId:
         options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
     };
-    const { result } = await this.call("session/runs/steer", params, callOptions(options));
+    const result = await this.call("session/runs/steer", params, callOptions(options));
     return result;
   }
 
@@ -317,7 +312,7 @@ export class LightspeedClient extends LightspeedHelpers {
     if (options.waitMs !== undefined) {
       params.waitMs = options.waitMs;
     }
-    const { result } = await this.call("session/events/read", params, callOptions(options));
+    const result = await this.call("session/events/read", params, callOptions(options));
     return result;
   }
 
@@ -336,7 +331,7 @@ export class LightspeedClient extends LightspeedHelpers {
     const read = <T>(waited: number, request: (call: CallOptions) => Promise<T>) =>
       retryTransient(waited + AWAIT_RUN_REQUEST_GRACE_MS, options, request);
     const readRun = async (): Promise<RunView> => {
-      const { result } = await read(0, (call) =>
+      const result = await read(0, (call) =>
         this.call("session/runs/read", { sessionId, runId }, call),
       );
       return result.run;
@@ -381,7 +376,7 @@ export class LightspeedClient extends LightspeedHelpers {
       if (events.length === 0) {
         // An empty page says nothing about the run, and the terminal event may
         // be behind a caller's cursor, so ask for its state.
-        const { result } = await read(0, (call) =>
+        const result = await read(0, (call) =>
           this.call("session/read", { sessionId }, call),
         );
         const summary = result.session.runs?.find((run) => run.id === runId);
@@ -393,10 +388,9 @@ export class LightspeedClient extends LightspeedHelpers {
         }
         if (result.session.executionFailure) {
           const message = `session ${sessionId} execution has stopped (${result.session.executionFailure})`;
-          throw new LightspeedRpcError({
-            code: -32016,
-            message,
-            data: { kind: "sessionExecutionStopped", message },
+          throw new LightspeedApiError({
+            type: "about:blank", title: "Session execution stopped", status: 409,
+            detail: message, kind: "sessionExecutionStopped",
           });
         }
       }
@@ -406,8 +400,7 @@ export class LightspeedClient extends LightspeedHelpers {
 
   /** A blob's bytes. Refs come from run output, tool calls, and message entries. */
   async readBlobBytes(blobRef: string, options: CallOptions = {}): Promise<Uint8Array> {
-    const { result } = await this.call("blobs/read", { blobRef }, options);
-    return Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0));
+    return this.call("blobs/read", { blobRef }, options);
   }
 
   /**
@@ -425,7 +418,7 @@ export class LightspeedClient extends LightspeedHelpers {
     for (const byte of bytes) {
       binary += String.fromCharCode(byte);
     }
-    const { result } = await this.call(
+    const result = await this.call(
       "blobs/put",
       { blobs: [{ bytesBase64: btoa(binary) }] },
       options,
@@ -435,13 +428,6 @@ export class LightspeedClient extends LightspeedHelpers {
       throw new LightspeedTransportError("Lightspeed API stored no blob");
     }
     return stored.blobRef;
-  }
-
-  private nextRequestId(): RequestId {
-    if (this.requestId) {
-      return this.requestId();
-    }
-    return this.nextNumericRequestId++;
   }
 
   private async readBody(response: Response, signal: AbortSignal | undefined): Promise<unknown> {
@@ -465,17 +451,12 @@ export class LightspeedClient extends LightspeedHelpers {
       }
     }
     if (!response.ok) {
-      // The gateway refuses a request without a valid token before it reads the body, so its
-      // 401 answers no request id. It is still the server's own typed error.
-      const refusal = response.status === 401 ? rpcErrorOf(body) : undefined;
-      if (refusal) {
-        throw new LightspeedRpcError(refusal);
+      if (isRecord(body) && typeof body.kind === "string" && typeof body.detail === "string" &&
+          typeof body.title === "string" && typeof body.type === "string" && body.status === response.status) {
+        throw new LightspeedApiError(body as unknown as HttpProblem);
       }
-      // A proxy's error page is not JSON, and the status is what explains it.
-      const hint =
-        response.status === 404 ? `: check that ${this.endpoint} is the gateway's /rpc URL` : "";
       throw new LightspeedTransportError(
-        `Lightspeed API request failed with HTTP ${response.status}${hint}`,
+        `Lightspeed API request failed with HTTP ${response.status}`,
         { status: response.status, body },
       );
     }
@@ -490,13 +471,9 @@ export class LightspeedClient extends LightspeedHelpers {
 
   private async buildHeaders(callHeaders: HeadersInit | undefined): Promise<Headers> {
     const headers = new Headers();
-    headers.set("content-type", "application/json");
     headers.set("accept", "application/json");
     if (this.options.token !== undefined) {
       headers.set("authorization", `Bearer ${this.options.token}`);
-    }
-    if (this.options.universe !== undefined) {
-      headers.set("x-lightspeed-universe", this.options.universe);
     }
     if (this.options.actor !== undefined) {
       headers.set("x-lightspeed-actor", this.options.actor);
@@ -505,6 +482,7 @@ export class LightspeedClient extends LightspeedHelpers {
       typeof this.headers === "function" ? await this.headers() : this.headers;
     appendHeaders(headers, defaultHeaders);
     appendHeaders(headers, callHeaders);
+    if (headers.has("x-lightspeed-universe")) throw new TypeError("Select the universe with the client universe option");
     return headers;
   }
 }
@@ -614,17 +592,6 @@ function appendHeaders(headers: Headers, values: HeadersInit | undefined): void 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** The JSON-RPC error a response body carries, if it carries a well-formed one. */
-function rpcErrorOf(body: unknown): JsonRpcErrorPayload | undefined {
-  if (!isRecord(body) || !isRecord(body.error)) {
-    return undefined;
-  }
-  const { code, message } = body.error;
-  return typeof code === "number" && typeof message === "string"
-    ? (body.error as unknown as JsonRpcErrorPayload)
-    : undefined;
 }
 
 function errorMessage(error: unknown): string {

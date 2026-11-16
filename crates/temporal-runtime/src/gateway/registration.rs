@@ -999,7 +999,7 @@ fn counts_as_failure(error: &ProtocolError) -> bool {
     )
 }
 
-/// `GET /environment-gateway/connect`: the daemon's control connection.
+/// `GET /environments/connect`: the daemon's control connection.
 pub(super) async fn connect_upgrade(
     State(state): State<Arc<GatewayState>>,
     upgrade: WebSocketUpgrade,
@@ -2388,7 +2388,7 @@ mod tests {
     }
 
     fn origin() -> CanonicalOrigin {
-        canonical_origin("wss://gateway.example/environment-gateway/connect").unwrap()
+        canonical_origin("wss://gateway.example/environments/connect").unwrap()
     }
 
     fn register_signed(

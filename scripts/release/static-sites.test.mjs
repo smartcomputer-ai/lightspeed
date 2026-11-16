@@ -29,7 +29,7 @@ function fixture(t) {
   write('release/metadata.env', readFileSync(join(repository, 'release/metadata.env')));
   write('Cargo.lock', readFileSync(join(repository, 'Cargo.lock')));
   write('dist/release-manifest.json', JSON.stringify({ rustVersion: `rustc ${metadata.LIGHTSPEED_RELEASE_RUST_VERSION}` }));
-  for (const contract of ['api.schema.json', 'methods.json', 'openrpc.json', 'api-reference.md']) {
+  for (const contract of ['api.schema.json', 'http.json', 'openapi.json', 'api-reference.md']) {
     write(`dist/contracts/${contract}`, `fixture ${contract}`);
   }
   for (const component of ['runtime', 'provider-incus', 'cli', 'demo']) {
@@ -102,6 +102,18 @@ test('local docs archives may be unpublished, but published manifests require an
   f.env.LIGHTSPEED_ARTIFACT_URL_DOCS = `oci://${registry}/docs-bundle:latest`;
   f.create();
   assert.notEqual(f.verify('--published').status, 0);
+});
+
+test('release contract checksum covers HTTP routing and OpenAPI artifacts', (t) => {
+  const f = fixture(t);
+  f.create();
+  assert.equal(f.verify().status, 0);
+  for (const name of ['http.json', 'openapi.json']) {
+    f.write(`dist/contracts/${name}`, 'changed contract');
+    assert.notEqual(f.verify().status, 0);
+    f.write(`dist/contracts/${name}`, `fixture ${name}`);
+  }
+  assert.equal(f.verify().status, 0);
 });
 
 test('manifest verification rejects missing, misplaced, or corrupted documentation', (t) => {

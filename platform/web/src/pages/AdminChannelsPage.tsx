@@ -33,12 +33,12 @@ import { useUniverses } from "@/lib/universes";
 export function AdminChannelsPage() {
   const accounts = useQuery({
     queryKey: ["admin-channel-accounts"],
-    queryFn: () => api<DeploymentChannelAccountListResponse>("GET", "/api/v1/channel-accounts"),
+    queryFn: () => api<DeploymentChannelAccountListResponse>("GET", "/api/ui/channel-accounts"),
   });
   const universes = useUniverses();
   const status = useQuery({
     queryKey: ["channels-status"],
-    queryFn: () => api<ChannelsStatus>("GET", "/api/v1/status/channels"),
+    queryFn: () => api<ChannelsStatus>("GET", "/api/ui/status/channels"),
     refetchInterval: 10_000,
   });
   const universeByCoreId = useMemo(

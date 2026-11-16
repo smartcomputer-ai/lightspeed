@@ -1,5 +1,5 @@
-export { LightspeedRpcError, LightspeedTransportError, lightspeedRpcErrorKind } from "./errors.js";
-export type { LightspeedRpcErrorKind, JsonRpcErrorPayload } from "./errors.js";
+export { LightspeedApiError, LightspeedTransportError } from "./errors.js";
+export { prepareHttpRequest } from "./http-request.js";
 export {
   LightspeedClient,
   generateSubmissionId,
@@ -10,9 +10,7 @@ export type {
   AwaitRunResult,
   CallOptions,
   LightspeedClientOptions,
-  MethodData,
   ReadEventsOptions,
-  RequestId,
   SessionEventKindOf,
   SessionEventType,
   StartRunOptions,
@@ -26,17 +24,18 @@ export type { RunTimelineItem, RunTimelineTool } from "./run-timeline.js";
 export { transcriptAuthor, transcriptMetadata } from "./transcript-metadata.js";
 export type { TranscriptMessageAuthor, TranscriptMessageMetadata } from "./transcript-metadata.js";
 export {
-  METHODS,
-  METHOD_INFO,
+  OPERATIONS,
+  OPERATION_INFO,
   NOTIFICATIONS,
-} from "./generated/methods.js";
+} from "./generated/operations.js";
 export type {
-  Method,
-  MethodMap,
-  MethodParams,
-  MethodResult,
-  NotificationMethod,
-} from "./generated/methods.js";
+  OperationId,
+  OperationMap,
+  OperationParams,
+  OperationResult,
+  NotificationOperationId,
+} from "./generated/operations.js";
 export type * from "./generated/types.js";
 
 export { readEventStream } from "./event-stream.js";
+export type { ServerSentEvent } from "./event-stream.js";

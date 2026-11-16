@@ -5,16 +5,19 @@ import base64
 import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from itertools import count
+from contextlib import asynccontextmanager
+from copy import deepcopy
+from urllib.parse import quote, urlencode, urlsplit
 from types import TracebackType
 from typing import Any, Self, TypedDict, cast
 from uuid import uuid4
 
 import httpx
 
-from ._generated import METHOD_INFO, GeneratedClient
+from ._generated import OPERATION_INFO, GeneratedClient
+from ._http import HTTP_OPERATIONS
 from ._options import UNSET, HeaderProvider, HeadersInput, Unset
-from .errors import LightspeedRpcError, LightspeedTransportError
+from .errors import LightspeedApiError, LightspeedTransportError
 from .types import (
     AgentNotification,
     UniverseWatchParams,
@@ -32,7 +35,6 @@ from .types import (
     SessionEventView,
 )
 
-type RequestId = str | int
 type Callback[**P] = Callable[P, None | Awaitable[None]]
 
 TERMINAL_STATUSES = frozenset(("completed", "failed", "cancelled"))
@@ -65,13 +67,49 @@ def _input_items(value: str | list[InputItem]) -> list[InputItem]:
     return value
 
 
-def _is_rpc_error(value: Any) -> bool:
-    """Whether `value` is a JSON-RPC error object with an integer code and a message."""
-    return (
-        isinstance(value, dict)
-        and type(value.get("code")) is int
-        and isinstance(value.get("message"), str)
-    )
+def _prepare_request(operation: str, params: dict[str, Any], endpoint: str | httpx.URL, universe: str | None) -> tuple[str, str, dict[str, Any] | None]:
+    binding = HTTP_OPERATIONS[operation]
+    remaining = deepcopy(params)
+    path = binding["path"]
+    def segment(value: Any, name: str) -> str:
+        if type(value) is int:
+            return str(value)
+        if not isinstance(value, str) or not value or value in (".", ".."):
+            raise ValueError(f"{name} must be a nonempty path identifier")
+        return quote(value, safe="")
+    for field in binding["pathFields"]:
+        owner = remaining
+        parts = field["field"].split(".")
+        for part in parts[:-1]:
+            owner = owner.get(part, {})
+        value = owner.pop(parts[-1], None)
+        path = path.replace("{" + field["parameter"] + "}", segment(value, field["field"]))
+    if "{universe}" in path:
+        path = path.replace("{universe}", segment(universe, "universe"))
+    base = str(endpoint).rstrip("/")
+    if urlsplit(base).query or urlsplit(base).fragment:
+        raise ValueError("API endpoint must not contain a query or fragment")
+    query: list[tuple[str, str]] = []
+    for parameter in binding["parameters"]:
+        if parameter["in"] != "query":
+            continue
+        value = remaining.pop(parameter["name"], None)
+        if value is None:
+            continue
+        encoding = parameter.get("x-lightspeed-encoding")
+        if encoding == "repeated":
+            if not isinstance(value, list):
+                raise ValueError(f"{parameter['name']} must be an array")
+            query.extend((parameter["name"], str(item).lower() if isinstance(item, bool) else str(item)) for item in value)
+        elif encoding == "json":
+            query.append((parameter["name"], json.dumps(value, separators=(",", ":"), ensure_ascii=False)))
+        else:
+            query.append((parameter["name"], str(value).lower() if isinstance(value, bool) else str(value)))
+    body = None if binding["method"] in ("GET", "HEAD") or binding["transfer"] == "binaryUpload" else remaining
+    if body is None and remaining:
+        raise ValueError(f"Unexpected parameters for {operation}: {', '.join(remaining)}")
+    url = base + path.removeprefix("/api/v1")
+    return binding["method"], url + ("?" + urlencode(query) if query else ""), body
 
 
 async def _retry_read[T](read: Callable[[], Awaitable[T]], deadline: float) -> T:
@@ -98,15 +136,14 @@ async def _notify[**P](callback: Callback[P] | None, *args: P.args, **kwargs: P.
 class AsyncLightspeedClient(GeneratedClient):
     """A client for the Lightspeed API.
 
-    `call` reaches every method and returns its full outcome. Named helpers
-    cover what most applications need, return just the method's data, and take
+    `call` and named helpers return direct response DTOs. Helpers take
     the IDs of their target as positional arguments.
 
     Use it as an async context manager, or call `aclose` when done, to release
     its connections. An `http_client` you pass in stays yours to close.
 
     Args:
-        endpoint: The gateway's `/rpc` URL.
+        endpoint: The API base URL, ending in `/api/v1` for a direct runtime.
         token: Sent as the bearer credential. Omit it only for a gateway in
             single mode.
         universe: The universe a request addresses, as its UUID or its handle.
@@ -114,7 +151,6 @@ class AsyncLightspeedClient(GeneratedClient):
             always name an actor; attribution does not restrict access. See `with_actor`.
         headers: Extra headers, or a function returning them for each request,
             which may be async. These override the options above.
-        request_id: Supplies each request's JSON-RPC ID instead of a counter.
         http_client: An `httpx.AsyncClient` to send with, for custom
             transports, timeouts, or tests. Without one the client makes its
             own, with a 60 second timeout.
@@ -128,7 +164,6 @@ class AsyncLightspeedClient(GeneratedClient):
         universe: str | None = None,
         actor: str | None = None,
         headers: HeadersInput | HeaderProvider | None = None,
-        request_id: Callable[[], RequestId] | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._endpoint = endpoint
@@ -138,8 +173,6 @@ class AsyncLightspeedClient(GeneratedClient):
         self._headers = headers
         self._http_client = http_client if http_client is not None else httpx.AsyncClient(timeout=60.0)
         self._owns_client = http_client is None
-        ids = count(1)
-        self._request_id = request_id if request_id is not None else ids.__next__
 
     async def __aenter__(self) -> Self:
         return self
@@ -161,15 +194,13 @@ class AsyncLightspeedClient(GeneratedClient):
         """
         return AsyncLightspeedClient(
             self._endpoint, token=self._token, universe=self._universe, actor=actor,
-            headers=self._headers, request_id=self._request_id, http_client=self._http_client,
+            headers=self._headers, http_client=self._http_client,
         )
 
     async def _request_headers(self, headers: HeadersInput | None = None) -> httpx.Headers:
-        request_headers = httpx.Headers({"content-type": "application/json", "accept": "application/json"})
+        request_headers = httpx.Headers({"accept": "application/json"})
         if self._token is not None:
             request_headers["authorization"] = f"Bearer {self._token}"
-        if self._universe is not None:
-            request_headers["x-lightspeed-universe"] = self._universe
         if self._actor is not None:
             request_headers["x-lightspeed-actor"] = self._actor
         defaults = self._headers() if callable(self._headers) else self._headers
@@ -179,63 +210,83 @@ class AsyncLightspeedClient(GeneratedClient):
             request_headers.update(defaults)
         if headers is not None:
             request_headers.update(headers)
+        if "x-lightspeed-universe" in request_headers:
+            raise ValueError("Select the universe with the client universe option")
         return request_headers
 
-    async def _invoke(
-        self, method: str, params: dict[str, Any], headers: HeadersInput | None = None
-    ) -> dict[str, Any]:
-        if method not in METHOD_INFO:
-            raise ValueError(f"Unknown Lightspeed method {method!r}")
-        if METHOD_INFO[method]["streaming"]:
-            raise ValueError("Use watch() for universe/watch")
-        request_id = self._request_id()
+    async def _build_request(
+        self, operation: str, params: dict[str, Any], headers: HeadersInput | None = None,
+        body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None,
+    ) -> httpx.Request:
+        method, url, data = _prepare_request(operation, params, self._endpoint, self._universe)
         request_headers = await self._request_headers(headers)
-        try:
-            request = self._http_client.build_request(
-                "POST", self._endpoint, headers=request_headers,
-                json={"id": request_id, "method": method, "params": params},
-            )
-            if METHOD_INFO[method]["scope"] in ("connection", "deployment"):
-                request.headers.pop("x-lightspeed-universe", None)
-            response = await self._http_client.send(request)
-        except httpx.RequestError as error:
-            raise LightspeedTransportError(
-                f"Lightspeed API request failed: {error}", transient=True,
-            ) from error
-        except httpx.InvalidURL as error:
-            raise LightspeedTransportError(f"Invalid Lightspeed gateway URL {self._endpoint!s}") from error
+        transfer = HTTP_OPERATIONS[operation]["transfer"]
+        request_headers["accept"] = {"sse": "text/event-stream", "binaryDownload": "application/octet-stream"}.get(transfer, "application/json")
+        if transfer == "binaryUpload":
+            if body is None:
+                raise ValueError("A binary upload requires body bytes or a stream")
+            length = len(body) if isinstance(body, bytes) else content_length
+            if type(length) is not int or length < 0:
+                raise ValueError("A binary upload requires a valid content_length")
+            request_headers["content-type"] = "application/octet-stream"
+            request_headers["content-length"] = str(length)
+            return self._http_client.build_request(method, url, headers=request_headers, content=body)
+        return self._http_client.build_request(method, url, headers=request_headers, json=data)
 
+    @staticmethod
+    def _response_json(response: httpx.Response) -> Any:
         try:
             body = response.json() if response.content else None
         except ValueError as error:
             if response.is_success:
-                raise LightspeedTransportError(
-                    "Lightspeed API response was not valid JSON", status=response.status_code, body=response.text,
-                ) from error
+                raise LightspeedTransportError("Lightspeed API response was not valid JSON", status=response.status_code, body=response.text) from error
             body = response.text
         if not response.is_success:
-            # The gateway refuses a request without a valid key before it reads the body, so its
-            # 401 answers no request ID. It is still the server's own typed error.
-            if response.status_code == 401 and isinstance(body, dict) and _is_rpc_error(body.get("error")):
-                raise LightspeedRpcError(body["error"])
-            hint = f": check that {self._endpoint!s} is the gateway's /rpc URL" if response.status_code == 404 else ""
-            raise LightspeedTransportError(
-                f"Lightspeed API request failed with HTTP {response.status_code}{hint}",
-                status=response.status_code, body=body,
-            )
-        if not isinstance(body, dict):
-            raise LightspeedTransportError("Lightspeed API response was not a JSON object", body=body)
-        if "id" in body and (type(body["id"]) is not type(request_id) or body["id"] != request_id):
-            raise LightspeedTransportError("Lightspeed API response id did not match the request id", body=body)
-        rpc_error = body.get("error")
-        if rpc_error:
-            if not _is_rpc_error(rpc_error):
-                raise LightspeedTransportError("Lightspeed API response had an invalid error", body=body)
-            raise LightspeedRpcError(rpc_error)
-        result = body.get("result")
-        if not isinstance(result, dict):
-            raise LightspeedTransportError("Lightspeed API response was missing its outcome object", body=body)
-        return result
+            if (isinstance(body, dict) and body.get("status") == response.status_code
+                    and all(isinstance(body.get(key), str) for key in ("type", "title", "detail", "kind"))):
+                raise LightspeedApiError(body)
+            raise LightspeedTransportError(f"Lightspeed API request failed with HTTP {response.status_code}", status=response.status_code, body=body)
+        return body
+
+    async def _invoke(
+        self, method: str, params: dict[str, Any], headers: HeadersInput | None = None,
+        body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None,
+    ) -> Any:
+        if method not in OPERATION_INFO:
+            raise ValueError(f"Unknown Lightspeed operation {method!r}")
+        if OPERATION_INFO[method]["streaming"]:
+            raise ValueError("Use watch() for universe/watch")
+        try:
+            request = await self._build_request(method, params, headers, body, content_length)
+            response = await self._http_client.send(request)
+        except httpx.RequestError as error:
+            raise LightspeedTransportError(f"Lightspeed API request failed: {error}", transient=True) from error
+        if response.is_success and HTTP_OPERATIONS[method]["transfer"] == "binaryDownload":
+            return response.content
+        return self._response_json(response)
+
+    @asynccontextmanager
+    async def open_download(self, operation: str, params: dict[str, Any], *, headers: HeadersInput | None = None) -> AsyncIterator[httpx.Response]:
+        """Stream a binary response; the context manager always closes it."""
+        if HTTP_OPERATIONS[operation]["transfer"] != "binaryDownload":
+            raise ValueError("open_download requires a binary download operation")
+        response = None
+        try:
+            request = await self._build_request(operation, params, headers)
+            response = await self._http_client.send(request, stream=True)
+            if not response.is_success:
+                await response.aread()
+                self._response_json(response)
+            yield response
+        except httpx.RequestError as error:
+            raise LightspeedTransportError("Download interrupted", transient=True) from error
+        finally:
+            if response is not None:
+                await response.aclose()
+
+    async def upload_blob(self, blob_ref: str, body: bytes | AsyncIterator[bytes], *, content_length: int | None = None, headers: HeadersInput | None = None) -> Any:
+        """Upload bytes or a stream with a declared length to the expected digest."""
+        return await self.call("blobs/upload", {"blobRef": blob_ref}, body=body, content_length=content_length, headers=headers)
 
     async def watch(
         self, params: UniverseWatchParams | None = None, *,
@@ -248,24 +299,18 @@ class AsyncLightspeedClient(GeneratedClient):
         """
         attempts = 0
         while True:
-            request_id = self._request_id()
-            request_headers = await self._request_headers(headers)
-            request_headers["accept"] = "text/event-stream"
+            response = None
             try:
-                async with self._http_client.stream(
-                    "POST", self._endpoint, headers=request_headers,
-                    json={"id": request_id, "method": "universe/watch", "params": params or {}},
-                    timeout=httpx.Timeout(60.0, read=45.0),
-                ) as response:
-                    if not response.is_success or not response.headers.get("content-type", "").startswith("text/event-stream"):
-                        await response.aread()
-                        try:
-                            body = response.json()
-                        except ValueError:
-                            body = None
-                        if isinstance(body, dict) and _is_rpc_error(body.get("error")):
-                            raise LightspeedRpcError(body["error"])
-                        raise LightspeedTransportError("Watch response was not an event stream", status=response.status_code)
+                request = await self._build_request("universe/watch", dict(params or {}), headers)
+                request.extensions["timeout"] = {"connect": 15.0, "read": 45.0, "write": 15.0, "pool": 15.0}
+                response = await self._http_client.send(request, stream=True)
+                if not response.is_success:
+                    await response.aread()
+                    self._response_json(response)
+                if not response.headers.get("content-type", "").startswith("text/event-stream"):
+                    raise LightspeedTransportError("Watch response was not an event stream", status=response.status_code)
+                if response:
+                    event = "message"
                     data: list[str] = []
                     size = 0
                     async for line in response.aiter_lines():
@@ -280,16 +325,15 @@ class AsyncLightspeedClient(GeneratedClient):
                             size = 0
                             if not isinstance(message, dict):
                                 raise LightspeedTransportError("Invalid watch event")
-                            if _is_rpc_error(message.get("error")):
-                                raise LightspeedRpcError(message["error"])
-                            if "result" in message:
-                                if message.get("id") != request_id:
-                                    raise LightspeedTransportError("Watch response id did not match")
+                            if event == "watch/end":
                                 break
-                            if message.get("method") not in cast(list[str], METHOD_INFO["universe/watch"]["notifications"]):
+                            if event not in cast(list[str], OPERATION_INFO["universe/watch"]["notifications"]):
                                 raise LightspeedTransportError("Unknown watch notification")
                             attempts = 0
-                            yield cast(AgentNotification, message)
+                            yield cast(AgentNotification, {"method": event, "params": message})
+                            event = "message"
+                        elif line.startswith("event:"):
+                            event = line[6:].removeprefix(" ") or "message"
                         elif line == "data" or line.startswith("data:"):
                             field = line[5:] if line.startswith("data:") else ""
                             if field.startswith(" "):
@@ -304,6 +348,9 @@ class AsyncLightspeedClient(GeneratedClient):
             except LightspeedTransportError as error:
                 if not reconnect or not error.transient:
                     raise
+            finally:
+                if response is not None:
+                    await response.aclose()
             if not reconnect:
                 return
             await asyncio.sleep(min(30.0, 2.0 ** min(attempts, 5)))
@@ -331,7 +378,7 @@ class AsyncLightspeedClient(GeneratedClient):
         }
         if not isinstance(config, Unset):
             params["config"] = config
-        return (await self.call("session/runs/start", params, headers=headers))["result"]
+        return await self.call("session/runs/start", params, headers=headers)
 
     async def steer_run(
         self,
@@ -349,7 +396,7 @@ class AsyncLightspeedClient(GeneratedClient):
             "items": _input_items(input),
             "submissionId": generate_submission_id() if isinstance(submission_id, Unset) else submission_id,
         }
-        return (await self.call("session/runs/steer", params, headers=headers))["result"]
+        return await self.call("session/runs/steer", params, headers=headers)
 
     async def read_events(
         self,
@@ -375,7 +422,7 @@ class AsyncLightspeedClient(GeneratedClient):
             params["limit"] = limit
         if not isinstance(wait_ms, Unset):
             params["waitMs"] = wait_ms
-        return (await self.call("session/events/read", params, headers=headers))["result"]
+        return await self.call("session/events/read", params, headers=headers)
 
     async def await_run(
         self,
@@ -393,7 +440,7 @@ class AsyncLightspeedClient(GeneratedClient):
         """Wait until a run finishes and return it with the cursor reached.
 
         Repeats reads that fail on the network for about 30 seconds, and raises
-        `LightspeedRpcError` of kind `sessionExecutionStopped` when nothing can
+        `LightspeedApiError` of kind `sessionExecutionStopped` when nothing can
         finish the run. A run that has already finished returns at once,
         whatever the cursor.
 
@@ -466,16 +513,15 @@ class AsyncLightspeedClient(GeneratedClient):
                         return {"run": run, "cursor": cursor}
                 if failure := session.get("executionFailure"):
                     message = f"session {session_id} execution has stopped ({failure})"
-                    raise LightspeedRpcError({
-                        "code": -32016, "message": message,
-                        "data": {"kind": "sessionExecutionStopped", "message": message},
+                    raise LightspeedApiError({
+                        "type": "about:blank", "title": "Session execution stopped", "status": 409,
+                        "detail": message, "kind": "sessionExecutionStopped",
                     })
             current_wait_ms = wait_ms
 
     async def read_blob_bytes(self, blob_ref: str, *, headers: HeadersInput | None = None) -> bytes:
         """A blob's bytes. Refs come from run output, tool calls, and message entries."""
-        outcome = await self.call("blobs/read", {"blobRef": blob_ref}, headers=headers)
-        return base64.b64decode(outcome["result"]["bytesBase64"], validate=True)
+        return await self.call("blobs/read", {"blobRef": blob_ref}, headers=headers)
 
     async def read_blob_text(self, blob_ref: str, *, headers: HeadersInput | None = None) -> str:
         """A blob as text, raising `UnicodeDecodeError` if it is not valid UTF-8.
@@ -491,7 +537,7 @@ class AsyncLightspeedClient(GeneratedClient):
             data = data.encode("utf-8")
         params: BlobPutParams = {"blobs": [{"bytesBase64": base64.b64encode(data).decode("ascii")}]}
         outcome = await self.call("blobs/put", params, headers=headers)
-        blobs = outcome["result"].get("blobs", [])
+        blobs = outcome.get("blobs", [])
         if not blobs:
             raise LightspeedTransportError("Lightspeed API stored no blob")
         return blobs[0]["blobRef"]

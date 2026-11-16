@@ -1432,13 +1432,13 @@ mod tests {
     fn trigger_secrets_read_flat_and_omit_what_a_trigger_lacks() {
         let webhook = BotTriggerSecretsReadResponse {
             secrets: BotTriggerSecretsView {
-                ingest_path: Some("/hooks/bots/u/triage/github/tok".to_owned()),
+                ingest_path: Some("/ingress/webhooks/bots/u/triage/github/tok".to_owned()),
                 pairing_code: None,
             },
         };
         assert_eq!(
             serde_json::to_value(&webhook).unwrap(),
-            json!({ "ingestPath": "/hooks/bots/u/triage/github/tok" })
+            json!({ "ingestPath": "/ingress/webhooks/bots/u/triage/github/tok" })
         );
         let chat: BotTriggerSecretsReadResponse =
             serde_json::from_value(json!({ "pairingCode": "ABCDEFGH2345" })).unwrap();
@@ -1487,19 +1487,19 @@ mod tests {
         // A payload in the shape an earlier server sent decodes without the
         // two values, so no client keeps or echoes them through this type.
         let mut wire = serde_json::to_value(webhook_view()).unwrap();
-        wire["ingestPath"] = json!("/hooks/bots/u/triage/github/tok");
+        wire["ingestPath"] = json!("/ingress/webhooks/bots/u/triage/github/tok");
         wire["pairingCode"] = json!("ABCDEFGH2345");
         let view: BotTriggerView = serde_json::from_value(wire).unwrap();
         assert_eq!(view, webhook_view());
         let written = serde_json::to_string(&view).unwrap();
-        assert!(!written.contains("/hooks/"), "{written}");
+        assert!(!written.contains("/ingress/webhooks/"), "{written}");
         assert!(!written.contains("ABCDEFGH2345"), "{written}");
     }
 
     #[test]
     fn writes_answer_with_secrets_beside_the_view_and_omit_them_when_there_are_none() {
         let secrets = BotTriggerSecretsView {
-            ingest_path: Some("/hooks/bots/u/triage/github/tok".to_owned()),
+            ingest_path: Some("/ingress/webhooks/bots/u/triage/github/tok".to_owned()),
             pairing_code: None,
         };
         let put = serde_json::to_value(BotTriggerPutResponse {
@@ -1509,9 +1509,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             put["secrets"],
-            json!({ "ingestPath": "/hooks/bots/u/triage/github/tok" })
+            json!({ "ingestPath": "/ingress/webhooks/bots/u/triage/github/tok" })
         );
-        assert!(!put["trigger"].to_string().contains("/hooks/"), "{put}");
+        assert!(
+            !put["trigger"].to_string().contains("/ingress/webhooks/"),
+            "{put}"
+        );
         let bare = serde_json::to_value(BotTriggerPutResponse {
             trigger: webhook_view(),
             secrets: BotTriggerSecretsView::default(),
@@ -1539,10 +1542,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             created["triggerSecrets"],
-            json!({ "github": { "ingestPath": "/hooks/bots/u/triage/github/tok" } })
+            json!({ "github": { "ingestPath": "/ingress/webhooks/bots/u/triage/github/tok" } })
         );
         assert!(
-            !created["triggers"].to_string().contains("/hooks/"),
+            !created["triggers"]
+                .to_string()
+                .contains("/ingress/webhooks/"),
             "{created}"
         );
         created.as_object_mut().unwrap().remove("triggerSecrets");

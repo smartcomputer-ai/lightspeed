@@ -94,7 +94,7 @@ describe("chat trigger payload", () => {
       accountId: "acct-1",
       pairing: "code",
       pairingCode: "LeakedCode12",
-      ingestPath: "/hooks/bots/u/ada/telegram/token",
+      ingestPath: "/ingress/webhooks/bots/u/ada/telegram/token",
       enabled: true,
       createdAtMs: 0,
       updatedAtMs: 0,
@@ -102,7 +102,7 @@ describe("chat trigger payload", () => {
     const input = triggerInputOf(chat);
     expect(input).toMatchObject({ triggerId: "telegram", kind: "chat", accountId: "acct-1", pairing: "code" });
     expect(JSON.stringify(input)).not.toContain("LeakedCode12");
-    expect(JSON.stringify(input)).not.toContain("/hooks/");
+    expect(JSON.stringify(input)).not.toContain("/ingress/webhooks/");
   });
 
   it("lists allowed handles when turns are restricted", () => {
@@ -154,9 +154,9 @@ describe("trigger secrets", () => {
     const fetched = vi.fn(async (..._request: unknown[]) => new Response(null, { status: 202 }));
     vi.stubGlobal("fetch", fetched);
     vi.stubGlobal("window", { location: { origin: "https://platform.example" } });
-    await sendSampleWebhook({ preset: null }, "/hooks/bots/u/ada/github/token");
+    await sendSampleWebhook({ preset: null }, "/ingress/webhooks/bots/u/ada/github/token");
     expect(fetched).toHaveBeenCalledTimes(1);
-    expect(fetched.mock.calls[0]![0]).toBe("https://platform.example/hooks/bots/u/ada/github/token");
+    expect(fetched.mock.calls[0]![0]).toBe("https://platform.example/ingress/webhooks/bots/u/ada/github/token");
     for (const missing of [undefined, null, ""]) {
       await expect(sendSampleWebhook({ preset: null }, missing)).rejects.toThrow("no ingest URL");
     }

@@ -142,7 +142,7 @@ openssl rand -base64 32
 ```
 
 Generate three other secrets: one for Platform authentication, one for
-internal environment routing, and one for the Platform’s runtime RPC access.
+internal environment routing, and one for the Platform’s runtime HTTP access.
 Run this command once for each:
 
 ```bash
@@ -160,7 +160,7 @@ no `export` prefix and no shell quotes around values.
 ```dotenv
 LIGHTSPEED_POSTGRES_URL=<runtime-postgres-connection-url>
 LIGHTSPEED_AUTH_MODE=authenticated
-LIGHTSPEED_RPC_TOKEN_PLATFORM=<platform-runtime-token>
+LIGHTSPEED_API_TOKEN_PLATFORM=<platform-runtime-token>
 LIGHTSPEED_GATEWAY_BIND=0.0.0.0:18080
 LIGHTSPEED_PUBLIC_BIND=0.0.0.0:18082
 LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND=0.0.0.0:18083
@@ -208,8 +208,8 @@ and environment credentials. Prepare `platform.env` with:
 LIGHTSPEED_PLATFORM_DATABASE_URL=<platform-postgres-connection-url>
 LIGHTSPEED_PLATFORM_AUTH_SECRET=<platform-auth-secret>
 LIGHTSPEED_PLATFORM_BASE_URL=https://lightspeed.example.com
-LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/rpc
-LIGHTSPEED_PLATFORM_RPC_TOKEN=<platform-runtime-token>
+LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/api/v1
+LIGHTSPEED_PLATFORM_API_TOKEN=<platform-runtime-token>
 LIGHTSPEED_PLATFORM_ADMIN_EMAIL=<administrator-email>
 LIGHTSPEED_PLATFORM_ADMIN_PASSWORD=<strong-initial-password>
 PORT=3000
@@ -273,7 +273,7 @@ docker run -d --name lightspeed-runtime \
   "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID"
 ```
 
-The host mappings are loopback-only. The Platform reaches private RPC by
+The host mappings are loopback-only. The Platform reaches private HTTP API by
 container name on the Docker network. The host proxy reaches public callbacks
 at `127.0.0.1:18082` and daemon connections at `127.0.0.1:18083`. Docker's
 stop signal starts graceful shutdown; the timeout gives it time to finish.
@@ -316,19 +316,24 @@ the proxy runs on the application host.
 
 | Public path | Upstream | Purpose |
 | --- | --- | --- |
-| Exact `/credentials/callback` | `http://127.0.0.1:18082` | Runtime OAuth callback |
-| Exact `/credentials/client-metadata.json` | `http://127.0.0.1:18082` | Runtime OAuth client metadata |
-| Prefix `/hooks/bots/` | `http://127.0.0.1:18082` | Bot webhooks |
-| Exact `/environment-gateway/connect` | `http://127.0.0.1:18083` | Daemon control WebSocket |
-| Exact `/environment-gateway/data` | `http://127.0.0.1:18083` | Daemon data WebSocket |
-| `/rpc` and prefixes `/environment-gateway/routes/`, `/environment-gateway/peer/` | Reject at the public edge | Private runtime and worker APIs |
+| Exact `/ingress/credentials/callback` | `http://127.0.0.1:18082` | Runtime OAuth callback |
+| Exact `/ingress/credentials/client-metadata.json` | `http://127.0.0.1:18082` | Runtime OAuth client metadata |
+| Prefix `/ingress/webhooks/bots/` | `http://127.0.0.1:18082` | Bot webhooks |
+| Exact `/environments/connect` | `http://127.0.0.1:18083` | Daemon control WebSocket |
+| Exact `/environments/data` | `http://127.0.0.1:18083` | Daemon data WebSocket |
+| `/api/v1` and prefixes `/api/v1/`, `/environments/routes/`, `/environments/peer/` | Reject at the public runtime edge | Private runtime and worker APIs |
 | All remaining paths | `http://127.0.0.1:3000` | Platform, including `/app/`, `/api/auth/`, and `/api/v1/` |
+
+Configure OAuth redirect registrations, webhook senders and daemon connect
+URLs with the paths above. The previous callback, webhook and environment
+paths have no aliases or redirects. The `environment-gateway` role and its
+configuration variable names are unchanged.
 
 Allow WebSocket upgrades and long-lived connections on the two public daemon
 routes. Forward the original host and scheme through the proxy's forwarded
 headers, pass WebSocket ping frames through, accept messages of up to 16 MiB,
 and do not close a quiet connection sooner than 60 seconds. Match those two
-routes exactly; forwarding the entire `/environment-gateway/` prefix would
+routes exactly; forwarding the entire `/environments/` prefix would
 also expose internal worker routes. Daemons must dial these routes on the
 host of `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`, or on a URL listed in
 `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`: they sign that origin when they
@@ -337,7 +342,8 @@ bind with neither.
 
 The Platform checks login, membership, role, and session visibility before
 calling the runtime with its configured token, universe selector, and actor ID.
-Keep `/rpc` private so browser access passes through those checks. RPC, public
+Keep the runtime's `/api/v1` private so browser access
+passes through those checks. Application API, public
 callbacks, and environment traffic use separate listeners. Keep port `18080`
 private; publish only the callback and daemon routes listed above. Each
 listener has `/health` and `/ready` endpoints for operational checks.

@@ -84,7 +84,7 @@ function MemberList({ universeId, writable, configuration }: { universeId: strin
   const [editing, setEditing] = useState<Member | null>(null);
   const members = useQuery({
     queryKey: ["members", universeId],
-    queryFn: () => api<Member[]>("GET", `/api/v1/universes/${universeId}/members`),
+    queryFn: () => api<Member[]>("GET", `/api/ui/universes/${universeId}/members`),
   });
   const invalidate = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["members", universeId] }),
@@ -94,7 +94,7 @@ function MemberList({ universeId, writable, configuration }: { universeId: strin
 
   const remove = useMutation({
     mutationFn: (memberId: string) =>
-      api("DELETE", `/api/v1/universes/${universeId}/members/${memberId}`),
+      api("DELETE", `/api/ui/universes/${universeId}/members/${memberId}`),
     onSuccess: () => void invalidate(),
   });
 
@@ -225,7 +225,7 @@ function EditMemberRoleDialog({ universeId, member, onClose, onDone }: {
 }) {
   const [role, setRole] = useState<UniverseRole>(member.role);
   const edit = useMutation({
-    mutationFn: () => api("PATCH", `/api/v1/universes/${universeId}/members/${member.id}`, { role }),
+    mutationFn: () => api("PATCH", `/api/ui/universes/${universeId}/members/${member.id}`, { role }),
     onSuccess: async () => {
       onClose();
       await onDone();
@@ -280,18 +280,18 @@ function AddMemberDialog({
 
   const users = useQuery({
     queryKey: ["users"],
-    queryFn: () => api<PlatformUser[]>("GET", "/api/v1/users"),
+    queryFn: () => api<PlatformUser[]>("GET", "/api/ui/users"),
   });
   const members = useQuery({
     queryKey: ["members", universeId],
-    queryFn: () => api<Member[]>("GET", `/api/v1/universes/${universeId}/members`),
+    queryFn: () => api<Member[]>("GET", `/api/ui/universes/${universeId}/members`),
     enabled: open,
   });
   const candidates = (users.data ?? []).filter((user) => !members.data?.some((member) => member.userId === user.id));
 
   const add = useMutation({
     mutationFn: () =>
-      api("POST", `/api/v1/universes/${universeId}/members`, { userId, role }),
+      api("POST", `/api/ui/universes/${universeId}/members`, { userId, role }),
     onSuccess: () => {
       setUserId("");
       setError(null);

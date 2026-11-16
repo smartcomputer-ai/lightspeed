@@ -93,7 +93,7 @@ it("uploads attachments on pick and sends them with the message", async () => {
   const { onSend } = await setup({ runActive: false });
   await attach(png());
   await waitForUi(() => expect(uploads).toHaveLength(1));
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/u1/attachments", { bytesBase64: btoa("\0\0\0") }, expect.any(AbortSignal));
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/u1/attachments", { bytesBase64: btoa("\0\0\0") }, expect.any(AbortSignal));
   expect(container.textContent).toContain("Uploading…");
   await act(async () => uploads[0]!(`sha256:${"a".repeat(64)}`));
   expect(container.textContent).toContain("PNG · 3 B");

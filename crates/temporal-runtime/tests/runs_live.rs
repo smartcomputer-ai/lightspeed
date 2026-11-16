@@ -283,7 +283,6 @@ async fn run_control_api(
         let workspace = api
             .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
             .await?
-            .result
             .workspace;
         run_control_session_config(&model, &workspace.workspace_id)
     } else {
@@ -330,7 +329,6 @@ async fn run_cancel_mid_generation_live_client(
             run_id: run.id.clone(),
         })
         .await?
-        .result
         .run;
     assert!(
         matches!(
@@ -375,7 +373,6 @@ async fn run_cancel_mid_generation_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     assert!(
         events
@@ -428,7 +425,6 @@ async fn run_cancel_during_tool_batch_live_client(
             run_id: run.id.clone(),
         })
         .await?
-        .result
         .run;
     assert!(matches!(
         cancelled.status,
@@ -517,8 +513,7 @@ async fn run_steering_live_client(
                 text: "also mention the moon".to_owned(),
             }],
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(steered.steering_id, "steering_1");
     assert_eq!(steered.run.status, api::RunStatus::Running);
     // Admitted while the first generation was still in flight.
@@ -575,7 +570,6 @@ async fn run_oversized_text_live_client(
     let workspace = api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
         .await?
-        .result
         .workspace;
     let mut config = run_control_session_config(&model, &workspace.workspace_id);
     config.context = Some(api::ContextConfig {
@@ -684,8 +678,8 @@ async fn run_command_waits_live_client(
             }],
         })
     };
-    let first = steer("delivery-1", "also mention the moon").await?.result;
-    let retried = steer("delivery-1", "also mention the moon").await?.result;
+    let first = steer("delivery-1", "also mention the moon").await?;
+    let retried = steer("delivery-1", "also mention the moon").await?;
     assert_eq!(retried.steering_id, first.steering_id);
     let conflicting = steer("delivery-1", "something else")
         .await
@@ -745,8 +739,7 @@ async fn run_steering_final_turn_live_client(
                 text: "one more thing".to_owned(),
             }],
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(steered.run.status, api::RunStatus::Running);
 
     let terminal = wait_for_terminal_run_with_timeout(&api, &session_id, &run.id, 40).await?;
@@ -859,7 +852,6 @@ async fn run_queue_live_client(
             run_id: second.id.clone(),
         })
         .await?
-        .result
         .run;
     assert_eq!(cancelled_second.status, api::RunStatus::Cancelled);
     assert!(
@@ -876,7 +868,6 @@ async fn run_queue_live_client(
             run_id: first.id.clone(),
         })
         .await?
-        .result
         .run;
     assert!(matches!(
         cancelled_first.status,
@@ -959,7 +950,6 @@ async fn run_parallel_tool_batch_live_client(
     let workspace = api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
         .await?
-        .result
         .workspace;
     api.start_session(SessionStartParams {
         access: None,
@@ -988,7 +978,7 @@ async fn run_parallel_tool_batch_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     assert_eq!(run.status, api::RunStatus::Completed);
     assert!(
         final_assistant_text(&run).is_some_and(|text| text.contains("Fake agent completed run"))
@@ -1029,7 +1019,6 @@ async fn run_parallel_tool_batch_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     let mut completions = events
         .iter()
@@ -1110,7 +1099,7 @@ async fn run_transient_llm_retry_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &started.run.id).await?;
     assert_eq!(
         run.status,
         api::RunStatus::Completed,
@@ -1235,7 +1224,6 @@ async fn run_harness_refusal_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     let failure = events
         .iter()
@@ -1305,7 +1293,7 @@ async fn run_llm_retry_exhaustion_live_client(
             config: None,
         })
         .await?;
-    let first_run = wait_for_terminal_run(&api, &session_id, &first.result.run.id).await?;
+    let first_run = wait_for_terminal_run(&api, &session_id, &first.run.id).await?;
     assert_eq!(
         first_run.status,
         api::RunStatus::Failed,
@@ -1322,7 +1310,6 @@ async fn run_llm_retry_exhaustion_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     assert!(
         events.iter().any(|event| matches!(
@@ -1355,7 +1342,7 @@ async fn run_llm_retry_exhaustion_live_client(
             config: None,
         })
         .await?;
-    let second_run = wait_for_terminal_run(&api, &session_id, &second.result.run.id).await?;
+    let second_run = wait_for_terminal_run(&api, &session_id, &second.run.id).await?;
     assert_eq!(
         second_run.status,
         api::RunStatus::Completed,
@@ -1438,8 +1425,7 @@ async fn run_unbounded_hosted_run_live_client(
     // takes about 30 s on the local dev stack, right at the default
     // terminal-run budget. Wait with headroom: the test is about transition
     // count, not latency.
-    let run =
-        wait_for_terminal_run_with_timeout(&api, &session_id, &started.result.run.id, 120).await?;
+    let run = wait_for_terminal_run_with_timeout(&api, &session_id, &started.run.id, 120).await?;
     assert!(
         final_assistant_text(&run).is_some_and(|text| text.contains("Fake agent completed run"))
     );

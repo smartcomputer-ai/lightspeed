@@ -92,7 +92,7 @@ it("switches a feature from General settings, and holds a feature whose requirem
   const [bots] = [...container.querySelectorAll<HTMLElement>('[role="switch"]')];
   expect(container.textContent).toContain("Needs Bots.");
   await act(async () => bots!.click());
-  expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/universe", { features: { bots: true } });
+  expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/universe", { features: { bots: true } });
 });
 
 it("offers chat accounts as a bot trigger only while channels are on", async () => {

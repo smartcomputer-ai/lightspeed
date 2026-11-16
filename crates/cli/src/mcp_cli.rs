@@ -84,7 +84,7 @@ struct McpServerLoginArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerPutArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the stored server as JSON.
@@ -242,7 +242,7 @@ fn auth_policy_from_args(args: &McpServerPutArgs) -> Result<api::McpServerAuthPo
 
 #[derive(Args, Debug, Clone)]
 struct McpServerListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit servers as JSON.
@@ -255,7 +255,7 @@ struct McpServerListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerReadArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the server as JSON.
@@ -267,7 +267,7 @@ struct McpServerReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct McpServerDeleteArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the deleted server as JSON.
@@ -418,7 +418,6 @@ async fn replace_server_credential(
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .server;
     put_server_credential(&api, current, grant_id, json).await
 }
@@ -447,8 +446,7 @@ async fn put_server_credential(
             expected_revision: Some(current.revision),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
@@ -485,7 +483,6 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .server;
     if !matches!(
         &current.auth_policy,
@@ -502,8 +499,7 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
             audience: args.audience,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     eprintln!("Open this URL in your browser to authorize:");
     eprintln!("{}", started.authorize_url);
     eprintln!("flowId {}", started.flow_id);
@@ -515,8 +511,7 @@ async fn server_login(args: McpServerLoginArgs) -> Result<()> {
                 flow_id: started.flow_id.clone(),
             })
             .await
-            .map_err(crate::api_client::api_error)?
-            .result;
+            .map_err(crate::api_client::api_error)?;
         match response.flow.status {
             api::CredentialFlowStatus::Pending => continue,
             api::CredentialFlowStatus::Completed => {
@@ -573,8 +568,7 @@ async fn server_put(args: McpServerPutArgs) -> Result<()> {
             expected_revision: args.expected_revision,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -590,8 +584,7 @@ async fn server_list(args: McpServerListArgs) -> Result<()> {
             status: args.status.map(Into::into),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -616,8 +609,7 @@ async fn server_read(args: McpServerReadArgs) -> Result<()> {
             server_id: args.server_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -633,8 +625,7 @@ async fn server_delete(args: McpServerDeleteArgs) -> Result<()> {
             server_id: args.server_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -671,8 +662,7 @@ async fn server_tools(args: McpServerReadArgs) -> Result<()> {
                 server_id: args.server_id,
             },
         )
-        .await?
-        .result;
+        .await?;
     match &response {
         api::McpServerToolsDiscoverResponse::Success { tools } => {
             if args.json {

@@ -33,7 +33,7 @@ impl GatewayAgentApi {
         &self,
         workflow_id: &str,
         params: RunReadParams,
-    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
+    ) -> Result<RunReadResponse, AgentApiError> {
         if !workflow_id.starts_with(&format!("{}/chat-", self.universe_id())) {
             return Err(denied());
         }
@@ -91,7 +91,7 @@ impl GatewayAgentApi {
     pub(crate) async fn lease_bot_poll_grant(
         &self,
         params: CredentialGrantLeaseParams,
-    ) -> Result<AgentApiOutcome<CredentialGrantLeaseResponse>, AgentApiError> {
+    ) -> Result<CredentialGrantLeaseResponse, AgentApiError> {
         use ::bots::BotTriggerStore as _;
         let authority = CONTROLLER.try_with(Clone::clone).map_err(|_| denied())?;
         let ResourceRef::Bot(ref id) = authority.actor else {

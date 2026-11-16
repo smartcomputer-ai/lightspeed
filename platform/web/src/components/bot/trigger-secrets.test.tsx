@@ -10,7 +10,7 @@ vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")
 vi.mock("@/lib/universes", () => ({ useFeature: () => true }));
 
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef";
-const INGEST_PATH = `/hooks/bots/core-universe/ada/github/${TOKEN}`;
+const INGEST_PATH = `/ingress/webhooks/bots/core-universe/ada/github/${TOKEN}`;
 const PAIRING_CODE = "PairCode2345";
 const base = { botId: "ada", enabled: true, createdAtMs: 0, updatedAtMs: 0 };
 // The triggers as the list returns them: no ingest path, no pairing code.
@@ -95,8 +95,8 @@ it("reads the secrets of webhook and paired chat triggers for a member who manag
   // One read each for the two triggers that have a secret; none for an open
   // chat connection or a schedule.
   expect(secretReads().sort()).toEqual([
-    "/api/v1/universes/universe/bots/ada/triggers/github/secrets",
-    "/api/v1/universes/universe/bots/ada/triggers/telegram/secrets",
+    "/api/ui/universes/universe/bots/ada/triggers/github/secrets",
+    "/api/ui/universes/universe/bots/ada/triggers/telegram/secrets",
   ]);
   expect(container.textContent).toContain(`${window.location.origin}${INGEST_PATH}`);
   expect(container.textContent).toContain(PAIRING_CODE);

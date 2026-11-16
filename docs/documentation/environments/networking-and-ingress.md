@@ -75,8 +75,8 @@ through an HTTPS/WebSocket-capable proxy targeting the environment listener
 
 | Path | Purpose |
 | --- | --- |
-| `/environment-gateway/connect` | Long-lived daemon control connection and identity admission/reconnection. |
-| `/environment-gateway/data` | Additional outbound data sockets opened when the gateway requests a worker route. |
+| `/environments/connect` | Long-lived daemon control connection and identity admission/reconnection. |
+| `/environments/data` | Additional outbound data sockets opened when the gateway requests a worker route. |
 
 Use `wss://` for a remote gateway. The daemon accepts plain `ws://` only for
 loopback, unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` opts in for a
@@ -98,8 +98,8 @@ one-time pairing token. Publishing only the control path can therefore make
 the machine appear connected while its actual tool operations fail. Both
 paths need WebSocket upgrades and suitable long-lived-connection handling.
 
-The worker route under `/environment-gateway/routes/` and the replica routes
-under `/environment-gateway/peer/` are private, bearer-authenticated paths.
+The worker route under `/environments/routes/` and the replica routes
+under `/environments/peer/` are private, bearer-authenticated paths.
 Reject both prefixes at the public edge. Peers use `POST .../peer/streams`
 for stream setup and WebSocket `GET .../peer/data` for a dial-back relay.
 Pairing tokens authenticate the acceptor and expire quickly; only the acceptor
@@ -108,7 +108,7 @@ machines. The daemon registration flow supplies what those machines need.
 
 Follow [Bring your own compute](bring-your-own-compute.md) for the complete
 registration procedure. [Self-hosting](../deployment/self-hosting.md#configure-the-public-edge)
-shows how to publish the daemon routes while keeping the runtime RPC
+shows how to publish the daemon routes while keeping the runtime HTTP API
 listener private.
 
 ## Reach passive daemons and Incus guests

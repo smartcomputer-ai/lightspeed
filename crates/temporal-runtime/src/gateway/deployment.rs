@@ -6,17 +6,16 @@ use std::sync::Arc;
 use api::AccessScope;
 
 use api::{
-    AgentApiError, AgentApiOutcome, DeploymentApiService,
-    DeploymentEnvironmentProviderDeleteParams, DeploymentEnvironmentProviderDeleteResponse,
-    DeploymentEnvironmentProviderListParams, DeploymentEnvironmentProviderListResponse,
-    DeploymentEnvironmentProviderPutParams, DeploymentEnvironmentProviderPutResponse,
-    DeploymentEnvironmentProviderReadParams, DeploymentEnvironmentProviderReadResponse,
-    DeploymentProviderBindingDeleteParams, DeploymentProviderBindingDeleteResponse,
-    DeploymentProviderBindingPutParams, DeploymentProviderBindingPutResponse,
-    DeploymentUniverseCreateParams, DeploymentUniverseCreateResponse,
-    DeploymentUniverseDeleteParams, DeploymentUniverseDeleteResponse, DeploymentUniverseListParams,
-    DeploymentUniverseListResponse, DeploymentUniverseReadParams, DeploymentUniverseReadResponse,
-    DeploymentUniverseView,
+    AgentApiError, DeploymentApiService, DeploymentEnvironmentProviderDeleteParams,
+    DeploymentEnvironmentProviderDeleteResponse, DeploymentEnvironmentProviderListParams,
+    DeploymentEnvironmentProviderListResponse, DeploymentEnvironmentProviderPutParams,
+    DeploymentEnvironmentProviderPutResponse, DeploymentEnvironmentProviderReadParams,
+    DeploymentEnvironmentProviderReadResponse, DeploymentProviderBindingDeleteParams,
+    DeploymentProviderBindingDeleteResponse, DeploymentProviderBindingPutParams,
+    DeploymentProviderBindingPutResponse, DeploymentUniverseCreateParams,
+    DeploymentUniverseCreateResponse, DeploymentUniverseDeleteParams,
+    DeploymentUniverseDeleteResponse, DeploymentUniverseListParams, DeploymentUniverseListResponse,
+    DeploymentUniverseReadParams, DeploymentUniverseReadResponse, DeploymentUniverseView,
 };
 use async_trait::async_trait;
 use credentials::SecretValue;
@@ -85,7 +84,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_deleted_sessions(
         &self,
         params: api::DeploymentDeletedSessionsListParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentDeletedSessionsListResponse>, AgentApiError> {
+    ) -> Result<api::DeploymentDeletedSessionsListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let rows = self
@@ -107,12 +106,10 @@ impl DeploymentApiService for GatewayDeploymentApi {
                     },
                 )
                 .collect();
-            Ok(AgentApiOutcome::new(
-                api::DeploymentDeletedSessionsListResponse {
-                    sessions,
-                    next_after,
-                },
-            ))
+            Ok(api::DeploymentDeletedSessionsListResponse {
+                sessions,
+                next_after,
+            })
         })
         .await
     }
@@ -120,7 +117,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn purge_session(
         &self,
         params: api::DeploymentSessionPurgeParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentSessionPurgeResponse>, AgentApiError> {
+    ) -> Result<api::DeploymentSessionPurgeResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_PURGE, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             SessionId::try_new(&params.session_id)
@@ -139,9 +136,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                         AgentApiError::internal(error.to_string())
                     }
                 })?;
-            Ok(AgentApiOutcome::new(api::DeploymentSessionPurgeResponse {
+            Ok(api::DeploymentSessionPurgeResponse {
                 deleted_session_ids,
-            }))
+            })
         })
         .await
     }
@@ -149,7 +146,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_deployment_provider_bindings(
         &self,
         params: api::DeploymentUniverseReadParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentProviderBindingListResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentProviderBindingListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let bindings = self
@@ -163,9 +160,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .iter()
                 .map(super::service::environment_providers::environment_provider_binding_view)
                 .collect();
-            Ok(AgentApiOutcome::new(
-                api::EnvironmentProviderBindingListResponse { bindings },
-            ))
+            Ok(api::EnvironmentProviderBindingListResponse { bindings })
         })
         .await
     }
@@ -173,7 +168,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseCreateResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CREATE, async {
             let universe_id = parse_universe_id(&params.universe_id)?;
             if let Some(handle) = &params.handle {
@@ -189,10 +184,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
             let universe = self.read_universe_view(universe_id).await?.ok_or_else(|| {
                 AgentApiError::internal(format!("universe disappeared after create: {universe_id}"))
             })?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseCreateResponse {
-                universe,
-                created,
-            }))
+            Ok(DeploymentUniverseCreateResponse { universe, created })
         })
         .await
     }
@@ -200,7 +192,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderPutResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -274,11 +266,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .put_provider(request)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderPutResponse {
-                    provider: environment_provider_view(&provider),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderPutResponse {
+                provider: environment_provider_view(&provider),
+            })
         })
         .await
     }
@@ -286,18 +276,16 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_environment_providers(
         &self,
         _params: DeploymentEnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderListResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let providers = store
                 .list_providers()
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderListResponse {
-                    providers: providers.iter().map(environment_provider_view).collect(),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderListResponse {
+                providers: providers.iter().map(environment_provider_view).collect(),
+            })
         })
         .await
     }
@@ -305,7 +293,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn read_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderReadParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -313,11 +301,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .read_provider(&provider_id)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderReadResponse {
-                    provider: environment_provider_view(&provider),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderReadResponse {
+                provider: environment_provider_view(&provider),
+            })
         })
         .await
     }
@@ -325,7 +311,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn delete_environment_provider(
         &self,
         params: DeploymentEnvironmentProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderDeleteResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -333,11 +319,9 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .delete_provider(&provider_id)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentEnvironmentProviderDeleteResponse {
-                    provider: environment_provider_view(&provider),
-                },
-            ))
+            Ok(DeploymentEnvironmentProviderDeleteResponse {
+                provider: environment_provider_view(&provider),
+            })
         })
         .await
     }
@@ -345,7 +329,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_environment_provider_binding(
         &self,
         params: DeploymentProviderBindingPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
+    ) -> Result<DeploymentProviderBindingPutResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let store = self.runtime.stores().store_for(universe_id);
@@ -359,11 +343,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 })
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(DeploymentProviderBindingPutResponse {
+            Ok(DeploymentProviderBindingPutResponse {
                 binding: super::service::environment_providers::environment_provider_binding_view(
                     &binding,
                 ),
-            }))
+            })
         })
         .await
     }
@@ -371,7 +355,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn delete_environment_provider_binding(
         &self,
         params: DeploymentProviderBindingDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentProviderBindingDeleteResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE, async {
             let universe_id = self.resolve_universe(&params.universe).await?;
             let provider_id = parse_environment_provider_id(params.provider_id)?;
@@ -380,14 +364,11 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .delete_provider_binding(universe_id, &provider_id)
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
-            Ok(AgentApiOutcome::new(
-                DeploymentProviderBindingDeleteResponse {
-                    binding:
-                        super::service::environment_providers::environment_provider_binding_view(
-                            &binding,
-                        ),
-                },
-            ))
+            Ok(DeploymentProviderBindingDeleteResponse {
+                binding: super::service::environment_providers::environment_provider_binding_view(
+                    &binding,
+                ),
+            })
         })
         .await
     }
@@ -395,7 +376,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_universe_configuration(
         &self,
         params: api::DeploymentUniverseConfigurationPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT, async {
             params
                 .configuration
@@ -412,9 +393,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .read_universe_view(id)
                 .await?
                 .ok_or_else(|| AgentApiError::not_found("universe no longer exists"))?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-                universe,
-            }))
+            Ok(DeploymentUniverseReadResponse { universe })
         })
         .await
     }
@@ -422,7 +401,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn put_universe_handle(
         &self,
         params: api::DeploymentUniverseHandlePutParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT, async {
             validate_universe_handle(&params.handle)?;
             let id = self.resolve_universe(&params.universe).await?;
@@ -434,9 +413,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 return Err(unknown());
             }
             let universe = self.read_universe_view(id).await?.ok_or_else(unknown)?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-                universe,
-            }))
+            Ok(DeploymentUniverseReadResponse { universe })
         })
         .await
     }
@@ -444,14 +421,14 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_universes(
         &self,
         _params: DeploymentUniverseListParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseListResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_LIST, async {
             let universes = store_pg::list_universe_stats(self.pool())
                 .await
                 .map_err(map_store_error)?;
-            Ok(AgentApiOutcome::new(DeploymentUniverseListResponse {
+            Ok(DeploymentUniverseListResponse {
                 universes: universes.into_iter().map(universe_view).collect(),
-            }))
+            })
         })
         .await
     }
@@ -459,7 +436,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_deployment_channel_accounts(
         &self,
         params: api::DeploymentChannelAccountListParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentChannelAccountListResponse>, AgentApiError> {
+    ) -> Result<api::DeploymentChannelAccountListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST, async {
             let accounts = store_pg::list_channel_accounts_all(
                 self.pool(),
@@ -468,17 +445,15 @@ impl DeploymentApiService for GatewayDeploymentApi {
             )
             .await
             .map_err(map_store_error)?;
-            Ok(AgentApiOutcome::new(
-                api::DeploymentChannelAccountListResponse {
-                    accounts: accounts
-                        .into_iter()
-                        .map(|(universe_id, record)| api::DeploymentChannelAccountView {
-                            universe_id: universe_id.to_string(),
-                            account: record.view(),
-                        })
-                        .collect(),
-                },
-            ))
+            Ok(api::DeploymentChannelAccountListResponse {
+                accounts: accounts
+                    .into_iter()
+                    .map(|(universe_id, record)| api::DeploymentChannelAccountView {
+                        universe_id: universe_id.to_string(),
+                        account: record.view(),
+                    })
+                    .collect(),
+            })
         })
         .await
     }
@@ -486,7 +461,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn read_universe(
         &self,
         params: DeploymentUniverseReadParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_READ, async {
             let universe_id = match Uuid::parse_str(params.universe.trim()) {
                 Ok(id) => id,
@@ -506,9 +481,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                     )));
                 }
             };
-            Ok(AgentApiOutcome::new(DeploymentUniverseReadResponse {
-                universe,
-            }))
+            Ok(DeploymentUniverseReadResponse { universe })
         })
         .await
     }
@@ -516,7 +489,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn delete_universe(
         &self,
         params: DeploymentUniverseDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentUniverseDeleteResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETE, async {
             let universe_id = match Uuid::parse_str(params.universe.trim()) {
                 Ok(id) => id,
@@ -541,10 +514,10 @@ impl DeploymentApiService for GatewayDeploymentApi {
                     universe_id.to_string(),
                 ));
             self.runtime.evict(universe_id).await;
-            Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
+            Ok(DeploymentUniverseDeleteResponse {
                 universe_id: universe_id.to_string(),
                 state,
-            }))
+            })
         })
         .await
     }
@@ -552,7 +525,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
     async fn list_deleted_universes(
         &self,
         params: api::DeploymentDeletedUniversesListParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentDeletedUniversesListResponse>, AgentApiError> {
+    ) -> Result<api::DeploymentDeletedUniversesListResponse, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST, async {
             if let Some(cursor) = &params.after {
                 let valid = cursor.split_once(':').is_some_and(|(time, id)| {
@@ -566,7 +539,6 @@ impl DeploymentApiService for GatewayDeploymentApi {
             }
             store_pg::list_deleted_universes(self.pool(), params.after.as_deref())
                 .await
-                .map(AgentApiOutcome::new)
                 .map_err(map_store_error)
         })
         .await

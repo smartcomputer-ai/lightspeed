@@ -7,7 +7,7 @@ use std::{collections::BTreeSet, fmt, str::FromStr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
-    /// HTTP/JSON-RPC gateway, OAuth callbacks, and webhook hooks.
+    /// Resource HTTP gateway, OAuth callbacks, and webhook hooks.
     Gateway,
     /// The environment data plane: the public routes outbound daemons dial,
     /// the internal route workers use to reach environments, the lifecycle

@@ -2555,15 +2555,9 @@ async fn blob_api_helpers_put_get_and_check_many() {
         vec![true, false]
     );
 
-    let read = read_blob(
-        &store,
-        BlobReadParams {
-            blob_ref: put.blobs[1].blob_ref.clone(),
-        },
-    )
-    .await
-    .expect("read blob");
-    assert_eq!(read.bytes_base64, BASE64.encode(b"world"));
+    let reference = BlobRef::parse(&put.blobs[1].blob_ref).unwrap();
+    let read = store.read_bytes(&reference).await.expect("read blob");
+    assert_eq!(read, b"world");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2805,11 +2799,11 @@ fn mcp_oauth_client_drafts_require_an_audience() {
 fn oauth_redirect_uris_normalize_trailing_slashes() {
     assert_eq!(
         oauth_api::oauth_redirect_uri("http://127.0.0.1:18080"),
-        "http://127.0.0.1:18080/credentials/callback"
+        "http://127.0.0.1:18080/ingress/credentials/callback"
     );
     assert_eq!(
         oauth_api::oauth_redirect_uri("https://lightspeed.example.com/"),
-        "https://lightspeed.example.com/credentials/callback"
+        "https://lightspeed.example.com/ingress/credentials/callback"
     );
 }
 
@@ -2849,7 +2843,7 @@ fn cimd_config_requires_a_public_https_base_url() {
     let cimd = oauth_api::cimd_config("https://lightspeed.example.com/").expect("cimd config");
     assert_eq!(
         cimd.client_id_url,
-        "https://lightspeed.example.com/credentials/client-metadata.json"
+        "https://lightspeed.example.com/ingress/credentials/client-metadata.json"
     );
 }
 
@@ -2859,11 +2853,11 @@ fn cimd_documents_declare_a_public_pkce_client() {
 
     assert_eq!(
         document["client_id"],
-        "https://lightspeed.example.com/credentials/client-metadata.json"
+        "https://lightspeed.example.com/ingress/credentials/client-metadata.json"
     );
     assert_eq!(
         document["redirect_uris"][0],
-        "https://lightspeed.example.com/credentials/callback"
+        "https://lightspeed.example.com/ingress/credentials/callback"
     );
     assert_eq!(document["token_endpoint_auth_method"], "none");
     assert_eq!(document["grant_types"][0], "authorization_code");
@@ -2880,7 +2874,7 @@ fn credential_flow_views_carry_derived_status() {
         created_by: Attribution::Local,
         state_hash: credentials::state_hash("state-1"),
         pkce_verifier_secret: credentials::SecretId::new("authsec_pkce"),
-        redirect_uri: "http://127.0.0.1:18080/credentials/callback".to_owned(),
+        redirect_uri: "http://127.0.0.1:18080/ingress/credentials/callback".to_owned(),
         scopes: Vec::new(),
         audience: Some("https://crm.example.com/mcp".to_owned()),
         expected_issuer: None,

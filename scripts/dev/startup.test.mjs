@@ -18,7 +18,7 @@ for (const profile of ["full", "platform"]) {
       env: {
         ...process.env,
         LIGHTSPEED_CHANNELS_CONNECTORS: "",
-        LIGHTSPEED_API_URL: "http://127.0.0.1:28080/runtime/rpc",
+        LIGHTSPEED_API_URL: "http://127.0.0.1:28080/runtime/api/v1",
         LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080",
         LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT: "28081",
         LIGHTSPEED_AUTH_MODE: "authenticated",
@@ -146,7 +146,7 @@ test("full profile never launches Configurator or connectors with runtime author
 });
 
 for (const profile of ["runtime", "full"]) {
-  test(`${profile} preflights and waits for private RPC, public callbacks, and environment routes separately`, () => {
+  test(`${profile} preflights and waits for private HTTP API, public callbacks, and environment routes separately`, () => {
     const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
       cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080", LIGHTSPEED_PUBLIC_BIND: "127.0.0.1:28082", LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: "127.0.0.1:28083" },
     });

@@ -1,7 +1,7 @@
 # Lightspeed Configurator MCP
 
 Streamable HTTP MCP facade over a configurable generated subset of the
-universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
+universe-scoped Lightspeed HTTP contract. Tools are generated from
 `crates/api/contract`; deployment-level `deployment/*` methods can never be
 exposed.
 
@@ -16,11 +16,11 @@ for development and trusted operator use.
 `tool-filter.json` contains the exact universe methods and params omitted from
 generation. The default surface excludes the `integration` param of `session/start`,
 environment jobs, environment registration keys, and the redundant Lightspeed
-handshake.
+connection probe and binary upload operation.
 Edit that file and run `npm run generate` to tune the advertised surface.
-Each authenticated request exposes that generated tool set. Method-family
+Each authenticated request exposes that generated tool set. Operation-family
 classification is descriptive and grants no restriction on a runtime token.
-Tool descriptions come from the canonical Rust method manifest and focus on
+Tool descriptions come from the canonical Rust operation catalog and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.
 
@@ -38,7 +38,7 @@ The default endpoints are:
 
 - MCP: `http://127.0.0.1:18081/mcp`
 - health: `http://127.0.0.1:18081/health`
-- upstream JSON-RPC: `http://127.0.0.1:18080/rpc`
+- upstream HTTP API: `http://127.0.0.1:18080/api/v1`
 
 Configuration:
 
@@ -51,7 +51,7 @@ is kept here for service-local convenience.
 | `LIGHTSPEED_AUTH_MODE` | `single` | `single` or `authenticated`; must match the upstream gateway |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST` | `127.0.0.1` | HTTP bind host |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | HTTP bind port |
-| `LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL` | `http://127.0.0.1:18080/rpc` | Lightspeed JSON-RPC endpoint |
+| `LIGHTSPEED_CONFIGURATOR_MCP_API_URL` | `http://127.0.0.1:18080/api/v1` | Lightspeed HTTP API base |
 | `LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_HOSTS` | loopback hosts | Comma-separated Host allow-list; required for non-loopback binds |
 | `LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_ORIGINS` | none | Comma-separated browser Origin allow-list |
 | `LIGHTSPEED_CONFIGURATOR_MCP_MAX_BODY_BYTES` | `67108864` | Maximum MCP JSON request size |
@@ -60,7 +60,8 @@ is kept here for service-local convenience.
 
 Authenticated operator requests send `Authorization: Bearer <runtime-token>`
 and `x-lightspeed-universe` for tool calls. Configurator verifies the token
-with the runtime before handling each MCP request. The optional actor header
+with the runtime before handling each MCP request. The MCP universe header
+selects the runtime resource URL; it is never forwarded as a runtime header. The optional actor header
 supplies attribution only. All configured runtime tokens have full authority;
 there are no per-token method groups or universe scopes.
 

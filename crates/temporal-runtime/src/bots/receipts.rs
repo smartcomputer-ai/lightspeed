@@ -303,7 +303,7 @@ pub async fn publish_directory(
         })
         .await
         .map_err(|error| activity_error("publish bot directory", error))?;
-    check_context_append(&response.result)?;
+    check_context_append(&response)?;
     Ok(BotPublishDirectoryResult {
         entries: u32::try_from(entries.len()).unwrap_or(u32::MAX),
     })

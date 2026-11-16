@@ -72,18 +72,10 @@ impl ResolvedConnection {
         ) {
             return Ok(headers);
         }
-        if let Some(caller) = &self.caller {
-            if caller.single {
-                return Ok(headers);
-            }
-            if self.universe.is_none() {
-                bail!(
-                    "select a universe with `lightspeed universe use <uuid-or-handle>` or --universe"
-                );
-            }
-        }
-        if let Some(universe) = &self.universe {
-            headers.insert("x-lightspeed-universe", HeaderValue::from_str(universe)?);
+        if self.universe.is_none() {
+            bail!(
+                "select a universe with `lightspeed universe use <uuid-or-handle>` or --universe"
+            );
         }
         Ok(headers)
     }
@@ -145,8 +137,8 @@ pub async fn universe_status(connection: &ResolvedConnection) -> Result<Universe
         .await;
     match response {
         Ok(response) => {
-            status.universe_id = Some(response.result.universe.universe_id);
-            status.handle = Some(response.result.universe.handle);
+            status.universe_id = Some(response.universe.universe_id);
+            status.handle = Some(response.universe.handle);
         }
         Err(error) => status.unavailable_reason = Some(error.to_string()),
     }
@@ -265,7 +257,10 @@ fn endpoint(url: &str) -> Result<String> {
     {
         bail!("runtime URL must not contain credentials, query parameters or a fragment");
     }
-    Ok(parsed.to_string())
+    if !parsed.path().trim_end_matches('/').ends_with("/api/v1") {
+        bail!("runtime URL must end in /api/v1");
+    }
+    Ok(parsed.to_string().trim_end_matches('/').to_owned())
 }
 
 fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnection> {
@@ -290,12 +285,17 @@ fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnect
 
 pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnection> {
     let client = HttpAgentApi::with_connection(connection.clone());
-    let response: api::InitializeResponse = client
-        .request_connection(api::METHOD_INITIALIZE, api::InitializeParams::default())
-        .await?
-        .result;
+    let response: api::ConnectionResponse = client
+        .request_connection(api::METHOD_INITIALIZE, serde_json::json!({}))
+        .await?;
+    if response.contract_revision != api::HTTP_CONTRACT_REVISION {
+        bail!("runtime HTTP contract revision is incompatible with this CLI");
+    }
     if response.caller.single != connection.secret.is_none() {
         bail!("runtime authentication does not match the configured connection");
+    }
+    if connection.universe.is_none() {
+        connection.universe = response.default_universe;
     }
     connection.caller = Some(response.caller);
     Ok(connection)
@@ -323,8 +323,7 @@ pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -
         format!(
             "cannot resolve universe {selected} to save it; use its UUID, or pass --universe {selected} on each command if the runtime is unavailable"
         )
-    })?
-    .result;
+    })?;
     Ok(response.universe.universe_id)
 }
 
@@ -358,7 +357,7 @@ pub async fn resolve(
     };
     let target = url.or(env_url.as_deref()).filter(|s| !s.is_empty());
     let explicit_secret = if name.is_none() || url.is_some() {
-        std::env::var("LIGHTSPEED_RPC_TOKEN")
+        std::env::var("LIGHTSPEED_API_TOKEN")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .map(nonempty_secret)
@@ -741,14 +740,14 @@ mod tests {
     fn saved_files_are_private_and_metadata_has_no_secret() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("credentials/key");
-        private_write(&file, b"lsk_private_fixture").unwrap();
-        assert_eq!(read_secret(&file).unwrap(), "lsk_private_fixture");
+        private_write(&file, b"lsr_private_fixture").unwrap();
+        assert_eq!(read_secret(&file).unwrap(), "lsr_private_fixture");
         let config = Connections {
             selected: Some("test".into()),
             connections: BTreeMap::from([(
                 "test".into(),
                 SavedConnection {
-                    endpoint: "http://localhost/rpc".into(),
+                    endpoint: "http://localhost/api/v1".into(),
                     single: false,
                     credential_file: Some(file),
                     owned_credential: true,
@@ -760,7 +759,7 @@ mod tests {
         assert!(
             !std::fs::read_to_string(dir.path().join("connections.json"))
                 .unwrap()
-                .contains("lsk_private_fixture")
+                .contains("lsr_private_fixture")
         );
         assert_eq!(
             load_at(dir.path()).unwrap().selected.as_deref(),
@@ -770,16 +769,16 @@ mod tests {
     #[test]
     fn endpoint_validation_prevents_credential_urls_and_remote_plaintext() {
         for url in [
-            "http://remote.example/rpc",
-            "https://key@example.org/rpc",
-            "https://example.org/rpc?secret=x",
+            "http://remote.example/api/v1",
+            "https://key@example.org/api/v1",
+            "https://example.org/api/v1?secret=x",
         ] {
             assert!(endpoint(url).is_err());
         }
         for url in [
-            "https://remote.example/rpc",
-            "http://127.0.0.1:18080/rpc",
-            "http://[::1]/rpc",
+            "https://remote.example/api/v1",
+            "http://127.0.0.1:18080/api/v1",
+            "http://[::1]/api/v1",
         ] {
             assert!(endpoint(url).is_ok(), "{url}");
         }
@@ -789,7 +788,7 @@ mod tests {
     fn direct_tokens_select_universes_only_for_universe_methods() {
         let mut connection = ResolvedConnection {
             name: None,
-            endpoint: "http://localhost/rpc".into(),
+            endpoint: "http://localhost/api/v1".into(),
             secret: Some("lsr_fixture".into()),
             universe: Some("team".into()),
             caller: Some(CallerAccess {
@@ -798,7 +797,7 @@ mod tests {
             }),
         };
         let headers = connection.headers("session/list").unwrap();
-        assert_eq!(headers["x-lightspeed-universe"], "team");
+        assert!(!headers.contains_key("x-lightspeed-universe"));
         assert_eq!(headers["authorization"], "Bearer lsr_fixture");
         for method in ["initialize", "deployment/universes/list"] {
             assert!(
@@ -815,6 +814,8 @@ mod tests {
             single: true,
             token_name: None,
         });
+        assert!(connection.headers("session/list").is_err());
+        connection.universe = Some("local".into());
         assert!(connection.headers("session/list").unwrap().is_empty());
     }
 }

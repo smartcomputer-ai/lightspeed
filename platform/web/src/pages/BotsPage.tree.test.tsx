@@ -106,14 +106,14 @@ it("opens the selected bot one level down and reads no other bot's conversations
   expect(caret("beta's")!.getAttribute("aria-expanded")).toBe("false");
   expect(caret("gamma's")).toBeUndefined();
   expect(caret("delta's")).toBeUndefined();
-  expect(new Set(stateReads())).toEqual(new Set(["/api/v1/universes/universe/bots/alpha/state"]));
+  expect(new Set(stateReads())).toEqual(new Set(["/api/ui/universes/universe/bots/alpha/state"]));
 });
 
 it("reads another bot's conversations only once its row is opened", async () => {
   await show("/u/universe/bots/alpha");
   await act(async () => caret("beta's")!.click());
   for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-  expect(stateReads()).toContain("/api/v1/universes/universe/bots/beta/state");
+  expect(stateReads()).toContain("/api/ui/universes/universe/bots/beta/state");
   expect(titles()).toContain("beta/chat/beta-thread");
 
   // Closed again, it is no longer refreshed.

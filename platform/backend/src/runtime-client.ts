@@ -1,10 +1,10 @@
 import {
   LightspeedClient,
-  LightspeedRpcError,
+  LightspeedApiError,
   type CallOptions,
-  type Method,
-  type MethodParams,
-  type MethodResult,
+  type OperationId,
+  type OperationParams,
+  type OperationResult,
   type UniverseWatchParams,
   type WatchKind,
 } from "@lightspeed-ai/sdk";
@@ -20,7 +20,7 @@ import {
   type UniverseRole,
 } from "@lightspeed-ai/platform-shared";
 import type { ServerEnv } from "./env.js";
-import { METHOD_ROLES, SESSION_TARGET_METHODS } from "./routes/method-roles.js";
+import { METHOD_ROLES, SESSION_TARGET_OPERATIONS } from "./routes/method-roles.js";
 
 export class GatewayUnconfigured extends Error {
   constructor() { super("runtime endpoint and Platform runtime token required"); }
@@ -39,9 +39,9 @@ export interface Member {
 }
 
 /// Methods only a session's creator, or an admin, may call.
-const CREATOR_METHODS: ReadonlySet<string> = new Set(["session/share"]);
+const CREATOR_OPERATIONS: ReadonlySet<string> = new Set(["session/share"]);
 /// Methods that may name a session that does not exist yet.
-const CREATION_METHODS: ReadonlySet<string> = new Set(["session/start"]);
+const CREATION_OPERATIONS: ReadonlySet<string> = new Set(["session/start"]);
 
 /// Deployment methods, with the Platform's runtime token and no universe or
 /// actor. Callers check that the user is a platform admin.
@@ -69,26 +69,23 @@ export function memberClient(
   env: ServerEnv,
   universe: { lightspeedUniverseId: string; gatewayUrl?: string | null; features?: unknown },
   member: Member,
-): LightspeedClient {
+): MemberClient {
   return new MemberClient(
-    clientOptions(env, universe.gatewayUrl, {
-      "x-lightspeed-universe": universe.lightspeedUniverseId,
-      "x-lightspeed-actor": member.userId,
-    }),
+    { ...clientOptions(env, universe.gatewayUrl, {"x-lightspeed-actor": member.userId}), universe: universe.lightspeedUniverseId },
     member,
     effectiveFeatures(universe.features),
   );
 }
 
-function clientOptions(env: ServerEnv, endpoint: string | null | undefined, headers: Record<string, string>) {
-  if (!env.lightspeedApiUrl || !env.lightspeedRpcToken) throw new GatewayUnconfigured();
+export function clientOptions(env: ServerEnv, endpoint: string | null | undefined, headers: Record<string, string>) {
+  if (!env.lightspeedApiUrl || !env.lightspeedApiToken) throw new GatewayUnconfigured();
   // The token only ever goes to the configured runtime.
   const resolved = new URL(endpoint ?? env.lightspeedApiUrl);
   if (resolved.href !== new URL(env.lightspeedApiUrl).href || resolved.username || resolved.password) throw new GatewayUnconfigured();
   return {
     endpoint: resolved.href,
     fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => globalThis.fetch(input, { ...init, redirect: "error" }),
-    headers: { authorization: `Bearer ${env.lightspeedRpcToken}`, ...headers },
+    headers: { authorization: `Bearer ${env.lightspeedApiToken}`, ...headers },
   };
 }
 
@@ -97,7 +94,7 @@ function clientOptions(env: ServerEnv, endpoint: string | null | undefined, head
 /// role; a session a method names is shared with the universe or was created
 /// by the member (creator-only methods need the creator), unless the member
 /// is an admin; a member's session list is narrowed to what they may see.
-class MemberClient extends LightspeedClient {
+export class MemberClient extends LightspeedClient {
   constructor(
     options: ConstructorParameters<typeof LightspeedClient>[0],
     private readonly member: Member,
@@ -106,18 +103,37 @@ class MemberClient extends LightspeedClient {
     super(options);
   }
 
-  override async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
+  authorizeWatch(params: UniverseWatchParams = {}): UniverseWatchParams {
     if (!roleAtLeast(this.member.role, "viewer")) throw new GateRefusal(403, "viewer role required");
     const requested = params.kinds ?? ["session", "bot", "environment", "workspace"];
     const kinds: WatchKind[] = requested.filter(kind => kind !== "bot" || this.features.bots);
     if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
-    return super.openWatch({
+    return {
       kinds,
       ...(this.member.role === "admin" ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.member.userId }),
-    }, options);
+    };
   }
 
-  override async call<M extends Method>(method: M, params: MethodParams<M>, options: CallOptions = {}): Promise<MethodResult<M>> {
+  override async openWatch(params: UniverseWatchParams = {}, options: CallOptions = {}): Promise<Response> {
+    return super.openWatch(this.authorizeWatch(params), options);
+  }
+
+  needsPolicyBody(operation: string): boolean {
+    return (operation === "session/start" && this.member.role !== "admin")
+      || (operation === "session/runs/start" && !roleAtLeast(this.member.role, "operator"));
+  }
+
+  override async openDownload(operation: "blobs/read" | "vfs/workspaces/files/read", params: OperationParams<typeof operation>, options: CallOptions = {}): Promise<Response> {
+    await this.authorizeOperation(operation, params as unknown as Record<string, unknown>, options);
+    return super.openDownload(operation, params, options);
+  }
+
+  override async call<M extends OperationId>(method: M, params: OperationParams<M>, options: CallOptions = {}): Promise<OperationResult<M>> {
+    const authorized = await this.authorizeOperation(method, params as unknown as Record<string, unknown>, options);
+    return authorized.response !== undefined ? authorized.response as OperationResult<M> : super.call(method, authorized.params as OperationParams<M>, options);
+  }
+
+  async authorizeOperation(method: string, params: Record<string, unknown>, options: CallOptions = {}): Promise<{ params: Record<string, unknown>; response?: OperationResult<"transcriptions/read"> }> {
     const required = METHOD_ROLES[method];
     if (!required) throw new GateRefusal(403, `${method} is not a member method`);
     const feature = featureOfMethod(method);
@@ -125,55 +141,55 @@ class MemberClient extends LightspeedClient {
     if (off) throw off;
     if (!roleAtLeast(this.member.role, required)) throw new GateRefusal(403, `${required} role required`);
     if (!roleAtLeast(this.member.role, "operator")) {
-      if (method === "session/start") requirePreparedSession(params as MethodParams<"session/start">);
-      if (method === "session/runs/start" && (params as MethodParams<"session/runs/start">).config != null) {
+      if (method === "session/start") requirePreparedSession(params as unknown as OperationParams<"session/start">);
+      if (method === "session/runs/start" && (params as unknown as OperationParams<"session/runs/start">).config != null) {
         throw new GateRefusal(403, "operator role required for run configuration overrides");
       }
     }
     // Draft transcriptions belong only to their creator, including for admins.
     if (method === "transcriptions/read" || method === "transcriptions/cancel") {
-      const transcriptionId = (params as MethodParams<"transcriptions/read">).transcriptionId;
+      const transcriptionId = (params as unknown as OperationParams<"transcriptions/read">).transcriptionId;
       const response = await super.call("transcriptions/read", { transcriptionId }, options);
-      const creator = response.result.transcription.createdBy;
+      const creator = response.transcription.createdBy;
       if (creator?.kind !== "actor" || creator.id !== this.member.userId) {
         throw new GateRefusal(403, "transcription belongs to another actor");
       }
-      if (method === "transcriptions/read") return response as MethodResult<M>;
+      if (method === "transcriptions/read") return { params, response };
     }
     const admin = this.member.role === "admin";
     if (method === "session/delete") {
       // Permanent deletion must use the separately authorized, audited purge route.
-      params = { ...params, softDelete: true, ...(!admin ? { sharedOnly: true } : {}) } as MethodParams<M>;
+      params = { ...params, softDelete: true, ...(!admin ? { sharedOnly: true } : {}) };
     }
-    if (!admin && CREATION_METHODS.has(method)) {
+    if (!admin && CREATION_OPERATIONS.has(method)) {
       const start = params as { deleteAfterCloseMs?: number | null };
       if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "admin role required for deletion retention");
       // Explicit null also overrides profile-derived deletion schedules.
-      params = { ...params, deleteAfterCloseMs: null } as MethodParams<M>;
+      params = { ...params, deleteAfterCloseMs: null };
     }
-    if (!admin && SESSION_TARGET_METHODS.has(method)) {
+    if (!admin && SESSION_TARGET_OPERATIONS.has(method)) {
       await this.requireSession(method, (params as { sessionId?: string }).sessionId);
     }
     if (!admin && method === "session/list") {
-      params = { ...params, visibleTo: this.member.userId } as MethodParams<M>;
+      params = { ...params, visibleTo: this.member.userId };
     }
-    return super.call(method, params, options);
+    return { params };
   }
 
   private async requireSession(method: string, sessionId: string | undefined): Promise<void> {
     if (!sessionId) {
-      if (CREATION_METHODS.has(method)) return;
+      if (CREATION_OPERATIONS.has(method)) return;
       throw new GateRefusal(404, "session not found");
     }
     let access;
     try {
-      access = (await super.call("session/read", { sessionId, runLimit: 1 })).result.session.access;
+      access = (await super.call("session/read", { sessionId, runLimit: 1 })).session.access;
     } catch (error) {
-      if (error instanceof LightspeedRpcError && error.kind === "notFound" && CREATION_METHODS.has(method)) return;
+      if (error instanceof LightspeedApiError && error.kind === "notFound" && CREATION_OPERATIONS.has(method)) return;
       throw error;
     }
     const creator = access.createdBy?.kind === "actor" && access.createdBy.id === this.member.userId;
-    const visible = CREATOR_METHODS.has(method) ? creator : creator || access.visibility === "universe";
+    const visible = CREATOR_OPERATIONS.has(method) ? creator : creator || access.visibility === "universe";
     if (!visible) throw new GateRefusal(404, "session not found");
     if (method === "session/delete" && !canDeleteSession(this.member.role, access.visibility === "universe")) {
       throw new GateRefusal(403, "operators may only delete shared sessions");
@@ -185,7 +201,7 @@ class MemberClient extends LightspeedClient {
 }
 
 /** Contributors choose a saved profile or the universe defaults, without overrides. */
-function requirePreparedSession(params: MethodParams<"session/start">): void {
+function requirePreparedSession(params: OperationParams<"session/start">): void {
   if (params.integration !== undefined) {
     throw new GateRefusal(403, "operator role required to create integrated sessions");
   }

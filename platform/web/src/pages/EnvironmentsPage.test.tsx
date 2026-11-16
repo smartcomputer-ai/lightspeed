@@ -153,7 +153,7 @@ it("shows one sorted semantic inventory with source-specific signals and lazy mo
   expect(table.textContent).toContain("Last seen");
   expect(table.textContent).toContain("key-id");
   expect(table.textContent).toContain("ws://example.test/");
-  expect(listReads()).toEqual(["/api/v1/universes/universe/environments"]);
+  expect(listReads()).toEqual(["/api/ui/universes/universe/environments"]);
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/credentials"))).toBe(false);
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/environment-registration-keys"))).toBe(false);
   expect(dialog()).toBeNull();
@@ -166,7 +166,7 @@ it("shows one sorted semantic inventory with source-specific signals and lazy mo
   expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
   expect(table.textContent).not.toContain("Secret environment variables");
   expect(mocks.api.mock.calls.filter(([, path]) => path.endsWith("/credentials")).map(([, path]) => path)).toEqual([
-    "/api/v1/universes/universe/environments/Runner/credentials",
+    "/api/ui/universes/universe/environments/Runner/credentials",
   ]);
   expect(dialog().textContent).not.toContain("Close environment");
   await closeDetails();
@@ -262,7 +262,7 @@ it("hides closed environments until asked and then shows why they closed", async
   expect(container.querySelector("table")).toBeNull();
   await act(async () => container.querySelector<HTMLButtonElement>('[role="switch"]')!.click());
   await settle();
-  expect(listReads()).toContain("/api/v1/universes/universe/environments?includeClosed=true");
+  expect(listReads()).toContain("/api/ui/universes/universe/environments?includeClosed=true");
   const table = container.querySelector("table")!;
   expect(table.textContent).toContain("Runner");
   expect(table.textContent).toContain("Closed when its registration key was revoked");
@@ -372,7 +372,7 @@ it("releases the daemon of a declared environment after confirmation", async () 
   expect(confirm.textContent).toContain("disconnected");
   rows = [declared, registered];
   await click(buttonIn(confirm, "Release daemon"));
-  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environments/Declared%20box/release"]]);
+  expect(writes()).toEqual([["POST", "/api/ui/universes/universe/environments/Declared%20box/release"]]);
   expect(dialogTitled("Release the daemon of Declared box?")).toBeUndefined();
   expect(dialog().textContent).toContain("None bound");
   expect(buttonLabels()).not.toContain("Release daemon");
@@ -399,7 +399,7 @@ it("keeps a key's declared-only policy when another field is edited", async () =
   expect(dialogTitled("Edit “Build machines”").textContent).toContain("Only admit declared environments");
   await type("registration-key-name", "Build fleet");
   await click(buttonIn(dialogTitled("Edit “Build machines”"), "Save"));
-  expect(writes()).toEqual([["PUT", "/api/v1/universes/universe/environment-registration-keys/key-id", {
+  expect(writes()).toEqual([["PUT", "/api/ui/universes/universe/environment-registration-keys/key-id", {
     displayName: "Build fleet", offlineCloseAfterMs: 600_000, declaredOnly: true,
   }]]);
 
@@ -408,7 +408,7 @@ it("keeps a key's declared-only policy when another field is edited", async () =
   await click(declaredOnly());
   expect(declaredOnly().getAttribute("aria-checked")).toBe("false");
   await click(buttonIn(dialogTitled("Edit “Build machines”"), "Save"));
-  expect(writes()).toEqual([["PUT", "/api/v1/universes/universe/environment-registration-keys/key-id", {
+  expect(writes()).toEqual([["PUT", "/api/ui/universes/universe/environment-registration-keys/key-id", {
     displayName: "Build machines", offlineCloseAfterMs: 600_000,
   }]]);
 });
@@ -431,7 +431,7 @@ it("mints a registration key under a chosen id, and reopens the id field when th
   const taken = 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another';
   mocks.api.mockRejectedValueOnce(new ApiError(409, { error: taken }));
   await click(buttonIn(mint(), "Mint key"));
-  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environment-registration-keys", {
+  expect(writes()).toEqual([["POST", "/api/ui/universes/universe/environment-registration-keys", {
     identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci",
   }]]);
   expect(mint().textContent).toContain(taken);
@@ -442,7 +442,7 @@ it("mints a registration key under a chosen id, and reopens the id field when th
   expect(mint().textContent).not.toContain(taken);
   mocks.api.mockResolvedValueOnce({ registrationKey: { ...registrationKey, displayName: "CI runners" }, secret: "lsrk_secret" });
   await click(buttonIn(mint(), "Mint key"));
-  expect(writes().at(-1)).toEqual(["POST", "/api/v1/universes/universe/environment-registration-keys", {
+  expect(writes().at(-1)).toEqual(["POST", "/api/ui/universes/universe/environment-registration-keys", {
     identityMode: "persistent", displayName: "CI runners",
   }]);
   expect((document.getElementById("registration-key-secret") as HTMLInputElement).value).toBe("lsrk_secret");
@@ -467,7 +467,7 @@ it("declares an environment under a persistent key", async () => {
   await type("declared-environment-name", " build-02 ");
   expect(buttonIn(declare, "Declare").disabled).toBe(false);
   await click(buttonIn(declare, "Declare"));
-  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environments/registered", {
+  expect(writes()).toEqual([["POST", "/api/ui/universes/universe/environments/registered", {
     environmentId: "build-box-02", registrationKeyId: "key-id", name: "build-02",
   }]]);
   expect(dialogTitled("Declare an environment under “Build machines”")).toBeUndefined();

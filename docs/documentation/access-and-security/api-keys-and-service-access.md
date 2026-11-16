@@ -16,21 +16,21 @@ untrusted applications or agents.
 
 | Mode | Behavior |
 | --- | --- |
-| `authenticated` | Requires at least one configured RPC token. Invalid credentials receive HTTP 401 before the request body is read. |
+| `authenticated` | Requires at least one configured API token. Invalid credentials receive HTTP 401 before the request body is read. |
 | `single` | Unauthenticated local development, using `LIGHTSPEED_PG_UNIVERSE_ID`. Credential, universe and actor headers are rejected. |
 
 The runtime binds separate listeners:
 
 | Listener | Default | Routes |
 | --- | --- | --- |
-| Private RPC | `127.0.0.1:18080` (`LIGHTSPEED_GATEWAY_BIND`) | `/rpc` |
-| Public callbacks and webhooks | `127.0.0.1:18082` (`LIGHTSPEED_PUBLIC_BIND`) | `/credentials/callback`, `/credentials/client-metadata.json`, `/hooks/bots/…` |
+| Private application API | `127.0.0.1:18080` (`LIGHTSPEED_GATEWAY_BIND`) | `/api/v1/...` |
+| Public callbacks and webhooks | `127.0.0.1:18082` (`LIGHTSPEED_PUBLIC_BIND`) | `/ingress/credentials/callback`, `/ingress/credentials/client-metadata.json`, `/ingress/webhooks/bots/…` |
 | Environment gateway | `127.0.0.1:18083` (`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`) | Daemon connections, worker routes, replica peers |
 
 Each serves `/health` and `/ready`. The `gateway` role starts the first two;
 `environment-gateway` starts the third. Bind addresses must be distinct, with
 fixed nonzero ports. Network rules should admit only trusted components and
-operators to RPC. Publish callbacks and webhooks using `LIGHTSPEED_PUBLIC_BASE_URL`.
+operators to the application API. Publish callbacks and webhooks using `LIGHTSPEED_PUBLIC_BASE_URL`.
 Daemon origins use `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` and optional
 `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`; keep worker and peer routes private.
 
@@ -40,15 +40,15 @@ Use an inline secret or a mounted file:
 
 ```text
 LIGHTSPEED_AUTH_MODE=authenticated
-LIGHTSPEED_RPC_TOKEN_FILE=/run/secrets/runtime-token
+LIGHTSPEED_API_TOKEN_FILE=/run/secrets/runtime-token
 ```
 
 The plain token is named `default`. Optional names distinguish components in
 attribution without changing their authority:
 
 ```text
-LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE=/run/secrets/platform-token
-LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE=/run/secrets/operator-token
+LIGHTSPEED_API_TOKEN_PLATFORM_FILE=/run/secrets/platform-token
+LIGHTSPEED_API_TOKEN_OPERATOR_FILE=/run/secrets/operator-token
 ```
 
 A suffix becomes a lower-case token name. Secrets must contain at least 32
@@ -70,15 +70,16 @@ put them in its workspace, or send them to a browser.
 Authenticated requests send:
 
 - `Authorization: Bearer <token>`.
-- `x-lightspeed-universe`, as a UUID or handle, for universe and service methods.
-  Omit it for deployment methods and `initialize`.
+- A universe UUID or handle in `/api/v1/universes/{universe}/...` for
+  universe resources. The HTTP API rejects `x-lightspeed-universe`.
 - Optional `x-lightspeed-actor`, an opaque identifier recorded as the actor.
   Any configured token may name an actor; it grants no permissions.
 
 Records use `{"kind":"actor","id":"alice"}` when an actor was supplied,
 otherwise `{"kind":"token","name":"platform"}`. Local and internal
-controller attribution remain distinct. `initialize` reports `single` and,
-for authenticated calls, `tokenName`.
+controller attribution remain distinct. `GET /api/v1/connection` reports
+runtime identity, contract revision, `single` and, for authenticated calls,
+`tokenName`. Single mode also returns `defaultUniverse` for URL selection.
 
 A universe selects a data partition. It does not restrict the token to that
 partition. Session list and watch visibility filters are parameters a trusted
@@ -88,8 +89,8 @@ provided, with a separate total limit.
 
 ## Connect the Platform
 
-Set `LIGHTSPEED_API_URL` to the runtime `/rpc` endpoint. The backend reads
-`LIGHTSPEED_PLATFORM_RPC_TOKEN` or `LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`; its
+Set `LIGHTSPEED_API_URL` to the runtime `/api/v1` base URL. The backend reads
+`LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`; its
 secret must match one configured on the runtime. The browser never receives
 this token. The Platform supplies the universe and signed-in actor after its
 role and visibility checks, including creator-only transcription reads and

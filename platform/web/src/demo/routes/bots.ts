@@ -919,7 +919,7 @@ function normalizeTrigger(
           ? (verification as unknown as Extract<BotTriggerView, { kind: "webhook" }>["verification"])
           : { scheme: "token" },
         preset: body.preset === "github" ? "github" : null,
-        ingestPath: `/hooks/bots/${universe.universe.lightspeedUniverseId}/${record.bot.botId}/${triggerId}/${token}`,
+        ingestPath: `/ingress/webhooks/bots/${universe.universe.lightspeedUniverseId}/${record.bot.botId}/${triggerId}/${token}`,
       } as StoredBotTrigger;
     }
     case "poll": {
@@ -1462,7 +1462,7 @@ function universeByAnyId(store: DemoStore, id: string): UniverseState | null {
   return store.universe(id);
 }
 
-/// Public ingress: `POST /hooks/bots/{universe}/{bot}/{trigger}/{token}`,
+/// Public ingress: `POST /ingress/webhooks/bots/{universe}/{bot}/{trigger}/{token}`,
 /// authenticated by the per-trigger URL token alone. A wrong token is
 /// indistinguishable from an unknown endpoint, like the core's route.
 export function hookRoutes(store: DemoStore): Hono {

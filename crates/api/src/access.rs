@@ -341,7 +341,7 @@ pub struct ResourceAccessSummary {
     pub created_by: Option<Attribution>,
 }
 
-/// What a public method does, independent of its RPC spelling. This classifies
+/// What a public method does, independent of its operation ID. This classifies
 /// the runtime's own work and the role an external gate should require.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -439,7 +439,10 @@ pub enum MethodTarget {
 
 /// Find the declared requirement. Unknown methods never inherit a default.
 pub fn method_access(method: &str) -> Option<MethodAccess> {
-    crate::rpc::universe_method_access(method)
+    if method == crate::METHOD_BLOBS_UPLOAD {
+        return Some(MethodAccess::Universe(UniverseAction::UseResource));
+    }
+    crate::operations::universe_method_access(method)
         .or_else(|| crate::deployment::deployment_method_access(method))
 }
 

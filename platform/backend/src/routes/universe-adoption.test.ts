@@ -1,3 +1,4 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import { schema } from "@lightspeed-ai/platform-db";
@@ -12,15 +13,15 @@ function fixture({ role = "admin", exists = true, handle = "runtime-handle", con
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   const writes: { table: unknown; values: Record<string, unknown> }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    calls.push(rpc);
-    const error = !exists ? { code: -32004, message: "not found" }
-      : conflict && rpc.method !== "deployment/universes/read" ? { code: -32009, message: "handle conflict" } : null;
-    if (error) return Response.json({ id: rpc.id, error });
-    return Response.json({ id: rpc.id, result: { result: { universe: {
-      universeId: rpc.params.universeId ?? rpc.params.universe,
-      handle: returnedHandle ?? (rpc.method === "deployment/universes/read" ? handle : rpc.params.handle),
-    } }, notifications: [] } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    calls.push({ method: request.method, params: request.params });
+    const error = !exists ? { type: "about:blank", title: "not found", detail: "not found", status: 404, kind: "notFound" }
+      : conflict && request.method !== "deployment/universes/read" ? { type: "about:blank", title: "handle conflict", detail: "handle conflict", status: 409, kind: "conflict" } : null;
+    if (error) return problemResponse(error);
+    return Response.json({ universe: {
+      universeId: request.params.universeId ?? request.params.universe,
+      handle: returnedHandle ?? (request.method === "deployment/universes/read" ? handle : request.params.handle),
+    } });
   }));
   // The first read finds no linked universe; `cached` makes the handle cache
   // lookup that follows find another organization.
@@ -41,7 +42,7 @@ function fixture({ role = "admin", exists = true, handle = "runtime-handle", con
   });
   app.route("/", universeRoutes({
     db: { ...db, transaction: async (work: (tx: typeof db) => unknown) => work(db) },
-    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_platform" },
+    env: { lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_platform" },
   } as unknown as AppContext));
   const request = (body: object = {}, path = "/adopt") => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Display name", lightspeedUniverseId: id, ...body }) });
   return { request, writes, calls };

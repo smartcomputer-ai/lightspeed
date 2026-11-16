@@ -41,7 +41,7 @@ async fn mcp_oauth_live_round_trip_restart_refresh_scope_and_reauth() -> anyhow:
     let _ = dotenvy::dotenv();
     let store = live_store().await?;
     let (fixture, endpoint, fixture_task) = start_oauth_mcp_fixture().await?;
-    let redirect_uri = "http://127.0.0.1:18999/credentials/callback";
+    let redirect_uri = "http://127.0.0.1:18999/ingress/credentials/callback";
 
     // The fixture is a loopback HTTP server, reachable only because the
     // private-network list names it; the suite sets the list itself so it does

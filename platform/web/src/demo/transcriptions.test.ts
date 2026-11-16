@@ -6,7 +6,7 @@ function boot() {
   const store = createDemoStore();
   const app = createDemoRouter(store);
   const universe = store.universeByHandle("software-factory")!;
-  const base = `/api/v1/universes/${universe.universe.id}/transcriptions`;
+  const base = `/api/ui/universes/${universe.universe.id}/transcriptions`;
   const call = (method: string, path = "", body?: unknown) => app.request(`${base}${path}`, {
     method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });

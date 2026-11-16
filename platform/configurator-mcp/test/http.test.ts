@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../test/http-fixture.js";
 import { request as httpRequest } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +10,7 @@ interface UpstreamRequest {
   method: string;
   headers: Headers;
   params: unknown;
+  universe?: string;
 }
 
 const running: RunningConfigurator[] = [];
@@ -18,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("Streamable HTTP configurator", () => {
-  it("initializes, lists all tools, and forwards a universe call in api-key mode", async () => {
+  it("initializes, lists all tools, and forwards a universe call in authenticated mode", async () => {
     const upstream: UpstreamRequest[] = [];
     const server = await start("authenticated", fakeUpstream(upstream));
     const { client, transport } = mcpClient(server, { authorization: "Bearer lsr_alpha" });
@@ -43,8 +45,7 @@ describe("Streamable HTTP configurator", () => {
     const content = result.content as Array<{ type: string; text: string }>;
     expect(content).toHaveLength(1);
     expect(JSON.parse(content[0]?.text ?? "")).toEqual({
-      result: { models: [], providers: [] },
-      notifications: [],
+      models: [], providers: [],
     });
     expect(upstream.filter((request) => request.method === "models/list")).toHaveLength(1);
     expect(upstream.every((request) => request.headers.get("authorization") === "Bearer lsr_alpha"))
@@ -91,14 +92,14 @@ describe("Streamable HTTP configurator", () => {
       !request.headers.has("x-lightspeed-universe") && !request.headers.has("x-lightspeed-actor"))).toBe(true);
     const calls = upstream.filter((request) => request.method === "session/list");
     expect(calls).toHaveLength(2);
-    expect(calls.map((call) => call.headers.get("x-lightspeed-universe")).sort()).toEqual(
+    expect(calls.map((call) => call.universe).sort()).toEqual(
       [universeA, universeB].sort(),
     );
     const callA = calls.find(
-      (call) => call.headers.get("x-lightspeed-universe") === universeA,
+      (call) => call.universe === universeA,
     );
     const callB = calls.find(
-      (call) => call.headers.get("x-lightspeed-universe") === universeB,
+      (call) => call.universe === universeB,
     );
     expect(callA?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000003");
     expect(callB?.headers.get("x-lightspeed-actor")).toBe("platform:user:00000000-0000-4000-8000-000000000004");
@@ -106,17 +107,9 @@ describe("Streamable HTTP configurator", () => {
   });
 
   it("authenticates protocol-only requests upstream and rejects invalid credentials", async () => {
-    const server = await start("authenticated", async (_input, init) => {
-      const body = JSON.parse(String(init?.body)) as { id: number | string };
-      return jsonResponse({
-        id: body.id,
-        error: {
-          code: -32001,
-          message: "invalid api key",
-          data: { kind: "unauthenticated", message: "request is not authenticated" },
-        },
-      });
-    });
+    const server = await start("authenticated", async () => Response.json({
+      type: "about:blank", title: "Unauthenticated", detail: "request is not authenticated", status: 401, kind: "unauthenticated",
+    }, { status: 401, headers: { "content-type": "application/problem+json" } }));
     const response = await fetch(`${server.url}/mcp`, {
       method: "POST",
       headers: mcpHeaders({ authorization: "Bearer lsr_revoked" }),
@@ -205,16 +198,7 @@ describe("Streamable HTTP configurator", () => {
   it("rejects oversized upstream responses without returning their body", async () => {
     const server = await start(
       "single",
-      async (_input, init) => {
-        const request = JSON.parse(String(init?.body)) as { id: number | string };
-        return jsonResponse({
-          id: request.id,
-          result: {
-            result: { padding: "sensitive-response".repeat(200) },
-            notifications: [],
-          },
-        });
-      },
+      async () => jsonResponse({ padding: "sensitive-response".repeat(200) }),
       [],
       1024,
     );
@@ -239,7 +223,7 @@ async function start(
     bindPort: 0,
     allowedHosts: ["127.0.0.1", "localhost"],
     allowedOrigins,
-    rpcEndpoint: "http://lightspeed.test/rpc",
+    apiEndpoint: "http://lightspeed.test/api/v1",
     authMode,
     maxBodyBytes,
     upstreamTimeoutMs: 5_000,
@@ -256,7 +240,7 @@ function mcpClient(server: RunningConfigurator, headers: Record<string, string>)
     { versionNegotiation: { mode: "auto" } },
   );
   const transport = new StreamableHTTPClientTransport(new URL(`${server.url}/mcp`), {
-    requestInit: { headers },
+    requestInit: { headers: { "x-lightspeed-universe": universeA, ...headers } },
   });
   return { client, transport };
 }
@@ -264,26 +248,16 @@ function mcpClient(server: RunningConfigurator, headers: Record<string, string>)
 /// A runtime that identifies the configured token.
 function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
   return async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as {
-      id: number | string;
-      method: string;
-      params: unknown;
-    };
+    const body = decodeHttpRequest(_input, init);
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    requests.push({ method: body.method, params: body.params, headers: new Headers(init?.headers) });
+    requests.push({ method: body.method, params: body.params, headers: new Headers(init?.headers), ...(body.universe ? { universe: body.universe } : {}) });
     const result =
       body.method === "initialize"
         ? {
-            protocolVersion: "1",
+            contractRevision: "1", runtime: "runtime", defaultUniverse: universeA,
             serverInfo: { name: "lightspeed-test", version: "1" },
-            capabilities: {
-              notifications: false,
-              historyRead: true,
-              eventLog: true,
-              localExecution: false,
-            },
             caller: { single: false, tokenName: "test" },
           }
         : body.method === "models/list"
@@ -291,7 +265,7 @@ function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
           : body.method === "session/list"
             ? { sessions: [] }
             : {};
-    return jsonResponse({ id: body.id, result: { result, notifications: [] } });
+    return jsonResponse(result);
   };
 }
 

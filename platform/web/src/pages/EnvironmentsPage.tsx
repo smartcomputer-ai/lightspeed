@@ -111,7 +111,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
     queryFn: () =>
       api<EnvironmentProviderBinding[]>(
         "GET",
-        `/api/v1/universes/${universeId}/environment-provider-bindings`,
+        `/api/ui/universes/${universeId}/environment-provider-bindings`,
       ),
   });
   const templates = useQuery(environmentTemplatesQuery(universeId));
@@ -133,14 +133,14 @@ function EnvironmentList({ universeId }: { universeId: string }) {
   const secrets = useQuery({
     queryKey: ["secrets", universeId],
     queryFn: () =>
-      api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
+      api<SecretsInventory>("GET", `/api/ui/universes/${universeId}/secrets`),
   });
   const hints = useQuery({
     queryKey: ["environment-hints", universeId],
     queryFn: () =>
       api<{ devEnvdEndpoint: string | null }>(
         "GET",
-        `/api/v1/universes/${universeId}/environments/hints`,
+        `/api/ui/universes/${universeId}/environments/hints`,
       ),
     staleTime: 300_000,
   });
@@ -150,7 +150,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
     queryFn: () =>
       api<EnvironmentRegistrationKey[]>(
         "GET",
-        `/api/v1/universes/${universeId}/environment-registration-keys`,
+        `/api/ui/universes/${universeId}/environment-registration-keys`,
       ),
   });
 
@@ -479,14 +479,14 @@ function EnvironmentCredentials({
     queryFn: () =>
       api<EnvironmentCredential[]>(
         "GET",
-        `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials`,
+        `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials`,
       ),
   });
   const unbind = useMutation({
     mutationFn: (envName: string) =>
       api<EnvironmentCredential>(
         "DELETE",
-        `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials/${encodeURIComponent(envName)}`,
+        `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials/${encodeURIComponent(envName)}`,
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({
@@ -619,7 +619,7 @@ function AssignCredentialDialog({
       const source = environmentCredentialSourceFromValue(selectedSource);
       return api<EnvironmentCredential>(
         "POST",
-        `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environmentId)}/credentials`,
+        `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environmentId)}/credentials`,
         { envName: envName.trim(), source },
       );
     },
@@ -868,7 +868,7 @@ function DeclareEnvironmentDialog({
   const [displayName, setDisplayName] = useState("");
   const declare = useMutation({
     mutationFn: (key: EnvironmentRegistrationKey) =>
-      api<Environment>("POST", `/api/v1/universes/${universeId}/environments/registered`, {
+      api<Environment>("POST", `/api/ui/universes/${universeId}/environments/registered`, {
         environmentId: environmentId.trim(),
         registrationKeyId: key.registrationKeyId,
         name: name.trim(),
@@ -967,7 +967,7 @@ function RevokeRegistrationKeyButton({
     mutationFn: () =>
       api<{ registrationKey: EnvironmentRegistrationKey; closedEnvironmentIds?: string[] }>(
         "POST",
-        `/api/v1/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/revoke`,
+        `/api/ui/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/revoke`,
         { closeEnvironments },
       ),
     onSuccess: async () => {
@@ -1026,7 +1026,7 @@ function RotateRegistrationKeyButton({
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
-        `/api/v1/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/rotate`,
+        `/api/ui/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/rotate`,
       ),
     onSuccess: async () => {
       setConfirming(false);
@@ -1218,7 +1218,7 @@ function RegistrationSecret({
 }) {
   const [copied, setCopied] = useState(false);
   const bootstrap = [
-    "LIGHTSPEED_ENVD_GATEWAY_URL=wss://<lightspeed host>/environment-gateway/connect",
+    "LIGHTSPEED_ENVD_GATEWAY_URL=wss://<lightspeed host>/environments/connect",
     `LIGHTSPEED_ENVD_REGISTRATION_KEY=${created.secret}`,
     "lightspeed-envd",
   ].join("\n");
@@ -1281,7 +1281,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
-        `/api/v1/universes/${universeId}/environment-registration-keys`,
+        `/api/ui/universes/${universeId}/environment-registration-keys`,
         {
           identityMode,
           ...registrationKeySettings(form, identityMode, null),
@@ -1387,7 +1387,7 @@ function EditRegistrationKeyDialog({
     mutationFn: (key: EnvironmentRegistrationKey) =>
       api<EnvironmentRegistrationKey>(
         "PUT",
-        `/api/v1/universes/${universeId}/environment-registration-keys/${key.registrationKeyId}`,
+        `/api/ui/universes/${universeId}/environment-registration-keys/${key.registrationKeyId}`,
         registrationKeySettings(form, key.identityMode, key.expiresAtMs),
       ),
     onSuccess: async () => {
@@ -1489,7 +1489,7 @@ function EnvironmentIngressButton({
   const ingress = useMutation({
     mutationFn: (enabled: boolean) => api<Environment>(
       "PUT",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/ingress`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/ingress`,
       { enabled },
     ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),
@@ -1525,7 +1525,7 @@ function ReleaseDaemonButton({
   const release = useMutation({
     mutationFn: () => api<Environment>(
       "POST",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/release`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/release`,
     ),
     onSuccess: async () => {
       setConfirming(false);
@@ -1573,7 +1573,7 @@ function CloseEnvironmentButton({
   const close = useMutation({
     mutationFn: () => api<Environment>(
       "DELETE",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
     ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),
   });
@@ -1644,7 +1644,7 @@ function EditEnvironmentDialog({
   const save = useMutation({
     mutationFn: () => api<Environment>(
       "PATCH",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
       {
         displayName: displayName.trim() || null,
         metadata: metadata ?? {},
@@ -1725,7 +1725,7 @@ function CreateEnvironmentDialog({
   const create = useMutation({
     mutationFn: () => {
       if (!selectedTemplate) throw new Error("Choose an environment template.");
-      return api<Environment>("POST", `/api/v1/universes/${universeId}/environments`, {
+      return api<Environment>("POST", `/api/ui/universes/${universeId}/environments`, {
         requestId,
         providerId: selectedTemplate.providerId,
         templateId: selectedTemplate.templateId,
@@ -1893,7 +1893,7 @@ function RegisterExternalEnvironmentDialog({
   const [error, setError] = useState<string | null>(null);
   const register = useMutation({
     mutationFn: () =>
-      api<Environment>("POST", `/api/v1/universes/${universeId}/environments/external`, {
+      api<Environment>("POST", `/api/ui/universes/${universeId}/environments/external`, {
         endpoint: endpoint.trim(),
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
       }),

@@ -19,11 +19,11 @@ function readPrivate(file) {
   return readFileSync(file, "utf8");
 }
 
-// Execution environments and frontend processes must not inherit RPC credentials.
+// Execution environments and frontend processes must not inherit API credentials.
 export function processEnvironment(env, role) {
   return Object.fromEntries(Object.entries(env).filter(([name]) => {
-    if (/^LIGHTSPEED_RPC_TOKEN(?:_|$)/.test(name)) return role === "runtime";
-    if (/^LIGHTSPEED_PLATFORM_RPC_TOKEN(?:_|$)/.test(name)) return role === "platform";
+    if (/^LIGHTSPEED_API_TOKEN(?:_|$)/.test(name)) return role === "runtime";
+    if (/^LIGHTSPEED_PLATFORM_API_TOKEN(?:_|$)/.test(name)) return role === "platform";
     return true;
   }));
 }
@@ -74,32 +74,32 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
     return { file, secret };
   }
 
-  const namedCli = configuredSecret(env, "LIGHTSPEED_RPC_TOKEN_CLI");
-  const defaultToken = configuredSecret(env, "LIGHTSPEED_RPC_TOKEN");
+  const namedCli = configuredSecret(env, "LIGHTSPEED_API_TOKEN_CLI");
+  const defaultToken = configuredSecret(env, "LIGHTSPEED_API_TOKEN");
   const cli = token("cli", namedCli ?? defaultToken);
   const usesDefault = namedCli === undefined && defaultToken !== undefined;
   const tokenEnvironment = usesDefault
-    ? { LIGHTSPEED_RPC_TOKEN_FILE: cli.file }
-    : { LIGHTSPEED_RPC_TOKEN_CLI_FILE: cli.file };
+    ? { LIGHTSPEED_API_TOKEN_FILE: cli.file }
+    : { LIGHTSPEED_API_TOKEN_CLI_FILE: cli.file };
   // Replace inline sources with private file paths so process plans never need secrets.
-  delete env.LIGHTSPEED_RPC_TOKEN_CLI;
+  delete env.LIGHTSPEED_API_TOKEN_CLI;
   if (full) {
-    const platform = token("platform", configuredSecret(env, "LIGHTSPEED_PLATFORM_RPC_TOKEN") ?? configuredSecret(env, "LIGHTSPEED_RPC_TOKEN_PLATFORM"));
+    const platform = token("platform", configuredSecret(env, "LIGHTSPEED_PLATFORM_API_TOKEN") ?? configuredSecret(env, "LIGHTSPEED_API_TOKEN_PLATFORM"));
     // A shared secret has one runtime identity. Keep the CLI/default name;
     // Platform still gets its own protected consumer file.
     if (platform.secret !== cli.secret && platform.secret !== defaultToken) {
-      tokenEnvironment.LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE = platform.file;
+      tokenEnvironment.LIGHTSPEED_API_TOKEN_PLATFORM_FILE = platform.file;
     } else {
-      delete env.LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE;
+      delete env.LIGHTSPEED_API_TOKEN_PLATFORM_FILE;
     }
-    tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE = platform.file;
-    delete env.LIGHTSPEED_RPC_TOKEN_PLATFORM;
-    delete env.LIGHTSPEED_PLATFORM_RPC_TOKEN;
+    tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE = platform.file;
+    delete env.LIGHTSPEED_API_TOKEN_PLATFORM;
+    delete env.LIGHTSPEED_PLATFORM_API_TOKEN;
   }
   // The default token, if used for the CLI, must not also appear under a second name.
   if (usesDefault) {
-    delete env.LIGHTSPEED_RPC_TOKEN;
-    delete env.LIGHTSPEED_RPC_TOKEN_CLI_FILE;
+    delete env.LIGHTSPEED_API_TOKEN;
+    delete env.LIGHTSPEED_API_TOKEN_CLI_FILE;
   }
   Object.assign(env, tokenEnvironment);
   writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: false, credentialFile: cli.file, ownedCredential: false, universe }, null, 2));
@@ -113,7 +113,7 @@ export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: 
   const single = env.LIGHTSPEED_AUTH_MODE === "single";
   const connection = handoff ? JSON.parse(readPrivate(handoff)) : null;
   const secret = single ? null : connection?.credentialFile
-    ? readPrivateToken(connection.credentialFile) : configuredSecret(env, "LIGHTSPEED_PLATFORM_RPC_TOKEN");
+    ? readPrivateToken(connection.credentialFile) : configuredSecret(env, "LIGHTSPEED_PLATFORM_API_TOKEN");
   if (!single && !secret) return false;
   const universes = [env.LIGHTSPEED_PG_UNIVERSE_ID];
   if (full && env.LIGHTSPEED_PLATFORM_DEV_SEED === "true") universes.push("6c696768-7473-4065-8064-000000000010");
@@ -121,25 +121,21 @@ export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: 
     const headers = { "content-type": "application/json" };
     if (!single) {
       headers.authorization = `Bearer ${secret}`;
-      headers["x-lightspeed-universe"] = universe;
     }
+    const endpoint = `${env.LIGHTSPEED_API_URL.replace(/\/$/, "")}/universes/${encodeURIComponent(universe)}/models/defaults`;
     async function call(method, params) {
-      const response = await request(env.LIGHTSPEED_API_URL, {
-        method: "POST", headers, redirect: "error", signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "development-model-defaults", method, params }),
+      const response = await request(endpoint, {
+        method, headers, redirect: "error", signal: AbortSignal.timeout(10_000),
+        ...(params ? { body: JSON.stringify(params) } : {}),
       });
+      // Another setup or user won the revision race. Their choice wins.
+      if (method === "PUT" && response.status === 409) return;
       if (!response.ok) throw new DevError(`Development model setup failed (HTTP ${response.status}).`);
-      const rpc = await response.json();
-      if (rpc.error) {
-        // Another setup or user won the revision race. Their choice wins.
-        if (method === "models/defaults/put" && rpc.error.data?.kind === "conflict") return;
-        throw new DevError(`Development model setup failed for ${method}.`, { hint: "Check that the runtime token is configured, then configure defaults with the CLI." });
-      }
-      return rpc.result.result;
+      return response.json();
     }
-    const { defaults } = await call("models/defaults/read", {});
+    const { defaults } = await call("GET");
     if (defaults.revision !== 0) continue;
-    await call("models/defaults/put", {
+    await call("PUT", {
       slot: "agentRun", expectedRevision: 0,
       model: { providerId: "openai", apiKind: "openai:responses", model: "gpt-6-sol" },
     });

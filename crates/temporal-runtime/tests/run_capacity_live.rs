@@ -119,7 +119,6 @@ async fn temporal_live_anthropic_run_learns_capacity_and_switches_models() -> an
                     }),
                 })
                 .await?
-                .result
                 .run;
             let other =
                 wait_for_terminal_run_with_timeout(&api, &session_id, &other.id, RUN_BUDGET)

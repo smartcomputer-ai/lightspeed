@@ -49,7 +49,7 @@ beforeEach(() => {
   mocks.configuration = {};
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
     if (path.endsWith("/members")) return members;
-    if (path === "/api/v1/users") return [];
+    if (path === "/api/ui/users") return [];
     throw new Error(`Unexpected request: ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -99,7 +99,7 @@ it.each(members)("changes the role of $name in place", async (member) => {
   await chooseMemberRole("operator");
   await act(async () => button("Save role")!.click());
   await settle();
-  expect(mocks.api).toHaveBeenCalledWith("PATCH", `/api/v1/universes/universe/members/${member.id}`, { role: "operator" });
+  expect(mocks.api).toHaveBeenCalledWith("PATCH", `/api/ui/universes/universe/members/${member.id}`, { role: "operator" });
   expect(mocks.api.mock.calls.some(([method, path]) => path.includes("/members") && (method === "DELETE" || method === "POST"))).toBe(false);
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });

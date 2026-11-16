@@ -14,7 +14,7 @@ before choosing an exporter or changing a version.
 
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
-| Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
+| Public application API | DTOs, typed operation catalogs, HTTP bindings and service interfaces in `crates/api/src/` | JSON Schema, HTTP routing catalog, OpenAPI, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
 | Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
@@ -35,7 +35,7 @@ both repository readers and the documentation site see.
 
 For a new operation, follow the neighboring DTO, method constant, service
 interface, and manifest/dispatcher entries in `crates/api`. The
-[RPC manifest](../../../crates/api/src/rpc.rs) ties ordinary dispatch and
+[operation catalog](../../../crates/api/src/operations.rs) ties ordinary dispatch and
 method metadata together; deployment methods have their corresponding
 [deployment manifest](../../../crates/api/src/deployment.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
@@ -44,7 +44,7 @@ Every method declaration requires an `access:` classification. From it, the
 exporter derives scope and the recommended member role. The method's name
 determines its API family, and session-target metadata identifies calls that
 need a session visibility check. These appear in the generated contract and
-TypeScript `METHOD_INFO`.
+TypeScript `OPERATION_INFO`.
 
 The runtime publishes this classification without enforcing caller permissions.
 Platform uses the generated role and target metadata to enforce access, while the runtime applies
@@ -119,10 +119,12 @@ node platform/scripts/generate-method-roles.mjs
 (cd clients/python && uv sync --locked && uv run python scripts/generate.py)
 ```
 
-The API exporter writes four files under `crates/api/contract/`:
-`api.schema.json`, `methods.json`, `openrpc.json`, and `api-reference.md`.
-Downstream code generation reads the JSON Schema bundle and method manifest;
-OpenRPC is an additional documentation format.
+The API exporter writes `api.schema.json`, `http.json`, `openapi.json` and `api-reference.md` under `crates/api/contract/`.
+The HTTP catalog and OpenAPI are generated from the same typed declarations
+that expand into runtime handlers. Declare input locations and response
+semantics there; never copy route definitions into a consumer. SDK transports use this same HTTP catalog. The SDK schema
+bundle remains draft-07; OpenAPI has its own 2020-12 export from the same DTOs.
+Run `npm run check:openapi` after export to validate structure and references.
 
 The second command writes the JSON Schema of a
 [configuration document](../deployment/configuration-as-code.md). A document

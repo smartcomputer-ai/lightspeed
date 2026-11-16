@@ -65,10 +65,15 @@ pub fn request_attribution() -> Result<Attribution, AgentApiError> {
 }
 
 /// Connection discovery does not load or require universe state.
-pub fn initialize_response(caller: CallerAccess) -> api::AgentApiOutcome<api::InitializeResponse> {
+pub fn connection_response(
+    caller: CallerAccess,
+    default_universe: Option<String>,
+) -> api::ConnectionResponse {
     use api::*;
-    AgentApiOutcome::new(InitializeResponse {
-        protocol_version: api::PROTOCOL_VERSION.to_owned(),
+    ConnectionResponse {
+        runtime: RuntimeKind::Runtime,
+        contract_revision: HTTP_CONTRACT_REVISION.into(),
+        default_universe,
         server_info: ServerInfo {
             name: "lightspeed-agent".to_owned(),
             version: format!("{}+{}", release_info::VERSION, release_info::GIT_SHA),
@@ -80,14 +85,8 @@ pub fn initialize_response(caller: CallerAccess) -> api::AgentApiOutcome<api::In
                 targets: release_info::envd_targets().map(str::to_owned).collect(),
             },
         },
-        capabilities: ServerCapabilities {
-            notifications: true,
-            history_read: true,
-            event_log: true,
-            local_execution: false,
-        },
         caller,
-    })
+    }
 }
 
 #[cfg(test)]

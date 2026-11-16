@@ -37,7 +37,7 @@ const MAX_FILTER_SAMPLE: usize = 50;
 /// How long `bots/delete` waits for a closing controller to complete.
 const BOT_CLOSE_WAIT: Duration = Duration::from_secs(30);
 
-/// Public ingest path of a webhook trigger. The route is outside RPC auth,
+/// Public ingest path of a webhook trigger. The route is outside application token authentication,
 /// so it names the universe, bot, and trigger; the token is the secret.
 pub fn webhook_ingest_path(
     universe_id: uuid::Uuid,
@@ -45,7 +45,7 @@ pub fn webhook_ingest_path(
     trigger_id: &BotTriggerId,
     token: &str,
 ) -> String {
-    format!("/hooks/bots/{universe_id}/{bot_id}/{trigger_id}/{token}")
+    format!("/ingress/webhooks/bots/{universe_id}/{bot_id}/{trigger_id}/{token}")
 }
 
 /// The stored secrets in their wire form: a webhook's URL token as the
@@ -591,8 +591,7 @@ impl GatewayAgentApi {
                         trees: trees.clone(),
                         ..Default::default()
                     })
-                    .await?
-                    .result;
+                    .await?;
                 sessions.extend(page.sessions);
                 match page.next_cursor {
                     Some(next) => cursor = Some(next),
@@ -1026,7 +1025,7 @@ mod tests {
         let view = serde_json::to_string(&webhook.view()).expect("trigger view");
         assert!(!view.contains("tok-1"), "{view}");
         assert!(!view.contains("ABCDEFGH2345"), "{view}");
-        assert!(!view.contains("/hooks/"), "{view}");
+        assert!(!view.contains("/ingress/webhooks/"), "{view}");
 
         let secrets = trigger_secrets_view(universe_id, &webhook);
         assert_eq!(

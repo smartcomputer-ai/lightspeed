@@ -277,8 +277,7 @@ async fn start(args: StartArgs) -> Result<()> {
             integration: None,
         })
         .await
-        .map_err(api_error)?
-        .result;
+        .map_err(api_error)?;
     print_json_or(args.common.json, &response, || {
         println!("Started session {}.", response.session.id);
         println!(
@@ -319,8 +318,7 @@ async fn put_metadata(args: MetadataPutArgs) -> Result<()> {
             metadata: args.metadata.map(),
         })
         .await
-        .map_err(api_error)?
-        .result;
+        .map_err(api_error)?;
     print_json_or(args.common.json, &response, || {
         println!("{}", session_line(&response.session));
     })
@@ -334,7 +332,6 @@ async fn list_context(args: ContextListArgs) -> Result<()> {
         })
         .await
         .map_err(api_error)?
-        .result
         .session;
     let context = session.active_context;
     print_json_or(args.common.json, &context, || {
@@ -396,7 +393,6 @@ async fn redact_context(args: ContextRedactArgs) -> Result<()> {
         })
         .await
         .map_err(api_error)?
-        .result
         .session
         .active_context;
     let mut entries = Vec::with_capacity(args.entry_ids.len());
@@ -464,8 +460,7 @@ async fn send_replacements(
             entries,
         })
         .await
-        .map_err(api_error)?
-        .result;
+        .map_err(api_error)?;
     print_json_or(common.json, &response, || {
         for result in &response.results {
             let status = match result.status {
@@ -494,8 +489,7 @@ async fn put_retention(args: RetentionArgs) -> Result<()> {
             },
         })
         .await
-        .map_err(api_error)?
-        .result;
+        .map_err(api_error)?;
     print_json_or(args.common.json, &response, || {
         println!("{}", session_line(&response.session));
     })
@@ -507,8 +501,7 @@ async fn restart(args: RestartArgs) -> Result<()> {
             session_id: args.session_id.clone(),
         })
         .await
-        .map_err(api_error)?
-        .result;
+        .map_err(api_error)?;
     print_json_or(args.common.json, &response, || {
         let outcome = if response.restarted {
             "restarted"
@@ -635,8 +628,7 @@ async fn collect_sessions(
                 ..Default::default()
             })
             .await
-            .map_err(api_error)?
-            .result;
+            .map_err(api_error)?;
         sessions.extend(page.sessions);
         match page.next_cursor {
             Some(next) => cursor = Some(next),

@@ -797,7 +797,7 @@ power loss.
 ## Registration channel
 
 An outbound daemon dials
-`wss://<gateway>[/prefix]/environment-gateway/connect` and keeps that control
+`wss://<gateway>[/prefix]/environments/connect` and keeps that control
 connection open. The daemon is the JSON-RPC client and the gateway the
 server; both directions carry requests and notifications.
 
@@ -838,7 +838,7 @@ Rules:
   return. From an ephemeral identity, it closes the environment.
 - For each `registration/openStream`, the daemon dials the stream URL derived
   from its configured connect URL, replacing the
-  `/environment-gateway/connect` suffix with `/environment-gateway/data`, with
+  `/environments/connect` suffix with `/environments/data`, with
   the one-time token as a bearer header, and serves the data plane on that
   socket. The gateway never names a URL.
 - The gateway pings every `heartbeatIntervalMs`. Either side treats three

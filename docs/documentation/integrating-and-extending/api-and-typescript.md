@@ -6,16 +6,63 @@ the application owns its business operation, the identifiers used to retry
 it, and what to do with the result. Stable identifiers let the application
 recover from a lost HTTP response without creating duplicate work.
 
-The TypeScript client supplies typed JSON-RPC calls and helpers for starting
+The TypeScript client supplies typed HTTP calls and helpers for starting
 runs and waiting for them to finish. Its public types come from the Rust API contract.
 Build against this client and the public contract so runtime implementation
 changes do not become dependencies of your application. A
 [Python client](../../../clients/python/README.md) covers the same API; what this
 page says about identifiers, events, and lifecycle applies to it too.
 
+## Resource HTTP API
+
+The private runtime listener serves the resource API under `/api/v1`.
+Its [OpenAPI contract](../../../crates/api/contract/openapi.json) and
+[routing catalog](../../../crates/api/contract/http.json) are generated from
+the same Rust declarations as its handlers. The SDKs and Platform use this
+contract for routing, types, and operation policy metadata.
+
+Authenticate with the same configured bearer token. Select the universe in
+the URL, using its UUID or handle, and omit `x-lightspeed-universe`:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $LIGHTSPEED_API_TOKEN" \
+  http://localhost:18080/api/v1/connection
+
+curl --fail-with-body \
+  -H "Authorization: Bearer $LIGHTSPEED_API_TOKEN" \
+  "http://localhost:18080/api/v1/universes/$LIGHTSPEED_UNIVERSE/sessions?limit=20"
+```
+
+Resource responses contain the declared DTO directly. Failures use an HTTP
+status and `application/problem+json`, including the stable `kind` field and
+structured details such as a retry's `submissionId`. A request timeout does
+not prove that a submitted command was rejected; keep its submission identity
+when retrying.
+
+Path identifiers are authoritative: do not repeat them in a write body,
+including inside nested records. Query arrays use repeated parameters;
+structured cursor/filter values use URL-encoded JSON where the operation
+declares that encoding. Unknown or duplicate scalar parameters are rejected.
+
+`GET /api/v1/universes/{universe}/events` serves the universe watch with
+`Accept: text/event-stream`. It retains reset/refetch semantics and is not a
+durable replay log. Blob reads return binary bytes; single binary uploads use
+`PUT /api/v1/universes/{universe}/blobs/{blobRef}/content` with
+`Content-Type: application/octet-stream` and `Content-Length`. Uploads spool
+to a temporary file to verify the digest and length before storage admission.
+The batch blob upload remains a separate JSON operation. Range requests are
+not supported by these initial HTTP bindings.
+
+Server integrations can import generated `HTTP_OPERATIONS` and
+`HTTP_CONTRACT_REVISION` from `@lightspeed-ai/sdk/server`; the package also
+ships `schema/http.json` and `schema/openapi.json`. These describe routes and
+policy targets without adding a second runtime body validator. They do not
+provide the Platform's authentication or resource authorization.
+
 ## Prepare an endpoint and a profile
 
-For this example, provide an authenticated runtime URL ending in `/rpc`, a
+For this example, provide an authenticated runtime URL ending in `/api/v1`, a
 configured runtime token, and the target universe's UUID or handle. This is a
 direct connection with full authority over every method and universe. Follow
 [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
@@ -27,7 +74,7 @@ code, agents, and untrusted applications. An application serving people must
 authenticate them and enforce its own access policy before forwarding requests.
 The Platform already does this for its web app. `client.withActor(userId)` records
 who asked; every runtime token may set an actor, and attribution grants no
-permissions. See [Serve a browser UI](#serve-a-browser-ui) for a proxy example.
+permissions. See [Serve a browser UI](#serve-a-browser-ui) for the gateway boundary.
 
 Create the `release-editor` profile and `release-notes` workspace from
 [Build your first agent](../getting-started/first-agent.md), including
@@ -45,10 +92,10 @@ npm install --save-exact "@lightspeed-ai/sdk@<release-version>"
 
 Replace `<release-version>` with the actual package version, or run
 `npm install @lightspeed-ai/sdk` for the latest release. Supply
-`LIGHTSPEED_API_URL`, `LIGHTSPEED_RPC_TOKEN`, and `LIGHTSPEED_UNIVERSE` through the
+`LIGHTSPEED_API_URL`, `LIGHTSPEED_API_TOKEN`, and `LIGHTSPEED_UNIVERSE` through the
 application's protected configuration. The `universe` option names the UUID or
-handle for universe methods; the SDK omits the header for connection and
-deployment methods. The example also reads `ACORN_RELEASE_JOB_ID`, an
+handle in resource paths; connection and deployment operations do not use
+that selection. The example also reads `ACORN_RELEASE_JOB_ID`, an
 application-defined operation ID such as `acorn-1.2-draft-001`. Keep it unchanged
 when retrying that operation.
 
@@ -69,7 +116,7 @@ function required(name: string): string {
 const jobId = required("ACORN_RELEASE_JOB_ID");
 const client = new LightspeedClient({
   endpoint: required("LIGHTSPEED_API_URL"),
-  token: required("LIGHTSPEED_RPC_TOKEN"),
+  token: required("LIGHTSPEED_API_TOKEN"),
   universe: required("LIGHTSPEED_UNIVERSE"),
 });
 
@@ -135,10 +182,9 @@ including administration such as auth, deployment, and channels, which have no h
 A helper and its `call` do the same thing, so prefer the helper when there is one. They
 differ in shape: a helper takes the IDs of its target first and everything else in one
 options object, and returns the method's data. `call` takes one params object and one
-options object, and returns the `AgentApiOutcome` envelope, including any notifications
-sent with the call. A few helpers also add behavior: `startRun` and `steerRun` accept
+options object, and returns the same direct DTO. A few helpers also add behavior: `startRun` and `steerRun` accept
 plain text and generate a submission ID, `awaitRun` combines several calls and has no
-single method behind it, and the blob helpers handle base64. The
+single method behind it, and the blob helpers handle binary transport. The
 [client README](../../../clients/typescript/README.md#helpers-and-call) lists them all.
 
 ## Transcribe audio before submitting session input
@@ -205,7 +251,7 @@ this, so a retry much later than that starts a new run. `session/runs/steer` tak
 
 The `startRun` helper generates an ID if you omit one, but calling the helper
 again generates another ID. That default does not provide retry safety across
-application restarts. JSON-RPC request IDs only correlate transport responses;
+application restarts. HTTP requests themselves do not identify durable work;
 they do not replace submission IDs. Apart from the reads inside `awaitRun`, the
 client does not retry failed HTTP calls.
 
@@ -292,7 +338,7 @@ proof of identity or permission.
 
 Platform sets `user:<id>` from the signed-in user on message and steering input.
 Its event endpoint preserves the runtime fields, and
-`GET /api/v1/universes/:id/members` supplies IDs, current names and roles; only
+`GET /api/ui/universes/:id/members` supplies IDs, current names and roles; only
 admins receive emails. Resolve actor IDs through that data in the application.
 An unmatched ID may be a former member or an external application's actor, so do
 not assume it identifies a former Platform member. Names, labels, date formatting
@@ -328,9 +374,9 @@ preview entered context, so it can differ from input acceptance time. Use
 empty or unavailable message can leave the previous preview intact. Display
 elapsed activity time locally from `activitySinceMs`.
 
-`universe/watch` is a streaming POST to `/rpc` with `Accept: text/event-stream`;
+`universe/watch` is `GET /api/v1/universes/{universe}/events` with `Accept: text/event-stream`;
 the TypeScript and Python SDKs expose watch iterators. Platform offers
-`GET /api/v1/universes/:id/watch`. The current web provider shares one connection
+the same resource route. The current web provider shares one connection
 across pages in the active universe of each tab. It receives all authorized
 session rows, including ones excluded by the current list filters. Ordinary list
 reads still perform filtering and pagination on the server; clients apply the
@@ -411,88 +457,46 @@ fires. Events tell you something changed; the run's projection is what to show.
 
 ## Serve a browser UI
 
-Keep runtime tokens on the server. The runtime gateway does not accept
-cross-origin requests. Mount `createRpcProxy` from `@lightspeed-ai/sdk/server` on your own server,
-and point the browser's `LightspeedClient` at it. The proxy forwards only the API methods
-you list by name, including those behind any helper the browser calls, calls your `authorize` function for each one, and ignores any identity the
-browser sends:
+Keep runtime tokens on the server. The Platform exposes the shared resource API
+under `/api/v1` and its application-specific routes under `/api/ui`. Browser
+sessions pass authentication, same-origin checks, membership, role and resource
+visibility checks before a request reaches the runtime.
 
-```ts
-import { LightspeedClient } from "@lightspeed-ai/sdk";
-import { createRpcProxy } from "@lightspeed-ai/sdk/server";
+The shared routes come from the generated catalog, with an explicit admission
+registry. The Platform selects a fixed runtime upstream, replaces identity headers,
+and supplies the authenticated actor. Most request bodies stream unchanged; only
+operations whose policy reads or rewrites fields require bounded body decoding.
+The runtime remains responsible for validating the API payload.
 
-declare function getUser(request: Request): Promise<{ id: string } | null>;
-// Implement membership and session-visibility checks for the configured universe.
-declare function canReadSession(userId: string, sessionId: string): Promise<boolean>;
+A standalone application's gateway must enforce its own equivalent policy. Use
+`HTTP_OPERATIONS` from `@lightspeed-ai/sdk/server` for route and target metadata;
+do not expose a full-authority runtime token to the browser. A universe partitions
+data but does not constrain a runtime token. For example, blob reads authorize
+ownership within the selected universe, not visibility of a particular session.
 
-export const handler = createRpcProxy({
-  client: new LightspeedClient({
-    endpoint: process.env.LIGHTSPEED_API_URL!,
-    token: process.env.LIGHTSPEED_RPC_TOKEN!,
-    universe: process.env.LIGHTSPEED_UNIVERSE!,
-  }),
-  methods: ["session/list", "session/read", "session/runs/list", "session/runs/read"],
-  authorize: async ({ request, method, params }) => {
-    const user = await getUser(request);
-    if (!user) return { deny: "unauthenticated" };
-    if (!params || typeof params !== "object" || Array.isArray(params)) {
-      return { deny: "forbidden" };
-    }
-    if (method === "session/list") {
-      return { actor: user.id, params: { ...params, visibleTo: user.id } };
-    }
-    const sessionId = (params as { sessionId?: unknown }).sessionId;
-    if (typeof sessionId !== "string" || !(await canReadSession(user.id, sessionId))) {
-      return { deny: "forbidden" };
-    }
-    return { actor: user.id };
-  },
-});
-```
-
-Implement `getUser` so it also checks membership in the configured universe.
-The example forces `visibleTo` on session lists and checks visibility before
-reading a named session or its runs. `authorize` receives untrusted params and
-can replace them; the runtime validates their API shape after the proxy admits
-them. Returning an `actor` records who asked and does not restrict the runtime
-token. A denial reaches the browser as a `LightspeedRpcError` with kind
-`unauthenticated` or `forbidden`.
-
-A universe partitions data. `blobs/read` takes only a blob reference and is not
-tied to a session, so anyone the proxy allows that method can read any blob in
-the selected universe whose reference they hold. If an application must see only
-some universes, enforce that selection in its gateway and keep the runtime token
-inside that trusted gateway. A separate universe alone does not limit a runtime
-token.
-
-Serve the proxy from the same origin as your page, because it sends no CORS headers. It
-accepts only POST with a JSON body, which also stops a cross-site form from using a
-signed-in user's cookies. A long `awaitRun` holds a request open for up to 30 seconds at
-a time, so check your host's limit on request duration. The
-[run inspector example](../../../clients/typescript/examples/run-inspector/README.md)
-is a small working page that uses all of this.
+Allow only reviewed operations, constrain the upstream, enforce browser origin
+policy for cookie authentication, and preserve cancellation and backpressure when
+forwarding SSE or binary responses. A long `awaitRun` may hold a request open for
+up to 30 seconds at a time; account for your host's request-duration limit.
 
 <a id="handle-errors-and-lifecycle-explicitly"></a>
 
 ## Handle errors and lifecycle
 
-Successful `call` results retain the `AgentApiOutcome` envelope:
-`outcome.result` contains method data and `outcome.notifications` contains
-notifications returned with that call. Helpers return the method data alone. Those notifications do not replace the
-durable session event stream.
+Successful `call` and helper results contain the declared DTO directly. Binary
+read helpers return bytes. The watch iterator carries named SSE events separately
+from ordinary responses; list hints do not replace the durable session event log.
 
-`LightspeedRpcError` preserves `code`, `message`, `kind`, and structured `data`.
-Inspect those fields for conflicts, rejected operations, missing records, or
-an environment that is not ready. Every `kind` is camelCase, such as `invalidRequest`
-or `notFound`. A missing or invalid runtime token is the kind `unauthenticated`. The gateway
-answers it with HTTP 401 before reading the request body, and the client turns that
-response into the same `LightspeedRpcError`; a program that calls `/rpc` without the
-client must check the HTTP status as well as the JSON-RPC error. `LightspeedTransportError` reports failures such as HTTP errors, invalid
-responses, or network interruption. Its `transient` flag says the same request may
-succeed later, and `cause` keeps the underlying failure. A transport failure after
-submission can leave acceptance unknown; reconcile with stable IDs before retrying
-mutations. Your own abort or timeout is not a transport failure: the call rejects with
-the signal's reason, such as an `AbortError` or `TimeoutError`.
+`LightspeedApiError` preserves HTTP `status`, `kind`, and the problem `payload`.
+Its `data` exposes structured problem details, including `submissionId` and model
+default information. Kinds are camelCase, such as `invalidRequest` and `notFound`.
+A missing or invalid runtime token produces HTTP 401 with kind `unauthenticated`
+before the gateway reads the request body.
+
+`LightspeedTransportError` reports invalid responses or network failures. A
+transport failure after submission can leave acceptance unknown; reconcile with
+stable IDs before retrying mutations. Your own abort or timeout rejects with the
+signal's reason, such as `AbortError` or `TimeoutError`.
 
 Two kinds need particular handling:
 

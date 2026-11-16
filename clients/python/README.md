@@ -1,7 +1,7 @@
 # Lightspeed Python SDK
 
 Start and inspect Lightspeed agent sessions from Python. The SDK is a typed, async
-JSON-RPC client generated from the Lightspeed API contract, with helpers for starting
+HTTP client generated from the Lightspeed API contract, with helpers for starting
 runs, waiting for them to finish, and inspecting what they did. A separate module has
 helpers for Temporal workflow code.
 
@@ -28,7 +28,7 @@ From a checkout, `python -m pip install ./clients/python` installs the same pack
 
 ## Start a session and run a task
 
-You need the gateway's `/rpc` URL, a
+You need the gateway's `/api/v1` URL, a
 [runtime token](https://ls.bot/docs/access-and-security/api-keys-and-service-access/), and a universe with a default model or a profile to start from.
 
 ```python
@@ -41,7 +41,7 @@ from lightspeed_ai import AsyncLightspeedClient
 async def main() -> None:
     async with AsyncLightspeedClient(
         os.environ["LIGHTSPEED_API_URL"],
-        token=os.environ["LIGHTSPEED_RPC_TOKEN"],
+        token=os.environ["LIGHTSPEED_RUNTIME_TOKEN"],
     ) as client:
         started = await client.start_session(
             display_name="Repository summary",
@@ -108,7 +108,7 @@ covers them in depth.
 
 ## Connect
 
-`AsyncLightspeedClient(endpoint, ...)` takes the gateway's `/rpc` URL and these keyword
+`AsyncLightspeedClient(endpoint, ...)` takes the gateway's `/api/v1` URL and these keyword
 arguments:
 
 | Argument | Use |
@@ -118,7 +118,6 @@ arguments:
 | `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
 | `headers` | Extra headers, or a function returning them for each request, which may be async. These override the arguments above. |
 | `http_client` | An `httpx.AsyncClient` to send with, for custom transports, timeouts, or tests. |
-| `request_id` | A function supplying each request's JSON-RPC ID, in place of a counter. |
 
 Use the client as an async context manager, or call `aclose()` when you are done. A
 client you pass as `http_client` stays yours to close. Without one, the SDK makes its
@@ -145,17 +144,16 @@ A helper and its `call` do the same thing. Prefer the helper when there is one, 
 session = (await client.read_session(session_id, run_limit=5))["session"]
 await client.close_session(session_id, force=True)
 
-# call: one params dictionary in the API's own field names, and you get the whole
-# outcome.
-outcome = await client.call("session/read", {"sessionId": session_id, "runLimit": 5})
-print(outcome["result"]["session"], outcome.get("notifications"))
+# call: one params dictionary in the API's own field names, returning the same DTO.
+result = await client.call("session/read", {"sessionId": session_id, "runLimit": 5})
+print(result["session"])
 
 # Administration has no helper.
 universes = await client.call("deployment/universes/list", {})
 ```
 
-Use `call` if you need the `notifications` returned with a method; helpers leave them
-out. The durable session event stream is the same either way. Both layers raise the same
+Use `watch` for live list changes and `read_events` for durable session events.
+Both layers raise the same
 [errors](#handle-errors), and both accept `headers` for one request.
 
 An argument you leave out is not sent. Passing `None` sends `null`, which a method can
@@ -183,7 +181,7 @@ environment operations. A few helpers do more than wrap one method:
   give none.
 - `await_run` has no single method behind it. It follows events, checks run state,
   retries reads, and returns the finished run.
-- `put_blob`, `read_blob_text`, and `read_blob_bytes` handle the base64 encoding.
+- `put_blob` sends a JSON batch upload; `read_blob_text` and `read_blob_bytes` download raw bytes.
 
 Each helper's docstring carries the method's documentation and describes its arguments.
 The
@@ -253,15 +251,15 @@ def failure_message(event: SessionEventView) -> str | None:
     return None
 ```
 
-The package also exports what it knows about the API itself: `METHODS` and
-`NOTIFICATIONS` list the names, `METHOD_INFO` describes every method, and
+The package also exports what it knows about the API itself: `OPERATIONS` and
+`NOTIFICATIONS` list the names, `OPERATION_INFO` describes every method, and
 `CLIENT_HELPERS` maps each generated helper to its method.
 
 ## Handle errors
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
+| `LightspeedApiError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `__cause__` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | `TimeoutError`, `asyncio.CancelledError` | Your own `asyncio.timeout` passed, or you cancelled the task. |
 
@@ -391,3 +389,5 @@ TypeScript SDK and `LIGHTSPEED_API_URL` pointing at a running gateway.
 ## License
 
 Apache-2.0
+
+HTTP paths, query encoding, and response types are generated from `http.json`. Universe requests require the `universe` client option. `initialize()` returns `defaultUniverse` when the runtime has a single configured universe. `upload_blob` accepts bytes or an async byte iterator with `content_length`; `open_download` is an async context manager yielding a streaming HTTP response. Errors expose HTTP `status`, structured `kind`, and the full problem `payload`.

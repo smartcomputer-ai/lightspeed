@@ -5,7 +5,7 @@ export const ACTOR_HEADER = "x-lightspeed-actor";
 
 export type ConfiguratorAuthMode = "single" | "authenticated";
 export type RequestAuthContext =
-  | { mode: "single" }
+  | { mode: "single"; universeId?: string }
   | { mode: "authenticated"; token: string; universeId?: string; actor?: string };
 
 export class HttpAuthError extends Error {
@@ -51,7 +51,6 @@ export function upstreamHeaders(auth: RequestAuthContext): HeadersInit | undefin
       return undefined;
     case "authenticated":
       return { authorization: `Bearer ${auth.token}`,
-        ...(auth.universeId ? { [UNIVERSE_HEADER]: auth.universeId } : {}),
         ...(auth.actor ? { [ACTOR_HEADER]: auth.actor } : {}) };
 
   }

@@ -16,7 +16,7 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
   const endpoints = [...new Set(rows.map(row => row.universe.gatewayUrl ?? ctx.env.lightspeedApiUrl))];
   const inventories = new Map(await Promise.all(endpoints.map(async endpoint => {
     const response = await deploymentClient(ctx.env, endpoint).call("deployment/universes/list", {});
-    return [endpoint, new Map((response.result.universes ?? []).map(universe => [universe.universeId, universe]))] as const;
+    return [endpoint, new Map((response.universes ?? []).map(universe => [universe.universeId, universe]))] as const;
   })));
   const seen = new Set<string>();
   const changes: { organizationId: string; handle: string }[] = [];

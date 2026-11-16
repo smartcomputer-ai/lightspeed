@@ -20,9 +20,9 @@ export function createDemoRouter(store: DemoStore): Hono {
   const app = new Hono();
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
   app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
-  app.get("/api/v1/admin/audit", (c) => store.currentUser.role === "admin"
+  app.get("/api/ui/admin/audit", (c) => store.currentUser.role === "admin"
     ? c.json(store.auditEvents.slice(-100).reverse()) : c.json({ error: "platform admin required" }, 403));
-  app.get("/api/v1/admin/universes/:id/deleted-sessions", (c) => {
+  app.get("/api/ui/admin/universes/:id/deleted-sessions", (c) => {
     if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
     const prefix = `${c.req.param("id")}:`;
     const sessions = [...store.deletedSessions.entries()].filter(([key]) => key.startsWith(prefix))
@@ -30,7 +30,7 @@ export function createDemoRouter(store: DemoStore): Hono {
       .sort((a, b) => a.sessionId.localeCompare(b.sessionId)).filter((session) => !c.req.query("after") || session.sessionId > c.req.query("after")!);
     return c.json({ sessions: sessions.slice(0, 100), nextAfter: sessions.length > 100 ? sessions[99]!.sessionId : null });
   });
-  app.post("/api/v1/admin/universes/:id/sessions/:sessionId/purge", (c) => {
+  app.post("/api/ui/admin/universes/:id/sessions/:sessionId/purge", (c) => {
     if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
     const universeId = c.req.param("id");
     const sessionId = c.req.param("sessionId");
@@ -53,14 +53,13 @@ export function createDemoRouter(store: DemoStore): Hono {
   });
   app.route("/api/auth", authRoutes(store));
   // The public webhook ingress lives outside /api, exactly like the core's
-  // POST /hooks/bots/{universe}/{bot}/{trigger}/{token} route.
-  app.route("/hooks", hookRoutes(store));
+  // POST /ingress/webhooks/bots/{universe}/{bot}/{trigger}/{token} route.
+  app.route("/ingress/webhooks", hookRoutes(store));
 
   const api = new Hono();
   api.route("/", platformRoutes(store));
   api.route("/", adminRoutes(store));
   for (const routes of [
-    watchRoutes,
     sessionRoutes,
     transcriptionRoutes,
     profileRoutes,
@@ -73,7 +72,8 @@ export function createDemoRouter(store: DemoStore): Hono {
   ]) {
     api.route("/universes", routes(store));
   }
-  app.route("/api/v1", api);
+  app.route("/api/ui", api);
+  app.route("/api/v1/universes", watchRoutes(store));
 
   // A missing stub surfaces as an ordinary API error in the UI instead of a
   // silent hang, which is how gaps get found.

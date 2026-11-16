@@ -14,6 +14,8 @@ mod request_headers;
 mod session_cli;
 mod session_resources;
 mod skills_cli;
+#[cfg(test)]
+mod test_http;
 mod vfs_cli;
 mod vfs_transfer;
 
@@ -223,7 +225,7 @@ mod tests {
                 "--universe",
                 "one",
                 "--api-url",
-                "http://localhost/rpc",
+                "http://localhost/api/v1",
             ];
             command.extend(args);
             Cli::try_parse_from(&command).unwrap_or_else(|error| panic!("{command:?}: {error}"));
@@ -245,7 +247,7 @@ mod tests {
             "--effort",
             "medium",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "hello",
         ])
         .expect("parse chat");
@@ -259,7 +261,7 @@ mod tests {
             "chat",
             "--new",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "hello",
         ])
         .expect("parse api url");
@@ -303,7 +305,7 @@ mod tests {
             "chat",
             "--new",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--upload",
             ".",
             "--workspace-path",
@@ -335,7 +337,7 @@ mod tests {
             "chat",
             "--new",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--profile",
             "support",
             "hello",
@@ -351,7 +353,7 @@ mod tests {
             "session",
             "profile",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "apply",
             "session_1",
             "--profile",
@@ -367,7 +369,7 @@ mod tests {
             "lightspeed",
             "profiles",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "import",
             "./support-profile.json",
             "--no-check",
@@ -379,7 +381,7 @@ mod tests {
             "lightspeed",
             "profiles",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "export",
             "support",
             "--output",
@@ -392,7 +394,7 @@ mod tests {
             "lightspeed",
             "profiles",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "check",
             "-",
         ])
@@ -408,7 +410,7 @@ mod tests {
             "snapshot",
             "upload",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--put-batch-bytes",
             "1048576",
             ".",
@@ -425,7 +427,7 @@ mod tests {
             "snapshots",
             "download",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "./out",
         ])
@@ -440,7 +442,7 @@ mod tests {
             "workspace",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--id",
             "workspace_1",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -456,7 +458,7 @@ mod tests {
             "workspace",
             "read",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "workspace_1",
         ])
         .expect("parse vfs workspace read");
@@ -470,7 +472,7 @@ mod tests {
             "workspace",
             "update",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--expected-revision",
             "4",
             "workspace_1",
@@ -487,7 +489,7 @@ mod tests {
             "workspace",
             "update",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "workspace_1",
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         ])
@@ -502,7 +504,7 @@ mod tests {
             "workspace",
             "delete",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "workspace_1",
         ])
         .expect("parse vfs workspace delete");
@@ -516,7 +518,7 @@ mod tests {
             "env",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
         ])
         .expect("parse env list");
         assert!(matches!(cli.command, Command::Env(_)));
@@ -529,7 +531,7 @@ mod tests {
             "session",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--metadata",
             "source=harbor",
             "--metadata",
@@ -547,7 +549,7 @@ mod tests {
                 "session",
                 "close",
                 "--api-url",
-                "http://127.0.0.1:18080/rpc",
+                "http://127.0.0.1:18080/api/v1",
                 "--metadata",
                 "novalue",
             ])
@@ -562,7 +564,7 @@ mod tests {
             "env",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--metadata",
             "harborContextId=abc",
         ])
@@ -577,7 +579,7 @@ mod tests {
             "env",
             "close",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
         ])
         .expect("parse env close");
@@ -591,7 +593,7 @@ mod tests {
             "env",
             "power",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "paused",
         ])
@@ -602,7 +604,7 @@ mod tests {
             "env",
             "update",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--display-name",
             "Build box",
@@ -616,7 +618,7 @@ mod tests {
             "env",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--include-closed",
             "--limit",
             "50",
@@ -631,7 +633,7 @@ mod tests {
                 "env",
                 "idle-policy",
                 "--api-url",
-                "http://127.0.0.1:18080/rpc",
+                "http://127.0.0.1:18080/api/v1",
                 "local-host",
             ])
             .is_err()
@@ -707,7 +709,7 @@ mod tests {
             "credentials",
             "bind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -726,7 +728,7 @@ mod tests {
             "credentials",
             "bind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -747,7 +749,7 @@ mod tests {
             "credentials",
             "bind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -766,7 +768,7 @@ mod tests {
             "credentials",
             "list",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
         ])
         .expect("parse env credentials list");
@@ -781,7 +783,7 @@ mod tests {
             "credentials",
             "unbind",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "local-host",
             "--env-name",
             "GITHUB_TOKEN",
@@ -799,7 +801,7 @@ mod tests {
             "--expected-revision",
             "2",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "echo",
             "--label",
             "echo",
@@ -822,7 +824,7 @@ mod tests {
             "oauth-client",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--id",
             "crm",
             "--kind",
@@ -850,7 +852,7 @@ mod tests {
             "oauth-client",
             "add",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--authorization-endpoint",
             "https://as.example.com/authorize",
             "--token-endpoint",
@@ -872,7 +874,7 @@ mod tests {
             "mcp",
             "put",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--label",
             "crm",
@@ -898,7 +900,7 @@ mod tests {
             "app",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--id",
             "lightspeed-github",
             "--app-id",
@@ -916,7 +918,7 @@ mod tests {
             "app",
             "create",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--app-id",
             "12345",
         ]);
@@ -932,7 +934,7 @@ mod tests {
             "installation",
             "grant",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "--app",
             "lightspeed-github",
             "--installation-id",
@@ -949,7 +951,7 @@ mod tests {
             "credential",
             "login",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "mcp:crm",
         ])
         .expect("parse credential login mcp:");
@@ -963,7 +965,7 @@ mod tests {
             "credential",
             "login",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--scope",
             "contacts.read",
@@ -983,7 +985,7 @@ mod tests {
             "credential",
             "set",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--grant",
             "authgrant_1",
@@ -999,7 +1001,7 @@ mod tests {
             "mcp",
             "login",
             "--api-url",
-            "http://127.0.0.1:18080/rpc",
+            "http://127.0.0.1:18080/api/v1",
             "crm",
             "--scope",
             "contacts.read",

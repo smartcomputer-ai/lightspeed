@@ -172,7 +172,7 @@ function BotsPane({
   const watchConnected = useWatchConnected(universeId);
   const bots = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
     refetchInterval: watchConnected ? 60_000 : ROSTER_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
@@ -187,7 +187,7 @@ function BotsPane({
   const states = useQueries({
     queries: openBots.map((botId) => ({
       queryKey: ["bot-state", universeId, botId],
-      queryFn: () => api<BotStateReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}/state`),
+      queryFn: () => api<BotStateReadResponse>("GET", `/api/ui/universes/${universeId}/bots/${botId}/state`),
       refetchInterval: botId === activeId ? (false as const) : OPEN_BOT_REFRESH_MS,
       refetchIntervalInBackground: false,
     })),
@@ -455,11 +455,11 @@ function BotWorkspace({
 }) {
   const bot = useQuery({
     queryKey: ["bot", universeId, botId],
-    queryFn: () => api<BotReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}`),
+    queryFn: () => api<BotReadResponse>("GET", `/api/ui/universes/${universeId}/bots/${botId}`),
   });
   const state = useQuery({
     queryKey: ["bot-state", universeId, botId],
-    queryFn: () => api<BotStateReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}/state`),
+    queryFn: () => api<BotStateReadResponse>("GET", `/api/ui/universes/${universeId}/bots/${botId}/state`),
     refetchInterval: 3_000,
     retry: true,
   });

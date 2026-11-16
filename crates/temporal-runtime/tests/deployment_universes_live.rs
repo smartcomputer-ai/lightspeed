@@ -79,17 +79,17 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
         };
 
         // Named at creation, or by derivation from the UUID.
-        let created = create(named, Some(&handle)).await?.result;
+        let created = create(named, Some(&handle)).await?;
         assert!(created.created);
         assert_eq!(created.universe.handle, handle);
-        let created = create(derived, None).await?.result;
+        let created = create(derived, None).await?;
         assert_eq!(
             created.universe.handle,
             store_pg::default_universe_handle(derived)
         );
 
         // Creating again reports the existing universe and never renames it.
-        let again = create(named, Some("some-other-name")).await?.result;
+        let again = create(named, Some("some-other-name")).await?;
         assert!(!again.created);
         assert_eq!(again.universe.handle, handle);
 
@@ -103,7 +103,7 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
 
         // Either form reaches the same universe.
         for reference in [named.to_string(), handle.clone()] {
-            let universe = read(&reference).await?.result.universe;
+            let universe = read(&reference).await?.universe;
             assert_eq!(universe.universe_id, named.to_string());
             assert_eq!(universe.handle, handle);
         }
@@ -113,7 +113,7 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
         }
 
         // A rename addressed by the current handle releases it at once.
-        let universe = rename(&handle, &renamed).await?.result.universe;
+        let universe = rename(&handle, &renamed).await?.universe;
         assert_eq!(universe.universe_id, named.to_string());
         assert_eq!(universe.handle, renamed);
         assert_eq!(
@@ -121,7 +121,7 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
             AgentApiErrorKind::NotFound
         );
         assert_eq!(
-            read(&renamed).await?.result.universe.universe_id,
+            read(&renamed).await?.universe.universe_id,
             named.to_string()
         );
         let error = rename(&derived.to_string(), &renamed).await.unwrap_err();
@@ -138,18 +138,10 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
                 universe: renamed.clone(),
             }),
         )
-        .await?
-        .result;
+        .await?;
         assert_eq!(purged.universe_id, named.to_string());
         assert_eq!(purged.state, api::UniverseDeletionState::Deleting);
-        assert!(
-            read(&named.to_string())
-                .await?
-                .result
-                .universe
-                .deletion
-                .is_some()
-        );
+        assert!(read(&named.to_string()).await?.universe.deletion.is_some());
         assert_eq!(
             create(named, None).await.unwrap_err().kind,
             AgentApiErrorKind::Conflict
@@ -158,10 +150,7 @@ async fn universes_are_addressed_by_uuid_or_handle() -> anyhow::Result<()> {
             read(&renamed).await.unwrap_err().kind,
             AgentApiErrorKind::NotFound
         );
-        let universe = rename(&derived.to_string(), &renamed)
-            .await?
-            .result
-            .universe;
+        let universe = rename(&derived.to_string(), &renamed).await?.universe;
         assert_eq!(universe.universe_id, derived.to_string());
         anyhow::Ok(())
     }

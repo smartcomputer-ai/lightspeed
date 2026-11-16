@@ -9,17 +9,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const manifestPath = path.resolve(here, "../../crates/api/contract/methods.json");
+const manifestPath = path.resolve(here, "../../crates/api/contract/http.json");
 const outPath = path.resolve(here, "../backend/src/routes/method-roles.ts");
 
-const { methods } = JSON.parse(readFileSync(manifestPath, "utf8"));
+const { operations } = JSON.parse(readFileSync(manifestPath, "utf8"));
 const roles = [];
 const targets = [];
 const unmembered = [];
-for (const spec of [...methods].sort((a, b) => a.method.localeCompare(b.method))) {
-  if (spec.role) roles.push(`  ${JSON.stringify(spec.method)}: ${JSON.stringify(spec.role)},`);
-  else unmembered.push(`  ${JSON.stringify(spec.method)},`);
-  if (spec.target === "sessionId") targets.push(`  ${JSON.stringify(spec.method)},`);
+for (const spec of [...operations].sort((a, b) => a.operationId.localeCompare(b.operationId))) {
+  if (spec.role) roles.push(`  ${JSON.stringify(spec.operationId)}: ${JSON.stringify(spec.role)},`);
+  else unmembered.push(`  ${JSON.stringify(spec.operationId)},`);
+  if (spec.target === "sessionId") targets.push(`  ${JSON.stringify(spec.operationId)},`);
 }
 
 writeFileSync(outPath, `/*
@@ -34,12 +34,12 @@ ${roles.join("\n")}
 };
 
 /** Methods that act on one session, named by \`sessionId\`. */
-export const SESSION_TARGET_METHODS: ReadonlySet<string> = new Set([
+export const SESSION_TARGET_OPERATIONS: ReadonlySet<string> = new Set([
 ${targets.join("\n")}
 ]);
 
 /** Deployment and service methods: never called on a member's behalf. */
-export const UNMEMBERED_METHODS: ReadonlySet<string> = new Set([
+export const UNMEMBERED_OPERATIONS: ReadonlySet<string> = new Set([
 ${unmembered.join("\n")}
 ]);
 `);

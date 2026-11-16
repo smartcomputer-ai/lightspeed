@@ -2,8 +2,8 @@
 //!
 //! Deployment methods address the deployment itself — the set of universes —
 //! rather than acting inside one universe, so they form a second scope class
-//! with its own service trait and dispatcher. They share the JSON-RPC
-//! envelope, error model, and `/rpc` endpoint with the universe-scoped API;
+//! with its own service trait. They share the resource HTTP transport and
+//! error model with the universe-scoped API;
 //! the `deployment/` method-name prefix is what routes a request here. Every configured
 //! runtime token reaches them.
 
@@ -415,7 +415,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn list_deleted_universes(
         &self,
         _params: DeploymentDeletedUniversesListParams,
-    ) -> Result<AgentApiOutcome<DeploymentDeletedUniversesListResponse>, AgentApiError> {
+    ) -> Result<DeploymentDeletedUniversesListResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "deleted universe administration is unavailable",
         ))
@@ -424,7 +424,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn list_deleted_sessions(
         &self,
         _params: DeploymentDeletedSessionsListParams,
-    ) -> Result<AgentApiOutcome<DeploymentDeletedSessionsListResponse>, AgentApiError> {
+    ) -> Result<DeploymentDeletedSessionsListResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "deleted session administration is unavailable",
         ))
@@ -432,7 +432,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn purge_session(
         &self,
         _params: DeploymentSessionPurgeParams,
-    ) -> Result<AgentApiOutcome<DeploymentSessionPurgeResponse>, AgentApiError> {
+    ) -> Result<DeploymentSessionPurgeResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "deleted session administration is unavailable",
         ))
@@ -441,7 +441,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn list_deployment_provider_bindings(
         &self,
         _params: DeploymentUniverseReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
         Err(AgentApiError::rejected(
             "deployment binding inventory unavailable",
         ))
@@ -449,37 +449,37 @@ pub trait DeploymentApiService: Send + Sync {
     async fn create_universe(
         &self,
         params: DeploymentUniverseCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseCreateResponse>, AgentApiError>;
+    ) -> Result<DeploymentUniverseCreateResponse, AgentApiError>;
 
     async fn list_universes(
         &self,
         params: DeploymentUniverseListParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseListResponse>, AgentApiError>;
+    ) -> Result<DeploymentUniverseListResponse, AgentApiError>;
 
     async fn read_universe(
         &self,
         params: DeploymentUniverseReadParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError>;
 
     async fn put_universe_configuration(
         &self,
         params: DeploymentUniverseConfigurationPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError>;
 
     async fn put_universe_handle(
         &self,
         params: DeploymentUniverseHandlePutParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseReadResponse>, AgentApiError>;
+    ) -> Result<DeploymentUniverseReadResponse, AgentApiError>;
 
     async fn delete_universe(
         &self,
         params: DeploymentUniverseDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError>;
+    ) -> Result<DeploymentUniverseDeleteResponse, AgentApiError>;
 
     async fn put_environment_provider(
         &self,
         _params: DeploymentEnvironmentProviderPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderPutResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment providers are unavailable",
         ))
@@ -488,7 +488,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn list_environment_providers(
         &self,
         _params: DeploymentEnvironmentProviderListParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderListResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderListResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment providers are unavailable",
         ))
@@ -497,7 +497,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn read_environment_provider(
         &self,
         _params: DeploymentEnvironmentProviderReadParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderReadResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment providers are unavailable",
         ))
@@ -506,7 +506,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn delete_environment_provider(
         &self,
         _params: DeploymentEnvironmentProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentEnvironmentProviderDeleteResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment providers are unavailable",
         ))
@@ -515,7 +515,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn put_environment_provider_binding(
         &self,
         _params: DeploymentProviderBindingPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
+    ) -> Result<DeploymentProviderBindingPutResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment provider bindings are unavailable",
         ))
@@ -524,7 +524,7 @@ pub trait DeploymentApiService: Send + Sync {
     async fn delete_environment_provider_binding(
         &self,
         _params: DeploymentProviderBindingDeleteParams,
-    ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
+    ) -> Result<DeploymentProviderBindingDeleteResponse, AgentApiError> {
         Err(AgentApiError::internal(
             "environment provider bindings are unavailable",
         ))
@@ -533,14 +533,15 @@ pub trait DeploymentApiService: Send + Sync {
     async fn list_deployment_channel_accounts(
         &self,
         _params: DeploymentChannelAccountListParams,
-    ) -> Result<AgentApiOutcome<DeploymentChannelAccountListResponse>, AgentApiError> {
+    ) -> Result<DeploymentChannelAccountListResponse, AgentApiError> {
         Err(AgentApiError::internal("channel accounts are unavailable"))
     }
 }
 
 macro_rules! deployment_api_methods {
-    ($($method_const:ident => $service_fn:ident($params:ty) -> $response:ty =>
-        [$summary:expr, $description:expr], access: $access:expr),+ $(,)?) => {
+    ($($method_const:path => $service_fn:ident($params:ty) -> $response:ty =>
+        [$summary:expr, $description:expr], access: $access:expr,
+        http: ($verb:ident, $path:literal, [$(($parameter:literal, $field:literal)),*], [$($query:literal),*], $transfer:ident, $success:ident)),+ $(,)?) => {
         pub(crate) fn deployment_method_access(method: &str) -> Option<MethodAccess> {
             match method {
                 $($method_const => Some($access),)+
@@ -549,23 +550,7 @@ macro_rules! deployment_api_methods {
         }
 
 
-        pub async fn dispatch_deployment_json_rpc(
-            service: &dyn DeploymentApiService,
-            request: JsonRpcRequest,
-        ) -> JsonRpcResponse {
-            let id = request.id;
-            match request.method.as_str() {
-                $(
-                    $method_const => match json_rpc_params::<$params>(request.params) {
-                        Ok(params) => json_rpc_outcome(id, service.$service_fn(params).await),
-                        Err(error) => JsonRpcResponse::failure(id, error),
-                    },
-                )+
-                other => JsonRpcResponse::failure(id, JsonRpcError::method_not_found(other)),
-            }
-        }
-
-        /// One entry per deployment JSON-RPC method, in dispatch order.
+        /// One entry per deployment operation in declaration order.
         /// Generated by the same macro invocation as the dispatcher, so the
         /// manifest cannot drift from it.
         pub fn deployment_method_manifest() -> Vec<MethodSpec> {
@@ -578,11 +563,12 @@ macro_rules! deployment_api_methods {
                         access: $access,
                         summary: $summary,
                         description: $description,
-                        params_type: stringify!($params),
-                        result_type: concat!("AgentApiOutcome<", stringify!($response), ">"),
+                        params_type: crate::http_contract::canonical_type_name::<$params>(),
+                        result_type: crate::http_contract::canonical_type_name::<$response>().into(),
+                        http: HttpBinding { verb: HttpVerb::$verb, path: $path, path_fields: &[$(HttpPathField { parameter: $parameter, field: $field }),*], query_fields: &[$($query),*], transfer: HttpTransfer::$transfer, success: HttpSuccess::$success },
                         register_schemas: |generator| MethodSchemas {
                             params: generator.subschema_for::<$params>(),
-                            result: generator.subschema_for::<AgentApiOutcome<$response>>(),
+                            result: generator.subschema_for::<$response>(),
                         },
                     },
                 )+
@@ -591,42 +577,67 @@ macro_rules! deployment_api_methods {
     };
 }
 
-deployment_api_methods! {
-    METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST => list_deleted_universes(DeploymentDeletedUniversesListParams) -> DeploymentDeletedUniversesListResponse =>
-        ["List deleted universes", "Permanent deletion records, newest first, with resource counts and unconfirmed provider targets."], access: MethodAccess::Deployment,
+/// Invoke a consumer with the canonical typed operations and their HTTP bindings.
+#[macro_export]
+macro_rules! for_each_deployment_operation {
+    ($consumer:ident) => {
+        $consumer! {
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_DELETED_LIST => list_deleted_universes($crate::DeploymentDeletedUniversesListParams) -> $crate::DeploymentDeletedUniversesListResponse =>
+        ["List deleted universes", "Permanent deletion records, newest first, with resource counts and unconfirmed provider targets."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/deleted-universes", [], ["after"], Json, Ok),
 
-    METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST => list_deleted_sessions(DeploymentDeletedSessionsListParams) -> DeploymentDeletedSessionsListResponse =>
-        ["List deleted sessions", "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_SESSIONS_PURGE => purge_session(DeploymentSessionPurgeParams) -> DeploymentSessionPurgeResponse =>
-        ["Permanently delete a session", "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history."], access: MethodAccess::Deployment,
+    $crate::METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST => list_deleted_sessions($crate::DeploymentDeletedSessionsListParams) -> $crate::DeploymentDeletedSessionsListResponse =>
+        ["List deleted sessions", "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/universes/{universe}/deleted-sessions", [("universe", "universe")], ["after"], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_SESSIONS_PURGE => purge_session($crate::DeploymentSessionPurgeParams) -> $crate::DeploymentSessionPurgeResponse =>
+        ["Permanently delete a session", "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history."], access: $crate::MethodAccess::Deployment,
+        http: (DELETE, "/api/v1/universes/{universe}/deleted-sessions/{sessionId}", [("universe", "universe"), ("sessionId", "sessionId")], [], Json, Ok),
 
-    METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST => list_deployment_provider_bindings(DeploymentUniverseReadParams) -> EnvironmentProviderBindingListResponse =>
-        ["List a universe's deployment provider bindings", "Deployment configuration inventory of one universe's provider bindings."], access: MethodAccess::Deployment,
+    $crate::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST => list_deployment_provider_bindings($crate::DeploymentUniverseReadParams) -> $crate::EnvironmentProviderBindingListResponse =>
+        ["List a universe's deployment provider bindings", "Deployment configuration inventory of one universe's provider bindings."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/universes/{universe}/deployment-provider-bindings", [("universe", "universe")], [], Json, Ok),
 
-    METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe(DeploymentUniverseCreateParams) -> DeploymentUniverseCreateResponse =>
-        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_UNIVERSES_LIST => list_universes(DeploymentUniverseListParams) -> DeploymentUniverseListResponse =>
-        ["List universes", "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
-        ["Read a universe", "Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT => put_universe_configuration(DeploymentUniverseConfigurationPutParams) -> DeploymentUniverseReadResponse =>
-        ["Declare universe presentation and access", "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT => put_universe_handle(DeploymentUniverseHandlePutParams) -> DeploymentUniverseReadResponse =>
-        ["Rename a universe", "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
-        ["Request universe deletion", "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>
-        ["List environment providers", "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(DeploymentEnvironmentProviderReadParams) -> DeploymentEnvironmentProviderReadResponse =>
-        ["Read an environment provider", "Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(DeploymentEnvironmentProviderDeleteParams) -> DeploymentEnvironmentProviderDeleteResponse =>
-        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding and no non-closed environment references it."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(DeploymentProviderBindingPutParams) -> DeploymentProviderBindingPutResponse =>
-        ["Put an environment provider binding", "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(DeploymentProviderBindingDeleteParams) -> DeploymentProviderBindingDeleteResponse =>
-        ["Delete an environment provider binding", "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts(DeploymentChannelAccountListParams) -> DeploymentChannelAccountListResponse =>
-        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::Deployment,
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_CREATE => create_universe($crate::DeploymentUniverseCreateParams) -> $crate::DeploymentUniverseCreateResponse =>
+        ["Create a universe", "Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another active universe holds is a conflict. A deleting or permanently deleted UUID is a conflict and cannot be reused."], access: $crate::MethodAccess::Deployment,
+        http: (POST, "/api/v1/universes", [], [], Json, CreatedFlag),
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_LIST => list_universes($crate::DeploymentUniverseListParams) -> $crate::DeploymentUniverseListResponse =>
+        ["List universes", "Returns deployment-wide universe summaries, including deleting universes and their teardown step, with approximate live aggregate counts and last session activity."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/universes", [], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe($crate::DeploymentUniverseReadParams) -> $crate::DeploymentUniverseReadResponse =>
+        ["Read a universe", "Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/universes/{universe}", [("universe", "universe")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT => put_universe_configuration($crate::DeploymentUniverseConfigurationPutParams) -> $crate::DeploymentUniverseReadResponse =>
+        ["Declare universe presentation and access", "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority."], access: $crate::MethodAccess::Deployment,
+        http: (PUT, "/api/v1/universes/{universe}/configuration", [("universe", "universe")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT => put_universe_handle($crate::DeploymentUniverseHandlePutParams) -> $crate::DeploymentUniverseReadResponse =>
+        ["Rename a universe", "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe."], access: $crate::MethodAccess::Deployment,
+        http: (PUT, "/api/v1/universes/{universe}/handle", [("universe", "universe")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe($crate::DeploymentUniverseDeleteParams) -> $crate::DeploymentUniverseDeleteResponse =>
+        ["Request universe deletion", "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound."], access: $crate::MethodAccess::Deployment,
+        http: (DELETE, "/api/v1/universes/{universe}", [("universe", "universe")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider($crate::DeploymentEnvironmentProviderPutParams) -> $crate::DeploymentEnvironmentProviderPutResponse =>
+        ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed."], access: $crate::MethodAccess::Deployment,
+        http: (PUT, "/api/v1/environment-providers/{providerId}", [("providerId", "providerId")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers($crate::DeploymentEnvironmentProviderListParams) -> $crate::DeploymentEnvironmentProviderListResponse =>
+        ["List environment providers", "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/environment-providers", [], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider($crate::DeploymentEnvironmentProviderReadParams) -> $crate::DeploymentEnvironmentProviderReadResponse =>
+        ["Read an environment provider", "Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/environment-providers/{providerId}", [("providerId", "providerId")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider($crate::DeploymentEnvironmentProviderDeleteParams) -> $crate::DeploymentEnvironmentProviderDeleteResponse =>
+        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding and no non-closed environment references it."], access: $crate::MethodAccess::Deployment,
+        http: (DELETE, "/api/v1/environment-providers/{providerId}", [("providerId", "providerId")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding($crate::DeploymentProviderBindingPutParams) -> $crate::DeploymentProviderBindingPutResponse =>
+        ["Put an environment provider binding", "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe."], access: $crate::MethodAccess::Deployment,
+        http: (PUT, "/api/v1/universes/{universe}/deployment-provider-bindings/{providerId}", [("universe", "universe"), ("providerId", "providerId")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding($crate::DeploymentProviderBindingDeleteParams) -> $crate::DeploymentProviderBindingDeleteResponse =>
+        ["Delete an environment provider binding", "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider."], access: $crate::MethodAccess::Deployment,
+        http: (DELETE, "/api/v1/universes/{universe}/deployment-provider-bindings/{providerId}", [("universe", "universe"), ("providerId", "providerId")], [], Json, Ok),
+    $crate::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts($crate::DeploymentChannelAccountListParams) -> $crate::DeploymentChannelAccountListResponse =>
+        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: $crate::MethodAccess::Deployment,
+        http: (GET, "/api/v1/deployment/channels/accounts", [], ["includeDisabled", "provider"], Json, Ok),
+        }
+    };
 }
+
+for_each_deployment_operation!(deployment_api_methods);

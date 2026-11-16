@@ -195,7 +195,6 @@ impl Fixture {
                 },
             })
             .await?
-            .result
             .profile;
         self.api
             .start_session(api::SessionStartParams {
@@ -327,7 +326,7 @@ where
                 registration_key_id: None,
                 display_name:"Code capability test".into(), identity_mode:api::EnvironmentIdentityModeView::Ephemeral,
                 max_active_environments:Some(1), ephemeral_disconnect_grace_ms:None, offline_close_after_ms:None, expires_at_ms:None,
-            }).await?.result;
+            }).await?;
             let connect_url = format!("ws://{address}{}", environment_protocol::routes::CONNECT_PATH);
             let mut registration = environment_daemon::config::RegistrationConfig::new(connect_url.clone(), environment_daemon::upgrade::resolve_discovery_url(Some(&connect_url), None)?);
             registration.registration_key = Some(environment_protocol::bytes::SecretString::new(key.secret.0));
@@ -338,7 +337,7 @@ where
             tasks.0.push(task.abort_handle());
             Some(tokio::time::timeout(Duration::from_secs(30), async {
                 loop {
-                    let records = state.api.list_environments(api::EnvironmentListParams::default()).await?.result.environments;
+                    let records = state.api.list_environments(api::EnvironmentListParams::default()).await?.environments;
                     if let Some(record) = records.into_iter().find(|record| record.state == api::EnvironmentStateView::Open) { return anyhow::Ok(record.environment_id); }
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
@@ -583,7 +582,6 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
             },
         })
         .await?
-        .result
         .profile;
     let features = serde_json::from_value(json!({
         "environments":{"environments":[{"environmentId":environment,"default":true,"access":"jobs","workingDirectory":fixture.root}]},
@@ -705,7 +703,6 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
             ..Default::default()
         })
         .await?
-        .result
         .sessions;
     anyhow::ensure!(
         children.len() == 2,
@@ -731,7 +728,6 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         anyhow::ensure!(
             view.lifecycle_status == api::SessionLifecycleStatus::Closed

@@ -24,7 +24,7 @@ pub(crate) struct ProfilesArgs {
     /// Emit machine-readable JSON (export always writes JSON).
     #[arg(long = "json", global = true)]
     output_json: bool,
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     #[command(subcommand)]
@@ -202,10 +202,10 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 .await
                 .map_err(api_error)?;
             if args.output_json {
-                print_json(&response.result.profiles)
+                print_json(&response.profiles)
             } else {
                 crate::output::table(
-                    &response.result.profiles,
+                    &response.profiles,
                     &[
                         ("profileId", "ID"),
                         ("displayName", "NAME"),
@@ -222,7 +222,7 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 })
                 .await
                 .map_err(api_error)?;
-            crate::output::show(args.output_json, &response.result.profile)
+            crate::output::show(args.output_json, &response.profile)
         }
         ProfilesCommand::Import { json, no_check } => {
             let mut batch = read_profile_import_arg(&json)?;
@@ -269,9 +269,9 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 .await
                 .map_err(api_error)?;
             if args.output_json {
-                print_json(&response.result.profile)
+                print_json(&response.profile)
             } else {
-                println!("Deleted profile {}.", response.result.profile.profile_id);
+                println!("Deleted profile {}.", response.profile.profile_id);
                 Ok(())
             }
         }
@@ -282,7 +282,7 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 })
                 .await
                 .map_err(api_error)?;
-            let profile = profile_input_from_record(response.result.profile);
+            let profile = profile_input_from_record(response.profile);
             write_json_output(&profile, out.as_deref())
         }
         ProfilesCommand::Check { json } => {
@@ -350,7 +350,7 @@ async fn upsert_vfs_workspace(
         .await
     {
         Ok(response) => {
-            let workspace = response.result.workspace;
+            let workspace = response.workspace;
             if workspace.head_snapshot_ref == snapshot_ref {
                 return Ok(workspace);
             }
@@ -363,7 +363,6 @@ async fn upsert_vfs_workspace(
                 })
                 .await
                 .map_err(api_error)?
-                .result
                 .workspace)
         }
         Err(error) if matches!(error.kind, AgentApiErrorKind::NotFound) => Ok(api
@@ -374,7 +373,6 @@ async fn upsert_vfs_workspace(
             })
             .await
             .map_err(api_error)?
-            .result
             .workspace),
         Err(error) => Err(api_error(error)),
     }
@@ -388,7 +386,7 @@ async fn upsert_profile(api: &HttpAgentApi, profile: AgentProfileInput) -> Resul
         .await
     {
         Ok(response) => {
-            let current = response.result.profile;
+            let current = response.profile;
             if profile_record_matches_input(&current, &profile) {
                 return Ok(current);
             }
@@ -399,7 +397,6 @@ async fn upsert_profile(api: &HttpAgentApi, profile: AgentProfileInput) -> Resul
                 })
                 .await
                 .map_err(api_error)?
-                .result
                 .profile)
         }
         Err(error) if matches!(error.kind, AgentApiErrorKind::NotFound) => Ok(api
@@ -409,7 +406,6 @@ async fn upsert_profile(api: &HttpAgentApi, profile: AgentProfileInput) -> Resul
             })
             .await
             .map_err(api_error)?
-            .result
             .profile),
         Err(error) => Err(api_error(error)),
     }
@@ -621,7 +617,7 @@ async fn validate_environments(
         .list_environment_provider_bindings(EnvironmentProviderBindingListParams::default())
         .await
     {
-        Ok(response) => response.result.bindings,
+        Ok(response) => response.bindings,
         Err(error) => {
             report.error(format!(
                 "failed to list environment provider bindings: {}",
@@ -651,7 +647,7 @@ async fn validate_environment_attachment(
         })
         .await
     {
-        Ok(response) => response.result.environment,
+        Ok(response) => response.environment,
         Err(error) => {
             report.error(format!(
                 "profile references missing environment {}: {}",
@@ -1215,8 +1211,7 @@ pub(crate) async fn session_profile(args: SessionProfileArgs) -> Result<()> {
             expected_config_revision,
             expected_tools_revision,
         })
-        .await?
-        .result;
+        .await?;
     if json {
         print_json(&response)
     } else {

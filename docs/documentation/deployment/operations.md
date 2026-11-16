@@ -121,7 +121,7 @@ The runtime binary supports five roles:
 
 | Role | Work it owns |
 | --- | --- |
-| `gateway` | JSON-RPC requests, OAuth callbacks, and bot webhook ingress. |
+| `gateway` | HTTP API requests, OAuth callbacks, and bot webhook ingress. |
 | `environment-gateway` | Daemon connections, worker environment routes, and environment lifecycle reconciliation: creating and closing provisioned environments and sweeping registered ones. |
 | `sessions` | Session, sub-agent, and environment-job workflows and activities, plus session/promise maintenance and CAS collection. |
 | `bots` | Bot controllers, trigger workflows and activities, and schedule reconciliation. |

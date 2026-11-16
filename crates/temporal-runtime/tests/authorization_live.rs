@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use store_pg::PgStore;
 use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
-    config::{GatewayAuthMode, RpcTokens},
+    config::{GatewayAuthMode, RuntimeTokens},
     gateway::{GatewayRoutes, GatewayState, gateway_router},
 };
 use uuid::Uuid;
@@ -30,13 +30,17 @@ impl Caller {
     }
 }
 
-async fn rpc(url: &str, caller: &Caller, method: &str, params: Value) -> Value {
+async fn api_call(url: &str, caller: &Caller, method: &str, params: Value) -> Value {
+    let universe = caller.universe.map(|id| id.to_string());
+    let parts = api::http_request(method, universe.as_deref(), params).unwrap();
     let mut request = reqwest::Client::new()
-        .post(url)
-        .bearer_auth(&caller.secret)
-        .json(&json!({"id":1,"method":method,"params":params}));
-    if let Some(universe) = caller.universe {
-        request = request.header("x-lightspeed-universe", universe.to_string());
+        .request(
+            reqwest::Method::from_bytes(parts.method.as_str().as_bytes()).unwrap(),
+            format!("{url}{}", parts.path),
+        )
+        .bearer_auth(&caller.secret);
+    if let Some(body) = parts.body {
+        request = request.json(&body);
     }
     if let Some(actor) = &caller.actor {
         request = request.header("x-lightspeed-actor", actor);
@@ -45,12 +49,12 @@ async fn rpc(url: &str, caller: &Caller, method: &str, params: Value) -> Value {
 }
 #[track_caller]
 fn success(value: Value) -> Value {
-    assert!(value.get("error").is_none(), "{value}");
-    value["result"]["result"].clone()
+    assert!(value.get("kind").is_none(), "{value}");
+    value
 }
 #[track_caller]
 fn kind(value: &Value) -> &str {
-    value["error"]["data"]["kind"].as_str().unwrap_or("success")
+    value["kind"].as_str().unwrap_or("success")
 }
 fn listed(value: &Value) -> BTreeSet<String> {
     value["sessions"]
@@ -69,18 +73,18 @@ async fn serve(
     runtime: Arc<UniverseRuntime>,
 ) -> anyhow::Result<(String, tokio::task::JoinHandle<std::io::Result<()>>)> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let endpoint = format!("http://{}/rpc", listener.local_addr()?);
+    let endpoint = format!("http://{}", listener.local_addr()?);
     let router = gateway_router(
         Arc::new(GatewayState::multi(
             GatewayAuthMode::Authenticated {
-                tokens: Arc::new(RpcTokens::from_configuration(
+                tokens: Arc::new(RuntimeTokens::from_configuration(
                     [
                         (
-                            "LIGHTSPEED_RPC_TOKEN_PLATFORM".into(),
+                            "LIGHTSPEED_API_TOKEN_PLATFORM".into(),
                             PLATFORM_TOKEN.into(),
                         ),
                         (
-                            "LIGHTSPEED_RPC_TOKEN_OPERATOR".into(),
+                            "LIGHTSPEED_API_TOKEN_OPERATOR".into(),
                             OPERATOR_TOKEN.into(),
                         ),
                     ],
@@ -146,12 +150,9 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
         )?);
         let (endpoint, server) = serve(runtime).await?;
         let outcome = async {
-            // A request that presents no valid token is answered 401 from its
-            // headers alone. Its body was not read, so the JSON-RPC error
-            // answers no request id.
-            let read = json!({"id":1,"method":"session/read","params":{"sessionId":"any"}});
+            // Invalid credentials are rejected with a problem response before reading a body.
             for bearer in [None, Some(format!("lsk_{}", "0".repeat(48)))] {
-                let mut request = reqwest::Client::new().post(&endpoint).json(&read);
+                let mut request = reqwest::Client::new().get(format!("{endpoint}/api/v1/universes/{universe}/sessions/any"));
                 if let Some(bearer) = &bearer {
                     request = request.bearer_auth(bearer);
                 }
@@ -159,7 +160,6 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
                 assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED, "{bearer:?}");
                 assert_eq!(response.headers()["www-authenticate"], "Bearer");
                 let refusal: Value = response.json().await?;
-                assert!(refusal["id"].is_null(), "{refusal}");
                 assert_eq!(kind(&refusal), "unauthenticated");
             }
 
@@ -171,22 +171,22 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
 
             // A session started for an actor is unshared and names its
             // creator; a retry keeps both.
-            let started = success(rpc(&endpoint, &alice, "session/start", json!({"sessionId": draft})).await);
+            let started = success(api_call(&endpoint, &alice, "session/start", json!({"sessionId": draft})).await);
             assert_eq!(started["session"]["id"], draft.as_str());
-            let read = success(rpc(&endpoint, &alice, "session/read", json!({"sessionId": draft})).await);
+            let read = success(api_call(&endpoint, &alice, "session/read", json!({"sessionId": draft})).await);
             assert_eq!(read["session"]["access"]["visibility"], "restricted");
             assert_eq!(read["session"]["access"]["createdBy"], json!({"kind":"actor","id":"alice"}));
-            success(rpc(&endpoint, &bob, "session/start", json!({"sessionId": draft, "access": {"visibility": "universe"}})).await);
-            let read = success(rpc(&endpoint, &bob, "session/read", json!({"sessionId": draft})).await);
+            success(api_call(&endpoint, &bob, "session/start", json!({"sessionId": draft, "access": {"visibility": "universe"}})).await);
+            let read = success(api_call(&endpoint, &bob, "session/read", json!({"sessionId": draft})).await);
             assert_eq!(read["session"]["access"]["visibility"], "restricted");
             assert_eq!(read["session"]["access"]["createdBy"]["id"], "alice");
 
             // A session may be shared from the start; a key acting for
             // itself is recorded as that key.
-            success(rpc(&endpoint, &bob, "session/start", json!({"sessionId": team, "access": {"visibility": "universe"}})).await);
-            let own = success(rpc(&endpoint, &developer, "session/start", json!({})).await);
+            success(api_call(&endpoint, &bob, "session/start", json!({"sessionId": team, "access": {"visibility": "universe"}})).await);
+            let own = success(api_call(&endpoint, &developer, "session/start", json!({})).await);
             let own = own["session"]["id"].as_str().unwrap().to_owned();
-            let read = success(rpc(&endpoint, &developer, "session/read", json!({"sessionId": own})).await);
+            let read = success(api_call(&endpoint, &developer, "session/read", json!({"sessionId": own})).await);
             assert_eq!(
                 read["session"]["access"]["createdBy"],
                 json!({"kind": "token", "name": "operator"})
@@ -195,30 +195,33 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
             // Lists filter by each session's root, in one pageable query. An
             // actor sees what it created and what is shared, and no one else's
             // unshared work.
-            let visible_to_bob = listed(&success(rpc(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
+            let visible_to_bob = listed(&success(api_call(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
             assert!(visible_to_bob.contains(&team));
             assert!(!visible_to_bob.contains(&draft));
-            let visible_to_alice = listed(&success(rpc(&endpoint, &alice, "session/list", json!({"visibleTo": "alice", "limit": 200})).await));
+            let visible_to_alice = listed(&success(api_call(&endpoint, &alice, "session/list", json!({"visibleTo": "alice", "limit": 200})).await));
             assert!(visible_to_alice.contains(&draft) && visible_to_alice.contains(&team));
-            let everything = listed(&success(rpc(&endpoint, &alice, "session/list", json!({"limit": 200})).await));
+            let everything = listed(&success(api_call(&endpoint, &alice, "session/list", json!({"limit": 200})).await));
             assert!(everything.contains(&draft) && everything.contains(&team) && everything.contains(&own));
 
             // Sharing is one way.
-            let shared = success(rpc(&endpoint, &alice, "session/share", json!({"sessionId": draft})).await);
+            let shared = success(api_call(&endpoint, &alice, "session/share", json!({"sessionId": draft})).await);
             assert_eq!(shared["access"]["visibility"], "universe");
-            assert_eq!(kind(&rpc(&endpoint, &alice, "session/share", json!({"sessionId": draft})).await), "rejected");
-            assert_eq!(kind(&rpc(&endpoint, &alice, "session/share", json!({"sessionId": "missing"})).await), "notFound");
-            let visible_to_bob = listed(&success(rpc(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
+            assert_eq!(kind(&api_call(&endpoint, &alice, "session/share", json!({"sessionId": draft})).await), "rejected");
+            assert_eq!(kind(&api_call(&endpoint, &alice, "session/share", json!({"sessionId": "missing"})).await), "notFound");
+            let visible_to_bob = listed(&success(api_call(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
             assert!(visible_to_bob.contains(&draft));
 
             // Actors never change a trusted component's access.
-            success(rpc(&endpoint, &developer.as_actor("mallory"), "session/read", json!({"sessionId": team})).await);
+            success(api_call(&endpoint, &developer.as_actor("mallory"), "session/read", json!({"sessionId": team})).await);
 
             let bytes = b"shared attachment";
-            let uploaded = success(rpc(&endpoint, &platform, "blobs/put", json!({"blobs":[{"bytesBase64": base64::engine::general_purpose::STANDARD.encode(bytes)}]})).await);
+            let uploaded = success(api_call(&endpoint, &platform, "blobs/put", json!({"blobs":[{"bytesBase64": base64::engine::general_purpose::STANDARD.encode(bytes)}]})).await);
             let blob = uploaded["blobs"][0]["blobRef"].clone();
-            let read = success(rpc(&endpoint, &developer, "blobs/read", json!({"blobRef": blob})).await);
-            assert_eq!(base64::engine::general_purpose::STANDARD.decode(read["bytesBase64"].as_str().unwrap())?, bytes);
+            let parts = api::http_request("blobs/read", Some(&universe.to_string()), json!({"blobRef":blob}))?;
+            let read = reqwest::Client::new().get(format!("{endpoint}{}", parts.path)).bearer_auth(&developer.secret).send().await?;
+            assert_eq!(read.status(), reqwest::StatusCode::OK);
+            assert_eq!(read.bytes().await?.as_ref(), bytes);
+
 
             anyhow::Ok(())
         }
@@ -231,7 +234,7 @@ async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires disposable Postgres and Temporal; no external OAuth provider; serialized"]
-async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyhow::Result<()> {
+async fn listeners_isolate_api_public_callbacks_and_environment_routes() -> anyhow::Result<()> {
     let _lock = support::live::LIVE_TEST_LOCK.lock().await;
     let (_pool, universe) = disposable_pool().await?;
     let activities = support::live::fake_worker_activities().await?;
@@ -248,8 +251,8 @@ async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyh
         )?);
         let state = Arc::new(GatewayState::multi(
             GatewayAuthMode::Authenticated {
-                tokens: Arc::new(RpcTokens::from_configuration(
-                    [("LIGHTSPEED_RPC_TOKEN_PLATFORM".into(), PLATFORM_TOKEN.into())],
+                tokens: Arc::new(RuntimeTokens::from_configuration(
+                    [("LIGHTSPEED_API_TOKEN_PLATFORM".into(), PLATFORM_TOKEN.into())],
                     |_| unreachable!(),
                 )?),
             }, runtime, public_url.clone(),
@@ -268,7 +271,7 @@ async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyh
         )).with_state(token_forms.clone());
         let mut servers = vec![tokio::spawn(async move { axum::serve(token_listener, token_router).await })];
         for (listener, routes) in [
-            (private_listener, GatewayRoutes::RPC),
+            (private_listener, GatewayRoutes::API),
             (public_listener, GatewayRoutes::PUBLIC),
             (environment_listener, GatewayRoutes::ENVIRONMENT),
         ] {
@@ -283,29 +286,35 @@ async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyh
                 }
             }
             for base in [&private_url, &public_url] {
-                for path in ["/environment-gateway/connect", "/environment-gateway/data", "/environment-gateway/routes/universe/environment"] {
+                for path in ["/environments/connect", "/environments/data", "/environments/routes/universe/environment"] {
                     assert_eq!(http.get(format!("{base}{path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
                 }
             }
             for base in [&public_url, &environment_url] {
                 assert_eq!(http.post(format!("{base}/rpc")).json(&json!({"id":1,"method":"initialize","params":{}}))
                     .send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+                assert_eq!(http.get(format!("{base}/api/v1/connection")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
             }
-            assert_eq!(http.post(format!("{private_url}/rpc")).json(&json!({"id":1,"method":"initialize","params":{}}))
-                .send().await?.status(), reqwest::StatusCode::UNAUTHORIZED);
+            assert_eq!(http.post(format!("{private_url}/rpc")).body("{}")
+                .send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+            assert_eq!(http.get(format!("{private_url}/api/v1/connection")).send().await?.status(), reqwest::StatusCode::UNAUTHORIZED);
             for base in [&private_url, &environment_url] {
-                for path in ["/credentials/callback", "/credentials/client-metadata.json"] {
+                for path in ["/ingress/credentials/callback", "/ingress/credentials/client-metadata.json"] {
                     assert_eq!(http.get(format!("{base}{path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
                 }
-                assert_eq!(http.post(format!("{base}/hooks/bots/{universe}/bot/trigger/token")).body("{}").send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+                assert_eq!(http.post(format!("{base}/ingress/webhooks/bots/{universe}/bot/trigger/token")).body("{}").send().await?.status(), reqwest::StatusCode::NOT_FOUND);
             }
-            let metadata = http.get(format!("{public_url}/credentials/client-metadata.json")).send().await?;
+            let metadata = http.get(format!("{public_url}/ingress/credentials/client-metadata.json")).send().await?;
             assert_eq!(metadata.status(), reqwest::StatusCode::OK);
             let metadata: Value = metadata.json().await?;
-            assert_eq!(metadata["client_id"], format!("{public_url}/credentials/client-metadata.json"));
-            assert_eq!(metadata["redirect_uris"], json!([format!("{public_url}/credentials/callback")]));
-            for old_path in ["/auth/callback", "/auth/client-metadata.json"] {
+            assert_eq!(metadata["client_id"], format!("{public_url}/ingress/credentials/client-metadata.json"));
+            assert_eq!(metadata["redirect_uris"], json!([format!("{public_url}/ingress/credentials/callback")]));
+            for old_path in ["/auth/callback", "/auth/client-metadata.json", "/credentials/callback", "/credentials/client-metadata.json"] {
                 assert_eq!(http.get(format!("{public_url}{old_path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+            }
+            assert_eq!(http.post(format!("{public_url}/hooks/bots/{universe}/bot/trigger/token")).body("{}").send().await?.status(), reqwest::StatusCode::NOT_FOUND);
+            for old_path in ["/environment-gateway/connect", "/environment-gateway/data", "/environment-gateway/routes/universe/environment", "/environment-gateway/peer/streams", "/environment-gateway/peer/data"] {
+                assert_eq!(http.get(format!("{environment_url}{old_path}")).send().await?.status(), reqwest::StatusCode::NOT_FOUND);
             }
 
             // Start through the authenticated private API. The browser callback
@@ -313,25 +322,25 @@ async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyh
             // its one-time state. A denied login exercises that whole HTTP path
             // without contacting an external OAuth provider.
             let caller = Caller { secret: PLATFORM_TOKEN.into(), universe: Some(universe), actor: Some("alice".into()) };
-            let endpoint = format!("{private_url}/rpc");
-            let created = success(rpc(&endpoint, &caller, "credentials/clients/create", json!({
+            let endpoint = private_url.clone();
+            let created = success(api_call(&endpoint, &caller, "credentials/clients/create", json!({
                 "providerKind":"customOAuth", "authorizationEndpoint":"https://example.com/authorize",
                 "tokenEndpoint":token_url, "remoteClientId":"browser-client", "tokenEndpointAuthMethod":"none"
             })).await);
-            let started = success(rpc(&endpoint, &caller, "credentials/flows/start", json!({"clientId":created["client"]["clientId"]})).await);
+            let started = success(api_call(&endpoint, &caller, "credentials/flows/start", json!({"clientId":created["client"]["clientId"]})).await);
             let authorize_url = url::Url::parse(started["authorizeUrl"].as_str().expect("authorization URL"))?;
             let state = authorize_url.query_pairs().find(|(key, _)| key == "state").expect("state").1.into_owned();
-            assert_eq!(authorize_url.query_pairs().find(|(key, _)| key == "redirect_uri").expect("redirect URI").1, format!("{public_url}/credentials/callback"));
-            let callback = format!("{public_url}/credentials/callback");
+            assert_eq!(authorize_url.query_pairs().find(|(key, _)| key == "redirect_uri").expect("redirect URI").1, format!("{public_url}/ingress/credentials/callback"));
+            let callback = format!("{public_url}/ingress/credentials/callback");
             let response = http.get(&callback).query(&[("state", state.as_str()), ("error", "access_denied")]).send().await?;
             assert_eq!(response.status(), reqwest::StatusCode::OK);
             assert!(response.text().await?.contains("Authorization failed"));
-            let read = success(rpc(&endpoint, &caller, "credentials/flows/read", json!({"flowId":started["flowId"]})).await);
+            let read = success(api_call(&endpoint, &caller, "credentials/flows/read", json!({"flowId":started["flowId"]})).await);
             assert_eq!(read["flow"]["status"], "failed");
             assert_eq!(http.get(&callback).query(&[("state", state.as_str()), ("error", "access_denied")]).send().await?.status(), reqwest::StatusCode::BAD_REQUEST);
             assert!(token_forms.lock().await.is_empty(), "denial never exchanges a token");
 
-            let started = success(rpc(&endpoint, &caller, "credentials/flows/start", json!({"clientId":created["client"]["clientId"]})).await);
+            let started = success(api_call(&endpoint, &caller, "credentials/flows/start", json!({"clientId":created["client"]["clientId"]})).await);
             let authorize_url = url::Url::parse(started["authorizeUrl"].as_str().expect("authorization URL"))?;
             let state = authorize_url.query_pairs().find(|(key, _)| key == "state").expect("state").1.into_owned();
             let challenge = authorize_url.query_pairs().find(|(key, _)| key == "code_challenge").expect("PKCE challenge").1.into_owned();
@@ -340,9 +349,9 @@ async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyh
             let page = response.text().await?;
             assert!(page.contains("Authorization complete"), "{page}");
             assert!(!page.contains("provider-test-access-token"));
-            let read = success(rpc(&endpoint, &caller, "credentials/flows/read", json!({"flowId":started["flowId"]})).await);
+            let read = success(api_call(&endpoint, &caller, "credentials/flows/read", json!({"flowId":started["flowId"]})).await);
             assert_eq!(read["flow"]["status"], "completed");
-            let grant = success(rpc(&endpoint, &caller, "credentials/grants/read", json!({"grantId":read["flow"]["grantId"]})).await);
+            let grant = success(api_call(&endpoint, &caller, "credentials/grants/read", json!({"grantId":read["flow"]["grantId"]})).await);
             assert_eq!(grant["grant"]["hasAccessToken"], true);
             assert_eq!(grant["grant"]["createdBy"], json!({"kind":"actor", "id":"alice"}));
             assert_eq!(grant["grant"]["status"], "active");
@@ -351,11 +360,174 @@ async fn listeners_isolate_rpc_public_callbacks_and_environment_routes() -> anyh
             assert_eq!(forms.len(), 1, "replay never exchanges the code again");
             assert_eq!(forms[0]["grant_type"], "authorization_code");
             assert_eq!(forms[0]["code"], "browser-code");
-            assert_eq!(forms[0]["redirect_uri"], format!("{public_url}/credentials/callback"));
+            assert_eq!(forms[0]["redirect_uri"], format!("{public_url}/ingress/credentials/callback"));
             assert_eq!(credentials::pkce_challenge_s256(&credentials::SecretValue::new(&forms[0]["code_verifier"])), challenge);
             Ok::<_, anyhow::Error>(())
         }.await;
         for server in servers { server.abort(); }
+        outcome
+    }).await
+}
+
+async fn resource_json(
+    response: reqwest::Response,
+    expected: reqwest::StatusCode,
+) -> anyhow::Result<Value> {
+    let status = response.status();
+    let content_type = response.headers()["content-type"].to_str()?.to_owned();
+    let body: Value = response.json().await?;
+    assert_eq!(status, expected, "{body}");
+    assert_eq!(content_type, "application/json");
+    assert!(body.get("result").is_none(), "direct response DTO: {body}");
+    Ok(body)
+}
+
+async fn resource_problem(
+    response: reqwest::Response,
+    expected: reqwest::StatusCode,
+    expected_kind: api::AgentApiErrorKind,
+) -> anyhow::Result<()> {
+    let status = response.status();
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/problem+json"
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let problem: api::HttpProblem = response.json().await?;
+    assert_eq!(status, expected, "{problem:?}");
+    assert_eq!(problem.status, expected.as_u16());
+    assert_eq!(problem.kind, expected_kind);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires disposable Postgres and Temporal; no model calls; serialized"]
+async fn resource_http_profiles_binary_ownership_and_watch() -> anyhow::Result<()> {
+    use api::AgentApiErrorKind::{InvalidRequest, NotFound, Unauthenticated};
+    use reqwest::StatusCode;
+    use std::time::Duration;
+
+    let _lock = support::live::LIVE_TEST_LOCK.lock().await;
+    let (_pool, universe) = disposable_pool().await?;
+    let activities = support::live::fake_worker_activities().await?;
+    support::live::run_with_live_worker(activities, move |client, queue, _session_id| async move {
+        let runtime = Arc::new(UniverseRuntime::new(
+            client, queue, None, DeploymentStores::from_env().await?,
+        )?);
+        let (endpoint, server) = serve(runtime).await?;
+        let base = &endpoint;
+        let outcome = async {
+            let http = reqwest::Client::new();
+            let connection_url = format!("{base}/api/v1/connection");
+            resource_problem(http.get(&connection_url).send().await?, StatusCode::UNAUTHORIZED, Unauthenticated).await?;
+            let connection = resource_json(http.get(&connection_url).bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::OK).await?;
+            assert_eq!(connection["runtime"], "runtime");
+            assert_eq!(connection["contractRevision"], api::HTTP_CONTRACT_REVISION);
+            assert_eq!(connection["caller"], json!({"single":false,"tokenName":"platform"}));
+            assert!(connection["serverInfo"]["name"].is_string());
+            let operator = resource_json(http.get(&connection_url).bearer_auth(OPERATOR_TOKEN).send().await?, StatusCode::OK).await?;
+            assert_eq!(operator["caller"]["tokenName"], "operator");
+            resource_problem(http.get(&connection_url).bearer_auth(PLATFORM_TOKEN)
+                .header("x-lightspeed-universe", universe.to_string()).send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+
+            let other_universe = Uuid::new_v4();
+            let other_handle = format!("http-{}", Uuid::new_v4().simple());
+            let created = resource_json(http.post(format!("{base}/api/v1/universes")).bearer_auth(PLATFORM_TOKEN)
+                .json(&json!({"universeId":other_universe,"handle":other_handle})).send().await?, StatusCode::CREATED).await?;
+            assert_eq!(created["created"], true);
+            let retried = resource_json(http.post(format!("{base}/api/v1/universes")).bearer_auth(PLATFORM_TOKEN)
+                .json(&json!({"universeId":other_universe,"handle":other_handle})).send().await?, StatusCode::OK).await?;
+            assert_eq!(retried["created"], false);
+            let other_profiles = resource_json(http.get(format!("{base}/api/v1/universes/{other_handle}/profiles"))
+                .bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::OK).await?;
+            assert_eq!(other_profiles["profiles"], json!([]));
+
+            let universe_url = format!("{base}/api/v1/universes/{universe}");
+            let profile_id = format!("http-{}", Uuid::new_v4().simple());
+            let profile_url = format!("{universe_url}/profiles/{profile_id}");
+            let created = resource_json(http.put(&profile_url).bearer_auth(PLATFORM_TOKEN)
+                .json(&json!({"profile":{"displayName":"HTTP profile","metadata":{"owner":"test"}}}))
+                .send().await?, StatusCode::OK).await?;
+            assert_eq!(created["profile"]["profileId"], profile_id);
+            assert_eq!(created["profile"]["metadata"], json!({"owner":"test"}));
+            let revision = created["profile"]["revision"].clone();
+            let updated = resource_json(http.put(&profile_url).bearer_auth(PLATFORM_TOKEN)
+                .json(&json!({"profile":{"displayName":"Updated"},"expectedRevision":revision}))
+                .send().await?, StatusCode::OK).await?;
+            assert_eq!(updated["profile"]["displayName"], "Updated");
+            let read = resource_json(http.get(&profile_url).bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::OK).await?;
+            assert_eq!(read["profile"], updated["profile"]);
+            let listed = resource_json(http.get(format!("{universe_url}/profiles")).bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::OK).await?;
+            assert!(listed["profiles"].as_array().expect("profile list").iter().any(|profile| profile["profileId"] == profile_id));
+
+            for body in [
+                json!({"profile":{"profileId":profile_id}}),
+                json!({"profile":{"profileId":"forged"}}),
+                json!({"profile":{},"surprise":true}),
+                json!({"profile":{"surprise":true}}),
+            ] {
+                resource_problem(http.put(&profile_url).bearer_auth(PLATFORM_TOKEN).json(&body).send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+            }
+            resource_problem(http.get(&profile_url).bearer_auth(PLATFORM_TOKEN).query(&[("unknown","value")]).send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+            resource_problem(http.get(&profile_url).bearer_auth(PLATFORM_TOKEN).body("{}").send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+            resource_problem(http.put(&profile_url).bearer_auth(PLATFORM_TOKEN).header("content-type","application/json")
+                .body(r#"{"profile":{},"profile":{}}"#).send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+            resource_problem(http.get(format!("{universe_url}/sessions?limit=1&limit=2")).bearer_auth(PLATFORM_TOKEN)
+                .send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+            resource_problem(http.get(format!("{base}/api/v1/no-such-resource")).bearer_auth(PLATFORM_TOKEN)
+                .send().await?, StatusCode::NOT_FOUND, NotFound).await?;
+
+            // A payload larger than a transfer chunk exercises actual storage range reads.
+            let mut bytes: Vec<u8> = (0..700_000).map(|index| (index % 251) as u8).collect();
+            bytes.extend_from_slice(Uuid::new_v4().as_bytes());
+            let blob_ref = harness::BlobRef::from_bytes(&bytes);
+            let blob_url = format!("{universe_url}/blobs/{blob_ref}/content");
+            let uploaded = resource_json(http.put(&blob_url).bearer_auth(PLATFORM_TOKEN)
+                .header("content-type","application/octet-stream").body(bytes.clone()).send().await?, StatusCode::OK).await?;
+            assert_eq!(uploaded["blobRef"], blob_ref.as_str());
+            assert_eq!(uploaded["bytes"], bytes.len() as u64);
+            let downloaded = http.get(&blob_url).bearer_auth(PLATFORM_TOKEN).send().await?;
+            assert_eq!(downloaded.status(), StatusCode::OK);
+            assert_eq!(downloaded.headers()["content-type"], "application/octet-stream");
+            assert_eq!(downloaded.content_length(), Some(bytes.len() as u64));
+            assert_eq!(downloaded.bytes().await?.as_ref(), bytes.as_slice());
+            resource_problem(http.get(format!("{base}/api/v1/universes/{other_handle}/blobs/{blob_ref}/content"))
+                .bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::NOT_FOUND, NotFound).await?;
+
+            let wrong_ref = harness::BlobRef::from_bytes(Uuid::new_v4().as_bytes());
+            let wrong_url = format!("{universe_url}/blobs/{wrong_ref}/content");
+            resource_problem(http.put(&wrong_url).bearer_auth(PLATFORM_TOKEN).header("content-type","application/octet-stream")
+                .body(bytes).send().await?, StatusCode::BAD_REQUEST, InvalidRequest).await?;
+            resource_problem(http.get(&wrong_url).bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::NOT_FOUND, NotFound).await?;
+
+            let events_url = format!("{universe_url}/events?kinds=session");
+            assert_eq!(http.head(&events_url).send().await?.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(http.head(&events_url).bearer_auth(PLATFORM_TOKEN).send().await?.status(), StatusCode::METHOD_NOT_ALLOWED);
+            let mut events = http.get(&events_url).bearer_auth(PLATFORM_TOKEN).header("accept","text/event-stream").send().await?;
+            assert_eq!(events.status(), StatusCode::OK);
+            assert_eq!(events.headers()["content-type"], "text/event-stream");
+            assert_eq!(events.headers()["cache-control"], "no-store");
+            let frame = tokio::time::timeout(Duration::from_secs(5), async {
+                let mut frame = Vec::new();
+                loop {
+                    let chunk = events.chunk().await?.expect("watch reset before end of stream");
+                    frame.extend_from_slice(&chunk);
+                    if frame.windows(2).any(|pair| pair == b"\n\n") {
+                        return anyhow::Ok(String::from_utf8(frame)?);
+                    }
+                }
+            }).await??;
+            let frame = frame.split("\n\n").next().expect("first SSE frame");
+            assert!(frame.lines().any(|line| line.strip_prefix("event:").is_some_and(|event| event.trim() == "watch/reset")), "{frame}");
+            let data = frame.lines().find_map(|line| line.strip_prefix("data:")).expect("reset payload");
+            assert_eq!(serde_json::from_str::<Value>(data.trim())?, json!({}));
+            drop(events);
+
+            resource_json(http.delete(&profile_url).bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::OK).await?;
+            resource_problem(http.get(&profile_url).bearer_auth(PLATFORM_TOKEN).send().await?, StatusCode::NOT_FOUND, NotFound).await?;
+            anyhow::Ok(())
+        }.await;
+        server.abort();
         outcome
     }).await
 }

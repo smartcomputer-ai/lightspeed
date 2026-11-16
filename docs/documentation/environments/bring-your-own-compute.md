@@ -92,7 +92,7 @@ For the local quickstart, run:
 
 ```bash
 "$LIGHTSPEED_ENVD_BIN" \
-  --gateway-url ws://127.0.0.1:18083/environment-gateway/connect \
+  --gateway-url ws://127.0.0.1:18083/environments/connect \
   --registration-key-file "$HOME/lightspeed-machine/registration-key" \
   --registration-name "My workstation" \
   --registration-receipt "$HOME/lightspeed-machine/receipt.json" \
@@ -101,7 +101,7 @@ For the local quickstart, run:
 ```
 
 For a remote installation, replace the gateway URL with its public endpoint,
-for example `wss://lightspeed.example.com/environment-gateway/connect`. Use
+for example `wss://lightspeed.example.com/environments/connect`. Use
 the host of the deployment's public base URL, or another registration URL
 the operator configured: the daemon signs the origin it dials, and the
 gateway refuses any other. Plain `ws://` is accepted only for loopback
@@ -169,7 +169,7 @@ directory and omit the deleted registration-key file:
 
 ```bash
 "$LIGHTSPEED_ENVD_BIN" \
-  --gateway-url ws://127.0.0.1:18083/environment-gateway/connect \
+  --gateway-url ws://127.0.0.1:18083/environments/connect \
   --registration-receipt "$HOME/lightspeed-machine/receipt.json" \
   --cwd "$HOME/lightspeed-machine/workspace" \
   --state-dir "$HOME/lightspeed-machine/state"
@@ -238,7 +238,7 @@ the runtime and daemon run on the same host; in a container deployment,
 | Symptom | What to check |
 | --- | --- |
 | The environment never appears | Check the registration secret, its universe and limits, and that the daemon can reach the gateway. |
-| A remote WebSocket connection fails | Use `wss://` and ensure both `/environment-gateway/connect` and `/environment-gateway/data` reach the environment gateway through a WebSocket-capable proxy. |
+| A remote WebSocket connection fails | Use `wss://` and ensure both `/environments/connect` and `/environments/data` reach the environment gateway through a WebSocket-capable proxy. |
 | Restart fails after deleting the key file | Remove `--registration-key-file` from the command and retain the original `--state-dir`. |
 | The daemon reports incompatible protocol versions | Use daemon and runtime builds from the same release, or run `lightspeed-envd upgrade`. `lightspeed-envd --print-build` reports daemon build and protocol information. |
 | The daemon exits with status 3 | The gateway refused registration for good, for example an invalid, revoked, or expired key, or a protocol version the daemon cannot upgrade to. The log names the reason. |

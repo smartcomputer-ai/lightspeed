@@ -162,5 +162,5 @@ export async function uploadPayload(
 }
 
 export function workspaceBaseUrl(universeId: string, workspaceId: string) {
-  return `/api/v1/universes/${encodeURIComponent(universeId)}/workspaces/${encodeURIComponent(workspaceId)}`;
+  return `/api/ui/universes/${encodeURIComponent(universeId)}/workspaces/${encodeURIComponent(workspaceId)}`;
 }

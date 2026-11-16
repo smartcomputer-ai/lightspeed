@@ -20,7 +20,7 @@ covered by [Tools and MCP](../using-lightspeed/tools-and-mcp.md).
 
 ## Connect the client, Configurator, and runtime
 
-Configurator connects to one configured runtime RPC endpoint. Its authentication
+Configurator connects to one configured runtime HTTP API endpoint. Its authentication
 mode must match that runtime:
 
 | Mode | Trusted operator supplies | Runtime connection |
@@ -46,11 +46,11 @@ LIGHTSPEED_AUTH_MODE=single node platform/configurator-mcp/dist/bin.js
 
 This example requires a runtime explicitly started in `single` mode. The
 Configurator listener defaults to `127.0.0.1:18081`, its MCP endpoint to `/mcp`,
-and the upstream runtime to `http://127.0.0.1:18080/rpc`. Its `/health` endpoint
+and the upstream runtime to `http://127.0.0.1:18080/api/v1`. Its `/health` endpoint
 returns `ok` when the process is serving; that does not prove upstream access.
 
 The [environment-variable reference](../reference/environment-variables.md#configurator-mcp)
-lists the RPC URL, bind address, host and origin allowlists, request-size limit,
+lists the API URL, bind address, host and origin allowlists, request-size limit,
 and timeouts. Host and origin checks supplement authentication; they grant no
 universe access. An authenticated operator uses Streamable HTTP with an
 `Authorization: Bearer <runtime-token>` header and `x-lightspeed-universe`.

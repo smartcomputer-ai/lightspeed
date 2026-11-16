@@ -44,9 +44,9 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   routes = {
-    "/api/v1/universes": () => [{ id: "factory", lightspeedUniverseId: "core-factory", name: "Factory", handle: "factory", status: "active", features: {} }],
-    "/api/v1/status/channels": () => status,
-    "/api/v1/channel-accounts": () => accounts,
+    "/api/ui/universes": () => [{ id: "factory", lightspeedUniverseId: "core-factory", name: "Factory", handle: "factory", status: "active", features: {} }],
+    "/api/ui/status/channels": () => status,
+    "/api/ui/channel-accounts": () => accounts,
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
     const route = routes[path];
@@ -95,14 +95,14 @@ it("lists the account inventory read-only, enabled unless stated otherwise", asy
 });
 
 it("says when no connector host is configured", async () => {
-  routes["/api/v1/status/channels"] = () => ({ connectors: [] });
+  routes["/api/ui/status/channels"] = () => ({ connectors: [] });
   await show();
   await waitForUi(() => expect(container.textContent).toContain("No connector hosts are configured."));
   expect(tables()).toHaveLength(1);
 });
 
 it("keeps the inventory when connector status is unavailable", async () => {
-  routes["/api/v1/status/channels"] = () => { throw new Error("status endpoint down"); };
+  routes["/api/ui/status/channels"] = () => { throw new Error("status endpoint down"); };
   await show();
   await waitForUi(() => expect(container.textContent).toContain("status endpoint down"));
   expect(tables()).toHaveLength(1);

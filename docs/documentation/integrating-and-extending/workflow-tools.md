@@ -247,7 +247,7 @@ the sender is authorized for your business operation.
 
 For `bound` + `pull`, consume `workflowToolInvoked` through the public session
 event stream, maintaining a cursor and deduplication state. This mode supports
-`accepted` completion only. There is no public receiver-filtered RPC.
+`accepted` completion only. There is no public receiver-filtered API operation.
 
 ## Add lifecycle coordination when needed
 

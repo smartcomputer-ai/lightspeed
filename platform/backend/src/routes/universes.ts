@@ -2,7 +2,7 @@ import { declaredRole } from "../declared-universes.js";
 import { syncUniverseHandles, requireAvailableCachedHandle } from "../universe-handles.js";
 import { Hono } from "hono";
 import { z } from "zod";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, ne, or, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { effectiveFeatures, memberAddSchema, memberUpdateSchema, mergeFeatureOverrides, universeHandleFromName, universeCreateSchema, universeHandleSchema, universeUpdateSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
@@ -65,11 +65,36 @@ async function universeForSession(
   return { universe: row.universe, handle: typeof row.universe.runtimeConfiguration?.deletionHandle === "string" ? row.universe.runtimeConfiguration.deletionHandle : row.handle, role, member: { userId: session.user.id, role } };
 }
 
+/** Resolve only Platform-linked universes before applying the existing membership gate. */
+export async function universeForRuntimeReference(ctx: AppContext, c: { get: (key: "session") => ApiVariables["session"] }, reference: string, allowDeleting = false): Promise<UniverseAccess | null> {
+  const [row] = await ctx.db.select({ id: universes.id }).from(universes)
+    .innerJoin(organization, eq(organization.id, universes.organizationId))
+    .where(or(eq(universes.lightspeedUniverseId, reference), eq(organization.slug, reference))).limit(1);
+  return row ? universeForSession(ctx, c, row.id, allowDeleting) : null;
+}
+
+export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAccess, actorId: string) {
+  const result = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
+    "deployment/universes/delete", { universe: access.universe.lightspeedUniverseId }, { headers: { "x-lightspeed-actor": actorId } },
+  );
+  await ctx.db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(731845920114)`);
+    await auditIdentity(tx, { actorId, action: "universe.delete", targetId: access.universe.lightspeedUniverseId, universeId: access.universe.id });
+    if (result.state === "deleted") {
+      await tx.delete(organization).where(eq(organization.id, access.universe.organizationId));
+    } else {
+      await tx.update(universes).set({ status: "deleting", runtimeConfiguration: { ...access.universe.runtimeConfiguration, deletionHandle: access.handle } }).where(eq(universes.id, access.universe.id));
+      await tx.update(organization).set({ slug: `_deleting-${access.universe.lightspeedUniverseId}` }).where(eq(organization.id, access.universe.organizationId));
+    }
+  });
+  return result;
+}
+
 /// Creates the platform half of a universe: an organization caching the
 /// authoritative runtime handle, the creator as its admin, and a row linked to the
 /// given engine universe id. Shared by create (fresh engine id) and adopt
 /// (existing engine id).
-async function createUniverseRows(
+export async function createUniverseRows(
   ctx: AppContext,
   userId: string,
   name: string,
@@ -178,7 +203,7 @@ export function universeRoutes(ctx: AppContext) {
         universeId: lightspeedUniverseId,
         handle: requestedHandle,
       });
-      const { handle, universeId } = response.result.universe;
+      const { handle, universeId } = response.universe;
       const created = await createUniverseRows(ctx, session.user.id, input.name, handle, universeId);
       return c.json(created, 201);
     });
@@ -196,7 +221,7 @@ export function universeRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const rows = await ctx.db.select().from(universes);
       const listed = await deploymentClientFor(ctx).call("deployment/universes/list", {});
-      const engineViews = listed.result.universes ?? [];
+      const engineViews = listed.universes ?? [];
       const engineIds = new Map(engineViews.map((view) => [view.universeId, view]));
       const linked = new Set(rows.map((row) => row.lightspeedUniverseId));
       return c.json({
@@ -238,7 +263,7 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ error: "already linked to a universe" }, 409);
     }
     return withGateway(c, async () => {
-      const { result: { universe } } = await deploymentClientFor(ctx).call("deployment/universes/read", {
+      const { universe } = await deploymentClientFor(ctx).call("deployment/universes/read", {
         universe: input.lightspeedUniverseId,
       });
       if (universe.deletion) return c.json({ error: "universe is being deleted" }, 409);
@@ -266,9 +291,9 @@ export function universeRoutes(ctx: AppContext) {
         { universeId: access.universe.lightspeedUniverseId, handle: access.handle },
       );
       // A universe that already exists keeps the handle it has; cache that.
-      await ctx.db.update(organization).set({ slug: created.result.universe.handle })
+      await ctx.db.update(organization).set({ slug: created.universe.handle })
         .where(eq(organization.id, access.universe.organizationId));
-      return c.json({ created: created.result.created });
+      return c.json({ created: created.created });
     });
   });
 
@@ -288,13 +313,13 @@ export function universeRoutes(ctx: AppContext) {
     const body = await parseBody(c, z.object({ handle: z.string() }));
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
-      const { result: { universe } } = await deploymentClientFor(ctx).call("deployment/universes/read", { universe: lightspeedUniverseId });
+      const { universe } = await deploymentClientFor(ctx).call("deployment/universes/read", { universe: lightspeedUniverseId });
       if (body.data.handle !== universe.handle) return c.json({ error: "type the universe handle to confirm deletion" }, 400);
       const report = await deploymentClientFor(ctx).call("deployment/universes/delete", {
         universe: lightspeedUniverseId,
       }, { headers: { "x-lightspeed-actor": c.get("session").user.id } });
       await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "universe.delete", targetId: lightspeedUniverseId });
-      return c.json({ ok: true, purge: report.result });
+      return c.json({ ok: true, purge: report });
     });
   });
 
@@ -308,21 +333,7 @@ export function universeRoutes(ctx: AppContext) {
     if (!body.ok) return body.response;
     if (body.data.handle !== access.handle) return c.json({ error: "type the universe handle to confirm deletion" }, 400);
     return withGateway(c, async () => {
-      const { result } = await deploymentClientFor(ctx, access.universe.gatewayUrl).call(
-        "deployment/universes/delete", { universe: access.universe.lightspeedUniverseId }, { headers: { "x-lightspeed-actor": c.get("session").user.id } },
-      );
-      await ctx.db.transaction(async tx => {
-        // Serialize with inventory sync so its older snapshot cannot restore
-        // the handle after this request releases it.
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(731845920114)`);
-        await auditIdentity(tx, { actorId: c.get("session").user.id, action: "universe.delete", targetId: access.universe.lightspeedUniverseId, universeId: access.universe.id });
-        if (result.state === "deleted") {
-          await tx.delete(organization).where(eq(organization.id, access.universe.organizationId));
-        } else {
-          await tx.update(universes).set({ status: "deleting", runtimeConfiguration: { ...access.universe.runtimeConfiguration, deletionHandle: access.handle } }).where(eq(universes.id, access.universe.id));
-          await tx.update(organization).set({ slug: `_deleting-${access.universe.lightspeedUniverseId}` }).where(eq(organization.id, access.universe.organizationId));
-        }
-      });
+      const result = await deleteManagedUniverse(ctx, access, c.get("session").user.id);
       return c.json({ ok: true, purge: result });
     });
   });
@@ -346,7 +357,7 @@ export function universeRoutes(ctx: AppContext) {
       const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/universes/handle/put", {
         universe: access.universe.lightspeedUniverseId, handle: body.data.handle,
       });
-      const handle = response.result.universe.handle;
+      const handle = response.universe.handle;
       await ctx.db.update(organization).set({ slug: handle }).where(eq(organization.id, access.universe.organizationId));
       return c.json(universeView(access.universe, handle, access.role));
     });

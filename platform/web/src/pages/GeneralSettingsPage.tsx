@@ -68,7 +68,7 @@ function FeaturesCard({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const change = useMutation({
     mutationFn: (features: Partial<Record<FeatureKey, boolean>>) =>
-      api<Universe>("PATCH", `/api/v1/universes/${universe.id}`, { features }),
+      api<Universe>("PATCH", `/api/ui/universes/${universe.id}`, { features }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["universes"] }),
   });
   return (
@@ -115,7 +115,7 @@ export function HandleCard({ universe }: { universe: Universe }) {
   const navigate = useNavigate();
   const [handle, setHandle] = useState(universe.handle);
   const rename = useMutation({
-    mutationFn: () => api<Universe>("PUT", `/api/v1/universes/${universe.id}/handle`, { handle: handle.trim() }),
+    mutationFn: () => api<Universe>("PUT", `/api/ui/universes/${universe.id}/handle`, { handle: handle.trim() }),
     onSuccess: (updated) => {
       queryClient.setQueryData<Universe[]>(["universes"], rows => rows?.map(row => row.id === updated.id ? updated : row));
       setHandle(updated.handle);
@@ -156,7 +156,7 @@ function RenameCard({ universe }: { universe: Universe }) {
 
   const rename = useMutation({
     mutationFn: () =>
-      api<Universe>("PATCH", `/api/v1/universes/${universe.id}`, { name: name.trim() }),
+      api<Universe>("PATCH", `/api/ui/universes/${universe.id}`, { name: name.trim() }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["universes"] }),
   });
 
@@ -234,7 +234,7 @@ function DangerZone({ universe }: { universe: Universe }) {
 
   const setStatus = useMutation({
     mutationFn: (status: "active" | "archived") =>
-      api<Universe>("PATCH", `/api/v1/universes/${universe.id}`, { status }),
+      api<Universe>("PATCH", `/api/ui/universes/${universe.id}`, { status }),
     onSuccess: async (_, status) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       if (status === "archived") {

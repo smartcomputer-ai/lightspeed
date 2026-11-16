@@ -42,7 +42,7 @@ export function botRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("bots/list", {});
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -58,7 +58,7 @@ export function botRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("bots/create", body as unknown as BotCreateParams);
-      return c.json(response.result, 201);
+      return c.json(response, 201);
     });
   });
 
@@ -70,7 +70,7 @@ export function botRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("bots/read", { botId: c.req.param("botId") });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -90,7 +90,7 @@ export function botRoutes(ctx: AppContext) {
         bot: { ...bot, botId: c.req.param("botId") },
         expectedRevision: body.expectedRevision,
       } as unknown as BotPutParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -102,7 +102,7 @@ export function botRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("bots/close", { botId: c.req.param("botId") });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -114,7 +114,7 @@ export function botRoutes(ctx: AppContext) {
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
       const response = await client.call("bots/delete", { botId: c.req.param("botId") });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -128,7 +128,7 @@ export function botRoutes(ctx: AppContext) {
       const response = await client.call("bots/state/read", {
         botId: c.req.param("botId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -143,7 +143,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -157,7 +157,7 @@ export function botRoutes(ctx: AppContext) {
       const response = await client.call("bots/triggers/list", {
         botId: c.req.param("botId"),
       });
-      const triggers = response.result.triggers ?? [];
+      const triggers = response.triggers ?? [];
       return c.json({
         triggers: triggers,
       });
@@ -175,7 +175,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         triggerId: c.req.param("triggerId"),
       });
-      const trigger = response.result.trigger;
+      const trigger = response.trigger;
       return c.json({
         trigger: trigger,
       });
@@ -196,7 +196,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         triggerId: c.req.param("triggerId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -217,7 +217,7 @@ export function botRoutes(ctx: AppContext) {
         trigger: { ...trigger, triggerId: c.req.param("triggerId") },
         expectedRevision: body.expectedRevision,
       } as unknown as BotTriggerPutParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -232,7 +232,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         triggerId: c.req.param("triggerId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -252,7 +252,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         event,
       } as unknown as BotEventAdmitParams);
-      return c.json(response.result, 202);
+      return c.json(response, 202);
     });
   });
 
@@ -271,7 +271,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         seq: body.seq,
       } as unknown as BotEventReplayParams);
-      return c.json(response.result, 202);
+      return c.json(response, 202);
     });
   });
 
@@ -292,7 +292,7 @@ export function botRoutes(ctx: AppContext) {
         limit,
         cursor: c.req.query("cursor"),
       } as unknown as BotEventListParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -311,7 +311,7 @@ export function botRoutes(ctx: AppContext) {
         botId: c.req.param("botId"),
         seq,
       } as unknown as BotEventReadParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -332,7 +332,7 @@ export function botRoutes(ctx: AppContext) {
         payload: body.payload,
         limit: body.limit,
       } as unknown as BotFilterTestParams);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 

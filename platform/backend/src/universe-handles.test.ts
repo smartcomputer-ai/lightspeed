@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../test/http-fixture.js";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AppContext } from "./context.js";
 import { syncUniverseHandles, UniverseHandleCacheConflict } from "./universe-handles.js";
@@ -11,14 +12,14 @@ function fixture(cached: string[], actual: string[]) {
   const chain = { from: () => chain, innerJoin: async () => rows };
   const tx = { update: () => ({ set: ({ slug }: { slug: string }) => ({ where: async () => { updates.push(slug); } }) }) };
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    expect(rpc.method).toBe("deployment/universes/list");
-    return Response.json({ id: rpc.id, result: { result: {
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    expect(request.method).toBe("deployment/universes/list");
+    return Response.json({
       universes: actual.map((handle, index) => ({ universeId: `uuid-${index}`, handle })),
-    }, notifications: [] } });
+    });
   }));
   const transaction = vi.fn(async (work: (value: typeof tx) => unknown) => work(tx));
-  const ctx = { db: { select: () => chain, transaction }, env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as unknown as AppContext;
+  const ctx = { db: { select: () => chain, transaction }, env: { lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as unknown as AppContext;
   return { ctx, updates, transaction };
 }
 it("refreshes renamed runtime handles atomically, including swapped cache values", async () => {

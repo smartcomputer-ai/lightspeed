@@ -1,5 +1,5 @@
 import {
-  LightspeedRpcError,
+  LightspeedApiError,
   LightspeedTransportError,
 } from "@lightspeed-ai/sdk";
 import { describe, expect, it } from "vitest";
@@ -32,11 +32,10 @@ describe("single-representation MCP tool results", () => {
 });
 
 describe("safe MCP tool errors", () => {
-  it("preserves typed Lightspeed RPC facts while redacting credentials", () => {
-    const error = new LightspeedRpcError({
-      code: -32010,
-      message: "rejected Bearer lsr_secret_value",
-      data: { kind: "rejected", message: "key lsr_secret_value was rejected" },
+  it("preserves typed Lightspeed HTTP facts while redacting credentials", () => {
+    const error = new LightspeedApiError({
+      type: "about:blank", title: "Rejected", status: 409, kind: "rejected",
+      detail: "rejected Bearer lsr_secret_value",
     });
     const result = failedToolResult(error);
     expect(result.isError).toBe(true);
@@ -44,15 +43,14 @@ describe("safe MCP tool errors", () => {
     expect(result.structuredContent).toBeUndefined();
     expect(
       JSON.parse((result.content[0] as { text: string }).text),
-    ).toMatchObject({ code: -32010, kind: "rejected" });
+    ).toMatchObject({ status: 409, kind: "rejected" });
   });
 
   it("redacts arbitrary bearer tokens without requiring a generated prefix", () => {
     const token = "configured-runtime-secret-without-prefix";
-    const error = new LightspeedRpcError({
-      code: -32010,
-      message: `rejected Bearer ${token}`,
-      data: { kind: "rejected", message: `authorization: bearer ${token}` },
+    const error = new LightspeedApiError({
+      type: "about:blank", title: "Rejected", status: 409, kind: "rejected",
+      detail: `rejected Bearer ${token}`,
     });
     const result = safeError(error);
     expect(JSON.stringify(result)).not.toContain(token);

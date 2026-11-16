@@ -109,10 +109,10 @@ it.each([
   [["lightspeed-users"], "user"], [["lightspeed-admins"], "admin"], [["lightspeed-users", "lightspeed-admins"], "admin"],
 ])("admits %j with local platform role %s and no universe membership", async (groups, role) => {
   const { cookie } = await login({ groups });
-  const me = await fixture.request("/api/v1/me", undefined, cookie);
+  const me = await fixture.request("/api/ui/me", undefined, cookie);
   expect(me.status).toBe(200);
   expect(((await me.json()) as { user: unknown }).user).toMatchObject({ role, identitySource: "company", companyAdmitted: true });
-  expect(await (await fixture.request("/api/v1/universes", undefined, cookie)).json()).toEqual([]);
+  expect(await (await fixture.request("/api/ui/universes", undefined, cookie)).json()).toEqual([]);
   const account = (await fixture.db.select().from(schema.account).where(eq(schema.account.userId, (await companyUser()).id)))[0]!;
   expect([account.accessToken, account.refreshToken, account.idToken]).toEqual([null, null, null]);
   const audit = JSON.stringify(await fixture.db.select().from(schema.identityAudit));
@@ -126,7 +126,7 @@ it.each([
   ["wrong nonce", { nonce: "wrong" }], ["missing nonce", { nonce: undefined }], ["missing email", { email: undefined }],
 ])("refuses %s before creating a company user or session", async (_name, claims) => {
   const { cookie } = await login(claims as JWTPayload);
-  expect((await fixture.request("/api/v1/me", undefined, cookie)).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, cookie)).status).toBe(401);
   expect(await companyUser()).toBeUndefined();
 });
 
@@ -141,21 +141,21 @@ it("preserves identity across email changes, refuses collisions and never links 
   await login({ email: "changed@example.test" });
   expect(await companyUser()).toMatchObject({ id: original.id, email: "changed@example.test" });
   const collision = await login({ sub: "different-subject", email: "changed@example.test" });
-  expect((await fixture.request("/api/v1/me", undefined, collision.cookie)).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, collision.cookie)).status).toBe(401);
   const localCollision = await login({ sub: "local-collision", email: identityEnv.adminEmail! });
-  expect((await fixture.request("/api/v1/me", undefined, localCollision.cookie)).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, localCollision.cookie)).status).toBe(401);
 });
 
 it("demotes existing sessions and revokes all of them when company admission disappears", async () => {
   const first = await login({ groups: ["lightspeed-admins"] });
   const second = await login({ groups: ["lightspeed-users"] });
-  expect(((await (await fixture.request("/api/v1/me", undefined, first.cookie)).json()) as { user: { role: string } }).user.role).toBe("user");
+  expect(((await (await fixture.request("/api/ui/me", undefined, first.cookie)).json()) as { user: { role: string } }).user.role).toBe("user");
   const denied = await login({ groups: [] });
-  for (const { cookie } of [first, second, denied]) expect((await fixture.request("/api/v1/me", undefined, cookie)).status).toBe(401);
+  for (const { cookie } of [first, second, denied]) expect((await fixture.request("/api/ui/me", undefined, cookie)).status).toBe(401);
   expect(await companyUser()).toMatchObject({ role: "user", companyAdmitted: false });
   const restored = await login();
-  expect((await fixture.request("/api/v1/me", undefined, restored.cookie)).status).toBe(200);
-  expect((await fixture.request("/api/v1/me", undefined, first.cookie)).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, restored.cookie)).status).toBe(200);
+  expect((await fixture.request("/api/ui/me", undefined, first.cookie)).status).toBe(401);
 });
 
 it("bounds sessions, does not slide with activity, and rejects stale bearer and cookie sessions", async () => {
@@ -163,14 +163,14 @@ it("bounds sessions, does not slide with activity, and rejects stale bearer and 
   const user = await companyUser();
   const [session] = await fixture.db.select().from(schema.session).where(eq(schema.session.userId, user.id));
   expect(session!.expiresAt.getTime() - user.providerCheckedAt!.getTime()).toBeLessThanOrEqual(28800000);
-  await fixture.request("/api/v1/me", undefined, cookie);
+  await fixture.request("/api/ui/me", undefined, cookie);
   const [again] = await fixture.db.select().from(schema.session).where(eq(schema.session.id, session!.id));
   expect(again!.expiresAt).toEqual(session!.expiresAt);
-  const bearer = await fixture.app.request(`${identityEnv.baseUrl}/api/v1/me`, { headers: { authorization: `Bearer ${session!.token}` } });
+  const bearer = await fixture.app.request(`${identityEnv.baseUrl}/api/ui/me`, { headers: { authorization: `Bearer ${session!.token}` } });
   expect(bearer.status).toBe(200);
   await fixture.db.update(schema.session).set({ expiresAt: new Date(0) }).where(eq(schema.session.id, session!.id));
-  expect((await fixture.request("/api/v1/me", undefined, cookie)).status).toBe(401);
-  expect((await fixture.app.request(`${identityEnv.baseUrl}/api/v1/me`, { headers: { authorization: `Bearer ${session!.token}` } })).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, cookie)).status).toBe(401);
+  expect((await fixture.app.request(`${identityEnv.baseUrl}/api/ui/me`, { headers: { authorization: `Bearer ${session!.token}` } })).status).toBe(401);
 });
 
 it("enforces suspension across auth routes, reauthentication and reinstatement without reviving old sessions", async () => {
@@ -180,10 +180,10 @@ it("enforces suspension across auth routes, reauthentication and reinstatement w
   expect((await fixture.request("/api/auth/admin/ban-user", { userId: user.id, banExpiresIn: 1 }, adminCookie)).status).toBe(200);
   expect((await fixture.request("/api/auth/update-user", { name: "changed" }, cookie)).status).toBe(401);
   expect(await (await fixture.request("/api/auth/get-session", undefined, cookie)).json()).toBeNull();
-  expect((await fixture.request("/api/v1/me", undefined, (await login()).cookie)).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, (await login()).cookie)).status).toBe(401);
   await fixture.request("/api/auth/admin/unban-user", { userId: user.id }, adminCookie);
-  expect((await fixture.request("/api/v1/me", undefined, cookie)).status).toBe(401);
-  expect((await fixture.request("/api/v1/me", undefined, (await login()).cookie)).status).toBe(200);
+  expect((await fixture.request("/api/ui/me", undefined, cookie)).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, (await login()).cookie)).status).toBe(200);
   expect((await fixture.db.select().from(schema.identityAudit)).map((r) => r.action)).toEqual(expect.arrayContaining(["emergency.sign_in", "user.suspend", "user.reinstate"]));
 });
 
@@ -217,14 +217,14 @@ it("validates JWT access-token entitlements against their own audience and the I
       { groups: ["lightspeed-users"], iat: Math.floor(Date.now() / 1000) + 600 },
     ]) {
       const denied = await login({}, { accessClaims }, target);
-      expect((await target.request("/api/v1/me", undefined, denied.cookie)).status).toBe(401);
+      expect((await target.request("/api/ui/me", undefined, denied.cookie)).status).toBe(401);
     }
     const signature = await login({}, { accessClaims: { groups: ["lightspeed-users"] }, wrongAccessSignature: true }, target);
-    expect((await target.request("/api/v1/me", undefined, signature.cookie)).status).toBe(401);
+    expect((await target.request("/api/ui/me", undefined, signature.cookie)).status).toBe(401);
     const opaque = await login({}, {}, target);
-    expect((await target.request("/api/v1/me", undefined, opaque.cookie)).status).toBe(401);
+    expect((await target.request("/api/ui/me", undefined, opaque.cookie)).status).toBe(401);
     const allowed = await login({ groups: [] }, { accessClaims: { groups: ["lightspeed-admins"] } }, target);
-    expect((await target.request("/api/v1/me", undefined, allowed.cookie)).status).toBe(200);
+    expect((await target.request("/api/ui/me", undefined, allowed.cookie)).status).toBe(200);
     expect((await target.db.select().from(schema.user).where(eq(schema.user.identitySource, "company")))[0]?.role).toBe("admin");
   } finally { await target.postgres.close(); }
 }, 30000);
@@ -236,7 +236,7 @@ it("keeps universe roles local, enforces their edits on existing sessions, and r
   const org = crypto.randomUUID();
   await fixture.db.insert(schema.organization).values({ id: org, name: "Local roles", slug: org, createdAt: new Date() });
   const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: org, name: "Local roles", lightspeedUniverseId: crypto.randomUUID() }).returning();
-  const base = `/api/v1/universes/${universe!.id}`;
+  const base = `/api/ui/universes/${universe!.id}`;
   const added = await fixture.request(`${base}/members`, { userId: company.id, role: "viewer" }, adminCookie);
   expect(added.status).toBe(201);
   const member = await added.json() as { id: string };
@@ -245,15 +245,15 @@ it("keeps universe roles local, enforces their edits on existing sessions, and r
   expect((await fixture.request(`${base}/members`, { userId: company.id, role: "admin" }, cookie)).status).toBe(403);
   expect((await fixture.request(`${base}/members/${member.id}`, { role: "operator" }, adminCookie, "PATCH")).status).toBe(200);
   for (const session of [cookie, renewed.cookie]) {
-    const listed = await (await fixture.request("/api/v1/universes", undefined, session)).json() as Array<{ role: string }>;
+    const listed = await (await fixture.request("/api/ui/universes", undefined, session)).json() as Array<{ role: string }>;
     expect(listed[0]?.role).toBe("operator");
   }
   expect((await fixture.request(`${base}/members/${member.id}`, undefined, adminCookie, "DELETE")).status).toBe(200);
-  expect(await (await fixture.request("/api/v1/universes", undefined, (await login()).cookie)).json()).toEqual([]);
-  expect((await fixture.request("/api/v1/admin/audit", undefined, cookie)).status).toBe(403);
-  expect((await fixture.request("/api/v1/admin/universes/u/sessions/s/purge", {}, cookie, "POST")).status).toBe(403);
+  expect(await (await fixture.request("/api/ui/universes", undefined, (await login()).cookie)).json()).toEqual([]);
+  expect((await fixture.request("/api/ui/admin/audit", undefined, cookie)).status).toBe(403);
+  expect((await fixture.request("/api/ui/admin/universes/u/sessions/s/purge", {}, cookie, "POST")).status).toBe(403);
   await fixture.db.delete(schema.user).where(eq(schema.user.id, company.id));
-  const events = await (await fixture.request("/api/v1/admin/audit", undefined, adminCookie)).json() as Array<{ targetId: string; action: string }>;
+  const events = await (await fixture.request("/api/ui/admin/audit", undefined, adminCookie)).json() as Array<{ targetId: string; action: string }>;
   expect(events.filter((event) => event.targetId === company.id).map((event) => event.action)).toEqual(expect.arrayContaining(["member.add", "member.role", "member.remove"]));
   await fixture.db.delete(schema.organization).where(eq(schema.organization.id, org));
 });
@@ -266,7 +266,7 @@ it("keeps local password login and admin provisioning available without OIDC", a
     const created = await target.request("/api/auth/admin/create-user", { name: "Local user", email: "local@example.test", password: "local-test-password", role: "user" }, responseCookies(signedIn));
     expect(created.status).toBe(200);
     const local = await target.request("/api/auth/sign-in/email", { email: "local@example.test", password: "local-test-password" });
-    expect((await target.request("/api/v1/me", undefined, responseCookies(local))).status).toBe(200);
+    expect((await target.request("/api/ui/me", undefined, responseCookies(local))).status).toBe(200);
   } finally { await target.postgres.close(); }
 }, 30000);
 
@@ -274,18 +274,18 @@ it("lets emergency admins change their own password and rejects callback replay"
   const changed = await fixture.request("/api/auth/change-password", { currentPassword: identityEnv.adminPassword, newPassword: "replacement-emergency-password", revokeOtherSessions: true }, await emergency());
   expect(changed.status).toBe(200);
   const newCookie = responseCookies(changed);
-  expect((await fixture.request("/api/v1/me", undefined, newCookie)).status).toBe(200);
+  expect((await fixture.request("/api/ui/me", undefined, newCookie)).status).toBe(200);
   expect((await fixture.request("/api/auth/change-password", { currentPassword: "replacement-emergency-password", newPassword: identityEnv.adminPassword }, newCookie)).status).toBe(200);
   const attempt = await login();
   const replay = await fixture.request(attempt.callback.pathname + attempt.callback.search, undefined, attempt.initCookie);
-  expect((await fixture.request("/api/v1/me", undefined, responseCookies(replay))).status).toBe(401);
+  expect((await fixture.request("/api/ui/me", undefined, responseCookies(replay))).status).toBe(401);
 });
 
 it("keeps emergency access working during provider failure and can turn passwords off", async () => {
   const existing = await login();
   fetchMock.mockImplementation(async () => { throw new Error("provider unavailable"); });
-  expect((await fixture.request("/api/v1/me", undefined, existing.cookie)).status).toBe(200);
-  expect((await fixture.request("/api/v1/me", undefined, await emergency())).status).toBe(200);
+  expect((await fixture.request("/api/ui/me", undefined, existing.cookie)).status).toBe(200);
+  expect((await fixture.request("/api/ui/me", undefined, await emergency())).status).toBe(200);
   const disabled = createAuth(fixture.db, { ...identityEnv, passwordSignIn: "off" });
   const response = await disabled.handler(new Request(`${identityEnv.baseUrl}/api/auth/sign-in/email`, {
     method: "POST", headers: { "content-type": "application/json", origin: identityEnv.baseUrl },
@@ -302,14 +302,14 @@ it("applies declared directory roles from verified login claims and removes them
   } }).returning();
   try {
     const { cookie } = await login({ groups: ["lightspeed-users", "research-admins"] });
-    const list = await fixture.request("/api/v1/universes", undefined, cookie);
+    const list = await fixture.request("/api/ui/universes", undefined, cookie);
     expect(await list.json()).toEqual([expect.objectContaining({ id: universe!.id, role: "admin" })]);
-    expect((await fixture.request(`/api/v1/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(200);
+    expect((await fixture.request(`/api/ui/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(200);
     expect(await fixture.db.select().from(schema.member).where(eq(schema.member.organizationId, orgId))).toEqual([]);
-    expect((await fixture.request(`/api/v1/universes/${universe!.id}`, { name: "Local edit" }, cookie, "PATCH")).status).toBe(409);
+    expect((await fixture.request(`/api/ui/universes/${universe!.id}`, { name: "Local edit" }, cookie, "PATCH")).status).toBe(409);
     await login({ groups: ["lightspeed-users"] });
-    expect(await (await fixture.request("/api/v1/universes", undefined, cookie)).json()).toEqual([]);
-    expect((await fixture.request(`/api/v1/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(404);
+    expect(await (await fixture.request("/api/ui/universes", undefined, cookie)).json()).toEqual([]);
+    expect((await fixture.request(`/api/ui/universes/${universe!.id}/members`, undefined, cookie)).status).toBe(404);
   } finally {
     await fixture.db.delete(schema.organization).where(eq(schema.organization.id, orgId));
   }

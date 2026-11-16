@@ -24,9 +24,9 @@ beforeEach(() => {
     status: "active", createdAt: "2026-01-01T00:00:00Z", role: "admin", features: { bots: true, channels: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {
-    if (method === "GET" && path === "/api/v1/universes") return [universe];
-    if (method === "PATCH" && path === "/api/v1/universes/platform-id") return { ...universe, ...body };
-    if (method === "PUT" && path === "/api/v1/universes/platform-id/handle") return { ...universe, ...body };
+    if (method === "GET" && path === "/api/ui/universes") return [universe];
+    if (method === "PATCH" && path === "/api/ui/universes/platform-id") return { ...universe, ...body };
+    if (method === "PUT" && path === "/api/ui/universes/platform-id/handle") return { ...universe, ...body };
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -89,7 +89,7 @@ it("renames with a trimmed display name once it changes", async () => {
   await type("universe-name", " Plant ");
   expect(save().disabled).toBe(false);
   await act(async () => input("universe-name").closest("form")!.requestSubmit());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/platform-id", { name: "Plant" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { name: "Plant" }));
 });
 
 it("holds an invalid handle and follows a saved handle to its new URL", async () => {
@@ -100,7 +100,7 @@ it("holds an invalid handle and follows a saved handle to its new URL", async ()
   expect(button("Save handle")!.disabled).toBe(false);
   await act(async () => input("universe-handle").closest("form")!.requestSubmit());
   await waitForUi(() => expect(location()).toBe("/u/plant/settings/general"));
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/universes/platform-id/handle", { handle: "plant" });
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/universes/platform-id/handle", { handle: "plant" });
 });
 
 it("shows a refused handle change and stays put", async () => {
@@ -122,7 +122,7 @@ it("archives only after confirmation, then leaves the universe", async () => {
   expect(writes()).toHaveLength(0);
   await act(async () => button("Archive")!.click());
   await waitForUi(() => expect(location()).toBe("/"));
-  expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/platform-id", { status: "archived" });
+  expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "archived" });
 });
 
 it("restores an archived universe without a confirmation", async () => {
@@ -130,7 +130,7 @@ it("restores an archived universe without a confirmation", async () => {
   await show();
   expect(button("Archive universe")).toBeUndefined();
   await act(async () => button("Restore universe")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/platform-id", { status: "active" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "active" }));
   expect(location()).toBe("/u/factory/settings/general");
 });
 

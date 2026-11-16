@@ -70,7 +70,7 @@ are available. To add capabilities, start with
 [Custom tools and model providers](integrating-and-extending/custom-tools-and-model-providers.md)
 and follow the guide for your extension.
 
-The [JSON-RPC reference](../../crates/api/contract/api-reference.md) and
+The [HTTP API reference](../../crates/api/contract/api-reference.md) and
 [workflow contract](../../crates/temporal-workflow/contract/workflow-contract.md)
 provide exact operations and payloads. To supply compute, follow
 [Implement an environment provider](integrating-and-extending/environment-providers.md)

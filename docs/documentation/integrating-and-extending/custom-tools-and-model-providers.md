@@ -12,7 +12,7 @@ Start with the extension path that fits the work:
 | Use another service speaking Responses or Chat Completions | Configure an OpenAI-compatible provider connection and select its model route. |
 | Support another model wire protocol | Implement a native client and request materializer, then add its API kind to the runtime. |
 
-The runtime has no general plugin-directory loader or public RPC for installing
+The runtime has no general plugin-directory loader or public API for installing
 an arbitrary Rust handler. A compiled extension becomes part of a new runtime
 build. MCP and [workflow tools](workflow-tools.md) let an implementation run
 in its own service or worker.

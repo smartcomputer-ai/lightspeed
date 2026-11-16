@@ -29,11 +29,11 @@ struct Watch {
     pending: String,
 }
 impl Watch {
-    async fn open(url: &str, params: Value) -> anyhow::Result<Self> {
+    async fn open(url: &str, universe: Uuid, params: Value) -> anyhow::Result<Self> {
+        let parts = api::http_request("universe/watch", Some(&universe.to_string()), params)?;
         let response = reqwest::Client::new()
-            .post(url)
+            .get(format!("{url}{}", parts.path))
             .header("accept", "text/event-stream")
-            .json(&json!({"id": 1, "method": "universe/watch", "params": params}))
             .send()
             .await?;
         anyhow::ensure!(response.headers()["content-type"] == "text/event-stream");
@@ -51,7 +51,13 @@ impl Watch {
                     let frame = self.pending[..end].to_owned();
                     self.pending.drain(..end + 2);
                     if let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) {
-                        return Ok(serde_json::from_str(data)?);
+                        let event = frame
+                            .lines()
+                            .find_map(|line| line.strip_prefix("event: "))
+                            .ok_or_else(|| anyhow::anyhow!("SSE event has no name"))?;
+                        return Ok(
+                            json!({"method":event,"params":serde_json::from_str::<Value>(data)?}),
+                        );
                     }
                 }
                 let chunk = self
@@ -76,16 +82,22 @@ impl Watch {
         }
     }
 }
-async fn rpc(url: &str, method: &str, params: Value) -> anyhow::Result<Value> {
-    let value: Value = reqwest::Client::new()
-        .post(url)
-        .json(&json!({"id": 2, "method": method, "params": params}))
-        .send()
-        .await?
-        .json()
-        .await?;
-    anyhow::ensure!(value.get("error").is_none(), "{value}");
-    Ok(value["result"]["result"].clone())
+async fn api_call(url: &str, universe: Uuid, method: &str, params: Value) -> anyhow::Result<Value> {
+    let parts = api::http_request(method, Some(&universe.to_string()), params)?;
+    let mut request = reqwest::Client::new().request(
+        reqwest::Method::from_bytes(parts.method.as_str().as_bytes())?,
+        format!("{url}{}", parts.path),
+    );
+    if let Some(body) = parts.body {
+        request = request.json(&body);
+    }
+    let response = request.send().await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "HTTP error {}",
+        response.status()
+    );
+    Ok(response.json().await?)
 }
 async fn ready(bus: &ChangeBus) -> anyhow::Result<()> {
     let mut changes = bus.subscribe_all();
@@ -128,7 +140,7 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
     )
     .build();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let endpoint = format!("http://{}/rpc", listener.local_addr()?);
+    let endpoint = format!("http://{}", listener.local_addr()?);
     let router = gateway_router(
         Arc::new(GatewayState::for_api(Arc::new(api))),
         1024 * 1024,
@@ -141,14 +153,14 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
     let server = tokio::spawn(async move { axum::serve(listener, router).await });
     let outcome = async {
         let refused: Value = reqwest::Client::new()
-            .post(&endpoint)
-            .json(&json!({"id":1,"method":"universe/watch","params":{}}))
+            .get(format!("{endpoint}/api/v1/universes/{universe}/events"))
             .send()
             .await?
             .json()
             .await?;
-        assert!(refused.get("error").is_some());
-        let mut workspaces = Watch::open(&endpoint, json!({"kinds":["workspace"]})).await?;
+        assert_eq!(refused["kind"], "invalidRequest");
+        let mut workspaces =
+            Watch::open(&endpoint, universe, json!({"kinds":["workspace"]})).await?;
         let snapshot = writer.put_bytes(b"manifest one".to_vec()).await?;
         let workspace_id = VfsWorkspaceId::new("watched");
         let created = writer
@@ -162,7 +174,7 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
             })
             .await?;
         let changed = workspaces.method("workspaces/changed").await?;
-        let listed = rpc(&endpoint, "vfs/workspaces/list", json!({})).await?;
+        let listed = api_call(&endpoint, universe, "vfs/workspaces/list", json!({})).await?;
         assert_eq!(changed["workspace"], listed["workspaces"][0]);
         let next = writer.put_bytes(b"manifest two".to_vec()).await?;
         let request = CompareAndSetVfsWorkspaceHead {
@@ -246,8 +258,12 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
             .await?;
         // Drain publication of the setup before subscribing to changes under test.
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let mut sessions =
-            Watch::open(&endpoint, json!({"kinds":["session"], "visibleTo":"alice"})).await?;
+        let mut sessions = Watch::open(
+            &endpoint,
+            universe,
+            json!({"kinds":["session"], "visibleTo":"alice"}),
+        )
+        .await?;
         for id in ["own", "private", "shared", "child"] {
             writer
                 .set_session_display_name(&SessionId::new(id), Some("Renamed".into()))
@@ -261,7 +277,13 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
         ];
         received.sort();
         assert_eq!(received, ["own", "shared"]);
-        let listed = rpc(&endpoint, "session/list", json!({"visibleTo":"alice"})).await?;
+        let listed = api_call(
+            &endpoint,
+            universe,
+            "session/list",
+            json!({"visibleTo":"alice"}),
+        )
+        .await?;
         for event in [first, second] {
             assert!(
                 listed["sessions"]
@@ -297,7 +319,8 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
             .await?;
         sessions.method("watch/reset").await?;
 
-        let mut others = Watch::open(&endpoint, json!({"kinds":["bot","environment"]})).await?;
+        let mut others =
+            Watch::open(&endpoint, universe, json!({"kinds":["bot","environment"]})).await?;
         let bot_id = api::BotId::new("watched");
         writer
             .create_bot(
@@ -320,7 +343,7 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
         let event = others.method("bots/changed").await?;
         assert_eq!(
             event["bot"],
-            rpc(&endpoint, "bots/list", json!({})).await?["bots"][0]
+            api_call(&endpoint, universe, "bots/list", json!({})).await?["bots"][0]
         );
         writer.delete_bot(&bot_id).await?;
         assert_eq!(others.method("bots/removed").await?["botId"], "watched");
@@ -337,7 +360,7 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
         let event = others.method("environments/changed").await?;
         assert_eq!(
             event["environment"],
-            rpc(&endpoint, "environments/list", json!({})).await?["environments"][0]
+            api_call(&endpoint, universe, "environments/list", json!({})).await?["environments"][0]
         );
         anyhow::Ok(())
     }

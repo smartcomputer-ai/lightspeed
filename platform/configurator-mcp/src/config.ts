@@ -5,7 +5,7 @@ export interface ConfiguratorConfig {
   bindPort: number;
   allowedHosts: string[];
   allowedOrigins: string[];
-  rpcEndpoint: string;
+  apiEndpoint: string;
   authMode: ConfiguratorAuthMode;
   maxBodyBytes: number;
   upstreamTimeoutMs: number;
@@ -15,7 +15,7 @@ export interface ConfiguratorConfig {
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ConfiguratorConfig {
   const bindHost = env.LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST ?? "127.0.0.1";
   const bindPort = integerEnv(env, "LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT", 18081);
-  const rpcEndpoint = env.LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL ?? "http://127.0.0.1:18080/rpc";
+  const apiEndpoint = env.LIGHTSPEED_CONFIGURATOR_MCP_API_URL ?? "http://127.0.0.1:18080/api/v1";
   const authMode = parseAuthMode(env.LIGHTSPEED_AUTH_MODE ?? "single");
   const allowedHosts = listEnv(env.LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_HOSTS);
   const allowedOrigins = listEnv(env.LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_ORIGINS);
@@ -40,13 +40,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Configurato
       "LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_HOSTS is required when binding beyond localhost",
     );
   }
-  new URL(rpcEndpoint);
+  new URL(apiEndpoint);
   return {
     bindHost,
     bindPort,
     allowedHosts: allowedHosts.length > 0 ? allowedHosts : loopbackHosts(bindHost),
     allowedOrigins,
-    rpcEndpoint,
+    apiEndpoint,
     authMode,
     maxBodyBytes,
     upstreamTimeoutMs,

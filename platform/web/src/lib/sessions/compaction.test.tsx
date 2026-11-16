@@ -48,7 +48,7 @@ it("shares pending state between the menu and transcript, prevents duplicates, a
   await show("bot/session");
   await act(async () => result.compact());
   await flush();
-  expect(api).toHaveBeenCalledWith("POST", "/api/v1/universes/universe/sessions/bot%2Fsession/context/compact");
+  expect(api).toHaveBeenCalledWith("POST", "/api/ui/universes/universe/sessions/bot%2Fsession/context/compact");
   expect(observer.label).toBe("Requesting compaction…");
   await act(async () => observer.compact());
   expect(api).toHaveBeenCalledTimes(1);

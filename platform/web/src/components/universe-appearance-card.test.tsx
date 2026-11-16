@@ -59,10 +59,10 @@ it.each(UNIVERSE_ICONS)("saves the %s icon and a color as each is chosen", async
   await render(<UniverseAppearanceCard universe={mocks.universe} />);
   if (icon !== DEFAULT_UNIVERSE_ICON) {
     await click(iconLabel);
-    expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/v1/universes/universe", { icon, iconColor: "default" });
+    expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/ui/universes/universe", { icon, iconColor: "default" });
   }
   await click("Blue color");
-  expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/v1/universes/universe", { icon, iconColor: "blue" });
+  expect(mocks.api).toHaveBeenLastCalledWith("PATCH", "/api/ui/universes/universe", { icon, iconColor: "blue" });
   expect(button(iconLabel).getAttribute("aria-pressed")).toBe("true");
   expect(button("Blue color").getAttribute("aria-pressed")).toBe("true");
   const preview = container.querySelector('[aria-label="Universe appearance preview"]')!;

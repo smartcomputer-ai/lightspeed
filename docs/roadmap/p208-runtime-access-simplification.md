@@ -1,8 +1,8 @@
 # P208 — Runtime access simplification
 
-**Status:** In progress, 2026-11-16. All implementation slices are in place.
-Scoped checks, live integration checks and the runtime smoke test passed;
-the final broad Rust rerun was interrupted when `target/` was cleared.
+**Status:** Complete, 2026-11-16. All implementation slices are in place.
+Scoped checks, live integration checks and the runtime smoke test passed.
+The broad Rust rerun interrupted by clearing `target/` has now passed in full.
 Decisions are listed under
 [Decisions](#decisions).
 
@@ -14,10 +14,10 @@ builds the replacement, in one place.
 
 The companion [resource HTTP API design](p208b-resource-http-api.md) specifies
 the agreed replacement of the client JSON-RPC transport before the general
-Platform API is built. Its HTTP implementation has not started.
-It also specifies the subsequent `/ingress` grouping and `/environments`
-machine-route prefix. The paths described below record the implementation
-before that cutover.
+Platform API is built. Its runtime, client and Platform HTTP cutover is implemented, with final
+integration validation in progress. It also implements the `/ingress`
+grouping and `/environments` machine-route prefix. The paths described below
+record the implementation before that cutover.
 
 ## Problem
 
@@ -386,6 +386,12 @@ Decided, 2026-11-16:
   classification stays as published information.
 
 ## Validation and progress
+
+- 2026-11-16: completed the previously interrupted baseline with
+  `cargo test --workspace --locked`: 3,378 tests passed, 366 ignored, no
+  failures. Tested code revision `d59f0d484285718bd9c4a98024b9b307adb7c8b5`;
+  only the companion design document was modified before the run. This
+  closes the outstanding broad validation before HTTP implementation.
 
 - 2026-11-16: design written after the design for self-service universes had
   started to rebuild principals in the runtime, from a survey of the

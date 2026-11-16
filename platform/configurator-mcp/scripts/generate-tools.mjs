@@ -4,14 +4,14 @@ import { fileURLToPath } from "node:url";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contractDir = path.resolve(packageDir, "..", "..", "crates", "api", "contract");
-const manifestPath = path.join(contractDir, "methods.json");
-const schemaPath = path.join(contractDir, "api.schema.json");
+const manifestPath = path.join(contractDir, "http.json");
 const filterPath = path.join(packageDir, "tool-filter.json");
 const outputPath = path.join(packageDir, "src", "generated", "tools.ts");
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-const bundle = JSON.parse(await readFile(schemaPath, "utf8"));
+
 const filter = JSON.parse(await readFile(filterPath, "utf8"));
+const bundle = JSON.parse(await readFile(path.join(contractDir, "api.schema.json"), "utf8"));
 const definitions = bundle.definitions ?? {};
 const literalValueKeywords = new Set([
   "const",
@@ -23,46 +23,46 @@ const literalValueKeywords = new Set([
   "uniqueItems",
   "writeOnly",
 ]);
-const universeMethods = (manifest.methods ?? []).filter((entry) => entry.scope === "universe");
+const universeMethods = (manifest.operations ?? []).filter((entry) => entry.scope === "universe");
 for (const entry of universeMethods) {
   if (typeof entry.summary !== "string" || entry.summary.trim().length === 0) {
-    throw new Error(`method ${entry.method} is missing summary documentation`);
+    throw new Error(`method ${entry.operationId} is missing summary documentation`);
   }
   if (typeof entry.description !== "string" || entry.description.trim().length === 0) {
-    throw new Error(`method ${entry.method} is missing description documentation`);
+    throw new Error(`method ${entry.operationId} is missing description documentation`);
   }
 }
 const { excludeMethods, excludeParams } = validateFilter(filter, universeMethods);
-const methods = universeMethods.filter((entry) => !excludeMethods.has(entry.method));
+const methods = universeMethods.filter((entry) => !excludeMethods.has(entry.operationId));
 
 const seenNames = new Map();
 const tools = methods.map((entry) => {
-  const name = toolName(entry.method);
+  const name = toolName(entry.operationId);
   const prior = seenNames.get(name);
   if (prior) {
-    throw new Error(`MCP tool name collision: ${name} for ${prior} and ${entry.method}`);
+    throw new Error(`MCP tool name collision: ${name} for ${prior} and ${entry.operationId}`);
   }
-  seenNames.set(name, entry.method);
+  seenNames.set(name, entry.operationId);
   // Every exposed universe method carries its contract category. Initialization
   // has no category and is excluded from the generated tool surface.
   if (typeof entry.group !== "string" || entry.group.length === 0) {
-    throw new Error(`method ${entry.method} has no method group`);
+    throw new Error(`method ${entry.operationId} has no method group`);
   }
   return {
     name,
-    method: entry.method,
+    method: entry.operationId,
     group: entry.group,
     summary: entry.summary,
     description: entry.description,
     paramsType: entry.params.type,
     resultType: entry.result.type,
-    inputSchema: standaloneSchema(entry.params.schema, entry.method, "params", excludeParams.get(entry.method)),
+    inputSchema: standaloneSchema(entry.params.schema, entry.operationId, "params", excludeParams.get(entry.operationId)),
   };
 });
 
-for (const entry of manifest.methods ?? []) {
-  if (entry.scope !== "universe" && tools.some((tool) => tool.method === entry.method)) {
-    throw new Error(`${entry.scope} method leaked into MCP tools: ${entry.method}`);
+for (const entry of manifest.operations ?? []) {
+  if (entry.scope !== "universe" && tools.some((tool) => tool.method === entry.operationId)) {
+    throw new Error(`${entry.scope} method leaked into MCP tools: ${entry.operationId}`);
   }
 }
 
@@ -103,7 +103,7 @@ function validateFilter(value, universeEntries) {
     }
     excluded.add(method);
   }
-  const universeNames = new Set(universeEntries.map((entry) => entry.method));
+  const universeNames = new Set(universeEntries.map((entry) => entry.operationId));
   const unknown = [...excluded].filter((method) => !universeNames.has(method));
   if (unknown.length > 0) {
     throw new Error(
@@ -117,7 +117,7 @@ function validateExcludedParams(value, universeEntries, excludedMethods) {
   const entries = Object.entries(value.excludeParams ?? {});
   const params = new Map();
   for (const [method, names] of entries) {
-    const entry = universeEntries.find((candidate) => candidate.method === method);
+    const entry = universeEntries.find((candidate) => candidate.operationId === method);
     if (!entry || excludedMethods.has(method)) {
       throw new Error(`tool-filter.json excludeParams names a method with no tool: ${method}`);
     }
@@ -183,7 +183,7 @@ function standaloneSchema(schema, method, side, excludedProperties = []) {
 
 function dereferenceRoot(schema, method, side) {
   const reference = schema?.$ref;
-  const prefix = "#/definitions/";
+  const prefix = "api.schema.json#/definitions/";
   if (typeof reference !== "string" || !reference.startsWith(prefix)) {
     throw new Error(`${method} ${side} schema is not a definitions ref`);
   }

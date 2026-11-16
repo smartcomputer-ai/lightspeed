@@ -502,7 +502,6 @@ where
                     config: None,
                 })
                 .await?
-                .result
                 .run
                 .id;
             let bridge = CodeToolClient::new(

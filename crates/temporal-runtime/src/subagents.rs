@@ -179,7 +179,6 @@ impl SubagentChildRuntime for AgentApiSubagentRuntime {
                     run_limit: Some(1),
                 })
                 .await?
-                .result
                 .session;
             Ok(session
                 .active_context

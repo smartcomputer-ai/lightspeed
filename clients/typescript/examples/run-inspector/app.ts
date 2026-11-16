@@ -1,6 +1,6 @@
 import {
   LightspeedClient,
-  LightspeedRpcError,
+  LightspeedApiError,
   runTimeline,
   type RunSummaryView,
   type RunTimelineItem,
@@ -9,8 +9,9 @@ import {
   type SessionSummaryView,
 } from "@lightspeed-ai/sdk";
 
-// The same client a server would use. It talks to our own /rpc, which holds the key.
-const client = new LightspeedClient({ endpoint: new URL("/rpc", location.origin) });
+// The same client a server would use. It talks to our own /api/v1, which holds the runtime token.
+const { universe } = await (await fetch("/connection")).json() as { universe: string };
+const client = new LightspeedClient({ endpoint: new URL("/api/v1", location.origin), universe });
 
 const el = (id: string) => document.getElementById(id) as HTMLElement;
 const sessionsEl = el("sessions");
@@ -40,7 +41,7 @@ async function guarded(work: () => Promise<void>): Promise<void> {
     await work();
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") return;
-    const kind = error instanceof LightspeedRpcError ? `${error.kind}: ` : "";
+    const kind = error instanceof LightspeedApiError ? `${error.kind}: ` : "";
     errorEl.textContent = kind + (error instanceof Error ? error.message : String(error));
   }
 }

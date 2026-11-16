@@ -81,21 +81,21 @@ function Channels({ universeId, handle }: { universeId: string; handle: string }
     queryKey: ["channel-accounts", universeId],
     queryFn: () => api<ChannelAccountListResponse>(
       "GET",
-      `/api/v1/universes/${universeId}/channel-accounts`,
+      `/api/ui/universes/${universeId}/channel-accounts`,
     ),
   });
   const pairings = useQuery({
     queryKey: ["channel-pairings", universeId],
     queryFn: () => api<ChannelPairingListResponse>(
       "GET",
-      `/api/v1/universes/${universeId}/channel-pairings`,
+      `/api/ui/universes/${universeId}/channel-pairings`,
     ),
   });
   const status = useQuery({
     queryKey: ["channel-status", universeId],
     queryFn: () => api<UniverseChannelStatus>(
       "GET",
-      `/api/v1/universes/${universeId}/channel-status`,
+      `/api/ui/universes/${universeId}/channel-status`,
     ),
     refetchInterval: 10_000,
   });
@@ -108,7 +108,7 @@ function Channels({ universeId, handle }: { universeId: string; handle: string }
 
   const toggle = useMutation({
     mutationFn: (account: ChannelAccountView) =>
-      api("PUT", `/api/v1/universes/${universeId}/channel-accounts/${account.accountId}`, {
+      api("PUT", `/api/ui/universes/${universeId}/channel-accounts/${account.accountId}`, {
         account: { ...accountInputOf(account), enabled: !(account.enabled ?? true) },
         expectedRevision: account.revision,
       }),
@@ -122,7 +122,7 @@ function Channels({ universeId, handle }: { universeId: string; handle: string }
   const unpair = useMutation({
     mutationFn: (pairing: ChannelPairingView) => api(
       "DELETE",
-      `/api/v1/universes/${universeId}/channel-pairings/${encodeURIComponent(pairing.accountId)}/${encodeURIComponent(pairing.chatId)}`,
+      `/api/ui/universes/${universeId}/channel-pairings/${encodeURIComponent(pairing.accountId)}/${encodeURIComponent(pairing.chatId)}`,
     ),
     onSuccess: () => queryClient.invalidateQueries({
       queryKey: ["channel-pairings", universeId],
@@ -331,7 +331,7 @@ function ConnectChannelDialog({
   const connect = useMutation({
     mutationFn: () => api(
       "POST",
-      `/api/v1/universes/${universeId}/channel-accounts/connect`,
+      `/api/ui/universes/${universeId}/channel-accounts/connect`,
       provider === "telegram"
         ? {
             provider,

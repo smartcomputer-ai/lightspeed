@@ -15,7 +15,9 @@ describe("request authentication", () => {
     const auth = authenticateHeaders("authenticated", input);
     expect(auth).toEqual({ mode: "authenticated", token: "lsr_service", universeId: universe, actor });
     const headers = new Headers(upstreamHeaders(auth));
-    for (const [name,value] of Object.entries(input)) expect(headers.get(name)).toBe(value);
+    expect(headers.get("authorization")).toBe(input.authorization);
+    expect(headers.get("x-lightspeed-actor")).toBe(actor);
+    expect(headers.has("x-lightspeed-universe")).toBe(false);
     expect(() => authenticateHeaders("authenticated", { "x-lightspeed-universe": universe })).toThrow(/missing required/);
     expect(() => authenticateHeaders("authenticated", { ...input, "x-lightspeed-actor": "a".repeat(257) })).toThrow();
     expect(() => authenticateHeaders("authenticated", { ...input, "x-lightspeed-principal": "user:old" })).toThrow();

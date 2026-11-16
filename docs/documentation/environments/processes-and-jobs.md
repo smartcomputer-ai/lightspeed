@@ -259,9 +259,9 @@ explicitly before [closing the environment](power-and-cleanup.md).
 ## Start jobs through the API
 
 Applications can call `environments/jobs/create`, `environments/jobs/read`,
-and `environments/jobs/cancel`. These public RPCs use camelCase fields, while
+and `environments/jobs/cancel`. These public API operations use camelCase fields, while
 the model tool examples above use their own schemas. There is no public
-session process-start RPC; `process/start` belongs to the separate environment
+session process-start operation; `process/start` belongs to the separate environment
 protocol.
 
 For example, this is a complete `environments/jobs/create` params object:

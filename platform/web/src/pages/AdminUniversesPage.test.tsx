@@ -40,12 +40,12 @@ beforeEach(() => {
     orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (method === "GET" && path === "/api/v1/universes") return universes;
-    if (method === "GET" && path === "/api/v1/universes/reconcile") {
+    if (method === "GET" && path === "/api/ui/universes") return universes;
+    if (method === "GET" && path === "/api/ui/universes/reconcile") {
       if (reconcile instanceof Error) throw reconcile;
       return reconcile;
     }
-    if (method === "POST" && path === "/api/v1/universes/sync-handles") return { updated: 2, skipped: 1 };
+    if (method === "POST" && path === "/api/ui/universes/sync-handles") return { updated: 2, skipped: 1 };
     if (method !== "GET") return {};
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
@@ -103,11 +103,11 @@ it("offers deletion for active and archived universes, and repair only for missi
   expect(buttonIn(row("Alpha"), "Delete")).toBeDefined();
 
   await act(async () => buttonIn(row("Mid"), "Recreate on engine")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/mid/engine", {}));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/mid/engine", {}));
   await act(async () => buttonIn(row("Zeta"), "Archive")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/zeta", { status: "archived" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/zeta", { status: "archived" }));
   await act(async () => buttonIn(row("Alpha"), "Restore")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/alpha", { status: "active" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/alpha", { status: "active" }));
 });
 
 it("deletes an active universe only after typing its exact handle", async () => {
@@ -120,7 +120,7 @@ it("deletes an active universe only after typing its exact handle", async () => 
   expect(buttonIn(alertDialog()!, "Delete permanently")!.disabled).toBe(true);
   await type("#delete-zeta", "zeta");
   await act(async () => buttonIn(alertDialog()!, "Delete permanently")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/zeta", { handle: "zeta" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/universes/zeta", { handle: "zeta" }));
 });
 
 it("opens a universe at its landing page", async () => {
@@ -134,7 +134,7 @@ it("reports what a runtime handle sync updated and skipped", async () => {
   await act(async () => buttonIn(container, "Sync from runtime")!.click());
   await waitForUi(() => expect(container.querySelector('[role="status"]')?.textContent).toContain("Synced runtime handles: 2 updated."));
   expect(container.querySelector('[role="status"]')?.textContent).toContain("1 missing from the runtime and skipped");
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/sync-handles", {});
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/sync-handles", {});
 });
 
 it("lists engine-only universes with their size, and deletes one after confirmation", async () => {
@@ -147,7 +147,7 @@ it("lists engine-only universes with their size, and deletes one after confirmat
   await waitForUi(() => expect(alertDialog()?.textContent).toContain("Permanently delete u-core-bare?"));
   await type("#delete-u-core-bare", "u-core-bare");
   await act(async () => buttonIn(alertDialog()!, "Delete permanently")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/universes/engine/core-bare", { handle: "u-core-bare" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/universes/engine/core-bare", { handle: "u-core-bare" }));
 });
 
 it("requires a display name before adopting", async () => {
@@ -167,7 +167,7 @@ it("adopts an orphan under the runtime handle it already has", async () => {
   expect(document.querySelector<HTMLInputElement>("#adopt-handle")!.value).toBe("kept");
   await type("#adopt-name", "Kept");
   await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept" }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept" }));
 });
 
 it("keeps the inventory when engine reconciliation is unavailable", async () => {

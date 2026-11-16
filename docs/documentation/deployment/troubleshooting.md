@@ -80,12 +80,12 @@ audience appears absent. See [People and roles](../access-and-security/people-an
 for the permission matrix.
 
 For runtime errors, verify the endpoint and configured token. HTTP 401 from
-`/rpc` means the bearer credential does not match a configured RPC token or the
+`/api/v1` means the bearer credential does not match a configured API token or the
 authentication headers are malformed. There is no key table or revocation API.
 Replace tokens in configuration and restart the runtime and affected consumers.
 Every valid runtime token has full authority; method-group checks are gone.
 
-The Platform uses `LIGHTSPEED_PLATFORM_RPC_TOKEN` or its `_FILE` form and names
+The Platform uses `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE` form and names
 the actor for attribution. It sends the universe UUID, not the handle in the
 browser URL. Direct clients must send `x-lightspeed-universe` as a UUID or
 handle for universe methods and omit it for `initialize` and deployment methods.

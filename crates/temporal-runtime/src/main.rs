@@ -180,7 +180,7 @@ impl RunArgs {
     fn listeners(&self, roles: &RoleSet) -> anyhow::Result<Vec<(SocketAddr, GatewayRoutes)>> {
         let mut listeners = Vec::new();
         if roles.has(Role::Gateway) {
-            listeners.push((self.bind, GatewayRoutes::RPC));
+            listeners.push((self.bind, GatewayRoutes::API));
             listeners.push((self.public_bind, GatewayRoutes::PUBLIC));
         }
         if roles.has(Role::EnvironmentGateway) {
@@ -775,12 +775,12 @@ mod tests {
     #[test]
     fn role_selection_binds_only_its_separate_route_families() {
         for (roles, expected) in [
-            ("gateway", vec![GatewayRoutes::RPC, GatewayRoutes::PUBLIC]),
+            ("gateway", vec![GatewayRoutes::API, GatewayRoutes::PUBLIC]),
             ("environment-gateway", vec![GatewayRoutes::ENVIRONMENT]),
             (
                 "gateway,environment-gateway",
                 vec![
-                    GatewayRoutes::RPC,
+                    GatewayRoutes::API,
                     GatewayRoutes::PUBLIC,
                     GatewayRoutes::ENVIRONMENT,
                 ],

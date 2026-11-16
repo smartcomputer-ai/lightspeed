@@ -1,3 +1,4 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -5,7 +6,7 @@ import { gatewayRoutes } from "./gateway.js";
 
 const auth = vi.hoisted(() => ({ role: "contributor" }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
-  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/rpc" },
+  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/api/v1" },
   handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "contributor"; });
@@ -15,30 +16,30 @@ const image = { blobRef: `sha256:${"b".repeat(64)}`, mime: "image/png", kind: "i
 const pdf = { blobRef: `sha256:${"c".repeat(64)}`, mime: "application/pdf", kind: "document", name: "offer.pdf" };
 const route = { providerId: "openai", apiKind: "openai:responses", model: "gpt-5.5-mini" };
 
-function fixture(steeringError?: { code: number; message: string }) {
+function fixture(steeringError?: { type: string; title: string; status: number; kind: string; detail: string }) {
   const requests: { method: string; params: Record<string, unknown> }[] = [];
   const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
     // The member gate reads the session before a session-targeted call.
-    if (rpc.method === "session/read") {
-      return Response.json({ id: rpc.id, result: { result: { session: { access: { visibility: "universe" } } }, notifications: [] } });
+    if (request.method === "session/read") {
+      return Response.json({ session: { access: { visibility: "universe" } } });
     }
-    requests.push(rpc);
-    if (rpc.method === "session/runs/steer" && steeringError) {
-      return Response.json({ id: rpc.id, error: steeringError });
+    requests.push({ method: request.method, params: request.params });
+    if (request.method === "session/runs/steer" && steeringError) {
+      return problemResponse(steeringError);
     }
-    const result = rpc.method === "blobs/put"
+    const result = request.method === "blobs/put"
       ? { blobs: [{ blobRef: image.blobRef, bytes: 3 }] }
-      : rpc.method === "session/runs/steer"
+      : request.method === "session/runs/steer"
         ? { steeringId: "steer_1", run: { id: "run_1", status: "running" } }
         : { run: { id: "run_1", status: "running", startedAtMs: 123,
           source: { type: "input", items: [{ type: "text", text: "Complete queued input" }] } } };
-    return Response.json({ id: rpc.id, result: { result, notifications: [] } });
+    return Response.json(result);
   });
   vi.stubGlobal("fetch", fetch);
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("session", { user: { id: "member" } } as ApiVariables["session"]); await next(); });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   const call = (path: string, body: unknown) => app.request(`/universe${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
@@ -107,16 +108,16 @@ it.each([
   "run is already terminal: run_1",
   "run is not accepting steering: run_1",
 ])("identifies steering refused before submission: %s", async (message) => {
-  const f = fixture({ code: -32010, message });
+  const f = fixture({ type: "about:blank", title: message, detail: message, status: 422, kind: "rejected" });
   const response = await f.call("/sessions/s1/runs/run_1/steer", { text: "Follow up" });
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({ error: message, kind: "steering_not_submitted" });
 });
 
 it.each([
-  { code: -32010, message: "run ended before steering reached it: run_1" },
-  { code: -32015, message: "steering has not been admitted yet and can still land on run_1" },
-  { code: -32009, message: "run is already terminal: run_1" },
+  { type: "about:blank", title: "run ended before steering reached it: run_1", detail: "run ended before steering reached it: run_1", status: 422, kind: "rejected" },
+  { type: "about:blank", title: "steering has not been admitted yet and can still land on run_1", detail: "steering has not been admitted yet and can still land on run_1", status: 409, kind: "operationPending" },
+  { type: "about:blank", title: "run is already terminal: run_1", detail: "run is already terminal: run_1", status: 409, kind: "conflict" },
 ])("does not label an uncertain steering outcome as unsubmitted: %j", async (error) => {
   const f = fixture(error);
   const response = await f.call("/sessions/s1/runs/run_1/steer", { text: "Follow up" });

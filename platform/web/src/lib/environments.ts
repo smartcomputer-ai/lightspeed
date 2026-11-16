@@ -17,7 +17,7 @@ export function environmentPagePath(
   if (options.after) query.set("after", options.after);
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.toString();
-  return `/api/v1/universes/${universeId}/environments${suffix ? `?${suffix}` : ""}`;
+  return `/api/ui/universes/${universeId}/environments${suffix ? `?${suffix}` : ""}`;
 }
 
 /// Every non-closed environment of the universe, read page by page. Pickers
@@ -49,7 +49,7 @@ export function environmentTemplatesQuery(universeId: string) {
   return {
     queryKey: ["environment-templates", universeId] as const,
     queryFn: () =>
-      api<EnvironmentTemplate[]>("GET", `/api/v1/universes/${universeId}/environment-templates`),
+      api<EnvironmentTemplate[]>("GET", `/api/ui/universes/${universeId}/environment-templates`),
   };
 }
 

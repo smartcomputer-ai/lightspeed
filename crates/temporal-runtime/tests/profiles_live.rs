@@ -104,8 +104,7 @@ async fn run_declared_environment_default_live_client(
             display_name: Some("Build box".to_owned()),
             metadata: Default::default(),
         })
-        .await?
-        .result;
+        .await?;
     assert!(declared.created);
     assert_eq!(
         declared.environment.status,
@@ -177,8 +176,7 @@ async fn run_declared_environment_default_live_client(
             registration_key_id: key_id,
             close_environments: true,
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(revoked.closed_environment_ids, [environment_id]);
     Ok(())
 }
@@ -212,7 +210,6 @@ async fn run_default_environment_put_live_client(
                 idle: None,
             })
             .await?
-            .result
             .environment
             .environment_id
             .to_string())
@@ -454,14 +451,12 @@ async fn run_profile_environment_selection_live_client(
     };
     let environment = create(format!("independent-{suffix}"), &chosen_id)
         .await?
-        .result
         .environment;
     let environment_id = environment.environment_id.clone();
     assert_eq!(environment_id, chosen_id);
     assert_eq!(
         create(format!("independent-{suffix}"), &chosen_id)
             .await?
-            .result
             .environment
             .environment_id,
         chosen_id
@@ -522,7 +517,7 @@ async fn run_profile_environment_selection_live_client(
             expected_tools_revision: None,
         })
         .await?;
-    assert!(!applied.result.applied.active_environment_changed);
+    assert!(!applied.applied.active_environment_changed);
     wait_for_environment_state(&api, &environment_id, api::EnvironmentStateView::Open).await?;
     api.close_session(api::SessionCloseParams {
         session_id: session_id.to_string(),
@@ -565,7 +560,6 @@ async fn read_environment_view(
             environment_id: environment_id.to_owned(),
         })
         .await?
-        .result
         .environment)
 }
 
@@ -637,15 +631,15 @@ async fn run_profiles_live_client(
             },
         })
         .await?;
-    assert_eq!(created.result.profile.profile_id, profile_id);
-    assert_eq!(created.result.profile.revision, 1);
+    assert_eq!(created.profile.profile_id, profile_id);
+    assert_eq!(created.profile.revision, 1);
 
     // Full-document put: re-send the created profile with a new description.
     let mut updated_input = AgentProfileInput {
         profile_id: profile_id.clone(),
-        display_name: created.result.profile.display_name.clone(),
-        description: created.result.profile.description.clone(),
-        document: created.result.profile.document.clone(),
+        display_name: created.profile.display_name.clone(),
+        description: created.profile.description.clone(),
+        document: created.profile.document.clone(),
     };
     updated_input.description = Some("Updated live profile".to_owned());
     let updated = api
@@ -654,9 +648,9 @@ async fn run_profiles_live_client(
             expected_revision: Some(1),
         })
         .await?;
-    assert_eq!(updated.result.profile.revision, 2);
+    assert_eq!(updated.profile.revision, 2);
     assert_eq!(
-        updated.result.profile.description.as_deref(),
+        updated.profile.description.as_deref(),
         Some("Updated live profile")
     );
 
@@ -665,11 +659,10 @@ async fn run_profiles_live_client(
             profile_id: profile_id.clone(),
         })
         .await?;
-    assert_eq!(read.result.profile.revision, 2);
+    assert_eq!(read.profile.revision, 2);
     let listed = api.list_profiles(ProfileListParams {}).await?;
     assert!(
         listed
-            .result
             .profiles
             .iter()
             .any(|profile| profile.profile_id == profile_id)
@@ -738,9 +731,9 @@ async fn run_profiles_live_client(
             expected_tools_revision: Some(session.active_tools.revision),
         })
         .await?;
-    assert!(!applied.result.applied.config_changed);
-    assert!(!applied.result.applied.instructions_changed);
-    assert!(!applied.result.applied.active_environment_changed);
+    assert!(!applied.applied.config_changed);
+    assert!(!applied.applied.instructions_changed);
+    assert!(!applied.applied.active_environment_changed);
 
     let cleared = api
         .apply_profile(ProfileApplyParams {
@@ -752,11 +745,11 @@ async fn run_profiles_live_client(
                     document: ProfileDocument::default(),
                 }),
             },
-            expected_config_revision: Some(applied.result.session.config_revision),
+            expected_config_revision: Some(applied.session.config_revision),
             expected_tools_revision: Some(session.active_tools.revision),
         })
         .await?;
-    assert!(cleared.result.applied.instructions_changed);
+    assert!(cleared.applied.instructions_changed);
     let cleared_view = read_session_view(&api, &session_id).await?;
     let cleared_instructions = cleared_view
         .active_context
@@ -776,11 +769,11 @@ async fn run_profiles_live_client(
             profile: ProfileSource::Named {
                 profile_id: profile_id.clone(),
             },
-            expected_config_revision: Some(cleared.result.session.config_revision),
+            expected_config_revision: Some(cleared.session.config_revision),
             expected_tools_revision: Some(cleared_view.active_tools.revision),
         })
         .await?;
-    assert!(restored.result.applied.instructions_changed);
+    assert!(restored.applied.instructions_changed);
     let restored_view = read_session_view(&api, &session_id).await?;
     assert_eq!(
         restored_view
@@ -807,7 +800,7 @@ async fn run_profiles_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.run.id).await?;
     let output = final_assistant_text(&run).expect("assistant output");
     assert!(output.contains("Fake agent completed run"));
 

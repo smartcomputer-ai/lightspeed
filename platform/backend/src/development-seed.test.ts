@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../test/http-fixture.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { schema, type Db } from "@lightspeed-ai/platform-db";
 import type { ServerEnv } from "./env.js";
@@ -9,7 +10,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 const admin = { id: "admin-login", email: "admin@lightspeed.dev" };
 const env = {
   devSeed: true, adminEmail: "admin@lightspeed.dev", adminPassword: "shared-custom-password",
-  lightspeedApiUrl: "http://localhost/rpc", lightspeedRpcToken: "lsr_fixture",
+  lightspeedApiUrl: "http://localhost/api/v1", lightspeedApiToken: "lsr_fixture",
 } as ServerEnv;
 
 /// A database answering each read, in order, with the next of `reads`, and a
@@ -20,10 +21,10 @@ function setup(reads: unknown[][], runtimeHandle = "test") {
     const headers = new Headers(init.headers);
     expect(headers.get("authorization")).toBe("Bearer lsr_fixture");
     expect(headers.get("x-lightspeed-actor")).toBeNull();
-    const rpc = JSON.parse(String(init.body));
-    expect(rpc.method).toBe("deployment/universes/create");
-    creations.push(rpc.params);
-    return Response.json({ id: rpc.id, result: { result: { created: true, universe: { universeId: rpc.params.universeId, handle: runtimeHandle } }, notifications: [] } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    expect(request.method).toBe("deployment/universes/create");
+    creations.push(request.params);
+    return Response.json({ created: true, universe: { universeId: request.params.universeId, handle: runtimeHandle } });
   }));
   const inserts: { table: unknown; values: Record<string, unknown> }[] = [];
   const updates: Record<string, unknown>[] = [];

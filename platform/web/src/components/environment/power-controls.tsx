@@ -41,7 +41,7 @@ export function EnvironmentPowerControls({
   const power = useMutation({
     mutationFn: (next: EnvironmentPowerStateView) => api<Environment>(
       "PUT",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/power`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/power`,
       { power: next },
     ),
     onSuccess: () => {

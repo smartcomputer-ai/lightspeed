@@ -48,14 +48,14 @@ it("keeps permanent deletion unavailable without platform-admin identity", async
   await show(false);
   expect(document.body.textContent).not.toContain("Also permanently delete retained history");
   await submit("Delete session");
-  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/v1/universes/u/sessions/s"]]);
+  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/ui/universes/u/sessions/s"]]);
   expect(mocks.deleted).toHaveBeenCalledOnce();
 });
 it("defaults to soft deletion even for platform admins", async () => {
   await show(true);
   expect(document.body.textContent).toContain("Also permanently delete retained history");
   await submit("Delete session");
-  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/v1/universes/u/sessions/s"]]);
+  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/ui/universes/u/sessions/s"]]);
 });
 it("soft-deletes first and permanently deletes through the audited admin endpoint", async () => {
   await show(true);
@@ -65,8 +65,8 @@ it("soft-deletes first and permanently deletes through the audited admin endpoin
   expect(mocks.api).not.toHaveBeenCalled();
   await submit("Permanently delete");
   expect(mocks.api.mock.calls).toEqual([
-    ["DELETE", "/api/v1/universes/u/sessions/s?cascade=true"],
-    ["POST", "/api/v1/admin/universes/u/sessions/s/purge", {}],
+    ["DELETE", "/api/ui/universes/u/sessions/s?cascade=true"],
+    ["POST", "/api/ui/admin/universes/u/sessions/s/purge", {}],
   ]);
   expect(mocks.deleted).toHaveBeenCalledOnce();
 });

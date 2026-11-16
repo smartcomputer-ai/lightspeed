@@ -108,13 +108,13 @@ for (const resetExitCode of [0, 7]) {
     const env = {
       ...process.env,
       LIGHTSPEED_AUTH_MODE: "authenticated",
-      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc",
+      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/api/v1",
       LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001",
     };
     const run = async () => ({ stdout: "" });
     const options = { root: directory, env, full: true, run };
     const before = await prepareCliConnection(options);
-    const beforeToken = readFileSync(before.tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE, "utf8");
+    const beforeToken = readFileSync(before.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8");
     const unrelated = path.join(directory, ".lightspeed", "unrelated");
     writeFileSync(unrelated, "preserve");
     writeFileSync(path.join(directory, "scripts/dev/infra/reset.sh"), `#!/bin/sh\nexit ${resetExitCode}\n`, { mode: 0o755 });
@@ -127,16 +127,16 @@ for (const resetExitCode of [0, 7]) {
     if (resetExitCode === 0) {
       assert.ok(!existsSync(credentialDirectory));
       assert.match(result.stdout, /lightspeed connect dev/);
-      delete env.LIGHTSPEED_RPC_TOKEN_CLI_FILE;
-      delete env.LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE;
-      delete env.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE;
+      delete env.LIGHTSPEED_API_TOKEN_CLI_FILE;
+      delete env.LIGHTSPEED_API_TOKEN_PLATFORM_FILE;
+      delete env.LIGHTSPEED_PLATFORM_API_TOKEN_FILE;
       const after = await prepareCliConnection(options);
-      assert.notEqual(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE, "utf8"), beforeToken);
+      assert.notEqual(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8"), beforeToken);
       assert.ok(existsSync(after.handoff));
     } else {
       assert.ok(existsSync(before.handoff));
       const after = await prepareCliConnection(options);
-      assert.equal(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE, "utf8"), beforeToken);
+      assert.equal(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8"), beforeToken);
     }
   });
 }

@@ -50,7 +50,7 @@ export class GrantLease implements TokenSource {
   private async lease(): Promise<string> {
     const leasedAtMs = this.now();
     const response = await this.client.call("credentials/grants/lease", { grantId: this.grantId });
-    const lease = response.result;
+    const lease = response;
     if (typeof lease.token !== "string" || lease.token.length === 0) {
       throw new TypeError(`credentials/grants/lease returned no token for ${this.grantId}`);
     }

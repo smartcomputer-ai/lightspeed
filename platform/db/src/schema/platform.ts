@@ -23,7 +23,7 @@ export const identityAudit = pgTable("identity_audit", {
 
 /// A platform universe: one better-auth organization plus its Lightspeed
 /// linkage. `lightspeedUniverseId` is the id stamped as
-/// `x-lightspeed-universe`; the app creates the engine universe explicitly.
+/// runtime resource URLs; the app creates the engine universe explicitly.
 export const universes = pgTable("universes", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: text("organization_id")
@@ -36,7 +36,7 @@ export const universes = pgTable("universes", {
   runtimeConfiguration: jsonb("runtime_configuration").$type<Record<string, unknown>>().default({}).notNull(),
   icon: text("icon").default("orbit").notNull(),
   iconColor: text("icon_color").default("default").notNull(),
-  /// Gateway RPC endpoint; null = the deployment default from env.
+  /// Runtime HTTP API base; null = the deployment default from env.
   gatewayUrl: text("gateway_url"),
   status: text("status", { enum: ["active", "archived", "deleting"] })
     .default("active")

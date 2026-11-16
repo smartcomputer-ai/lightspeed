@@ -73,8 +73,7 @@ pub(crate) async fn config(args: ConfigArgs) -> Result<()> {
                         expected_revision.unwrap_or(session.config_revision),
                     ),
                 })
-                .await?
-                .result;
+                .await?;
             output::show(json, &response)
         }
     }
@@ -94,6 +93,5 @@ async fn load(api: &HttpAgentApi, id: &str) -> Result<api::SessionView> {
             run_limit: Some(1),
         })
         .await?
-        .result
         .session)
 }

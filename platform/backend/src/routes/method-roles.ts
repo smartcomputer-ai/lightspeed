@@ -9,6 +9,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "blobs/has": "viewer",
   "blobs/put": "contributor",
   "blobs/read": "viewer",
+  "blobs/upload": "contributor",
   "bots/close": "operator",
   "bots/create": "operator",
   "bots/delete": "operator",
@@ -135,7 +136,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
 };
 
 /** Methods that act on one session, named by `sessionId`. */
-export const SESSION_TARGET_METHODS: ReadonlySet<string> = new Set([
+export const SESSION_TARGET_OPERATIONS: ReadonlySet<string> = new Set([
   "session/close",
   "session/config/put",
   "session/context/append",
@@ -164,7 +165,7 @@ export const SESSION_TARGET_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 /** Deployment and service methods: never called on a member's behalf. */
-export const UNMEMBERED_METHODS: ReadonlySet<string> = new Set([
+export const UNMEMBERED_OPERATIONS: ReadonlySet<string> = new Set([
   "channels/inbound/admit",
   "credentials/grants/lease",
   "deployment/channels/accounts/list",

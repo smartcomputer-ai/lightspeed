@@ -741,12 +741,12 @@ mod tests {
     fn runtime_tokens_are_not_inherited_by_commands() {
         const CHILD: &str = "LIGHTSPEED_TEST_RPC_SCRUB_CHILD";
         const TOKENS: [&str; 6] = [
-            "LIGHTSPEED_RPC_TOKEN",
-            "LIGHTSPEED_RPC_TOKEN_FILE",
-            "LIGHTSPEED_RPC_TOKEN_PLATFORM",
-            "LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE",
-            "LIGHTSPEED_PLATFORM_RPC_TOKEN",
-            "LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE",
+            "LIGHTSPEED_API_TOKEN",
+            "LIGHTSPEED_API_TOKEN_FILE",
+            "LIGHTSPEED_API_TOKEN_PLATFORM",
+            "LIGHTSPEED_API_TOKEN_OPERATOR_FILE",
+            "LIGHTSPEED_PLATFORM_API_TOKEN",
+            "LIGHTSPEED_PLATFORM_API_TOKEN_FILE",
         ];
         if std::env::var_os(CHILD).is_none() {
             // Give an isolated test process the environment. Never mutate the

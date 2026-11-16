@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { METHOD_INFO } from "@lightspeed-ai/sdk";
+import { OPERATION_INFO } from "@lightspeed-ai/sdk";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 
 describe("generated universe tools", () => {
@@ -7,6 +7,7 @@ describe("generated universe tools", () => {
     const excluded = new Set([
       "initialize",
       "universe/watch",
+      "blobs/upload",
       "environments/jobs/create",
       "environments/jobs/read",
       "environments/jobs/cancel",
@@ -20,7 +21,7 @@ describe("generated universe tools", () => {
       "environments/registered/put",
       "environments/registered/release",
     ]);
-    const expectedMethods = Object.entries(METHOD_INFO)
+    const expectedMethods = Object.entries(OPERATION_INFO)
       .filter(([method, info]) => info.scope === "universe" && !excluded.has(method))
       .map(([method]) => method)
       .sort();

@@ -183,7 +183,7 @@ function WorkspacePane({
     refetchInterval: watchConnected ? 60_000 : 10_000,
     refetchIntervalInBackground: false,
     queryFn: () =>
-      api<WorkspaceRow[]>("GET", `/api/v1/universes/${universeId}/workspaces`),
+      api<WorkspaceRow[]>("GET", `/api/ui/universes/${universeId}/workspaces`),
   });
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
@@ -192,7 +192,7 @@ function WorkspacePane({
     queryFn: () =>
       api<WorkspaceTree>(
         "GET",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/tree`,
+        `/api/ui/universes/${universeId}/workspaces/${workspaceId}/tree`,
       ),
     enabled: workspaceId !== undefined,
   });
@@ -349,7 +349,7 @@ function FileDetail({
     queryFn: () =>
       api<WorkspaceTree>(
         "GET",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/tree`,
+        `/api/ui/universes/${universeId}/workspaces/${workspaceId}/tree`,
       ),
   });
   const file = tree.data
@@ -366,7 +366,7 @@ function FileDetail({
     queryFn: () =>
       api<BlobContent>(
         "GET",
-        `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(file!.blob_ref)}`,
+        `/api/ui/universes/${universeId}/blobs/${encodeURIComponent(file!.blob_ref)}`,
       ),
     enabled: !!file,
     placeholderData: (previous, query) =>
@@ -458,7 +458,7 @@ function FileDetail({
     }) =>
       api<{ workspace: WorkspaceRow }>(
         "PUT",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
+        `/api/ui/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
         {
           contentText: submission.contentText,
           expectedRevision: submission.revision,
@@ -689,7 +689,7 @@ function NewWorkspaceDialog({
   const dialogWarp = useDialogWarp(open);
   const create = useMutation({
     mutationFn: (input: unknown) =>
-      api<WorkspaceRow>("POST", `/api/v1/universes/${universeId}/workspaces`, input),
+      api<WorkspaceRow>("POST", `/api/ui/universes/${universeId}/workspaces`, input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] });
       // Once the warp has played out: close, and open the new workspace.
@@ -822,7 +822,7 @@ function NewFileDialog({
     mutationFn: (target: string) =>
       api(
         "POST",
-        `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/upload`,
+        `/api/ui/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/upload`,
         {
           expectedRevision: revision,
           replace: false,

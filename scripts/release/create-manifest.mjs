@@ -15,7 +15,7 @@ if (version !== metadata.LIGHTSPEED_PRODUCT_VERSION) throw new Error('unexpected
 const partial = process.argv.includes('--partial');
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const contractHash = crypto.createHash("sha256");
-for (const file of ["api.schema.json", "methods.json", "openrpc.json", "api-reference.md"]) {
+for (const file of ["api.schema.json", "http.json", "openapi.json", "api-reference.md"]) {
   contractHash.update(fs.readFileSync(path.join("dist/contracts", file)));
 }
 

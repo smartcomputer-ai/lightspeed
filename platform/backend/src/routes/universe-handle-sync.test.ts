@@ -1,3 +1,4 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -19,17 +20,17 @@ function fixture(platformAdmin = true) {
     update: () => ({ set: (value: { slug: string }) => ({ where: async () => { handle = value.slug; updates.push(handle); sequence.push("cache"); } }) }),
   };
   const runtime = vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body)); calls.push(rpc); sequence.push("runtime");
-    const result = rpc.method === "deployment/universes/list"
+    const request = decodeHttpRequest(_url as string | Request | URL, init); calls.push({ method: request.method, params: request.params }); sequence.push("runtime");
+    const result = request.method === "deployment/universes/list"
       ? { universes: [{ universeId: universe.lightspeedUniverseId, handle: "from-runtime" }] }
-      : { universe: { universeId: universe.lightspeedUniverseId, handle: rpc.params.handle } };
-    return Response.json({ id: rpc.id, result: { result, notifications: [] } });
+      : { universe: { universeId: universe.lightspeedUniverseId, handle: request.params.handle } };
+    return Response.json(result);
   });
   vi.stubGlobal("fetch", runtime);
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("session", { user: { id: "user", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
   app.route("/", universeRoutes({ db: { ...db, transaction: async (work: (tx: typeof db) => unknown) => work(db) },
-    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_fixture" },
+    env: { lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_fixture" },
   } as unknown as AppContext));
   const row = () => ({ universe, handle, role: "admin" });
   const request = (path: string, method = "GET", body?: object) => app.request(path, { method,
@@ -87,8 +88,8 @@ it("preserves the cached handle if runtime rejects the rename", async () => {
   const f = fixture(false);
   f.reads.push([f.row()], [{ role: "admin" }], []);
   f.runtime.mockImplementationOnce(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    return Response.json({ id: rpc.id, error: { code: -32009, message: "handle is already in use", data: { kind: "conflict" } } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    return problemResponse({ type: "about:blank", title: "handle is already in use", detail: "handle is already in use", status: 409, kind: "conflict" });
   });
   const response = await f.request("/platform-id/handle", "PUT", { handle: "taken" });
   expect(response.status).toBe(409);

@@ -5,7 +5,7 @@ import type { AccountRunnerLike } from "../src/host/account-runner.js";
 import { ConnectorHost } from "../src/host/host.js";
 import { ConnectorHealthTracker } from "../src/host/lifecycle.js";
 import { ConnectorMetrics } from "../src/host/metrics.js";
-import { UNIVERSE_A, UNIVERSE_B, account, fakeRpc } from "./fixtures.js";
+import { UNIVERSE_A, UNIVERSE_B, account, fakeHttp } from "./fixtures.js";
 
 class FakeRunner implements AccountRunnerLike {
   readonly key: string;
@@ -47,7 +47,7 @@ describe("connector host", () => {
       account({ accountId: "wa-main", provider: "whatsapp", credentialGrantId: null }),
       account({ accountId: "tg-b", universeId: UNIVERSE_B }),
     ];
-    const rpc = fakeRpc((method, params) => {
+    const api = fakeHttp((method, params) => {
       expect(method).toBe("deployment/channels/accounts/list");
       expect(params).toEqual({ includeDisabled: false });
       return { accounts: listed };
@@ -61,7 +61,7 @@ describe("connector host", () => {
         health: null,
       },
       {
-        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiToken: "connector-test-runtime-token-1234567890", endpoint: "http://core.test/api/v1", fetch: api.fetch }),
         createRunner: (candidate) => {
           const runner = new FakeRunner(candidate);
           const list = runners.get(runner.key) ?? [];
@@ -76,7 +76,7 @@ describe("connector host", () => {
 
     await host.start();
     expect(host.served().sort()).toEqual([`${UNIVERSE_B}/tg-b`, `${UNIVERSE_A}/tg-main`].sort());
-    expect(rpc.calls[0]?.headers.has("x-lightspeed-universe")).toBe(false);
+    expect(api.calls[0]?.headers.has("x-lightspeed-universe")).toBe(false);
     expect(host.snapshot()).toMatchObject({ state: "ready", discovery: { passes: 1, lastSuccessAtMs: 42 } });
 
     // Revision bump restarts; disappearance stops; a new account starts; a failed runner restarts.
@@ -109,11 +109,11 @@ describe("connector host", () => {
 
   it("keeps serving through a failed discovery pass and reports it", async () => {
     let fail = false;
-    const rpc = fakeRpc(() => (fail ? new Error("core unavailable") : { accounts: [account({ accountId: "tg-main" })] }));
+    const api = fakeHttp(() => (fail ? new Error("core unavailable") : { accounts: [account({ accountId: "tg-main" })] }));
     const host = new ConnectorHost(
       { providers: ["telegram", "whatsapp"], accounts: null, discoveryIntervalMs: 60_000, health: null },
       {
-        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiToken: "connector-test-runtime-token-1234567890", endpoint: "http://core.test/api/v1", fetch: api.fetch }),
         createRunner: (candidate) => new FakeRunner(candidate),
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },
@@ -130,11 +130,11 @@ describe("connector host", () => {
   });
 
   it("serves health, readiness, and metrics for every account on one listener", async () => {
-    const rpc = fakeRpc(() => ({ accounts: [account({ accountId: "tg-main" })] }));
+    const api = fakeHttp(() => ({ accounts: [account({ accountId: "tg-main" })] }));
     const host = new ConnectorHost(
       { providers: ["telegram"], accounts: null, discoveryIntervalMs: 60_000, health: { host: "127.0.0.1", port: 0 } },
       {
-        core: new CoreClient({ apiKey: "lsk_test_connector", endpoint: "http://core.test/rpc", fetch: rpc.fetch }),
+        core: new CoreClient({ apiToken: "connector-test-runtime-token-1234567890", endpoint: "http://core.test/api/v1", fetch: api.fetch }),
         createRunner: (candidate) => new FakeRunner(candidate),
         log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },

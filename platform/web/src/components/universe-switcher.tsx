@@ -220,7 +220,7 @@ export function NewUniverseDialog({
 
   const create = useMutation({
     mutationFn: (input: { name: string; handle: string }) =>
-      api<Universe>("POST", "/api/v1/universes", input),
+      api<Universe>("POST", "/api/ui/universes", input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       // Once the warp has played out: close, and open the new universe.

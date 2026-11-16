@@ -1015,12 +1015,12 @@ mod tests {
     #[test]
     fn ingest_urls_join_the_origin_and_the_route_once() {
         assert_eq!(
-            ingest_url("https://ls.example", "/hooks/bots/u/b/t/tok"),
-            "https://ls.example/hooks/bots/u/b/t/tok"
+            ingest_url("https://ls.example", "/ingress/webhooks/bots/u/b/t/tok"),
+            "https://ls.example/ingress/webhooks/bots/u/b/t/tok"
         );
         assert_eq!(
-            ingest_url("https://ls.example/", "/hooks/bots/u/b/t/tok"),
-            "https://ls.example/hooks/bots/u/b/t/tok"
+            ingest_url("https://ls.example/", "/ingress/webhooks/bots/u/b/t/tok"),
+            "https://ls.example/ingress/webhooks/bots/u/b/t/tok"
         );
     }
 
@@ -1093,11 +1093,12 @@ mod tests {
     const ORIGIN: &str = "https://ls.example/";
 
     fn ingest_path_of(record: &BotTriggerRecord) -> Option<String> {
-        record
-            .secrets
-            .webhook_token
-            .as_ref()
-            .map(|token| format!("/hooks/bots/u/triage/{}/{token}", record.trigger_id))
+        record.secrets.webhook_token.as_ref().map(|token| {
+            format!(
+                "/ingress/webhooks/bots/u/triage/{}/{token}",
+                record.trigger_id
+            )
+        })
     }
 
     fn put_secrets(
@@ -1114,7 +1115,7 @@ mod tests {
         let created = put_secrets(MAIN, None, &webhook);
         assert_eq!(
             created.ingest_url.as_deref(),
-            Some("https://ls.example/hooks/bots/u/triage/github/tok-1")
+            Some("https://ls.example/ingress/webhooks/bots/u/triage/github/tok-1")
         );
         assert_eq!(created.pairing_code, None);
         // The same holds in a rotated generation of the main session.

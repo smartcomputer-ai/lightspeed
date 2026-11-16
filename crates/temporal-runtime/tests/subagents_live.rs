@@ -854,7 +854,7 @@ async fn start_subagent_parent_with_features(
             config: None,
         })
         .await?;
-    Ok(run.result.run.id)
+    Ok(run.run.id)
 }
 
 async fn list_children(
@@ -927,7 +927,6 @@ async fn run_agent_run_media_live_client(
             ..Default::default()
         })
         .await?
-        .result
         .workspace;
     let child_config: SessionConfig = serde_json::from_value(serde_json::json!({
         "features": {"vfs": {
@@ -997,7 +996,6 @@ async fn run_agent_run_media_live_client(
             run_limit: None,
         })
         .await?
-        .result
         .session;
     let handles = parent_view
         .active_context
@@ -1042,7 +1040,6 @@ async fn run_file_attachment_live_client(
             ..Default::default()
         })
         .await?
-        .result
         .workspace;
     // Only the child receives the workspace. The parent's link must stand alone.
     let child_config =
@@ -1106,8 +1103,7 @@ async fn run_file_attachment_live_client(
             limit: Some(500),
             wait_ms: Some(0),
         })
-        .await?
-        .result;
+        .await?;
     assert!(events.events.iter().any(|event| matches!(&event.kind,
         api::SessionEventKindView::ToolCallCompleted { attachments, .. }
             if attachments.iter().any(|item| item.handle == reference.handle))));
@@ -1131,7 +1127,6 @@ async fn run_agent_run_inline_live_client(
             profile_id: profile_id.clone(),
         })
         .await?
-        .result
         .profile;
     let run_id = start_subagent_parent(
         api.as_ref(),
@@ -1165,7 +1160,6 @@ async fn run_agent_run_inline_live_client(
             wait_ms: Some(0),
         })
         .await?
-        .result
         .events;
     let output = events
         .iter()
@@ -1211,7 +1205,6 @@ async fn run_agent_run_inline_live_client(
             run_limit: None,
         })
         .await?
-        .result
         .session;
     let child_origin = child_view.origin.expect("child origin view");
     assert_eq!(child_origin.parent_session_id, session_id.as_str());
@@ -1229,20 +1222,19 @@ async fn run_agent_run_inline_live_client(
             ..Default::default()
         })
         .await?;
-    assert_eq!(listed.result.sessions.len(), 1);
-    assert!(listed.result.sessions[0].origin.is_some());
+    assert_eq!(listed.sessions.len(), 1);
+    assert!(listed.sessions[0].origin.is_some());
     let parent_view = api
         .read_session(SessionReadParams {
             session_id: session_id.as_str().to_owned(),
             run_limit: None,
         })
         .await?;
-    assert!(parent_view.result.session.origin.is_none());
+    assert!(parent_view.session.origin.is_none());
     // The grant publishes the sub-agent catalog as a context entry; the model
     // reads the menu from there, not from the schema.
     assert!(
         parent_view
-            .result
             .session
             .active_context
             .entries
@@ -1470,7 +1462,7 @@ async fn run_stopped_child_live_client(
                     run_limit: None,
                 })
                 .await
-                .is_ok_and(|view| !view.result.session.runs.is_empty());
+                .is_ok_and(|view| !view.session.runs.is_empty());
             child_id = Some(child.session_id);
             Ok(started)
         },
@@ -1671,7 +1663,6 @@ async fn run_agent_run_inherit_environment_live_client(
             idle: None,
         })
         .await?
-        .result
         .environment;
     // Parent selects an independently created environment and may run the child.
     api.start_session(SessionStartParams {
@@ -1717,7 +1708,6 @@ async fn run_agent_run_inherit_environment_live_client(
             run_limit: None,
         })
         .await?
-        .result
         .session
         .active_environment_id
         .expect("parent should have a provisioned environment");
@@ -1737,7 +1727,7 @@ async fn run_agent_run_inherit_environment_live_client(
             config: None,
         })
         .await?;
-    let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run.result.run.id).await?;
+    let parent_run = wait_for_terminal_run(api.as_ref(), &session_id, &run.run.id).await?;
     assert_eq!(parent_run.status, api::RunStatus::Completed);
     let parent_output = final_assistant_text(&parent_run).expect("parent assistant output");
     assert!(
@@ -1758,7 +1748,6 @@ async fn run_agent_run_inherit_environment_live_client(
             wait_ms: Some(0),
         })
         .await?
-        .result
         .events;
     let inherited = child_events.iter().any(|event| {
         serde_json::to_string(&event.kind).is_ok_and(|json| {
@@ -1776,7 +1765,6 @@ async fn run_agent_run_inherit_environment_live_client(
             environment_id: parent_environment.clone(),
         })
         .await?
-        .result
         .environment;
     assert!(
         !matches!(
@@ -1892,7 +1880,6 @@ async fn run_agent_spawn_cancel_live_client(
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         let runs = serde_json::to_string_pretty(&view.runs)?;
         anyhow::bail!("{error}; parent runs: {runs}");
@@ -1950,7 +1937,6 @@ async fn run_agent_spawn_cancel_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     let execution_id = events
         .iter()

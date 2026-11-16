@@ -119,7 +119,7 @@ it("keeps the display name open and summarizes the id and starting point", async
 
   await click(dialog().querySelector('button[type="submit"]'));
   const put = mocks.api.mock.calls.find(([method]) => method === "PUT");
-  expect(put?.[1]).toBe("/api/v1/universes/universe/profiles/tier-two");
+  expect(put?.[1]).toBe("/api/ui/universes/universe/profiles/tier-two");
   expect(put?.[2]).toEqual({
     profileId: "tier-two",
     displayName: "Support owner",

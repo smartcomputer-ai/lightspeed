@@ -117,7 +117,7 @@ function ProfilePane({
 }) {
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
-    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/ui/universes/${universeId}/profiles`),
   });
   const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("createProfile");
@@ -187,7 +187,7 @@ function ProfileEditor({
   const doc = useQuery({
     queryKey: ["profile", universeId, profileId],
     queryFn: () =>
-      api<ProfileDocument>("GET", `/api/v1/universes/${universeId}/profiles/${profileId}`),
+      api<ProfileDocument>("GET", `/api/ui/universes/${universeId}/profiles/${profileId}`),
     staleTime: 0,
   });
 
@@ -235,7 +235,7 @@ function ProfileEditor({
       if (!manage) throw new Error("You do not have permission to edit this profile.");
       // The core reconciles bots applying this profile onto the new
       // revision on its own.
-      await api("PUT", `/api/v1/universes/${universeId}/profiles/${profileId}`, document);
+      await api("PUT", `/api/ui/universes/${universeId}/profiles/${profileId}`, document);
     },
     onSuccess: () => {
       setError(null);
@@ -248,7 +248,7 @@ function ProfileEditor({
   const remove = useMutation({
     mutationFn: () => {
       if (!manage) throw new Error("You do not have permission to delete this profile.");
-      return api("DELETE", `/api/v1/universes/${universeId}/profiles/${profileId}`);
+      return api("DELETE", `/api/ui/universes/${universeId}/profiles/${profileId}`);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["profiles", universeId] });
@@ -641,11 +641,11 @@ function NewProfileDialog({
       if (sourceProfileId) {
         const source = await api<ProfileDocument>(
           "GET",
-          `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(sourceProfileId)}`,
+          `/api/ui/universes/${universeId}/profiles/${encodeURIComponent(sourceProfileId)}`,
         );
         document = copiedProfileDocument(source, profileId, displayName);
       }
-      return api("PUT", `/api/v1/universes/${universeId}/profiles/${profileId}`, document);
+      return api("PUT", `/api/ui/universes/${universeId}/profiles/${profileId}`, document);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["profiles", universeId] });

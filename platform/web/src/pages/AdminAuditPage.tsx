@@ -17,7 +17,7 @@ interface AuditEvent {
 export function AdminAuditPage() {
   const audit = useQuery({
     queryKey: ["admin", "audit"],
-    queryFn: () => api<AuditEvent[]>("GET", "/api/v1/admin/audit"),
+    queryFn: () => api<AuditEvent[]>("GET", "/api/ui/admin/audit"),
   });
   const users = useQuery({
     queryKey: ["admin", "users"],

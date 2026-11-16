@@ -39,11 +39,6 @@ pub struct UniverseWatchParams {
     pub visible_to: Option<String>,
 }
 
-/// Final response when a watch reaches its lifetime. Reconnect and refetch on
-/// watch/reset; notifications are lossy hints and have no durable resume cursor.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct UniverseWatchResponse {}
-
 pub const WATCH_NOTIFICATIONS: &[&str] = &[
     "session/changed",
     "session/removed",

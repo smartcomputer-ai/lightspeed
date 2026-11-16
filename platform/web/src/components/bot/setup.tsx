@@ -91,7 +91,7 @@ export function BotSetup({
     queryFn: () =>
       api<ProfileDocument>(
         "GET",
-        `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`,
+        `/api/ui/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`,
       ),
     staleTime: 0,
     retry: false,
@@ -99,7 +99,7 @@ export function BotSetup({
   const triggers = useQuery({
     queryKey: ["bot-triggers", universeId, bot.botId],
     queryFn: () =>
-      api<{ triggers?: BotTriggerView[] }>("GET", `/api/v1/universes/${universeId}/bots/${bot.botId}/triggers`),
+      api<{ triggers?: BotTriggerView[] }>("GET", `/api/ui/universes/${universeId}/bots/${bot.botId}/triggers`),
   });
   const accounts = useChannelAccounts(universeId);
   const defaultEnvironmentId = defaultEnvironmentAttachment(profile.data?.config)?.environmentId;
@@ -222,7 +222,7 @@ function useBotPut(universeId: string, bot: BotView) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (fields: Partial<BotInput>) =>
-      api<{ bot: BotView }>("PUT", `/api/v1/universes/${universeId}/bots/${bot.botId}`, {
+      api<{ bot: BotView }>("PUT", `/api/ui/universes/${universeId}/bots/${bot.botId}`, {
         bot: { ...botInputOf(bot), ...fields },
         expectedRevision: bot.revision,
       }),
@@ -394,12 +394,12 @@ function SessionProfileSection({
   const permissions = useActionPermissions(universeId);
   const manageProfile = permissions.can("manageProfile");
   const queryClient = useQueryClient();
-  const profileUrl = `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`;
+  const profileUrl = `/api/ui/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`;
   const options = useSessionConfigEditorOptions(universeId, true);
   const environments = useQuery(openEnvironmentsQuery(universeId));
   const bots = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
   });
   const sharedWith = (bots.data?.bots ?? []).filter(
     (other) => other.botId !== bot.botId && other.profileId === bot.profileId && other.closedAtMs == null,
@@ -559,7 +559,7 @@ function ProfileSwitcher({
 }) {
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
-    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/ui/universes/${universeId}/profiles`),
   });
   const [selected, setSelected] = useState(bot.profileId);
   useEffect(() => setSelected(bot.profileId), [bot.profileId]);
@@ -781,7 +781,7 @@ function OtherBotsSection({
   const queryClient = useQueryClient();
   const bots = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
   });
   const inboxFrom = inbox && inbox.kind === "bot" ? (inbox.from ?? null) : null;
   // A paused inbox reads as "Nobody" but keeps its sender list and routing,
@@ -808,13 +808,13 @@ function OtherBotsSection({
   const save = useMutation({
     mutationFn: async () => {
       if (emitDirty) {
-        await api("PUT", `/api/v1/universes/${universeId}/bots/${bot.botId}`, {
+        await api("PUT", `/api/ui/universes/${universeId}/bots/${bot.botId}`, {
           bot: { ...botInputOf(bot), emit },
           expectedRevision: bot.revision,
         });
       }
       if (inboxDirty) {
-        const url = `/api/v1/universes/${universeId}/bots/${bot.botId}/triggers`;
+        const url = `/api/ui/universes/${universeId}/bots/${bot.botId}/triggers`;
         if (mode === "off") {
           // Pause, never delete: the sender list and routing survive.
           if (inbox && inbox.enabled !== false) {
@@ -989,7 +989,7 @@ function DangerSection({
   const closed = bot.closedAtMs != null;
   const close = useMutation({
     mutationFn: () =>
-      api<BotCloseResponse>("POST", `/api/v1/universes/${universeId}/bots/${bot.botId}/close`),
+      api<BotCloseResponse>("POST", `/api/ui/universes/${universeId}/bots/${bot.botId}/close`),
     onSuccess: async ({ bot: updated }) => {
       queryClient.setQueryData(["bot", universeId, bot.botId], { bot: updated });
       await Promise.all([
@@ -999,7 +999,7 @@ function DangerSection({
     },
   });
   const remove = useMutation({
-    mutationFn: () => api<BotDeleteResponse>("DELETE", `/api/v1/universes/${universeId}/bots/${bot.botId}`),
+    mutationFn: () => api<BotDeleteResponse>("DELETE", `/api/ui/universes/${universeId}/bots/${bot.botId}`),
     onSuccess: async () => {
       queryClient.removeQueries({ queryKey: ["bot", universeId, bot.botId] });
       await queryClient.invalidateQueries({ queryKey: ["bots", universeId] });

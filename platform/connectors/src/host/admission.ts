@@ -57,7 +57,7 @@ export function createInboundGate(options: InboundGateOptions): InboundGate {
           accountId: options.accountId,
           inbound,
         });
-        decision = response.result.decision;
+        decision = response.decision;
       } catch (error) {
         options.metrics.recordInbound("failed");
         log.error(`connectors: ${options.accountId} inbound admission failed`, error);

@@ -26,7 +26,7 @@ enum SnapshotCommand {
 
 #[derive(Args, Debug, Clone)]
 struct SnapshotArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the snapshot summary as JSON.
@@ -59,7 +59,7 @@ struct SnapshotArgs {
 
 #[derive(Args, Debug, Clone)]
 struct MaterializeArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the materialization summary as JSON.
@@ -96,7 +96,7 @@ enum WorkspaceCommand {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceCreateArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the workspace summary as JSON.
@@ -115,7 +115,7 @@ struct WorkspaceCreateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceListArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the workspace list as JSON.
@@ -125,7 +125,7 @@ struct WorkspaceListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceReadArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the workspace summary as JSON.
@@ -137,7 +137,7 @@ struct WorkspaceReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceUpdateArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the workspace summary as JSON.
@@ -157,7 +157,7 @@ struct WorkspaceUpdateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct WorkspaceDeleteArgs {
-    /// JSON-RPC agent API URL.
+    /// Resource HTTP API base URL.
     #[arg(skip)]
     api_url: String,
     /// Emit the deleted workspace summary as JSON.
@@ -230,8 +230,7 @@ async fn workspace_create(args: WorkspaceCreateArgs) -> Result<()> {
             display_name: args.display_name,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     print_workspace(response.workspace, args.json)
 }
 
@@ -240,8 +239,7 @@ async fn workspace_list(args: WorkspaceListArgs) -> Result<()> {
     let response = api
         .list_vfs_workspaces(api::VfsWorkspaceListParams {})
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&response.workspaces)?);
         return Ok(());
@@ -267,7 +265,6 @@ async fn workspace_read(args: WorkspaceReadArgs) -> Result<()> {
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace;
     print_workspace(workspace, args.json)
 }
@@ -283,7 +280,6 @@ async fn workspace_update(args: WorkspaceUpdateArgs) -> Result<()> {
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace;
     print_workspace(workspace, args.json)
 }
@@ -296,7 +292,6 @@ async fn workspace_delete(args: WorkspaceDeleteArgs) -> Result<()> {
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace;
     if args.json {
         crate::output::show(true, &workspace)
@@ -322,7 +317,6 @@ pub(crate) async fn create_workspace_from_snapshot(
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .workspace)
 }
 
@@ -360,7 +354,6 @@ async fn put_workspace_attachment(
         })
         .await
         .map_err(crate::api_client::api_error)?
-        .result
         .session;
     let mut config = session
         .config
@@ -386,8 +379,7 @@ async fn put_workspace_attachment(
             config,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result)
+        .map_err(crate::api_client::api_error)?)
 }
 
 async fn materialize(args: MaterializeArgs) -> Result<()> {

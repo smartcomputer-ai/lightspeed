@@ -170,7 +170,6 @@ pub async fn upload_snapshot(
                 .collect(),
         })
         .await?
-        .result
         .blobs;
     anyhow::ensure!(
         uploaded.len() == files.len(),
@@ -196,8 +195,7 @@ pub async fn upload_snapshot(
         .commit_vfs_snapshot(api::VfsSnapshotCommitParams {
             manifest: serde_json::to_value(manifest)?,
         })
-        .await?
-        .result)
+        .await?)
 }
 
 /// Universe used by live tests: the one bound by `LIGHTSPEED_PG_UNIVERSE_ID`.
@@ -405,7 +403,6 @@ pub async fn wait_for_terminal_run_with_timeout(
                     })
                     .await?;
                 if let Some(run) = session
-                    .result
                     .session
                     .runs
                     .into_iter()
@@ -421,7 +418,6 @@ pub async fn wait_for_terminal_run_with_timeout(
                             run_id: run.id,
                         })
                         .await?
-                        .result
                         .run);
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -451,7 +447,6 @@ pub async fn start_text_run(
             config: None,
         })
         .await?
-        .result
         .run)
 }
 
@@ -466,7 +461,7 @@ pub async fn read_run(
             run_id: run_id.to_owned(),
         })
         .await?;
-    Ok(Some(response.result.run))
+    Ok(Some(response.run))
 }
 
 pub async fn read_session_view(
@@ -479,7 +474,6 @@ pub async fn read_session_view(
             run_limit: None,
         })
         .await?
-        .result
         .session)
 }
 
@@ -498,7 +492,6 @@ pub async fn wait_for_environment_state(
                 environment_id: environment_id.to_owned(),
             })
             .await?
-            .result
             .environment;
         if environment.state == expected {
             return Ok(environment);
@@ -585,7 +578,7 @@ pub async fn wait_for_session_lifecycle(
                 run_limit: None,
             })
             .await?;
-        if session.result.session.lifecycle_status == expected {
+        if session.session.lifecycle_status == expected {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

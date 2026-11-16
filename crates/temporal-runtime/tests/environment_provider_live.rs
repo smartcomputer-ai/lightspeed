@@ -157,7 +157,6 @@ async fn wait_for(
                 environment_id: environment_id.to_owned(),
             })
             .await?
-            .result
             .environment;
         if done(&environment) {
             return Ok(environment);
@@ -223,7 +222,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                 }),
             )
         };
-        let guarded_view = read(guarded_id.clone()).await?.result.provider;
+        let guarded_view = read(guarded_id.clone()).await?.provider;
         assert!(guarded_view.has_credential);
         assert_eq!(guarded_view.data_route_base, None);
         let effective = guarded_view
@@ -231,7 +230,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             .clone()
             .expect("a ws:// controller has a derivable data route base");
         assert!(effective.ends_with("/routes"), "{effective}");
-        assert!(!read(open_id.clone()).await?.result.provider.has_credential);
+        assert!(!read(open_id.clone()).await?.provider.has_credential);
         // A controller URL that names no controller is refused outright, and
         // so is a guarded controller registered without its credential.
         for (controller_endpoint, credential) in [
@@ -285,7 +284,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             }),
         )
         .await?
-        .result
         .templates;
         assert_eq!(templates.len(), 1);
         assert_eq!(templates[0].template_id, FAKE_TEMPLATE_ID);
@@ -299,7 +297,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             api_a.create_environment(create_params(&format!("create-{suffix}"), &guarded_id)),
         )
         .await?
-        .result
         .environment;
         assert_eq!(created.state, EnvironmentStateView::Provisioning);
         let retried = calling(
@@ -307,7 +304,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             api_a.create_environment(create_params(&format!("create-{suffix}"), &guarded_id)),
         )
         .await?
-        .result
         .environment;
         assert_eq!(retried.environment_id, created.environment_id);
         let environment_id = created.environment_id.clone();
@@ -331,7 +327,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             api_b.create_environment(create_params(&format!("open-{suffix}"), &open_id)),
         )
         .await?
-        .result
         .environment;
         calling(
             caller_b.clone(),
@@ -347,7 +342,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             api_a.create_environment(create_params(&format!("second-{suffix}"), &guarded_id)),
         )
         .await?
-        .result
         .environment;
         calling(
             caller_a.clone(),
@@ -363,8 +357,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                 ..EnvironmentListParams::default()
             }),
         )
-        .await?
-        .result;
+        .await?;
         assert_eq!(first_page.environments.len(), 1);
         assert!(first_page.next_after.is_some());
         let next_page = calling(
@@ -375,8 +368,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                 ..EnvironmentListParams::default()
             }),
         )
-        .await?
-        .result;
+        .await?;
         assert_eq!(next_page.environments.len(), 1);
         assert_ne!(
             next_page.environments[0].environment_id,
@@ -388,8 +380,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             caller_b.clone(),
             api_b.list_environments(EnvironmentListParams::default()),
         )
-        .await?
-        .result;
+        .await?;
         assert_eq!(listed_b.environments.len(), 1);
 
         // Power is a synchronous pass-through: the answer is recorded.
@@ -401,7 +392,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             }),
         )
         .await?
-        .result
         .environment;
         assert_eq!(paused.state, EnvironmentStateView::Open);
         assert_eq!(paused.status, EnvironmentStatusView::Paused);
@@ -441,7 +431,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             }),
         )
         .await?
-        .result
         .environment;
         assert_eq!(
             public_endpoint(&ingress).as_deref(),
@@ -455,7 +444,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             }),
         )
         .await?
-        .result
         .environment;
         assert_eq!(public_endpoint(&removed), None);
 
@@ -471,7 +459,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             }),
         )
         .await?
-        .result
         .environment;
         let external_power = calling(
             caller_a.clone(),
@@ -490,7 +477,6 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             }),
         )
         .await?
-        .result
         .environment;
         assert_eq!(closed_external.state, EnvironmentStateView::Closed);
 
@@ -578,7 +564,6 @@ async fn environment_provider_outage_backs_off_per_row() -> anyhow::Result<()> {
             api.create_environment(create_params(&format!("outage-{suffix}"), &provider_id)),
         )
         .await?
-        .result
         .environment;
         let environment_id = environments::EnvironmentId::new(created.environment_id.clone());
         // Each pass that cannot reach the provider counts one attempt and

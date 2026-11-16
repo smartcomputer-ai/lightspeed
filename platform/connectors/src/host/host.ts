@@ -146,7 +146,7 @@ export class ConnectorHost {
       const response = await this.deps.core
         .deployment()
         .call("deployment/channels/accounts/list", { includeDisabled: false });
-      listed = response.result.accounts ?? [];
+      listed = response.accounts ?? [];
     } catch (error) {
       this.discovery.lastError = errorMessage(error);
       this.discovery.lastErrorAtMs = this.now();

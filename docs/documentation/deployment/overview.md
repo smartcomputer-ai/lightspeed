@@ -13,7 +13,7 @@ roles when you need to scale or operate them independently.
 
 | Component | Responsibility | Needed for |
 | --- | --- | --- |
-| `lightspeed-runtime` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
+| `lightspeed-runtime` | HTTP API gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
 | Platform backend and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
@@ -51,14 +51,14 @@ proxy must preserve that distinction.
 
 The full web product uses an authenticated runtime. Platform checks the signed-in
 person's membership, role, and session visibility before making a runtime call.
-It authenticates with `LIGHTSPEED_PLATFORM_RPC_TOKEN` or its `_FILE` form, selects
+It authenticates with `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE` form, selects
 the universe, and names the person as the actor for attribution. The runtime
 checks the configured token, partitions resources by universe, and records the
 actor. It holds no caller permission model.
 
 | Mode | How requests are addressed | Use |
 | --- | --- | --- |
-| `authenticated` | Configured bearer token; universe methods require a UUID or handle in `x-lightspeed-universe` | Platform backend, trusted operators and direct integrations |
+| `authenticated` | Configured bearer token; universe methods require a UUID or handle in the resource URL | Platform backend, trusted operators and direct integrations |
 | `single` | No credential check; ordinary requests use one configured universe | Private local development |
 
 Every runtime token has full authority over every method and universe, including
@@ -67,9 +67,9 @@ and agents. Programs can use direct access only as trusted components; a gateway
 must authenticate and authorize untrusted callers. Platform personal and service
 account tokens are separate work.
 
-RPC, OAuth callbacks and bot webhooks currently share one runtime listener.
-Restrict `/rpc` at the network or reverse proxy while allowing the required
-public callback and webhook paths. See
+The private HTTP API, public callbacks/webhooks, and environment gateway use
+separate listeners. Restrict the application listener to trusted callers and
+publish only the required callback and daemon routes. See
 [Access and security](../access-and-security/overview.md) for the access model and
 [Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md)
 for shared infrastructure and isolation limits.
@@ -80,7 +80,7 @@ One `lightspeed-runtime` executable supplies five roles:
 
 | Role | Work it owns |
 | --- | --- |
-| `gateway` | JSON-RPC, OAuth callbacks, and bot webhook ingestion |
+| `gateway` | HTTP API, OAuth callbacks, and bot webhook ingestion |
 | `environment-gateway` | Worker routes to environments, outbound daemon connections, and environment lifecycle reconciliation |
 | `sessions` | Session workflows and activities, plus session and blob retention work |
 | `bots` | Bot controllers, trigger work, and bot activities |

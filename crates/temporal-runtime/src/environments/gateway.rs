@@ -7,7 +7,7 @@ use uuid::Uuid;
 /// Path prefix of the worker routes the environment gateway serves:
 /// `{prefix}/{universe}/{environment}`. Runtime-internal: only Lightspeed's
 /// own workers dial it, with the deployment token.
-pub const ROUTE_PATH_PREFIX: &str = "/environment-gateway/routes";
+pub const ROUTE_PATH_PREFIX: &str = "/environments/routes";
 
 /// Connect bound (TCP, TLS and upgrade) of a worker route. The gateway
 /// answers a registered environment's upgrade only once the reverse
@@ -190,13 +190,13 @@ mod tests {
         let config = EnvironmentGatewayClientConfig::new("https://gateway.test/", "secret");
         assert_eq!(
             config.endpoint(&key()),
-            "wss://gateway.test/environment-gateway/routes/00000000-0000-0000-0000-000000000000/environment-a"
+            "wss://gateway.test/environments/routes/00000000-0000-0000-0000-000000000000/environment-a"
         );
         let local = EnvironmentGatewayClientConfig::new("http://127.0.0.1:18080", "secret");
         assert!(
             local
                 .endpoint(&key())
-                .starts_with("ws://127.0.0.1:18080/environment-gateway/routes/")
+                .starts_with("ws://127.0.0.1:18080/environments/routes/")
         );
     }
 

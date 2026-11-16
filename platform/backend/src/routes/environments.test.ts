@@ -1,3 +1,4 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -7,7 +8,7 @@ import { universeForSession } from "./universes.js";
 
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
+    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
     role: "operator",
     member: { userId: "user", role: "operator" },
   })),
@@ -68,28 +69,22 @@ beforeEach(() => {
   failingProviders = new Set();
   heldRegistrationKeys = new Map();
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    const params = (rpc.params ?? {}) as Record<string, unknown>;
-    calls.push({ method: rpc.method, params });
-    if (rpc.method === "environments/templates/list" && failingProviders.has(String(params.providerId))) {
-      return Response.json({
-        id: rpc.id,
-        error: { code: -32603, message: "provider unreachable", data: { kind: "internal" } },
-      });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    const params = (request.params ?? {}) as Record<string, unknown>;
+    calls.push({ method: request.method, params });
+    if (request.method === "environments/templates/list" && failingProviders.has(String(params.providerId))) {
+      return problemResponse({ type: "about:blank", title: "provider unreachable", detail: "provider unreachable", status: 500, kind: "internal" });
     }
-    if (rpc.method === "environments/registration-keys/create" && heldRegistrationKeys.has(String(params.registrationKeyId))) {
-      return Response.json({
-        id: rpc.id,
-        error: { code: -32603, message: "environment registry environment_registration_key already exists", data: { kind: "conflict" } },
-      });
+    if (request.method === "environments/registration-keys/create" && heldRegistrationKeys.has(String(params.registrationKeyId))) {
+      return problemResponse({ type: "about:blank", title: "environment registry environment_registration_key already exists", detail: "environment registry environment_registration_key already exists", status: 500, kind: "conflict" });
     }
-    return Response.json({ id: rpc.id, result: { result: engineResult(rpc.method, params), notifications: [] } });
+    return Response.json(engineResult(request.method, params));
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
 
 const ctx = {
-  env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" },
+  env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" },
 } as unknown as AppContext;
 
 function app(platformRole?: string) {

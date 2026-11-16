@@ -11,9 +11,9 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 use store_pg::PgStore;
-use temporal_runtime::config::RpcTokens;
+use temporal_runtime::config::RuntimeTokens;
 use temporal_runtime::gateway::authentication::{
-    ACTOR_HEADER, UNIVERSE_HEADER, request_context, resolve_caller,
+    ACTOR_HEADER, request_context_for_universe, resolve_caller,
 };
 use temporal_runtime::gateway::request_context::RequestContext;
 use uuid::Uuid;
@@ -59,7 +59,7 @@ async fn tokens_reach_every_universe_with_explicit_targets() {
 }
 
 async fn authenticate(
-    tokens: &RpcTokens,
+    tokens: &RuntimeTokens,
     pool: &sqlx::PgPool,
     secret: &str,
     universe: Option<&str>,
@@ -68,13 +68,20 @@ async fn authenticate(
 ) -> Result<RequestContext, AgentApiError> {
     let mut headers = HeaderMap::new();
     headers.insert("authorization", format!("Bearer {secret}").parse().unwrap());
-    if let Some(universe) = universe {
-        headers.insert(UNIVERSE_HEADER, universe.parse().unwrap());
-    }
     if let Some(actor) = actor {
         headers.insert(ACTOR_HEADER, actor.parse().unwrap());
     }
-    request_context(resolve_caller(tokens, pool, &headers).await?, method)
+    let caller = resolve_caller(tokens, &headers)?;
+    let universe = match universe {
+        Some(reference) => Some(
+            store_pg::resolve_universe_reference(pool, reference)
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?
+                .ok_or_else(|| AgentApiError::not_found("unknown universe"))?,
+        ),
+        None => None,
+    };
+    request_context_for_universe(caller, method, universe)
 }
 async fn exercise(pool: &sqlx::PgPool) {
     PgStore::migrate(pool).await.unwrap();
@@ -82,10 +89,10 @@ async fn exercise(pool: &sqlx::PgPool) {
         ("platform", "platform-secret-with-at-least-32-characters"),
         ("operator", "operator-secret-with-at-least-32-characters"),
     ];
-    let tokens = RpcTokens::from_configuration(
+    let tokens = RuntimeTokens::from_configuration(
         secrets.map(|(name, secret)| {
             (
-                format!("LIGHTSPEED_RPC_TOKEN_{}", name.to_uppercase()),
+                format!("LIGHTSPEED_API_TOKEN_{}", name.to_uppercase()),
                 secret.into(),
             )
         }),

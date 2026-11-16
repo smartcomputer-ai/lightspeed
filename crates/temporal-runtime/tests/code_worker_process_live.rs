@@ -138,7 +138,7 @@ impl CodeProcess {
             ])
             .env("LIGHTSPEED_AUTH_MODE", "authenticated")
             .env(
-                "LIGHTSPEED_RPC_TOKEN_CODE_TEST",
+                "LIGHTSPEED_API_TOKEN_CODE_TEST",
                 "code-worker-test-token-at-least-32-characters",
             )
             // Code does not use environment tools. These child-local values
@@ -252,7 +252,7 @@ async fn killed_code_worker_recovers_on_another_process_without_replaying_javasc
                 let recovered = async {
                     wait_until("worker-loss recovery", Duration::from_secs(50), async || {
                         replacement.ensure_running()?;
-                        let status = api.read_run(api::RunReadParams { session_id: session_id.to_string(), run_id: run.id.clone() }).await?.result.run.status;
+                        let status = api.read_run(api::RunReadParams { session_id: session_id.to_string(), run_id: run.id.clone() }).await?.run.status;
                         anyhow::ensure!(!matches!(status, api::RunStatus::Failed | api::RunStatus::Cancelled), "parent run unexpectedly {status:?}");
                         Ok(status == api::RunStatus::Completed)
                     }).await?;

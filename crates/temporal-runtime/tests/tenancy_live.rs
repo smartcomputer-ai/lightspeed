@@ -93,10 +93,10 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
             )
             .await?;
             assert_eq!(
-                started.result.session.lifecycle_status,
+                started.session.lifecycle_status,
                 SessionLifecycleStatus::Open
             );
-            assert_eq!(started.result.session.activity, api::SessionActivity::Idle);
+            assert_eq!(started.session.activity, api::SessionActivity::Idle);
         }
 
         // Distinct workflows: both composed ids are queryable and healthy.
@@ -135,7 +135,6 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         let listed_b = calling(caller_b.clone(), api_b.list_profiles(ProfileListParams {})).await?;
         assert!(
             listed_b
-                .result
                 .profiles
                 .iter()
                 .all(|profile| profile.profile_id != profile_id),
@@ -171,7 +170,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         )
         .await?;
         assert_eq!(
-            closed_a.result.session.lifecycle_status,
+            closed_a.session.lifecycle_status,
             SessionLifecycleStatus::Closed
         );
         let open_b = calling(
@@ -183,10 +182,10 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         )
         .await?;
         assert_eq!(
-            open_b.result.session.lifecycle_status,
+            open_b.session.lifecycle_status,
             SessionLifecycleStatus::Open
         );
-        assert_eq!(open_b.result.session.activity, api::SessionActivity::Idle);
+        assert_eq!(open_b.session.activity, api::SessionActivity::Idle);
 
         // Cleanup: terminate both workflows.
         for universe_id in [universe_a, universe_b] {

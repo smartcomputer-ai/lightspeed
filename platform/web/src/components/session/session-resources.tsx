@@ -53,12 +53,12 @@ export function useSessionResources(universeId: string, config: unknown, activeE
   });
   const mcpServers = useQuery({
     queryKey: ["mcp-servers", universeId],
-    queryFn: () => api<McpServerOption[]>("GET", `/api/v1/universes/${universeId}/mcp-servers`),
+    queryFn: () => api<McpServerOption[]>("GET", `/api/ui/universes/${universeId}/mcp-servers`),
     enabled,
   });
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
-    queryFn: () => api<WorkspaceOption[]>("GET", `/api/v1/universes/${universeId}/workspaces`),
+    queryFn: () => api<WorkspaceOption[]>("GET", `/api/ui/universes/${universeId}/workspaces`),
     enabled,
   });
   return sessionResources(config, activeEnvironmentId, {
@@ -222,7 +222,7 @@ function SubAgentProfileRows({ universeId, handle, profileIds }: {
 }) {
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
-    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/ui/universes/${universeId}/profiles`),
     enabled: Boolean(universeId),
     staleTime: 60_000,
   });

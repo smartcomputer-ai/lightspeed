@@ -33,7 +33,7 @@ async function show() {
 }
 it("loads audit events directly and resolves users while preserving deleted targets", async () => {
   await show();
-  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/v1/admin/audit");
+  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/ui/admin/audit");
   expect(container.textContent).toContain("Audit log");
   const rows = [...container.querySelectorAll("tbody tr")].map((row) => row.textContent);
   expect(rows[0]).toContain("Session permanently deleted");

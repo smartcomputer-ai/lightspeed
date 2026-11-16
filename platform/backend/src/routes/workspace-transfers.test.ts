@@ -1,3 +1,4 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { unzipSync } from "fflate";
 import {
@@ -15,7 +16,7 @@ vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
     universe: {
       lightspeedUniverseId: "universe",
-      gatewayUrl: "https://engine.example/rpc",
+      gatewayUrl: "https://engine.example/api/v1",
     },
     handle: "test",
     role: identity.role,
@@ -161,24 +162,16 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: unknown, init: RequestInit) => {
-      const rpc = JSON.parse(String(init.body));
-      calls.push(rpc.method);
-      expect(new Headers(init.headers).get("x-lightspeed-universe")).toBe(
-        "universe",
-      );
+      const request = decodeHttpRequest(_url as string | Request | URL, init);
+      calls.push(request.method);
+      expect(request.universe).toBe("universe");
+      expect(new Headers(init.headers).has("x-lightspeed-universe")).toBe(false);
       let result: unknown;
-      switch (rpc.method) {
+      switch (request.method) {
         case "vfs/workspaces/delete":
-          expect(rpc.params).toEqual({ workspaceId: "docs" });
+          expect(request.params).toEqual({ workspaceId: "docs" });
           if (workspaceDeleted)
-            return Response.json({
-              id: rpc.id,
-              error: {
-                code: -32004,
-                message: "workspace not found",
-                data: { kind: "notFound" },
-              },
-            });
+            return problemResponse({ type: "about:blank", title: "workspace not found", detail: "workspace not found", status: 404, kind: "notFound" });
           workspaceDeleted = true;
           result = {
             workspace: {
@@ -199,17 +192,14 @@ beforeEach(() => {
           };
           break;
         case "vfs/snapshots/read":
-          expect(rpc.params.snapshotRef).toBe("snapshot");
+          expect(request.params.snapshotRef).toBe("snapshot");
           result = { manifest: structuredClone(manifest) };
           break;
         case "blobs/put": {
           if (failBlob)
-            return Response.json({
-              id: rpc.id,
-              error: { code: -32603, message: "storage failed" },
-            });
+            return problemResponse({ type: "about:blank", title: "storage failed", detail: "storage failed", status: 500, kind: "internal" });
           const ref = `blob${blobs.size}`;
-          const bytesBase64 = rpc.params.blobs[0].bytesBase64;
+          const bytesBase64 = request.params.blobs[0].bytesBase64;
           blobs.set(ref, bytesBase64);
           result = {
             blobs: [
@@ -222,23 +212,16 @@ beforeEach(() => {
           break;
         }
         case "vfs/snapshots/commit":
-          committedManifest = rpc.params.manifest;
+          committedManifest = request.params.manifest;
           result = { snapshotRef: "next" };
           break;
         case "vfs/workspaces/update":
-          expect(rpc.params.expectedRevision).toBe(revision);
+          expect(request.params.expectedRevision).toBe(revision);
           if (race)
-            return Response.json({
-              id: rpc.id,
-              error: {
-                code: -32009,
-                message: "conflict",
-                data: { kind: "conflict" },
-              },
-            });
-          if (rpc.params.displayName !== undefined) {
-            expect(rpc.params.snapshotRef).toBe("snapshot");
-            displayName = rpc.params.displayName;
+            return problemResponse({ type: "about:blank", title: "conflict", detail: "conflict", status: 409, kind: "conflict" });
+          if (request.params.displayName !== undefined) {
+            expect(request.params.snapshotRef).toBe("snapshot");
+            displayName = request.params.displayName;
           } else {
             if (!committedManifest)
               throw new Error("Expected a committed snapshot");
@@ -255,15 +238,11 @@ beforeEach(() => {
           };
           break;
         case "blobs/read":
-          result = { bytesBase64: blobs.get(rpc.params.blobRef) };
-          break;
+          return new Response(Buffer.from(blobs.get(request.params.blobRef)!, "base64"), { headers: { "content-type": "application/octet-stream" } });
         default:
-          throw new Error(`Unexpected RPC ${rpc.method}`);
+          throw new Error(`Unexpected operation ${request.method}`);
       }
-      return Response.json({
-        id: rpc.id,
-        result: { result, notifications: [] },
-      });
+      return Response.json(result);
     }),
   );
 });
@@ -275,8 +254,8 @@ function app(workspaceUploadLimits?: WorkspaceUploadLimits) {
     "/",
     gatewayRoutes({
       env: {
-        lightspeedApiUrl: "https://engine.example/rpc",
-        lightspeedRpcToken: "lsr_fixture",
+        lightspeedApiUrl: "https://engine.example/api/v1",
+        lightspeedApiToken: "lsr_fixture",
         workspaceUploadLimits,
       },
     } as AppContext),

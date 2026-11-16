@@ -22,12 +22,12 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
     mutationFn: async () => {
       if (permanent && !platformAdmin) throw new Error("Platform admin access is required for permanent deletion.");
       if (!softDeleted) {
-        await api("DELETE", `/api/v1/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}${cascade ? "?cascade=true" : ""}`);
+        await api("DELETE", `/api/ui/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}${cascade ? "?cascade=true" : ""}`);
         setSoftDeleted(true);
       }
       if (permanent) {
         // Use the same server-side authorization and audit path as the admin page.
-        await api("POST", `/api/v1/admin/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}/purge`, {});
+        await api("POST", `/api/ui/admin/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}/purge`, {});
         void queryClient.invalidateQueries({ queryKey: ["admin", "audit"] });
         void queryClient.invalidateQueries({ queryKey: ["admin", "deleted-sessions", universeId] });
       }

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "lightspeed-ai"
 version = "0.10.0"
-description = "Async Python SDK for the Lightspeed JSON-RPC gateway"
+description = "Async Python SDK for the Lightspeed HTTP API"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"

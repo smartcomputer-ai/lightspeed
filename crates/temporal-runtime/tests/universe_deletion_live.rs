@@ -78,14 +78,13 @@ async fn delete(
             },
         ),
     )
-    .await?
-    .result)
+    .await?)
 }
 
 async fn read(
     runtime: &Arc<UniverseRuntime>,
     id: Uuid,
-) -> Result<api::AgentApiOutcome<api::DeploymentUniverseReadResponse>, api::AgentApiError> {
+) -> Result<api::DeploymentUniverseReadResponse, api::AgentApiError> {
     calling(
         caller(),
         GatewayDeploymentApi::new(runtime.clone()).read_universe(
@@ -216,7 +215,6 @@ async fn provision(
         }),
     )
     .await?
-    .result
     .environment;
     let environment_id = environments::EnvironmentId::new(environment.environment_id);
     let started = Instant::now();
@@ -430,10 +428,10 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
         delete(&runtime, id).await?.state,
         UniverseDeletionState::Deleting
     );
-    assert!(read(&runtime, id).await?.result.universe.deletion.is_some());
-    let tokens = temporal_runtime::config::RpcTokens::from_configuration(
+    assert!(read(&runtime, id).await?.universe.deletion.is_some());
+    let tokens = temporal_runtime::config::RuntimeTokens::from_configuration(
         [(
-            "LIGHTSPEED_RPC_TOKEN".into(),
+            "LIGHTSPEED_API_TOKEN".into(),
             "deletion-test-token-at-least-32-characters".into(),
         )],
         |_| unreachable!(),
@@ -443,17 +441,12 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
         "authorization",
         "Bearer deletion-test-token-at-least-32-characters".parse()?,
     );
-    headers.insert("x-lightspeed-universe", id.to_string().parse()?);
-    assert_eq!(
-        temporal_runtime::gateway::authentication::resolve_caller(
-            &tokens,
-            runtime.stores().pool(),
-            &headers
-        )
-        .await
-        .unwrap_err()
-        .kind,
-        AgentApiErrorKind::NotFound
+    temporal_runtime::gateway::authentication::resolve_caller(&tokens, &headers)
+        .expect("universe deletion does not revoke component credentials");
+    assert!(
+        store_pg::resolve_universe_reference(runtime.stores().pool(), &id.to_string())
+            .await?
+            .is_none()
     );
 
     assert!(
@@ -485,12 +478,7 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
     loop {
         match read(&runtime, id).await {
             Ok(current) => {
-                let step = current
-                    .result
-                    .universe
-                    .deletion
-                    .expect("deletion progress")
-                    .step;
+                let step = current.universe.deletion.expect("deletion progress").step;
                 if !seen_steps.contains(&step) {
                     seen_steps.push(step);
                 }
@@ -572,8 +560,7 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
         caller(),
         GatewayDeploymentApi::new(runtime.clone()).list_deleted_universes(Default::default()),
     )
-    .await?
-    .result;
+    .await?;
     assert!(
         listed
             .universes
@@ -681,10 +668,7 @@ async fn deletion_ends_watch_and_connected_daemon_and_refuses_disconnected_daemo
     store_pg::PgStore::migrate(stores.pool()).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let base = format!("http://{}", listener.local_addr()?);
-    let connect = format!(
-        "ws://{}/environment-gateway/connect",
-        listener.local_addr()?
-    );
+    let connect = format!("ws://{}/environments/connect", listener.local_addr()?);
     let runtime = Arc::new(UniverseRuntime::new(
         connect_temporal(&TemporalConnectionConfig::from_env()?).await?,
         format!("deletion-daemon-{}", Uuid::new_v4().simple()),
@@ -722,8 +706,7 @@ async fn deletion_ends_watch_and_connected_daemon_and_refuses_disconnected_daemo
             },
         ),
     )
-    .await?
-    .result;
+    .await?;
     let sandbox = tempfile::tempdir()?;
     let config = |name: &str| -> anyhow::Result<DaemonConfig> {
         let root = sandbox.path().join(name);
@@ -776,8 +759,13 @@ async fn deletion_ends_watch_and_connected_daemon_and_refuses_disconnected_daemo
         tokio::time::timeout(Duration::from_secs(10), second_exit).await??,
         DaemonExit::Shutdown
     ));
-    let mut watch = reqwest::Client::new().post(format!("{base}/rpc")).header("accept", "text/event-stream")
-        .json(&serde_json::json!({"id":1,"method":"universe/watch","params":{"kinds":["environment"]}})).send().await?;
+    let mut watch = reqwest::Client::new()
+        .get(format!(
+            "{base}/api/v1/universes/{id}/events?kinds=environment"
+        ))
+        .header("accept", "text/event-stream")
+        .send()
+        .await?;
     assert_eq!(watch.headers()["content-type"], "text/event-stream");
     let initial = tokio::time::timeout(Duration::from_secs(5), watch.chunk())
         .await??

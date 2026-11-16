@@ -82,11 +82,11 @@ function ServerList({ universeId }: { universeId: string }) {
   const queryClient = useQueryClient();
   const servers = useQuery({
     queryKey: ["mcp-servers", universeId],
-    queryFn: () => api<McpServer[]>("GET", `/api/v1/universes/${universeId}/mcp-servers`),
+    queryFn: () => api<McpServer[]>("GET", `/api/ui/universes/${universeId}/mcp-servers`),
   });
   const credentialGrants = useQuery({
     queryKey: ["credential-grants", universeId],
-    queryFn: () => api<CredentialGrantOption[]>("GET", `/api/v1/universes/${universeId}/credential-grants`),
+    queryFn: () => api<CredentialGrantOption[]>("GET", `/api/ui/universes/${universeId}/credential-grants`),
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["mcp-servers", universeId] });
   const [createOpen, setCreateOpen] = useState(false);
@@ -169,7 +169,7 @@ function ServerDetails({ universeId, server, credentialGrants, credentialGrantsL
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [oauthOpen, setOAuthOpen] = useState(false);
   const remove = useMutation({
-    mutationFn: () => api("DELETE", `/api/v1/universes/${universeId}/mcp-servers/${encodeURIComponent(server.serverId)}`),
+    mutationFn: () => api("DELETE", `/api/ui/universes/${universeId}/mcp-servers/${encodeURIComponent(server.serverId)}`),
     onSuccess: () => { onChanged(); onDeleted(); },
   });
   const grant = credentialGrants.find((candidate) => candidate.grantId === server.credential?.grantId);
@@ -363,7 +363,7 @@ function ServerDialog({
   const probe = useMutation({
     mutationFn: (url: string) => api<McpServerAuthDiscovery>(
       "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/discover-auth`,
+      `/api/ui/universes/${universeId}/mcp-servers/discover-auth`,
       { serverUrl: url },
     ),
     onSuccess: (result, url) => {
@@ -409,7 +409,7 @@ function ServerDialog({
         authorizationServer: oauthAuthorizationServer,
       });
       if (!editing) {
-        return api<McpServer>("POST", `/api/v1/universes/${universeId}/mcp-servers`, {
+        return api<McpServer>("POST", `/api/ui/universes/${universeId}/mcp-servers`, {
           serverId,
           serverUrl,
           defaultServerLabel: serverId,
@@ -428,7 +428,7 @@ function ServerDialog({
       }
       return api<McpServer>(
         "PUT",
-        `/api/v1/universes/${universeId}/mcp-servers/${server.serverId}`,
+        `/api/ui/universes/${universeId}/mcp-servers/${server.serverId}`,
         {
           serverId: server.serverId,
           serverUrl,
@@ -1042,7 +1042,7 @@ function OAuthDialog({
   const start = useMutation({
     mutationFn: () => api<McpOAuthFlowStart>(
       "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/start`,
+      `/api/ui/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/start`,
       {},
     ),
     onSuccess: (nextAttempt) => setAttempt(nextAttempt),
@@ -1052,14 +1052,14 @@ function OAuthDialog({
     enabled: Boolean(server && attempt),
     queryFn: () => api<McpOAuthFlow>(
       "GET",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${attempt!.flowId}`,
+      `/api/ui/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${attempt!.flowId}`,
     ),
     refetchInterval: (query) => query.state.data?.status === "pending" ? 1_500 : false,
   });
   const complete = useMutation({
     mutationFn: (flowId: string) => api<McpServer>(
       "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${flowId}/complete`,
+      `/api/ui/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${flowId}/complete`,
       { expectedRevision: attempt!.serverRevision },
     ),
     onSuccess: onDone,

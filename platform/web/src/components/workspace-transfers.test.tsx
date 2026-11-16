@@ -377,7 +377,7 @@ it("requires confirmation to delete a workspace and allows cancellation", async 
   await click(button("Delete workspace"));
   expect(mocks.api).toHaveBeenCalledWith(
     "DELETE",
-    "/api/v1/universes/u/workspaces/ws",
+    "/api/ui/universes/u/workspaces/ws",
   );
   expect(mocks.workspaceRemoved).toHaveBeenCalledOnce();
   expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -479,7 +479,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
   await click(button("Rename"));
   expect(mocks.api).toHaveBeenCalledWith(
     "PATCH",
-    "/api/v1/universes/u/workspaces/ws",
+    "/api/ui/universes/u/workspaces/ws",
     { displayName: "Project notes", expectedRevision: 3 },
   );
   expect(
@@ -631,7 +631,7 @@ it.each([
     expect(writes()).toEqual([
       [
         "POST",
-        "/api/v1/universes/u/workspaces/ws/rename",
+        "/api/ui/universes/u/workspaces/ws/rename",
         { path, name: "renamed", expectedRevision: 3 },
       ],
     ]);
@@ -700,7 +700,7 @@ it.each([
   expect(writes()).toEqual([
     [
       "POST",
-      "/api/v1/universes/u/workspaces/ws/upload",
+      "/api/ui/universes/u/workspaces/ws/upload",
       {
         expectedRevision: 7,
         replace: false,
@@ -783,7 +783,7 @@ it("puts workspace actions in one menu, and uploads new files without a modal", 
   await waitForWrites();
   expect(writes()[0]).toEqual([
     "POST",
-    "/api/v1/universes/u/workspaces/ws/upload",
+    "/api/ui/universes/u/workspaces/ws/upload",
     {
       expectedRevision: 3,
       replace: false,
@@ -943,7 +943,7 @@ it("confirms recursive folder deletion and reports the removed path", async () =
   await click(button("Delete folder"));
   expect(mocks.api).toHaveBeenCalledWith(
     "DELETE",
-    "/api/v1/universes/u/workspaces/ws/entries?path=docs&expectedRevision=3",
+    "/api/ui/universes/u/workspaces/ws/entries?path=docs&expectedRevision=3",
   );
   expect(mocks.removed).toHaveBeenCalledWith("docs");
 });
@@ -975,7 +975,7 @@ it("downloads from the file menu with the original filename", async () => {
   await menu("File actions: docs/a #?.txt");
   await click(item("Download"));
   expect(fetchMock).toHaveBeenCalledWith(
-    "/api/v1/universes/u/workspaces/ws/download?path=docs%2Fa+%23%3F.txt",
+    "/api/ui/universes/u/workspaces/ws/download?path=docs%2Fa+%23%3F.txt",
     { credentials: "same-origin" },
   );
   await waitForUi(() => expect(names).toEqual(["a #?.txt"]));
@@ -1014,14 +1014,14 @@ it("offers the open file’s actions in its detail header and on its row’s rig
     ),
   );
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith(
-    "GET", "/api/v1/universes/u/workspaces/ws/tree",
+    "GET", "/api/ui/universes/u/workspaces/ws/tree",
   ));
   expect(container.querySelector("textarea")).toBeNull();
   await act(async () => snapshot.resolve({ ...tree(), workspace }));
   await waitForUi(() => {
     expect(mocks.api).toHaveBeenCalledWith(
       "GET",
-      "/api/v1/universes/u/blobs/old",
+      "/api/ui/universes/u/blobs/old",
     );
   });
   expect(container.querySelector('textarea[aria-label="File contents"]')).toBeNull();
@@ -1130,7 +1130,7 @@ it.each(["", "docs"])(
     expect(writes()).toEqual([
       [
         "POST",
-        "/api/v1/universes/u/workspaces/ws/upload",
+        "/api/ui/universes/u/workspaces/ws/upload",
         {
           expectedRevision: 3,
           replace: false,
@@ -1247,7 +1247,7 @@ it.each(["file", "folder", "move-file", "move-folder"])(
     await click(button("Save"));
     expect(mocks.api).toHaveBeenCalledWith(
       "PUT",
-      `/api/v1/universes/u/workspaces/ws/files/${destination.split("/").map(encodeURIComponent).join("/")}`,
+      `/api/ui/universes/u/workspaces/ws/files/${destination.split("/").map(encodeURIComponent).join("/")}`,
       {
         contentText: "unsaved edit",
         expectedRevision: 4,
@@ -1337,7 +1337,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
     });
     expect(mocks.api).toHaveBeenCalledWith(
       "PUT",
-      "/api/v1/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
+      "/api/ui/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
       { contentText: "edited", expectedRevision: 3, mediaType: "text/plain" },
     );
   },
@@ -1580,7 +1580,7 @@ it.each([
   expect(container.querySelector('[role="status"]')?.textContent).toContain("Drop to move into");
   await entryDrag("drop", target, transfer);
   expect(writes()).toEqual([[
-    "POST", "/api/v1/universes/u/workspaces/ws/move",
+    "POST", "/api/ui/universes/u/workspaces/ws/move",
     { path, destination, expectedRevision: 3 },
   ]]);
   expect(mocks.renamed).toHaveBeenCalledWith(path, destination, { before: 3, after: 3 });

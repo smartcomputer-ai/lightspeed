@@ -40,10 +40,10 @@ export interface ServerEnv {
   github: { clientId: string; clientSecret: string } | null;
   oidc?: OidcConfig | null;
   passwordSignIn?: "local" | "break-glass" | "off";
-  /// Authenticated Lightspeed gateway RPC endpoint.
+  /// Authenticated Lightspeed runtime HTTP API endpoint.
   lightspeedApiUrl: string | null;
   /// Full-authority runtime credential, held only by the Platform backend.
-  lightspeedRpcToken?: string | null;
+  lightspeedApiToken?: string | null;
   /// Public Streamable HTTP endpoint installed by the Configurator setup.
   configuratorMcpUrl: string | null;
   /// Permit the installed Configurator MCP record to reach a private network.
@@ -73,18 +73,18 @@ export function loadEnv(): ServerEnv {
   if (booleanEnv("LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER", false)) {
     throw new Error("Configurator trusted-header authentication is retired; setup is temporarily unavailable");
   }
-  const token = process.env.LIGHTSPEED_PLATFORM_RPC_TOKEN;
-  const tokenFile = process.env.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE;
+  const token = process.env.LIGHTSPEED_PLATFORM_API_TOKEN;
+  const tokenFile = process.env.LIGHTSPEED_PLATFORM_API_TOKEN_FILE;
   if (token !== undefined && tokenFile !== undefined) {
-    throw new Error("Set only one of LIGHTSPEED_PLATFORM_RPC_TOKEN and LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE");
+    throw new Error("Set only one of LIGHTSPEED_PLATFORM_API_TOKEN and LIGHTSPEED_PLATFORM_API_TOKEN_FILE");
   }
-  let lightspeedRpcToken: string | null = token ?? null;
+  let lightspeedApiToken: string | null = token ?? null;
   if (tokenFile !== undefined) {
-    try { lightspeedRpcToken = readFileSync(tokenFile, "utf8").replace(/\r?\n$/, ""); }
-    catch { throw new Error("Cannot read LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE"); }
+    try { lightspeedApiToken = readFileSync(tokenFile, "utf8").replace(/\r?\n$/, ""); }
+    catch { throw new Error("Cannot read LIGHTSPEED_PLATFORM_API_TOKEN_FILE"); }
   }
-  if (lightspeedRpcToken !== null && (lightspeedRpcToken.length < 32 || /[^\x21-\x7e]/u.test(lightspeedRpcToken))) {
-    throw new Error("LIGHTSPEED_PLATFORM_RPC_TOKEN must contain at least 32 printable ASCII characters without whitespace");
+  if (lightspeedApiToken !== null && (lightspeedApiToken.length < 32 || /[^\x21-\x7e]/u.test(lightspeedApiToken))) {
+    throw new Error("LIGHTSPEED_PLATFORM_API_TOKEN must contain at least 32 printable ASCII characters without whitespace");
   }
   const github =
     process.env.LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID &&
@@ -113,7 +113,7 @@ export function loadEnv(): ServerEnv {
     oidc,
     passwordSignIn: passwordSignIn as ServerEnv["passwordSignIn"],
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,
-    lightspeedRpcToken,
+    lightspeedApiToken,
     configuratorMcpUrl: process.env.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? null,
     configuratorMcpAllowPrivateNetwork: booleanEnv(
       "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK",

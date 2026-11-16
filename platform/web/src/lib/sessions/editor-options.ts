@@ -16,20 +16,20 @@ export function useSessionConfigEditorOptions(
 ) {
   const servers = useQuery({
     queryKey: ["mcp-servers", universeId],
-    queryFn: () => api<McpServerOption[]>("GET", `/api/v1/universes/${universeId}/mcp-servers`),
+    queryFn: () => api<McpServerOption[]>("GET", `/api/ui/universes/${universeId}/mcp-servers`),
     enabled,
   });
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
     queryFn: () =>
-      api<WorkspaceOption[]>("GET", `/api/v1/universes/${universeId}/workspaces`),
+      api<WorkspaceOption[]>("GET", `/api/ui/universes/${universeId}/workspaces`),
     enabled,
   });
   const models = useModelDiscovery(universeId, enabled);
   const defaults = useModelDefaults(universeId, enabled);
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
-    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/ui/universes/${universeId}/profiles`),
     enabled,
   });
   const environments = useQuery({ ...openEnvironmentsQuery(universeId), enabled });

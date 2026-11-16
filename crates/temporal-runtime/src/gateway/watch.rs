@@ -317,37 +317,39 @@ impl Subscription {
         }
     }
 
-    pub(super) fn response(self, id: api::RequestId) -> Response {
-        self.response_for(id, STREAM_LIFETIME)
+    pub(super) fn resource_response(self) -> Response {
+        self.resource_response_for(STREAM_LIFETIME)
     }
 
-    fn response_for(self, id: api::RequestId, lifetime: Duration) -> Response {
+    fn resource_response_for(self, lifetime: Duration) -> Response {
         let deadline = tokio::time::Instant::now() + lifetime;
-        let stream = futures_util::stream::unfold(Some(self), move |state| {
-            let id = id.clone();
-            async move {
-                let mut subscription = state?;
-                let next_message = if tokio::time::Instant::now() >= deadline {
-                    None
-                } else {
-                    tokio::time::timeout_at(deadline, subscription.next())
-                        .await
-                        .ok()
-                        .flatten()
-                };
-                let (data, next) = match next_message {
-                    Some(data) => (data.to_string(), Some(subscription)),
-                    None => (
-                        serde_json::to_string(&api::JsonRpcResponse::success(
-                            id,
-                            api::AgentApiOutcome::new(api::UniverseWatchResponse {}),
-                        ))
-                        .expect("watch response serializes"),
-                        None,
-                    ),
-                };
-                Some((Ok::<_, Infallible>(Event::default().data(data)), next))
-            }
+        let stream = futures_util::stream::unfold(Some(self), move |state| async move {
+            let mut subscription = state?;
+            let next = if tokio::time::Instant::now() >= deadline {
+                None
+            } else {
+                tokio::time::timeout_at(deadline, subscription.next())
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            let (event, next) = match next {
+                Some(data) => {
+                    let notification: serde_json::Value = serde_json::from_str(&data)
+                        .expect("watch queue contains serialized notifications");
+                    let name = notification["method"]
+                        .as_str()
+                        .expect("notification method");
+                    let params = serde_json::to_string(&notification["params"])
+                        .expect("notification params serialize");
+                    (
+                        Event::default().event(name).data(params),
+                        Some(subscription),
+                    )
+                }
+                None => (Event::default().event("watch/end").data("{}"), None),
+            };
+            Some((Ok::<_, Infallible>(event), next))
         });
         let mut response = Sse::new(stream)
             .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -732,11 +734,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn stream_starts_with_reset_and_ends_with_response_and_releases_subscription() {
+    async fn stream_starts_with_reset_and_ends_with_event_and_releases_subscription() {
         let registry = Arc::new(WatchRegistry::default());
         let subscription = registry.subscribe(store(), &context(), params()).unwrap();
-        let response =
-            subscription.response_for(api::RequestId::Number(7), Duration::from_millis(5));
+        let response = subscription.resource_response_for(Duration::from_millis(5));
         assert_eq!(response.headers()["content-type"], "text/event-stream");
         let bytes = tokio::time::timeout(
             Duration::from_secs(1),
@@ -751,9 +752,41 @@ mod tests {
             .filter_map(|line| line.strip_prefix("data: "))
             .map(|data| serde_json::from_str(data).unwrap())
             .collect();
-        assert_eq!(events[0]["method"], "watch/reset");
-        assert_eq!(events[1]["id"], 7);
-        assert_eq!(events[1]["result"]["result"], serde_json::json!({}));
+        assert!(text.contains("event: watch/reset"));
+        assert!(text.contains("event: watch/end"));
+        assert_eq!(events[1], serde_json::json!({}));
+        assert_eq!(lock(&registry.0).total, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resource_stream_uses_named_events_and_releases_subscription() {
+        let registry = Arc::new(WatchRegistry::default());
+        let subscription = registry.subscribe(store(), &context(), params()).unwrap();
+        let response = subscription.resource_response_for(Duration::from_millis(5));
+        let bytes = tokio::time::timeout(
+            Duration::from_secs(1),
+            axum::body::to_bytes(response.into_body(), 4096),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(text.contains("event: watch/reset\ndata: {}"), "{text}");
+        assert!(text.contains("event: watch/end\ndata: {}"), "{text}");
+        assert!(!text.contains("result"));
+        assert!(!text.contains("method"));
+        assert_eq!(lock(&registry.0).total, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dropping_resource_stream_releases_its_subscription_immediately() {
+        let registry = Arc::new(WatchRegistry::default());
+        let response = registry
+            .subscribe(store(), &context(), params())
+            .unwrap()
+            .resource_response();
+        assert_eq!(lock(&registry.0).total, 1);
+        drop(response);
         assert_eq!(lock(&registry.0).total, 0);
     }
 }

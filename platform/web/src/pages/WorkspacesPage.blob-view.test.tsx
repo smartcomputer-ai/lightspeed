@@ -209,7 +209,7 @@ it("previews unsaved edits, preserves them in source, and saves the draft from p
   expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   await act(async () => button("Preview").click());
   await act(async () => button("Save").click());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", `/api/v1/universes/u/workspaces/ws/files/docs/${encodeURIComponent(name)}`, {
+  expect(mocks.api).toHaveBeenCalledWith("PUT", `/api/ui/universes/u/workspaces/ws/files/docs/${encodeURIComponent(name)}`, {
     contentText: draft, expectedRevision: 3, mediaType: "text/plain",
   });
 });

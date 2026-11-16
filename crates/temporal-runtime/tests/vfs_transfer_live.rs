@@ -131,8 +131,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                     declared_only: false,
                     expires_at_ms: None,
                 })
-                .await?
-                .result;
+                .await?;
             let connect_url = format!("ws://{address}{CONNECT_PATH}");
             let mut registration = RegistrationConfig::new(
                 connect_url.clone(),
@@ -156,7 +155,6 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                         .api
                         .list_environments(api::EnvironmentListParams::default())
                         .await?
-                        .result
                         .environments;
                     if let Some(environment) = environments
                         .into_iter()
@@ -430,7 +428,6 @@ async fn run_case(
             ..Default::default()
         })
         .await?
-        .result
         .workspace;
     std::fs::create_dir_all(root.join("tree"))?;
     std::fs::write(root.join("tree/obsolete.txt"), b"remove on materialize")?;
@@ -487,7 +484,7 @@ async fn run_case(
             config: Some(serde_json::from_value(json!({"model": api_projection::model_to_api(&model), "features": features}))?),
             ..Default::default()
         },
-    }}).await?.result.profile;
+    }}).await?.profile;
     api.start_session(api::SessionStartParams {
         access: None,
         session_id: Some(session.to_string()),
@@ -512,7 +509,6 @@ async fn run_case(
             notify_on_terminal: None,
         })
         .await?
-        .result
         .run;
     let run = wait_for_terminal_run(api, session, &run.id).await?;
     anyhow::ensure!(
@@ -570,7 +566,6 @@ async fn run_case(
             workspace_id: workspace.workspace_id,
         })
         .await?
-        .result
         .workspace;
     let manifest =
         vfs::read_snapshot_manifest(store, &BlobRef::parse(&head.head_snapshot_ref)?).await?;
@@ -667,7 +662,6 @@ async fn run_content_case(
             },
         })
         .await?
-        .result
         .profile;
     api.start_session(api::SessionStartParams {
         session_id: Some(session.to_string()),

@@ -59,8 +59,8 @@ beforeEach(() => {
     universe("Broken", [], { error: "engine timeout" }),
   ];
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (method === "GET" && path === "/api/v1/admin/environment-providers") return providers;
-    if (method === "GET" && path === "/api/v1/admin/environment-provider-bindings") return bindings;
+    if (method === "GET" && path === "/api/ui/admin/environment-providers") return providers;
+    if (method === "GET" && path === "/api/ui/admin/environment-provider-bindings") return bindings;
     if (method !== "GET") return {};
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
@@ -140,7 +140,7 @@ it("registers a provider with only the fields that were filled in", async () => 
   await type("#provider-credential", "secret");
   await submit();
   await waitForUi(() => expect(dialog()).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/environment-providers/incus-c", {
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/environment-providers/incus-c", {
     controllerEndpoint: "wss://incus-c.internal:19090/control",
     credential: "secret",
   });
@@ -158,7 +158,7 @@ it("edits a provider under its fixed id and can drop the stored credential", asy
   expect(credential.disabled).toBe(true);
   await act(async () => buttonIn(dialog()!, "Save")!.click());
   await waitForUi(() => expect(dialog()).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/environment-providers/incus-b", {
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/environment-providers/incus-b", {
     displayName: "Incus B",
     controllerEndpoint: "wss://incus-b.internal/control",
     dataRouteBase: "wss://routes.internal",
@@ -171,14 +171,14 @@ it("toggles a binding and deletes one only after confirmation", async () => {
   const toggle = section("incus-a").querySelector<HTMLElement>('[aria-label="Enable incus-a for Alpha"]')!;
   expect(toggle.getAttribute("aria-checked")).toBe("false");
   await act(async () => toggle.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/universes/core-Alpha/environment-provider-bindings/incus-a", { enabled: true }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/universes/core-Alpha/environment-provider-bindings/incus-a", { enabled: true }));
 
   const zeta = [...section("incus-a").querySelectorAll("tbody tr")].find((row) => row.textContent?.includes("Zeta"))!;
   await act(async () => buttonIn(zeta, "Delete")!.click());
   await waitForUi(() => expect(alertDialog()?.textContent).toContain("Unbind Zeta?"));
   expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
   await act(async () => buttonIn(alertDialog()!, "Delete binding")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/admin/universes/core-Zeta/environment-provider-bindings/incus-a"));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/admin/universes/core-Zeta/environment-provider-bindings/incus-a"));
 });
 
 it("binds only active, readable universes that are not bound yet", async () => {
@@ -192,7 +192,7 @@ it("binds only active, readable universes that are not bound yet", async () => {
   await act(async () => { picker.value = "core-Beta"; picker.dispatchEvent(new Event("change", { bubbles: true })); });
   await submit();
   await waitForUi(() => expect(dialog()).toBeNull());
-  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/v1/admin/universes/core-Beta/environment-provider-bindings/incus-a", { enabled: true });
+  expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/universes/core-Beta/environment-provider-bindings/incus-a", { enabled: true });
 });
 
 it("holds the bind action when every active universe is already bound", async () => {
@@ -213,5 +213,5 @@ it("deletes a provider after confirmation and shows why the engine refused", asy
   await waitForUi(() => expect(alertDialog()?.textContent).toContain("Delete provider incus-a?"));
   await act(async () => buttonIn(alertDialog()!, "Delete provider")!.click());
   await waitForUi(() => expect(container.textContent).toContain("provider still has bindings"));
-  expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/v1/admin/environment-providers/incus-a");
+  expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/admin/environment-providers/incus-a");
 });

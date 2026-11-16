@@ -28,7 +28,7 @@ An incoming message becomes a `ChannelInbound` request to
 routable. If a bot processes it, the conversation workflow later schedules
 connector activities to prepare media, show typing, or deliver a response.
 
-The retained host used `LIGHTSPEED_CONNECTOR_API_KEY` and a restricted runtime
+The retained host used `LIGHTSPEED_CONNECTOR_API_TOKEN` and a restricted runtime
 key. That authentication model has been removed. The launcher no longer starts
 the host, and its old keys no longer authenticate. See
 [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)

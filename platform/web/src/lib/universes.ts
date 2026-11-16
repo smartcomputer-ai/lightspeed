@@ -9,7 +9,7 @@ import { SETTINGS, settings } from "@/lib/settings";
 export function useUniverses() {
   return useQuery({
     queryKey: ["universes"],
-    queryFn: () => api<Universe[]>("GET", "/api/v1/universes"),
+    queryFn: () => api<Universe[]>("GET", "/api/ui/universes"),
     refetchInterval: 30000,
   });
 }

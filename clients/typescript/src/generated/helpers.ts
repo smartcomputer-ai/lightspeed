@@ -3,7 +3,7 @@
  * Do not edit by hand.
  */
 import type { CallOptions } from "../client.js";
-import type { Method, MethodParams, MethodResult } from "./methods.js";
+import type { OperationId, OperationParams, OperationResult } from "./operations.js";
 import type * as Api from "./types.js";
 
 /** Helper name to the API method it calls. See scripts/helpers.mjs for which methods have one. */
@@ -55,17 +55,17 @@ export const CLIENT_HELPERS = {
 } as const;
 
 export abstract class LightspeedHelpers {
-  abstract call<M extends Method>(
+  abstract call<M extends OperationId>(
     method: M,
-    params: MethodParams<M>,
+    params: OperationParams<M>,
     options?: CallOptions,
-  ): Promise<MethodResult<M>>;
+  ): Promise<OperationResult<M>>;
 
-  private async invoke<M extends Method>(
+  private async invoke<M extends OperationId>(
     method: M,
     target: object,
     options: CallOptions,
-  ): Promise<MethodResult<M>["result"]> {
+  ): Promise<OperationResult<M>> {
     const { signal, headers, ...params } = options;
     const call: CallOptions = {};
     if (signal) {
@@ -74,16 +74,16 @@ export abstract class LightspeedHelpers {
     if (headers) {
       call.headers = headers;
     }
-    const outcome = await this.call(method, { ...target, ...params } as MethodParams<M>, call);
-    return outcome.result;
+    const outcome = await this.call(method, { ...target, ...params } as OperationParams<M>, call);
+    return outcome;
   }
 
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
+   * Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.
    */
-  initialize(options: Api.InitializeParams & CallOptions = {}): Promise<Api.InitializeResponse> {
+  initialize(options: Api.ConnectionParams & CallOptions = {}): Promise<Api.ConnectionResponse> {
     return this.invoke("initialize", {  }, options);
   }
 
@@ -416,7 +416,7 @@ export abstract class LightspeedHelpers {
    *
    * Reads bytes at a path in the current workspace head.
    */
-  readWorkspaceFile(workspaceId: string, path: string, options: Omit<Api.VfsWorkspaceFileReadParams, "workspaceId" | "path"> & CallOptions = {}): Promise<Api.BlobReadResponse> {
+  readWorkspaceFile(workspaceId: string, path: string, options: Omit<Api.VfsWorkspaceFileReadParams, "workspaceId" | "path"> & CallOptions = {}): Promise<Uint8Array> {
     return this.invoke("vfs/workspaces/files/read", { workspaceId, path }, options);
   }
 

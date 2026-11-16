@@ -131,7 +131,7 @@ it("replaces an environment secret's value exactly, under the same credential", 
   for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
 
   const call = mocks.api.mock.calls.find(([method, path]) => method === "POST" && (path as string).endsWith("/replace"));
-  expect(call?.[1]).toBe("/api/v1/universes/universe/secrets/grants/environment/replace");
+  expect(call?.[1]).toBe("/api/ui/universes/universe/secrets/grants/environment/replace");
   expect(call?.[2]).toEqual({ value });
 });
 

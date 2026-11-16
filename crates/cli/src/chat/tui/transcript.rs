@@ -791,7 +791,7 @@ mod tests {
             ("Universe".into(), "development · deployment key".into()),
             (
                 "Runtime".into(),
-                "local development · http://localhost:18080/rpc".into(),
+                "local development · http://localhost:18080/api/v1".into(),
             ),
         ]);
         state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {

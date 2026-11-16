@@ -50,7 +50,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
 
   app.get("/environment-providers", (c) => withGateway(c, async () => {
     const response = await deploymentClientFor(ctx).call("deployment/environment-providers/list", {});
-    return c.json(response.result.providers);
+    return c.json(response.providers);
   }));
 
   /// Deployment-wide binding inventory: every platform universe on the
@@ -74,7 +74,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
           "deployment/environment-provider-bindings/list",
           { universe: row.lightspeedUniverseId },
         );
-        return { ...base, bindings: response.result.bindings ?? [], error: null };
+        return { ...base, bindings: response.bindings ?? [], error: null };
       } catch (error) {
         return {
           ...base,
@@ -98,7 +98,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
         "deployment/environment-providers/put",
         params,
       );
-      return c.json(response.result.provider);
+      return c.json(response.provider);
     });
   });
 
@@ -107,7 +107,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
       "deployment/environment-providers/delete",
       { providerId: c.req.param("providerId") },
     );
-    return c.json(response.result.provider);
+    return c.json(response.provider);
   }));
 
   app.put("/universes/:universeId/environment-provider-bindings/:providerId", async (c) => {
@@ -123,7 +123,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
         "deployment/environment-providers/bindings/put",
         params,
       );
-      return c.json(response.result.binding);
+      return c.json(response.binding);
     });
   });
 
@@ -136,7 +136,7 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
           providerId: c.req.param("providerId"),
         },
       );
-      return c.json(response.result.binding);
+      return c.json(response.binding);
     }));
 
   return app;

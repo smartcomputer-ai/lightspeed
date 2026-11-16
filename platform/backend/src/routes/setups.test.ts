@@ -24,7 +24,7 @@ function routes(role: UniverseRole) {
       insert: writes,
       update: writes,
     },
-    env: { lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_fixture", configuratorMcpUrl: "https://configurator.example/mcp" },
+    env: { lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_fixture", configuratorMcpUrl: "https://configurator.example/mcp" },
   } as unknown as AppContext;
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {

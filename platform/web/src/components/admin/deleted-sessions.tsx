@@ -20,7 +20,7 @@ function DeletedSessionsContent({ universe, onClose }: { universe: Universe; onC
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [confirmation, setConfirmation] = useState<Selection | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const base = `/api/v1/admin/universes/${encodeURIComponent(universe.id)}`;
+  const base = `/api/ui/admin/universes/${encodeURIComponent(universe.id)}`;
   const readPage = (after?: string) => api<DeploymentDeletedSessionsListResponse>("GET", `${base}/deleted-sessions${after ? `?after=${encodeURIComponent(after)}` : ""}`);
   const sessions = useInfiniteQuery({
     queryKey: ["admin", "deleted-sessions", universe.id],

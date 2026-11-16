@@ -100,7 +100,7 @@ describe("demo compaction conversations", () => {
     const store = createDemoStore();
     const session = store.universe(PERSONAL_ASSISTANT_UNIVERSE_ID)!.sessions.get("bot:v1:assistant:k-ada")!;
     const app = createDemoRouter(store);
-    const path = `http://demo.local/api/v1/universes/${PERSONAL_ASSISTANT_UNIVERSE_ID}/sessions/${session.view.id}/config`;
+    const path = `http://demo.local/api/ui/universes/${PERSONAL_ASSISTANT_UNIVERSE_ID}/sessions/${session.view.id}/config`;
     const response = await app.fetch(new Request(path, {
       method: "PUT", headers: { "content-type": "application/json" },
       body: JSON.stringify({ expectedConfigRevision: session.view.configRevision,
@@ -118,7 +118,7 @@ it("explains why manual compaction is unavailable without a connected engine", a
   const store = createDemoStore();
   const universe = store.universe(PERSONAL_ASSISTANT_UNIVERSE_ID)!;
   const session = [...universe.sessions.values()][0]!;
-  const response = await createDemoRouter(store).request(`/api/v1/universes/${PERSONAL_ASSISTANT_UNIVERSE_ID}/sessions/${encodeURIComponent(session.view.id)}/context/compact`, { method: "POST" });
+  const response = await createDemoRouter(store).request(`/api/ui/universes/${PERSONAL_ASSISTANT_UNIVERSE_ID}/sessions/${encodeURIComponent(session.view.id)}/context/compact`, { method: "POST" });
   expect(response.status).toBe(501);
   expect(await response.json()).toMatchObject({ error: expect.stringContaining("unavailable in the demo") });
 });

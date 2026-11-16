@@ -339,7 +339,7 @@ export function useSessionLineage({ universeId, sessionId, origin, runRevision }
   const parentId = origin?.parentSessionId;
   const parent = useQuery({
     queryKey: ["session", universeId, parentId],
-    queryFn: () => api<SessionView>("GET", `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(parentId!)}`),
+    queryFn: () => api<SessionView>("GET", `/api/ui/universes/${universeId}/sessions/${encodeURIComponent(parentId!)}`),
     enabled: Boolean(parentId),
   });
   const children = useInfiniteQuery({
@@ -347,7 +347,7 @@ export function useSessionLineage({ universeId, sessionId, origin, runRevision }
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({ limit: "50", parent: sessionId });
       if (pageParam) params.set("cursor", pageParam);
-      return api<SessionListPage>("GET", `/api/v1/universes/${universeId}/sessions?${params.toString()}`);
+      return api<SessionListPage>("GET", `/api/ui/universes/${universeId}/sessions?${params.toString()}`);
     },
     initialPageParam: "",
     getNextPageParam: (last) => last.nextCursor ?? undefined,

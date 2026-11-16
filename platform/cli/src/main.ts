@@ -44,20 +44,20 @@ program
 program
   .command("whoami")
   .description("show the authenticated user")
-  .action(async () => printJson(await api("GET", "/api/v1/me")));
+  .action(async () => printJson(await api("GET", "/api/ui/me")));
 
 const universe = program.command("universe").description("manage universes");
 
 universe
   .command("list")
-  .action(async () => printJson(await api("GET", "/api/v1/universes")));
+  .action(async () => printJson(await api("GET", "/api/ui/universes")));
 
 universe
   .command("create <name>")
   .option("--handle <handle>")
   .action(async (name: string, opts: { handle?: string }) =>
     printJson(
-      await api("POST", "/api/v1/universes", {
+      await api("POST", "/api/ui/universes", {
         name,
         handle: opts.handle,
       }),
@@ -66,12 +66,12 @@ universe
 
 universe
   .command("show <id>")
-  .action(async (id: string) => printJson(await api("GET", `/api/v1/universes/${id}`)));
+  .action(async (id: string) => printJson(await api("GET", `/api/ui/universes/${id}`)));
 
 universe
   .command("archive <id>")
   .action(async (id: string) =>
-    printJson(await api("PATCH", `/api/v1/universes/${id}`, { status: "archived" })),
+    printJson(await api("PATCH", `/api/ui/universes/${id}`, { status: "archived" })),
   );
 
 const member = program.command("member").description("manage universe members");
@@ -80,7 +80,7 @@ member
   .command("list")
   .requiredOption("--universe <id>")
   .action(async (opts: { universe: string }) =>
-    printJson(await api("GET", `/api/v1/universes/${opts.universe}/members`)),
+    printJson(await api("GET", `/api/ui/universes/${opts.universe}/members`)),
   );
 
 member
@@ -90,7 +90,7 @@ member
   .option("--role <role>", "viewer | contributor | operator | admin", "contributor")
   .action(async (opts: { universe: string; user: string; role: string }) =>
     printJson(
-      await api("POST", `/api/v1/universes/${opts.universe}/members`, {
+      await api("POST", `/api/ui/universes/${opts.universe}/members`, {
         userId: opts.user,
         role: opts.role,
       }),
@@ -105,7 +105,7 @@ member
     printJson(
       await api(
         "DELETE",
-        `/api/v1/universes/${opts.universe}/members/${opts.member}`,
+        `/api/ui/universes/${opts.universe}/members/${opts.member}`,
       ),
     ),
   );
@@ -128,9 +128,9 @@ async function setChannelAccountEnabled(
 ): Promise<unknown> {
   const { account } = (await api(
     "GET",
-    `/api/v1/universes/${universe}/channel-accounts/${accountId}`,
+    `/api/ui/universes/${universe}/channel-accounts/${accountId}`,
   )) as { account: ChannelAccountDoc };
-  return api("PUT", `/api/v1/universes/${universe}/channel-accounts/${accountId}`, {
+  return api("PUT", `/api/ui/universes/${universe}/channel-accounts/${accountId}`, {
     account: {
       accountId: account.accountId,
       provider: account.provider,
@@ -151,7 +151,7 @@ const channelAccount = program
 channelAccount
   .command("list")
   .description("operator view: every account across universes")
-  .action(async () => printJson(await api("GET", "/api/v1/channel-accounts")));
+  .action(async () => printJson(await api("GET", "/api/ui/channel-accounts")));
 
 channelAccount
   .command("add")
@@ -174,7 +174,7 @@ channelAccount
       credentialGrant?: string;
     }) =>
       printJson(
-        await api("POST", `/api/v1/universes/${opts.universe}/channel-accounts`, {
+        await api("POST", `/api/ui/universes/${opts.universe}/channel-accounts`, {
           account: {
             accountId: opts.accountId,
             provider: opts.provider,
@@ -205,7 +205,7 @@ channelAccount
   .command("rm <id>")
   .requiredOption("--universe <universeId>")
   .action(async (id: string, opts: { universe: string }) =>
-    printJson(await api("DELETE", `/api/v1/universes/${opts.universe}/channel-accounts/${id}`)),
+    printJson(await api("DELETE", `/api/ui/universes/${opts.universe}/channel-accounts/${id}`)),
   );
 
 const userCmd = program.command("user").description("manage platform users (admin)");
@@ -222,7 +222,7 @@ userCmd
       // better-auth admin plugin endpoint; bearer token must belong to a
       // platform admin.
       printJson(
-        await api("POST", "/api/v1/admin/users", {
+        await api("POST", "/api/ui/admin/users", {
           email: opts.email,
           name: opts.name,
           password,
@@ -236,14 +236,14 @@ userCmd
   .command("list")
   .action(async () =>
     printJson(
-      await api("GET", "/api/v1/admin/users"),
+      await api("GET", "/api/ui/admin/users"),
     ),
   );
 
 const identity = program.command("identity").description("canonical deployment groups, memberships and role administration");
-identity.command("list").action(async () => printJson(await api("GET", "/api/v1/admin/identity")));
+identity.command("list").action(async () => printJson(await api("GET", "/api/ui/admin/identity")));
 identity.command("apply <json>").description("apply a core AccessChange JSON document")
-  .action(async (json: string) => printJson(await api("POST", "/api/v1/admin/identity", JSON.parse(json))));
+  .action(async (json: string) => printJson(await api("POST", "/api/ui/admin/identity", JSON.parse(json))));
 
 try {
   await program.parseAsync();

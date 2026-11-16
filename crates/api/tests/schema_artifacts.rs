@@ -6,9 +6,9 @@
 use std::{fs, path::PathBuf};
 
 use api::{
-    AgentApiOutcome, AgentNotification, EventCursor, InputItem, RunFailureKindView, RunFailureView,
-    RunStartParams, RunStartResponse, RunStartSource, RunStatus, RunSummarySourceView,
-    RunSummaryView, RunView, RunViewSource, SessionEventsReadParams,
+    EventCursor, InputItem, RunFailureKindView, RunFailureView, RunStartParams, RunStartResponse,
+    RunStartSource, RunStatus, RunSummarySourceView, RunSummaryView, RunView, RunViewSource,
+    SessionEventsReadParams,
 };
 use serde_json::{Value, json};
 
@@ -149,15 +149,9 @@ fn serialized_fixtures_validate_against_exported_schemas() {
             message_truncated: true,
         }),
     };
-    let outcome = AgentApiOutcome::with_notifications(
-        RunStartResponse { run: summary },
-        vec![AgentNotification::RunStarted {
-            session_id: "session_1".to_owned(),
-            run,
-        }],
-    );
-    let value = serde_json::to_value(&outcome).expect("serialize");
-    assert_validates(&bundle, "AgentApiOutcomeOfRunStartResponse", &value);
+    let value = serde_json::to_value(RunStartResponse { run: summary }).expect("serialize");
+    assert_validates(&bundle, "RunStartResponse", &value);
+    assert_validates(&bundle, "RunView", &serde_json::to_value(&run).unwrap());
 
     let params = SessionEventsReadParams {
         direction: Default::default(),
@@ -238,8 +232,8 @@ fn committed_schema_artifacts_are_current() {
     let exported = api::export_schemas();
     let artifacts = [
         ("api.schema.json", &exported.schema_bundle),
-        ("methods.json", &exported.methods),
-        ("openrpc.json", &exported.openrpc),
+        ("http.json", &exported.http),
+        ("openapi.json", &exported.openapi),
     ];
     for (name, current) in artifacts {
         assert_eq!(

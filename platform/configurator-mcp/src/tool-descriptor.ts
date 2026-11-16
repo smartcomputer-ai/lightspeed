@@ -1,4 +1,4 @@
-import type { Method, MethodGroup } from "@lightspeed-ai/sdk";
+import type { OperationId, MethodGroup } from "@lightspeed-ai/sdk";
 
 export interface JsonSchema {
   [key: string]: unknown;
@@ -6,7 +6,7 @@ export interface JsonSchema {
 
 export interface GeneratedToolDescriptor {
   name: string;
-  method: Method;
+  method: OperationId;
   /// The API family published by the runtime contract.
   group: MethodGroup;
   summary: string;

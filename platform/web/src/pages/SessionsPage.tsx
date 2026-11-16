@@ -256,7 +256,7 @@ function SessionList({
     queryFn: ({ pageParam }) =>
       api<SessionListPage>(
         "GET",
-        `/api/v1/universes/${universeId}/sessions?${listQuery.toString()}${
+        `/api/ui/universes/${universeId}/sessions?${listQuery.toString()}${
           pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""
         }`,
     ),
@@ -391,10 +391,10 @@ function SessionList({
         action === "close"
           ? api<SessionView>(
               "POST",
-              `/api/v1/universes/${universeId}/sessions/${id}/close`,
+              `/api/ui/universes/${universeId}/sessions/${id}/close`,
               { force: true },
             )
-          : api<SessionSummary>("DELETE", `/api/v1/universes/${universeId}/sessions/${id}`),
+          : api<SessionSummary>("DELETE", `/api/ui/universes/${universeId}/sessions/${id}`),
       );
       const failed = results.filter((result) => result.status === "rejected").length;
       return { action, done: ids.length - failed, failed };
@@ -1045,13 +1045,13 @@ function NewSessionDialog({
 
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
-    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/ui/universes/${universeId}/profiles`),
     enabled: open,
   });
   const selectedProfile = useQuery({
     queryKey: ["profile", universeId, profileId],
     queryFn: () =>
-      api<ProfileDocument>("GET", `/api/v1/universes/${universeId}/profiles/${profileId}`),
+      api<ProfileDocument>("GET", `/api/ui/universes/${universeId}/profiles/${profileId}`),
     enabled: open && Boolean(profileId),
   });
   const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup");
@@ -1087,7 +1087,7 @@ function NewSessionDialog({
 
   const create = useMutation({
     mutationFn: () =>
-      api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
+      api<SessionView>("POST", `/api/ui/universes/${universeId}/sessions`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         profile: creationProfile,
       }),
@@ -1470,7 +1470,7 @@ export function SessionDetail({
     queryFn: () =>
       api<SessionView>(
         "GET",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}`,
+        `/api/ui/universes/${universeId}/sessions/${sessionId}`,
       ),
     refetchInterval: (query) => sessionMayBeRunning(query.state.data) ? SESSION_LIVENESS_REFRESH_MS : false,
   });
@@ -1530,7 +1530,7 @@ export function SessionDetail({
   const loadFullText = useCallback(
     async (blobRef: string) => {
       const result = await api<{ bytesBase64: string }>(
-        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}?resourceKind=session&resourceId=${encodeURIComponent(sessionId)}`,
+        "GET", `/api/ui/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}?resourceKind=session&resourceId=${encodeURIComponent(sessionId)}`,
       );
       return new TextDecoder().decode(Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0)));
     },
@@ -1637,7 +1637,7 @@ export function SessionDetail({
   // carry that traffic, and only bot managers may list the roster.
   const botDirectory = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
     enabled: owningBotId !== null && botsOn,
     staleTime: 60_000,
     retry: false,
@@ -1664,7 +1664,7 @@ export function SessionDetail({
   const loadMedia = useCallback(
     async (blobRef: string, mime: string) => {
       const result = await api<{ bytesBase64: string }>(
-        "GET", `/api/v1/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}?resourceKind=session&resourceId=${encodeURIComponent(sessionId)}`,
+        "GET", `/api/ui/universes/${universeId}/blobs/${encodeURIComponent(blobRef)}?resourceKind=session&resourceId=${encodeURIComponent(sessionId)}`,
       );
       const bytes = Uint8Array.from(atob(result.bytesBase64), (char) => char.charCodeAt(0));
       return new Blob([bytes], { type: mime });
@@ -1733,7 +1733,7 @@ export function SessionDetail({
       const accepted = await postUntilAccepted(
         () => api<SessionRunAccepted>(
           "POST",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/messages`,
+          `/api/ui/universes/${universeId}/sessions/${sessionId}/messages`,
           {
             text,
             submissionId,
@@ -1777,7 +1777,7 @@ export function SessionDetail({
       const accepted = await postUntilAccepted(
         () => api<SessionRunSteered>(
           "POST",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
+          `/api/ui/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
           {
             text,
             submissionId: id,
@@ -1804,7 +1804,7 @@ export function SessionDetail({
     if (!current) return;
     const updated = await api<SessionView>(
       "PUT",
-      `/api/v1/universes/${universeId}/sessions/${sessionId}/config`,
+      `/api/ui/universes/${universeId}/sessions/${sessionId}/config`,
       { config, expectedConfigRevision: current.configRevision },
     );
     queryClient.setQueryData(["session", universeId, sessionId], updated);
@@ -1816,7 +1816,7 @@ export function SessionDetail({
     try {
       return await api<SessionRunCancelled>(
         "POST",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/cancel`,
+        `/api/ui/universes/${universeId}/sessions/${sessionId}/runs/${runId}/cancel`,
         {},
       );
     } catch (error) {
@@ -1887,7 +1887,7 @@ export function SessionDetail({
     let message: ComposerMessage | undefined;
     let cancellationAttempted = false;
     try {
-      const run = await api<RunView>("GET", `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}`);
+      const run = await api<RunView>("GET", `/api/ui/universes/${universeId}/sessions/${sessionId}/runs/${runId}`);
       if (run.status !== "queued") throw new Error("This message is no longer queued.");
       message = await queuedMessage(run, loadFullText);
       if (currentScope.current !== submissionScope) return;
@@ -1900,7 +1900,7 @@ export function SessionDetail({
       });
       cancellationAttempted = true;
       const cancelled = await api<SessionRunCancelled>(
-        "POST", `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/cancel`, {},
+        "POST", `/api/ui/universes/${universeId}/sessions/${sessionId}/runs/${runId}/cancel`, {},
       );
       if (cancelled.run.status !== "cancelled" || cancelled.run.startedAtMs != null) {
         throw new Error("The queued message started before it could be converted. Steering was not sent.");
@@ -1986,7 +1986,7 @@ export function SessionDetail({
     try {
       const response = await api<SessionRunApprovalsDecided>(
         "POST",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${approvalRun.id}/approvals`,
+        `/api/ui/universes/${universeId}/sessions/${sessionId}/runs/${approvalRun.id}/approvals`,
         { decisions: [{ approvalId, decision }] },
       );
       const result = response.results[0];
@@ -2023,7 +2023,7 @@ export function SessionDetail({
     mutationFn: () =>
       api<SessionView>(
         "POST",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}/close`,
+        `/api/ui/universes/${universeId}/sessions/${sessionId}/close`,
         { force: true },
       ),
     onSuccess: async (closedSession) => {
@@ -2042,7 +2042,7 @@ export function SessionDetail({
     mutationFn: () =>
       api<SessionView>(
         "POST",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}/restart`,
+        `/api/ui/universes/${universeId}/sessions/${sessionId}/restart`,
         {},
       ),
     onSuccess: async (restarted) => {

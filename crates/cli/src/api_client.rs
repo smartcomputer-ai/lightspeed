@@ -1,27 +1,24 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use api::{
-    AgentApiError, AgentApiErrorKind, AgentApiOutcome, BlobHasParams, BlobHasResponse,
-    BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse, CredentialClientCreateParams,
-    CredentialClientCreateResponse, CredentialClientDeleteParams, CredentialClientDeleteResponse,
-    CredentialClientListParams, CredentialClientListResponse, CredentialClientReadParams,
-    CredentialClientReadResponse, CredentialFlowStartParams, CredentialFlowStartResponse,
-    CredentialFlowStatusParams, CredentialFlowStatusResponse,
-    CredentialGitHubInstallationGrantParams, CredentialGitHubInstallationGrantResponse,
-    CredentialGitHubInstallationListParams, CredentialGitHubInstallationListResponse,
-    CredentialGrantListParams, CredentialGrantListResponse, CredentialGrantReadParams,
-    CredentialGrantReadResponse, CredentialGrantRevokeParams, CredentialGrantRevokeResponse,
-    CredentialProviderCreateParams, CredentialProviderCreateResponse,
-    CredentialProviderDeleteParams, CredentialProviderDeleteResponse, CredentialProviderListParams,
-    CredentialProviderListResponse, CredentialProviderReadParams, CredentialProviderReadResponse,
-    EnvironmentCloseParams, EnvironmentCloseResponse, EnvironmentCredentialBindParams,
-    EnvironmentCredentialBindResponse, EnvironmentCredentialListParams,
-    EnvironmentCredentialListResponse, EnvironmentCredentialUnbindParams,
-    EnvironmentCredentialUnbindResponse, EnvironmentListParams, EnvironmentListResponse,
-    EnvironmentPowerPutParams, EnvironmentPowerPutResponse, EnvironmentProviderBindingListParams,
-    EnvironmentProviderBindingListResponse, EnvironmentReadParams, EnvironmentReadResponse,
-    JsonRpcRequest, JsonRpcResponse, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT, METHOD_BLOBS_READ,
-    METHOD_CREDENTIALS_CLIENTS_CREATE, METHOD_CREDENTIALS_CLIENTS_DELETE,
+    AgentApiError, AgentApiErrorKind, BlobHasParams, BlobHasResponse, BlobPutParams,
+    BlobPutResponse, BlobReadParams, CredentialClientCreateParams, CredentialClientCreateResponse,
+    CredentialClientDeleteParams, CredentialClientDeleteResponse, CredentialClientListParams,
+    CredentialClientListResponse, CredentialClientReadParams, CredentialClientReadResponse,
+    CredentialFlowStartParams, CredentialFlowStartResponse, CredentialFlowStatusParams,
+    CredentialFlowStatusResponse, CredentialGitHubInstallationGrantParams,
+    CredentialGitHubInstallationGrantResponse, CredentialGitHubInstallationListParams,
+    CredentialGitHubInstallationListResponse, CredentialGrantListParams,
+    CredentialGrantListResponse, CredentialGrantReadParams, CredentialGrantReadResponse,
+    CredentialGrantRevokeParams, CredentialGrantRevokeResponse, CredentialProviderCreateParams,
+    CredentialProviderCreateResponse, CredentialProviderDeleteParams,
+    CredentialProviderDeleteResponse, CredentialProviderListParams, CredentialProviderListResponse,
+    CredentialProviderReadParams, CredentialProviderReadResponse, EnvironmentCloseParams,
+    EnvironmentCloseResponse, EnvironmentCredentialBindParams, EnvironmentCredentialBindResponse,
+    EnvironmentCredentialListParams, EnvironmentCredentialListResponse,
+    EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse, EnvironmentListParams,
+    EnvironmentListResponse, EnvironmentPowerPutParams, EnvironmentPowerPutResponse,
+    EnvironmentProviderBindingListParams, EnvironmentProviderBindingListResponse,
+    EnvironmentReadParams, EnvironmentReadResponse, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
+    METHOD_BLOBS_READ, METHOD_CREDENTIALS_CLIENTS_CREATE, METHOD_CREDENTIALS_CLIENTS_DELETE,
     METHOD_CREDENTIALS_CLIENTS_LIST, METHOD_CREDENTIALS_CLIENTS_READ,
     METHOD_CREDENTIALS_FLOWS_READ, METHOD_CREDENTIALS_FLOWS_START,
     METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST,
@@ -45,7 +42,7 @@ use api::{
     McpServerPutParams, McpServerPutResponse, McpServerReadParams, McpServerReadResponse,
     ModelListParams, ModelListResponse, ProfileApplyParams, ProfileApplyResponse,
     ProfileDeleteParams, ProfileDeleteResponse, ProfileListParams, ProfileListResponse,
-    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse, RequestId,
+    ProfilePutParams, ProfilePutResponse, ProfileReadParams, ProfileReadResponse,
     RunApprovalsDecideParams, RunApprovalsDecideResponse, RunCancelParams, RunCancelResponse,
     RunReadParams, RunReadResponse, RunStartParams, RunStartResponse, RunSteerParams,
     RunSteerResponse, SessionConfigPutParams, SessionConfigPutResponse, SessionEventsReadParams,
@@ -63,7 +60,6 @@ pub(crate) struct HttpAgentApi {
     endpoint: String,
     client: reqwest::Client,
     connection: crate::connection::ResolvedConnection,
-    next_id: AtomicU64,
 }
 
 impl HttpAgentApi {
@@ -73,7 +69,7 @@ impl HttpAgentApi {
             crate::connection::ResolvedConnection {
                 name: None,
                 endpoint,
-                secret: std::env::var("LIGHTSPEED_RPC_TOKEN")
+                secret: std::env::var("LIGHTSPEED_API_TOKEN")
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
                 universe: std::env::var("LIGHTSPEED_UNIVERSE")
@@ -94,7 +90,6 @@ impl HttpAgentApi {
                 .build()
                 .expect("HTTP client"),
             connection,
-            next_id: AtomicU64::new(1),
         }
     }
 
@@ -106,7 +101,7 @@ impl HttpAgentApi {
     pub(crate) async fn open_or_start_session(
         &self,
         params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+    ) -> Result<SessionStartResponse, AgentApiError> {
         match self.start_session(params.clone()).await {
             Ok(outcome) => Ok(outcome),
             Err(error)
@@ -118,20 +113,15 @@ impl HttpAgentApi {
                     run_limit: None,
                 })
                 .await
-                .map(|outcome| {
-                    AgentApiOutcome::with_notifications(
-                        SessionStartResponse {
-                            session: api::SessionMutationView {
-                                id: outcome.result.session.id,
-                                lifecycle_status: outcome.result.session.lifecycle_status,
-                                activity: outcome.result.session.activity,
-                                head_cursor: None,
-                                config_revision: outcome.result.session.config_revision,
-                                context_revision: outcome.result.session.active_context.revision,
-                            },
-                        },
-                        outcome.notifications,
-                    )
+                .map(|response| SessionStartResponse {
+                    session: api::SessionMutationView {
+                        id: response.session.id,
+                        lifecycle_status: response.session.lifecycle_status,
+                        activity: response.session.activity,
+                        head_cursor: None,
+                        config_revision: response.session.config_revision,
+                        context_revision: response.session.active_context.revision,
+                    },
                 })
             }
             Err(error) => Err(error),
@@ -141,56 +131,56 @@ impl HttpAgentApi {
     pub(crate) async fn start_session(
         &self,
         params: SessionStartParams,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+    ) -> Result<SessionStartResponse, AgentApiError> {
         self.request(METHOD_SESSION_START, params).await
     }
 
     pub(crate) async fn read_profile(
         &self,
         params: ProfileReadParams,
-    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+    ) -> Result<ProfileReadResponse, AgentApiError> {
         self.request(METHOD_PROFILES_READ, params).await
     }
 
     pub(crate) async fn list_profiles(
         &self,
         params: ProfileListParams,
-    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+    ) -> Result<ProfileListResponse, AgentApiError> {
         self.request(METHOD_PROFILES_LIST, params).await
     }
 
     pub(crate) async fn put_profile(
         &self,
         params: ProfilePutParams,
-    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+    ) -> Result<ProfilePutResponse, AgentApiError> {
         self.request(METHOD_PROFILES_PUT, params).await
     }
 
     pub(crate) async fn delete_profile(
         &self,
         params: ProfileDeleteParams,
-    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+    ) -> Result<ProfileDeleteResponse, AgentApiError> {
         self.request(METHOD_PROFILES_DELETE, params).await
     }
 
     pub(crate) async fn apply_profile(
         &self,
         params: ProfileApplyParams,
-    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+    ) -> Result<ProfileApplyResponse, AgentApiError> {
         self.request(METHOD_SESSION_PROFILES_APPLY, params).await
     }
 
     pub(crate) async fn read_session(
         &self,
         params: SessionReadParams,
-    ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
+    ) -> Result<SessionReadResponse, AgentApiError> {
         self.request(METHOD_SESSION_READ, params).await
     }
 
     pub(crate) async fn replace_context(
         &self,
         params: api::ContextReplaceParams,
-    ) -> Result<AgentApiOutcome<api::ContextReplaceResponse>, AgentApiError> {
+    ) -> Result<api::ContextReplaceResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_CONTEXT_REPLACE, params)
             .await
     }
@@ -198,28 +188,28 @@ impl HttpAgentApi {
     pub(crate) async fn read_run(
         &self,
         params: RunReadParams,
-    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
+    ) -> Result<RunReadResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_READ, params).await
     }
 
     pub(crate) async fn list_sessions(
         &self,
         params: SessionListParams,
-    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+    ) -> Result<SessionListResponse, AgentApiError> {
         self.request(METHOD_SESSION_LIST, params).await
     }
 
     pub(crate) async fn put_session_metadata(
         &self,
         params: api::SessionMetadataPutParams,
-    ) -> Result<AgentApiOutcome<api::SessionMetadataPutResponse>, AgentApiError> {
+    ) -> Result<api::SessionMetadataPutResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_METADATA_PUT, params).await
     }
 
     pub(crate) async fn put_session_retention(
         &self,
         params: api::SessionRetentionPutParams,
-    ) -> Result<AgentApiOutcome<api::SessionRetentionPutResponse>, AgentApiError> {
+    ) -> Result<api::SessionRetentionPutResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_RETENTION_PUT, params)
             .await
     }
@@ -227,49 +217,49 @@ impl HttpAgentApi {
     pub(crate) async fn restart_session(
         &self,
         params: api::SessionRestartParams,
-    ) -> Result<AgentApiOutcome<api::SessionRestartResponse>, AgentApiError> {
+    ) -> Result<api::SessionRestartResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_RESTART, params).await
     }
 
     pub(crate) async fn close_session(
         &self,
         params: api::SessionCloseParams,
-    ) -> Result<AgentApiOutcome<api::SessionCloseResponse>, AgentApiError> {
+    ) -> Result<api::SessionCloseResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_CLOSE, params).await
     }
 
     pub(crate) async fn delete_session(
         &self,
         params: api::SessionDeleteParams,
-    ) -> Result<AgentApiOutcome<api::SessionDeleteResponse>, AgentApiError> {
+    ) -> Result<api::SessionDeleteResponse, AgentApiError> {
         self.request(api::METHOD_SESSION_DELETE, params).await
     }
 
     pub(crate) async fn read_session_events(
         &self,
         params: SessionEventsReadParams,
-    ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
+    ) -> Result<SessionEventsReadResponse, AgentApiError> {
         self.request(METHOD_SESSION_EVENTS_READ, params).await
     }
 
     pub(crate) async fn start_run(
         &self,
         params: RunStartParams,
-    ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+    ) -> Result<RunStartResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_START, params).await
     }
 
     pub(crate) async fn cancel_run(
         &self,
         params: RunCancelParams,
-    ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
+    ) -> Result<RunCancelResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_CANCEL, params).await
     }
 
     pub(crate) async fn decide_run_approvals(
         &self,
         params: RunApprovalsDecideParams,
-    ) -> Result<AgentApiOutcome<RunApprovalsDecideResponse>, AgentApiError> {
+    ) -> Result<RunApprovalsDecideResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_APPROVALS_DECIDE, params)
             .await
     }
@@ -277,140 +267,152 @@ impl HttpAgentApi {
     pub(crate) async fn steer_run(
         &self,
         params: RunSteerParams,
-    ) -> Result<AgentApiOutcome<RunSteerResponse>, AgentApiError> {
+    ) -> Result<RunSteerResponse, AgentApiError> {
         self.request(METHOD_SESSION_RUNS_STEER, params).await
     }
 
     pub(crate) async fn list_skills(
         &self,
         params: SkillListParams,
-    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+    ) -> Result<SkillListResponse, AgentApiError> {
         self.request(METHOD_SESSION_SKILLS_LIST, params).await
     }
 
     pub(crate) async fn list_models(
         &self,
         params: ModelListParams,
-    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+    ) -> Result<ModelListResponse, AgentApiError> {
         self.request(METHOD_MODELS_LIST, params).await
     }
 
     pub(crate) async fn put_blobs(
         &self,
         params: BlobPutParams,
-    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+    ) -> Result<BlobPutResponse, AgentApiError> {
         self.request(METHOD_BLOBS_PUT, params).await
     }
 
     pub(crate) async fn has_blobs(
         &self,
         params: BlobHasParams,
-    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+    ) -> Result<BlobHasResponse, AgentApiError> {
         self.request(METHOD_BLOBS_HAS, params).await
     }
 
-    pub(crate) async fn read_blob(
-        &self,
-        params: BlobReadParams,
-    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
-        self.request(METHOD_BLOBS_READ, params).await
+    pub(crate) async fn read_blob(&self, params: BlobReadParams) -> Result<Vec<u8>, AgentApiError> {
+        let response = self
+            .send(
+                METHOD_BLOBS_READ,
+                serde_json::to_value(params)
+                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+            )
+            .await
+            .map_err(|error| match error.downcast::<AgentApiError>() {
+                Ok(error) => error,
+                Err(error) => AgentApiError::internal(error.to_string()),
+            })?;
+        response
+            .bytes()
+            .await
+            .map(|bytes| bytes.to_vec())
+            .map_err(|error| AgentApiError::internal(error.to_string()))
     }
 
     pub(crate) async fn commit_vfs_snapshot(
         &self,
         params: VfsSnapshotCommitParams,
-    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+    ) -> Result<VfsSnapshotCommitResponse, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOTS_COMMIT, params).await
     }
 
     pub(crate) async fn read_vfs_snapshot(
         &self,
         params: VfsSnapshotReadParams,
-    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+    ) -> Result<VfsSnapshotReadResponse, AgentApiError> {
         self.request(METHOD_VFS_SNAPSHOTS_READ, params).await
     }
 
     pub(crate) async fn create_vfs_workspace(
         &self,
         params: VfsWorkspaceCreateParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceCreateResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_CREATE, params).await
     }
 
     pub(crate) async fn read_vfs_workspace(
         &self,
         params: VfsWorkspaceReadParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceReadResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_READ, params).await
     }
 
     pub(crate) async fn list_vfs_workspaces(
         &self,
         params: VfsWorkspaceListParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceListResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_LIST, params).await
     }
 
     pub(crate) async fn update_vfs_workspace(
         &self,
         params: VfsWorkspaceUpdateParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceUpdateResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_UPDATE, params).await
     }
 
     pub(crate) async fn delete_vfs_workspace(
         &self,
         params: VfsWorkspaceDeleteParams,
-    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+    ) -> Result<VfsWorkspaceDeleteResponse, AgentApiError> {
         self.request(METHOD_VFS_WORKSPACES_DELETE, params).await
     }
 
     pub(crate) async fn put_mcp_server(
         &self,
         params: McpServerPutParams,
-    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError> {
+    ) -> Result<McpServerPutResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_PUT, params).await
     }
 
     pub(crate) async fn list_mcp_servers(
         &self,
         params: McpServerListParams,
-    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+    ) -> Result<McpServerListResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_LIST, params).await
     }
 
     pub(crate) async fn read_mcp_server(
         &self,
         params: McpServerReadParams,
-    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+    ) -> Result<McpServerReadResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_READ, params).await
     }
 
     pub(crate) async fn delete_mcp_server(
         &self,
         params: McpServerDeleteParams,
-    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+    ) -> Result<McpServerDeleteResponse, AgentApiError> {
         self.request(METHOD_MCP_SERVERS_DELETE, params).await
     }
 
     pub(crate) async fn list_credential_grants(
         &self,
         params: CredentialGrantListParams,
-    ) -> Result<AgentApiOutcome<CredentialGrantListResponse>, AgentApiError> {
+    ) -> Result<CredentialGrantListResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_GRANTS_LIST, params).await
     }
 
     pub(crate) async fn read_credential_grant(
         &self,
         params: CredentialGrantReadParams,
-    ) -> Result<AgentApiOutcome<CredentialGrantReadResponse>, AgentApiError> {
+    ) -> Result<CredentialGrantReadResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_GRANTS_READ, params).await
     }
 
     pub(crate) async fn put_credential_grant(
         &self,
         params: api::CredentialGrantPutParams,
-    ) -> Result<AgentApiOutcome<api::CredentialGrantPutResponse>, AgentApiError> {
+    ) -> Result<api::CredentialGrantPutResponse, AgentApiError> {
         self.request(api::METHOD_CREDENTIALS_GRANTS_PUT, params)
             .await
     }
@@ -418,14 +420,14 @@ impl HttpAgentApi {
     pub(crate) async fn revoke_credential_grant(
         &self,
         params: CredentialGrantRevokeParams,
-    ) -> Result<AgentApiOutcome<CredentialGrantRevokeResponse>, AgentApiError> {
+    ) -> Result<CredentialGrantRevokeResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_GRANTS_REVOKE, params).await
     }
 
     pub(crate) async fn create_credential_client(
         &self,
         params: CredentialClientCreateParams,
-    ) -> Result<AgentApiOutcome<CredentialClientCreateResponse>, AgentApiError> {
+    ) -> Result<CredentialClientCreateResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_CLIENTS_CREATE, params)
             .await
     }
@@ -433,21 +435,21 @@ impl HttpAgentApi {
     pub(crate) async fn list_credential_clients(
         &self,
         params: CredentialClientListParams,
-    ) -> Result<AgentApiOutcome<CredentialClientListResponse>, AgentApiError> {
+    ) -> Result<CredentialClientListResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_CLIENTS_LIST, params).await
     }
 
     pub(crate) async fn read_credential_client(
         &self,
         params: CredentialClientReadParams,
-    ) -> Result<AgentApiOutcome<CredentialClientReadResponse>, AgentApiError> {
+    ) -> Result<CredentialClientReadResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_CLIENTS_READ, params).await
     }
 
     pub(crate) async fn delete_credential_client(
         &self,
         params: CredentialClientDeleteParams,
-    ) -> Result<AgentApiOutcome<CredentialClientDeleteResponse>, AgentApiError> {
+    ) -> Result<CredentialClientDeleteResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_CLIENTS_DELETE, params)
             .await
     }
@@ -455,21 +457,21 @@ impl HttpAgentApi {
     pub(crate) async fn start_credential_flow(
         &self,
         params: CredentialFlowStartParams,
-    ) -> Result<AgentApiOutcome<CredentialFlowStartResponse>, AgentApiError> {
+    ) -> Result<CredentialFlowStartResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_FLOWS_START, params).await
     }
 
     pub(crate) async fn read_credential_flow_status(
         &self,
         params: CredentialFlowStatusParams,
-    ) -> Result<AgentApiOutcome<CredentialFlowStatusResponse>, AgentApiError> {
+    ) -> Result<CredentialFlowStatusResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_FLOWS_READ, params).await
     }
 
     pub(crate) async fn create_credential_provider(
         &self,
         params: CredentialProviderCreateParams,
-    ) -> Result<AgentApiOutcome<CredentialProviderCreateResponse>, AgentApiError> {
+    ) -> Result<CredentialProviderCreateResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_PROVIDERS_CREATE, params)
             .await
     }
@@ -477,7 +479,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_credential_providers(
         &self,
         params: CredentialProviderListParams,
-    ) -> Result<AgentApiOutcome<CredentialProviderListResponse>, AgentApiError> {
+    ) -> Result<CredentialProviderListResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_PROVIDERS_LIST, params)
             .await
     }
@@ -485,7 +487,7 @@ impl HttpAgentApi {
     pub(crate) async fn read_credential_provider(
         &self,
         params: CredentialProviderReadParams,
-    ) -> Result<AgentApiOutcome<CredentialProviderReadResponse>, AgentApiError> {
+    ) -> Result<CredentialProviderReadResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_PROVIDERS_READ, params)
             .await
     }
@@ -493,7 +495,7 @@ impl HttpAgentApi {
     pub(crate) async fn delete_credential_provider(
         &self,
         params: CredentialProviderDeleteParams,
-    ) -> Result<AgentApiOutcome<CredentialProviderDeleteResponse>, AgentApiError> {
+    ) -> Result<CredentialProviderDeleteResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_PROVIDERS_DELETE, params)
             .await
     }
@@ -501,7 +503,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_github_installations(
         &self,
         params: CredentialGitHubInstallationListParams,
-    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationListResponse>, AgentApiError> {
+    ) -> Result<CredentialGitHubInstallationListResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_LIST, params)
             .await
     }
@@ -509,7 +511,7 @@ impl HttpAgentApi {
     pub(crate) async fn grant_github_installation(
         &self,
         params: CredentialGitHubInstallationGrantParams,
-    ) -> Result<AgentApiOutcome<CredentialGitHubInstallationGrantResponse>, AgentApiError> {
+    ) -> Result<CredentialGitHubInstallationGrantResponse, AgentApiError> {
         self.request(METHOD_CREDENTIALS_GITHUB_INSTALLATIONS_GRANT, params)
             .await
     }
@@ -517,14 +519,14 @@ impl HttpAgentApi {
     pub(crate) async fn put_session_config(
         &self,
         params: SessionConfigPutParams,
-    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
+    ) -> Result<SessionConfigPutResponse, AgentApiError> {
         self.request(METHOD_SESSION_CONFIG_PUT, params).await
     }
 
     pub(crate) async fn bind_environment_credential(
         &self,
         params: EnvironmentCredentialBindParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialBindResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCredentialBindResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CREDENTIALS_BIND, params)
             .await
     }
@@ -532,7 +534,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_environment_credentials(
         &self,
         params: EnvironmentCredentialListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCredentialListResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CREDENTIALS_LIST, params)
             .await
     }
@@ -540,7 +542,7 @@ impl HttpAgentApi {
     pub(crate) async fn unbind_environment_credential(
         &self,
         params: EnvironmentCredentialUnbindParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCredentialUnbindResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCredentialUnbindResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND, params)
             .await
     }
@@ -548,7 +550,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_environment_provider_bindings(
         &self,
         params: EnvironmentProviderBindingListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, params)
             .await
     }
@@ -556,42 +558,42 @@ impl HttpAgentApi {
     pub(crate) async fn list_environments(
         &self,
         params: EnvironmentListParams,
-    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+    ) -> Result<EnvironmentListResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_LIST, params).await
     }
 
     pub(crate) async fn read_environment(
         &self,
         params: EnvironmentReadParams,
-    ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError> {
+    ) -> Result<EnvironmentReadResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_READ, params).await
     }
 
     pub(crate) async fn close_environment(
         &self,
         params: EnvironmentCloseParams,
-    ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError> {
+    ) -> Result<EnvironmentCloseResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_CLOSE, params).await
     }
 
     pub(crate) async fn put_environment_power(
         &self,
         params: EnvironmentPowerPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError> {
+    ) -> Result<EnvironmentPowerPutResponse, AgentApiError> {
         self.request(METHOD_ENVIRONMENTS_POWER_PUT, params).await
     }
 
     pub(crate) async fn update_environment(
         &self,
         params: api::EnvironmentUpdateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentUpdateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentUpdateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_UPDATE, params).await
     }
 
     pub(crate) async fn create_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyCreateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyCreateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE, params)
             .await
     }
@@ -599,7 +601,7 @@ impl HttpAgentApi {
     pub(crate) async fn read_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyReadParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyReadResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyReadResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ, params)
             .await
     }
@@ -607,7 +609,7 @@ impl HttpAgentApi {
     pub(crate) async fn list_environment_registration_keys(
         &self,
         params: api::EnvironmentRegistrationKeyListParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyListResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyListResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST, params)
             .await
     }
@@ -615,7 +617,7 @@ impl HttpAgentApi {
     pub(crate) async fn update_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyUpdateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyUpdateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyUpdateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE, params)
             .await
     }
@@ -623,7 +625,7 @@ impl HttpAgentApi {
     pub(crate) async fn put_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyPutParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyPutResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyPutResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_PUT, params)
             .await
     }
@@ -631,7 +633,7 @@ impl HttpAgentApi {
     pub(crate) async fn rotate_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyRotateParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyRotateResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyRotateResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_ROTATE, params)
             .await
     }
@@ -639,16 +641,12 @@ impl HttpAgentApi {
     pub(crate) async fn revoke_environment_registration_key(
         &self,
         params: api::EnvironmentRegistrationKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyRevokeResponse>, AgentApiError> {
+    ) -> Result<api::EnvironmentRegistrationKeyRevokeResponse, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE, params)
             .await
     }
 
-    pub(crate) async fn request<P, R>(
-        &self,
-        method: &str,
-        params: P,
-    ) -> Result<AgentApiOutcome<R>, AgentApiError>
+    pub(crate) async fn request<P, R>(&self, method: &str, params: P) -> Result<R, AgentApiError>
     where
         P: Serialize,
         R: DeserializeOwned,
@@ -667,88 +665,69 @@ impl HttpAgentApi {
         &self,
         method: &str,
         params: P,
-    ) -> anyhow::Result<AgentApiOutcome<R>> {
-        let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let request = JsonRpcRequest {
-            id,
-            method: method.to_owned(),
-            params: Some(serde_json::to_value(params).map_err(|error| {
-                AgentApiError::invalid_request(format!("failed to encode API params: {error}"))
-            })?),
-        };
-        let response = self
+    ) -> anyhow::Result<R> {
+        let response = self.send(method, serde_json::to_value(params)?).await?;
+        response.json::<R>().await.map_err(|error| {
+            AgentApiError::internal(format!("invalid API response: {error}")).into()
+        })
+    }
+
+    async fn send(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<reqwest::Response> {
+        let parts = api::http_request(operation, self.connection.universe.as_deref(), params)?;
+        let base = self.endpoint.trim_end_matches('/');
+        let suffix = parts
+            .path
+            .strip_prefix("/api/v1")
+            .ok_or_else(|| AgentApiError::internal("invalid catalog path"))?;
+        let mut request = self
             .client
-            .post(&self.endpoint)
-            .headers(
-                self.connection
-                    .headers(method)
-                    .map_err(|error| AgentApiError::invalid_request(error.to_string()))?,
+            .request(
+                reqwest::Method::from_bytes(parts.method.as_str().as_bytes())?,
+                format!("{base}{suffix}"),
             )
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| {
-                if error.is_connect() || error.is_timeout() {
-                    anyhow::Error::new(StartupUnavailable)
-                } else {
-                    anyhow::Error::new(AgentApiError::internal(format!(
-                        "runtime unavailable: {error}"
-                    )))
-                }
-            })?;
+            .headers(self.connection.headers(operation)?);
+        if let Some(body) = parts.body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.map_err(|error| {
+            if error.is_connect() || error.is_timeout() {
+                anyhow::Error::new(StartupUnavailable)
+            } else {
+                anyhow::Error::new(AgentApiError::internal(format!(
+                    "runtime unavailable: {error}"
+                )))
+            }
+        })?;
+        if response.status().is_success() {
+            return Ok(response);
+        }
         let status = response.status();
+        let body = response.bytes().await?;
+        if let Ok(problem) = serde_json::from_slice::<api::HttpProblem>(&body) {
+            let mut error = AgentApiError::new(problem.kind, problem.detail);
+            error.model_default_slot = problem.model_default_slot;
+            error.submission_id = problem.submission_id;
+            error.deleted_universe = problem.deleted_universe;
+            return Err(error.into());
+        }
         if matches!(status.as_u16(), 502..=504) {
             return Err(StartupUnavailable.into());
         }
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(AgentApiError::new(
-                AgentApiErrorKind::Unauthenticated,
-                "runtime rejected the token; verify the connection and runtime token configuration",
-            )
-            .into());
-        }
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AgentApiError::new(
-                AgentApiErrorKind::Forbidden,
-                "key scope or method groups do not permit this operation",
-            )
-            .into());
-        }
-        let response = response
-            .error_for_status()
-            .map_err(|error| AgentApiError::internal(format!("API request failed: {error}")))?
-            .json::<JsonRpcResponse>()
-            .await
-            .map_err(|error| AgentApiError::internal(format!("invalid API response: {error}")))?;
-        if let Some(error) = response.error {
-            return Err(agent_error_from_json_rpc(error).into());
-        }
-        let value = response
-            .result
-            .ok_or_else(|| AgentApiError::internal("JSON-RPC response missing result"))?;
-        serde_json::from_value::<AgentApiOutcome<R>>(value)
-            .map_err(|error| AgentApiError::internal(format!("invalid API result: {error}")).into())
+        let kind = match status.as_u16() {
+            401 => AgentApiErrorKind::Unauthenticated,
+            403 => AgentApiErrorKind::Forbidden,
+            _ => AgentApiErrorKind::Internal,
+        };
+        Err(AgentApiError::new(kind, format!("API request failed: HTTP {status}")).into())
     }
 }
 
 pub(crate) fn api_error(error: api::AgentApiError) -> anyhow::Error {
     anyhow::anyhow!("{error}")
-}
-
-fn agent_error_from_json_rpc(error: api::JsonRpcError) -> AgentApiError {
-    if let Some(error) = error.data {
-        return error;
-    }
-    let kind = match error.code {
-        -32602 => AgentApiErrorKind::InvalidRequest,
-        -32004 => AgentApiErrorKind::NotFound,
-        -32017 => AgentApiErrorKind::Gone,
-        -32009 => AgentApiErrorKind::Conflict,
-        -32010 => AgentApiErrorKind::Rejected,
-        -32015 => AgentApiErrorKind::OperationPending,
-        _ => AgentApiErrorKind::Internal,
-    };
-    AgentApiError::new(kind, error.message)
 }
 
 #[derive(Debug)]
@@ -759,3 +738,100 @@ impl std::fmt::Display for StartupUnavailable {
     }
 }
 impl std::error::Error for StartupUnavailable {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    async fn fixture(
+        status: u16,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> (HttpAgentApi, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/api/v1", listener.local_addr().unwrap());
+        let content_type = content_type.to_owned();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut headers = String::new();
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                headers.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status} Response\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .get_mut()
+                .write_all(response.as_bytes())
+                .await
+                .unwrap();
+            stream.get_mut().write_all(&body).await.unwrap();
+            headers
+        });
+        (
+            HttpAgentApi::with_connection(crate::connection::ResolvedConnection {
+                name: None,
+                endpoint,
+                secret: Some("fixture-token".into()),
+                universe: Some("team space".into()),
+                caller: None,
+            }),
+            task,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resources_use_encoded_paths_and_direct_results() {
+        let (client, task) = fixture(200, "application/json", br#"{"profiles":[]}"#.to_vec()).await;
+        let response: serde_json::Value = client.request("profiles/list", json!({})).await.unwrap();
+        assert_eq!(response, json!({"profiles":[]}));
+        let headers = task.await.unwrap();
+        assert!(headers.starts_with("GET /api/v1/universes/team%20space/profiles HTTP/1.1"));
+        assert!(headers.contains("authorization: Bearer fixture-token"));
+        assert!(!headers.contains("x-lightspeed-universe"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pending_problem_preserves_submission_and_is_not_startup_unavailability() {
+        let body = json!({"type":"about:blank","title":"Gateway Timeout","status":504,"detail":"pending","kind":"operationPending","submissionId":"submission-1"});
+        let (client, task) = fixture(
+            504,
+            "application/problem+json",
+            serde_json::to_vec(&body).unwrap(),
+        )
+        .await;
+        let error = client
+            .request_connection::<_, serde_json::Value>("profiles/list", json!({}))
+            .await
+            .unwrap_err();
+        let error = error.downcast::<AgentApiError>().unwrap();
+        assert_eq!(error.kind, AgentApiErrorKind::OperationPending);
+        assert_eq!(error.submission_id.as_deref(), Some("submission-1"));
+        task.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blob_download_returns_unmodified_binary_bytes() {
+        let bytes = vec![0, 255, 128, 1, 10];
+        let (client, task) = fixture(200, "application/octet-stream", bytes.clone()).await;
+        assert_eq!(
+            client
+                .read_blob(BlobReadParams {
+                    blob_ref: "sha256:test".into()
+                })
+                .await
+                .unwrap(),
+            bytes
+        );
+        assert!(task.await.unwrap().contains("/blobs/sha256%3Atest/content"));
+    }
+}

@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../test/http-fixture.js";
 import type { DeploymentChannelAccountView } from "@lightspeed-ai/sdk";
 
 export const UNIVERSE_A = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";
@@ -21,20 +22,17 @@ export function account(
   };
 }
 
-/** A fake JSON-RPC transport: answers `method` with `result`, records every call. */
-export function fakeRpc(
+/** A real HTTP-shaped runtime fixture, recording logical operation parameters. */
+export function fakeHttp(
   handler: (method: string, params: unknown, headers: Headers) => unknown,
-): { fetch: typeof fetch; calls: Array<{ method: string; params: unknown; headers: Headers }> } {
-  const calls: Array<{ method: string; params: unknown; headers: Headers }> = [];
-  const fetch: typeof globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body)) as { id: unknown; method: string; params: unknown };
-    const headers = new Headers(init?.headers);
-    calls.push({ method: body.method, params: body.params, headers });
-    const result = handler(body.method, body.params, headers);
-    if (result instanceof Error) {
-      return Response.json({ id: body.id, error: { code: -32010, message: result.message } });
-    }
-    return Response.json({ id: body.id, result: { result } });
+) {
+  const calls: Array<ReturnType<typeof decodeHttpRequest>> = [];
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const request = decodeHttpRequest(input, init);
+    calls.push(request);
+    const result = handler(request.method, request.params, request.headers);
+    if (result instanceof Error) return Response.json({ type: "about:blank", title: "Rejected", detail: result.message, status: 409, kind: "rejected" }, { status: 409, headers: { "content-type": "application/problem+json" } });
+    return Response.json(result);
   };
   return { fetch, calls };
 }

@@ -85,7 +85,7 @@ export function useChannelAccounts(universeId: string, enabled = true) {
   return useQuery({
     queryKey: ["channel-accounts", universeId],
     queryFn: () =>
-      api<ChannelAccountListResponse>("GET", `/api/v1/universes/${universeId}/channel-accounts`),
+      api<ChannelAccountListResponse>("GET", `/api/ui/universes/${universeId}/channel-accounts`),
     enabled: enabled && channelsOn,
   });
 }
@@ -539,7 +539,7 @@ export function SavedTriggerFormCard({
   const save = useMutation({
     mutationFn: () => {
       if (!editable) throw new Error("You do not have permission to edit this trigger.");
-      return api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
+      return api("PUT", `/api/ui/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
         trigger: triggerUpdateBody(trigger, forms, deliveryOnly),
         expectedRevision: trigger.revision,
       });
@@ -713,7 +713,7 @@ export function triggerSecretsQuery(
     queryFn: () =>
       api<BotTriggerSecrets>(
         "GET",
-        `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}/secrets`,
+        `/api/ui/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}/secrets`,
       ),
     staleTime: Infinity,
   };
@@ -803,7 +803,7 @@ export function TriggersSection({
   const triggers = useQuery({
     queryKey: ["bot-triggers", universeId, botId],
     queryFn: () =>
-      api<{ triggers?: BotTriggerView[] }>("GET", `/api/v1/universes/${universeId}/bots/${botId}/triggers`),
+      api<{ triggers?: BotTriggerView[] }>("GET", `/api/ui/universes/${universeId}/bots/${botId}/triggers`),
     // The bot may add or change triggers itself (self-configuration); keep
     // the cards current while the page is open.
     refetchInterval: 5_000,
@@ -811,7 +811,7 @@ export function TriggersSection({
   });
   const bots = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
     enabled: manage,
   });
   const accounts = useChannelAccounts(universeId);
@@ -822,7 +822,7 @@ export function TriggersSection({
   ]);
   const toggle = useMutation({
     mutationFn: (trigger: BotTriggerView) =>
-      api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
+      api("PUT", `/api/ui/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
         trigger: { ...triggerInputOf(trigger), enabled: !(trigger.enabled ?? true) },
         expectedRevision: trigger.revision,
       }),
@@ -830,7 +830,7 @@ export function TriggersSection({
   });
   const remove = useMutation({
     mutationFn: (triggerId: string) =>
-      api("DELETE", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${triggerId}`),
+      api("DELETE", `/api/ui/universes/${universeId}/bots/${botId}/triggers/${triggerId}`),
     onSuccess: () => {
       setPendingDelete(null);
       return invalidate();
@@ -1346,7 +1346,7 @@ function ChatRowDetail({
   // out and the stored code stays.
   const rotate = useMutation({
     mutationFn: () =>
-      api("PUT", `/api/v1/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
+      api("PUT", `/api/ui/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
         trigger: { ...triggerInputOf(trigger), pairing: "code", pairingCode: mintPairingCode() },
         expectedRevision: trigger.revision,
       }),
@@ -2594,7 +2594,7 @@ function AddTriggerInline({
       const triggerId = name.trim();
       return api(
         "PUT",
-        `/api/v1/universes/${universeId}/bots/${botId}/triggers/${encodeURIComponent(triggerId)}`,
+        `/api/ui/universes/${universeId}/bots/${botId}/triggers/${encodeURIComponent(triggerId)}`,
         { trigger: triggerCreateBody(kind, triggerId, forms) },
       );
     },

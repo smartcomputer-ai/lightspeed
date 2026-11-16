@@ -445,7 +445,7 @@ people inspect retained history and the runtime reconstructs execution state.
 
 ## Live list updates
 
-`universe/watch` is a streaming JSON-RPC call on `POST /rpc` with
+`universe/watch` is `GET /api/v1/universes/{universe}/events` with
 `Accept: text/event-stream`. It sends current list rows for sessions, bots,
 environments and VFS workspaces. Runtime tokens can watch every collection.
 The Platform decides which collections and audience its callers may see.

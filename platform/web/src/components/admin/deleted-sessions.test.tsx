@@ -69,8 +69,8 @@ it("purges only selected sessions across pages after a separate confirmation", a
   expect(purgeCalls()).toEqual([]);
   await click("Purge selected");
   expect(purgeCalls()).toEqual([
-    ["POST", "/api/v1/admin/universes/u/sessions/s1/purge", {}],
-    ["POST", "/api/v1/admin/universes/u/sessions/s3/purge", {}],
+    ["POST", "/api/ui/admin/universes/u/sessions/s1/purge", {}],
+    ["POST", "/api/ui/admin/universes/u/sessions/s3/purge", {}],
   ]);
   expect(remaining).toEqual(["s2"]);
 });
@@ -79,13 +79,13 @@ it("purge all captures every page before confirmation and excludes later arrival
   await show();
   expect(document.querySelector('[aria-label="Select session s2"]')).toBeNull();
   await click("Purge all…");
-  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/v1/admin/universes/u/deleted-sessions?after=s1");
+  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/ui/admin/universes/u/deleted-sessions?after=s1");
   expect(document.body.textContent).toContain("2 selected sessions");
   expect(purgeCalls()).toEqual([]);
   remaining.push("s3");
   await click("Purge all");
   expect(purgeCalls().map(([, path]) => path)).toEqual([
-    "/api/v1/admin/universes/u/sessions/s1/purge", "/api/v1/admin/universes/u/sessions/s2/purge",
+    "/api/ui/admin/universes/u/sessions/s1/purge", "/api/ui/admin/universes/u/sessions/s2/purge",
   ]);
   expect(remaining).toEqual(["s3"]);
 });
@@ -108,7 +108,7 @@ it("retries only failures after partially successful deletion", async () => {
   failed.clear();
   await click("Retry failed");
   expect(purgeCalls().map(([, path]) => path)).toEqual([
-    "/api/v1/admin/universes/u/sessions/s1/purge", "/api/v1/admin/universes/u/sessions/s2/purge", "/api/v1/admin/universes/u/sessions/s2/purge",
+    "/api/ui/admin/universes/u/sessions/s1/purge", "/api/ui/admin/universes/u/sessions/s2/purge", "/api/ui/admin/universes/u/sessions/s2/purge",
   ]);
   expect(remaining).toEqual([]);
 });

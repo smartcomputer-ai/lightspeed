@@ -1,28 +1,28 @@
-//! Deployment credentials for trusted RPC callers. Names provide attribution only.
+//! Deployment credentials for trusted API callers. Names provide attribution only.
 use std::{collections::BTreeMap, fmt};
 
 use anyhow::{Context, bail};
 use subtle::ConstantTimeEq;
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct RpcTokens(BTreeMap<String, String>);
+pub struct RuntimeTokens(BTreeMap<String, String>);
 
-impl fmt::Debug for RpcTokens {
+impl fmt::Debug for RuntimeTokens {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RpcTokens")
+        f.debug_struct("RuntimeTokens")
             .field("names", &self.0.keys().collect::<Vec<_>>())
             .finish()
     }
 }
 
-impl RpcTokens {
+impl RuntimeTokens {
     pub fn from_env() -> anyhow::Result<Self> {
         let mut entries = Vec::new();
         for (name, value) in std::env::vars_os() {
-            if name.to_string_lossy().starts_with("LIGHTSPEED_RPC_TOKEN") {
+            if name.to_string_lossy().starts_with("LIGHTSPEED_API_TOKEN") {
                 let name = name
                     .into_string()
-                    .map_err(|_| anyhow::anyhow!("invalid RPC token variable name"))?;
+                    .map_err(|_| anyhow::anyhow!("invalid API token variable name"))?;
                 let value = value
                     .into_string()
                     .map_err(|_| anyhow::anyhow!("{name} must contain UTF-8"))?;
@@ -41,7 +41,7 @@ impl RpcTokens {
     ) -> anyhow::Result<Self> {
         let mut tokens = BTreeMap::new();
         for (variable, value) in entries {
-            let Some(suffix) = variable.strip_prefix("LIGHTSPEED_RPC_TOKEN") else {
+            let Some(suffix) = variable.strip_prefix("LIGHTSPEED_API_TOKEN") else {
                 continue;
             };
             let (suffix, file) = if suffix == "_FILE" {
@@ -55,10 +55,10 @@ impl RpcTokens {
                 "default".to_owned()
             } else {
                 let Some(name) = suffix.strip_prefix('_').filter(|name| !name.is_empty()) else {
-                    bail!("invalid RPC token variable: {variable}")
+                    bail!("invalid API token variable: {variable}")
                 };
                 if !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
-                    bail!("invalid RPC token name in {variable}");
+                    bail!("invalid API token name in {variable}");
                 }
                 name.to_ascii_lowercase()
             };
@@ -81,14 +81,14 @@ impl RpcTokens {
                 bail!("{variable} must supply a non-whitespace printable ASCII HTTP bearer token");
             }
             if tokens.values().any(|previous| previous == &secret) {
-                bail!("{variable} duplicates another RPC token secret");
+                bail!("{variable} duplicates another API token secret");
             }
             if tokens.insert(name.clone(), secret).is_some() {
-                bail!("RPC token {name} has multiple configuration sources");
+                bail!("API token {name} has multiple configuration sources");
             }
         }
         if tokens.is_empty() {
-            bail!("authenticated mode requires LIGHTSPEED_RPC_TOKEN or a named RPC token");
+            bail!("authenticated mode requires LIGHTSPEED_API_TOKEN or a named API token");
         }
         Ok(Self(tokens))
     }
@@ -108,8 +108,8 @@ impl RpcTokens {
 mod tests {
     use super::*;
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
-    fn parse(entries: &[(&str, &str)]) -> anyhow::Result<RpcTokens> {
-        RpcTokens::from_configuration(
+    fn parse(entries: &[(&str, &str)]) -> anyhow::Result<RuntimeTokens> {
+        RuntimeTokens::from_configuration(
             entries.iter().map(|(k, v)| (k.to_string(), v.to_string())),
             |_| bail!("unavailable"),
         )
@@ -117,9 +117,9 @@ mod tests {
     #[test]
     fn simple_and_named_tokens_authenticate_without_revealing_secrets() {
         let tokens = parse(&[
-            ("LIGHTSPEED_RPC_TOKEN", SECRET),
+            ("LIGHTSPEED_API_TOKEN", SECRET),
             (
-                "LIGHTSPEED_RPC_TOKEN_PLATFORM",
+                "LIGHTSPEED_API_TOKEN_PLATFORM",
                 "platform-secret-with-at-least-32-characters",
             ),
         ])
@@ -134,9 +134,9 @@ mod tests {
     }
     #[test]
     fn mounted_secrets_remove_only_line_endings() {
-        let tokens = RpcTokens::from_configuration(
+        let tokens = RuntimeTokens::from_configuration(
             [(
-                "LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE".into(),
+                "LIGHTSPEED_API_TOKEN_OPERATOR_FILE".into(),
                 "/secret".into(),
             )],
             |path| {
@@ -151,32 +151,32 @@ mod tests {
     fn invalid_or_ambiguous_configuration_fails_closed_without_secrets() {
         for entries in [
             vec![],
-            vec![("LIGHTSPEED_RPC_TOKEN", "short")],
-            vec![("LIGHTSPEED_RPC_TOKEN", "                                ")],
-            vec![("LIGHTSPEED_RPC_TOKEN", "0123456789abcdef0123456789abcdef ")],
-            vec![("LIGHTSPEED_RPC_TOKEN_FILE", "/missing")],
+            vec![("LIGHTSPEED_API_TOKEN", "short")],
+            vec![("LIGHTSPEED_API_TOKEN", "                                ")],
+            vec![("LIGHTSPEED_API_TOKEN", "0123456789abcdef0123456789abcdef ")],
+            vec![("LIGHTSPEED_API_TOKEN_FILE", "/missing")],
             vec![
-                ("LIGHTSPEED_RPC_TOKEN", SECRET),
+                ("LIGHTSPEED_API_TOKEN", SECRET),
                 (
-                    "LIGHTSPEED_RPC_TOKEN_DEFAULT",
+                    "LIGHTSPEED_API_TOKEN_DEFAULT",
                     "another-secret-with-at-least-32-characters",
                 ),
             ],
             vec![
-                ("LIGHTSPEED_RPC_TOKEN_A", SECRET),
-                ("LIGHTSPEED_RPC_TOKEN_B", SECRET),
+                ("LIGHTSPEED_API_TOKEN_A", SECRET),
+                ("LIGHTSPEED_API_TOKEN_B", SECRET),
             ],
-            vec![("LIGHTSPEED_RPC_TOKEN_", SECRET)],
-            vec![("LIGHTSPEED_RPC_TOKEN", "0123456789abcdef0123456789abcdef\n")],
+            vec![("LIGHTSPEED_API_TOKEN_", SECRET)],
+            vec![("LIGHTSPEED_API_TOKEN", "0123456789abcdef0123456789abcdef\n")],
         ] {
             let error = parse(&entries).unwrap_err().to_string();
             assert!(!error.contains(SECRET));
         }
         assert!(
-            RpcTokens::from_configuration(
+            RuntimeTokens::from_configuration(
                 [
-                    ("LIGHTSPEED_RPC_TOKEN_A".into(), SECRET.into()),
-                    ("LIGHTSPEED_RPC_TOKEN_A_FILE".into(), "/secret".into())
+                    ("LIGHTSPEED_API_TOKEN_A".into(), SECRET.into()),
+                    ("LIGHTSPEED_API_TOKEN_A_FILE".into(), "/secret".into())
                 ],
                 |_| Ok("another-secret-with-at-least-32-characters".into())
             )

@@ -1,3 +1,4 @@
+import { decodeHttpRequest, problemResponse } from "../../test/http-fixture.js";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { universeRoutes } from "./routes/universes.js";
@@ -33,7 +34,7 @@ let absentKind: "gone" | "notFound";
 const first = "11111111-1111-4111-8111-111111111111";
 const second = "22222222-2222-4222-8222-222222222222";
 beforeAll(async () => {
-  fixture = await identityFixture({ ...identityEnv, lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsr_fixture" });
+  fixture = await identityFixture({ ...identityEnv, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "lsr_fixture" });
   context = { ...fixture, pool: {} as never };
 }, 30000);
 afterAll(async () => { await fixture?.postgres.close(); vi.unstubAllGlobals(); });
@@ -42,10 +43,10 @@ beforeEach(async () => {
   absentKind = "notFound";
   inventory = [{ universeId: first, handle: "research", displayName: "Research", members: [], directoryGroupMappings: [{ issuer, group: "research-readers", role: "viewer" }] }, { universeId: second, handle: "unnamed" }];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    if (rpc.method === "deployment/universes/read") return Response.json({ id: rpc.id, error: { code: -32004, message: absentKind, data: { kind: absentKind, message: absentKind } } });
-    expect(rpc.method).toBe("deployment/universes/list");
-    return Response.json({ id: rpc.id, result: { result: { universes: inventory }, notifications: [] } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    if (request.method === "deployment/universes/read") return problemResponse({ type: "about:blank", title: absentKind, detail: absentKind, status: 404, kind: absentKind });
+    expect(request.method).toBe("deployment/universes/list");
+    return Response.json({ universes: inventory });
   }));
 });
 it("adopts only named universes without an invented owner and is idempotent", async () => {
@@ -125,10 +126,10 @@ it("accepts deletion without archiving, fences member routes and audits the requ
   app.route("/", universeRoutes(context));
   const request = (handle: string) => app.request(`/${row!.id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ handle }) });
   const runtime = vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    expect(rpc.method).toBe("deployment/universes/delete");
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    expect(request.method).toBe("deployment/universes/delete");
     expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe(user!.id);
-    return Response.json({ id: rpc.id, result: { result: { universeId: first, state: "deleting" }, notifications: [] } });
+    return Response.json({ universeId: first, state: "deleting" });
   });
   vi.stubGlobal("fetch", runtime);
   expect((await request("wrong")).status).toBe(400);
@@ -154,8 +155,8 @@ it("does not remove Platform data when the delete request fails", async () => {
   app.use("*", async (c, next) => { c.set("session", { user: { id: user!.id, role: "admin" } } as ApiVariables["session"]); await next(); });
   app.route("/", universeRoutes(context));
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    return Response.json({ id: rpc.id, error: { code: -32004, message: "not found" } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    return problemResponse({ type: "about:blank", title: "not found", detail: "not found", status: 404, kind: "notFound" });
   }));
   expect((await app.request(`/${row!.id}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ handle: "research" }) })).status).toBe(404);
   expect((await fixture.db.select().from(schema.universes))[0]?.status).toBe("active");

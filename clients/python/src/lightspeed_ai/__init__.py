@@ -6,24 +6,23 @@
 """
 
 from . import types
-from ._generated import CLIENT_HELPERS, METHOD_INFO, METHODS, NOTIFICATIONS
+from ._generated import CLIENT_HELPERS, OPERATION_INFO, OPERATIONS, NOTIFICATIONS
 from .client import TERMINAL_STATUSES, AsyncLightspeedClient, AwaitRunResult, generate_submission_id
-from .errors import LightspeedRpcError, LightspeedTransportError, rpc_error_kind
+from .errors import LightspeedApiError, LightspeedTransportError
 from .timeline import RunTimelineItem, run_timeline
 
 __all__ = [
     "AsyncLightspeedClient",
     "AwaitRunResult",
     "CLIENT_HELPERS",
-    "LightspeedRpcError",
+    "LightspeedApiError",
     "LightspeedTransportError",
-    "METHODS",
-    "METHOD_INFO",
+    "OPERATIONS",
+    "OPERATION_INFO",
     "NOTIFICATIONS",
     "RunTimelineItem",
     "TERMINAL_STATUSES",
     "generate_submission_id",
-    "rpc_error_kind",
     "run_timeline",
     "types",
 ]

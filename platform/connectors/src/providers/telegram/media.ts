@@ -79,7 +79,7 @@ export function createTelegramMediaActivities(
         const response = await config.core.call("blobs/put", {
           blobs: [{ bytesBase64: Buffer.from(bytes).toString("base64") }],
         });
-        const blob = response.result.blobs?.[0];
+        const blob = response.blobs?.[0];
         if (blob === undefined) {
           throw new Error("missing blob result");
         }

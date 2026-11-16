@@ -1,10 +1,11 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
 import { gatewayRoutes } from "./gateway.js";
 const auth = vi.hoisted(() => ({ role: "contributor" }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
-  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/rpc" },
+  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/api/v1" },
   handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "contributor"; });
@@ -13,16 +14,17 @@ const audio = { blobRef: `sha256:${"a".repeat(64)}`, mime: "audio/webm", name: "
 function fixture() {
   const requests: { method: string; params: Record<string, unknown> }[] = [];
   const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
-    expect(new Headers(init.headers).get("x-lightspeed-universe")).toBe("universe");
+    expect(decodeHttpRequest(_url as string | Request | URL, init).universe).toBe("universe");
+    expect(new Headers(init.headers).has("x-lightspeed-universe")).toBe(false);
     expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe("member");
-    const rpc = JSON.parse(String(init.body));
-    requests.push(rpc);
-    return Response.json({ id: rpc.id, result: { result: rpc.method === "blobs/put" ? { blobs: [{ blobRef: audio.blobRef, bytes: 5 }] } : { transcription: { transcriptionId: "job", status: "running", createdBy: { kind: "actor", id: "member" } } }, notifications: [] } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    requests.push({ method: request.method, params: request.params });
+    return Response.json(request.method === "blobs/put" ? { blobs: [{ blobRef: audio.blobRef, bytes: 5 }] } : { transcription: { transcriptionId: "job", status: "running", createdBy: { kind: "actor", id: "member" } } });
   });
   vi.stubGlobal("fetch", fetch);
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("session", { user: { id: "member" } } as ApiVariables["session"]); await next(); });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   const call = (method: string, path = "", body?: unknown) => app.request(`/universe/transcriptions${path}`, {
     method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -59,8 +61,8 @@ it("rejects explicit model overrides and malformed audio before reaching the run
 it("preserves the missing speech default error", async () => {
   const f = fixture();
   f.fetch.mockImplementation(async (_url, init) => {
-    const rpc = JSON.parse(String(init.body));
-    return Response.json({ id: rpc.id, error: { code: -32014, message: "Choose a speech model", data: { kind: "modelDefaultUnset", message: "Choose a speech model", modelDefaultSlot: "speechToText" } } });
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    return problemResponse({ type: "about:blank", title: "Choose a speech model", detail: "Choose a speech model", status: 409, kind: "modelDefaultUnset", modelDefaultSlot: "speechToText" });
   });
   const response = await f.call("POST", "", { audio, idempotencyKey: "request" });
   expect(response.status).toBe(400);
@@ -72,12 +74,12 @@ it.each(["contributor", "operator", "admin"])("never returns another actor's tra
   const f = fixture();
   const calls: string[] = [];
   f.fetch.mockImplementation(async (_url, init) => {
-    const rpc = JSON.parse(String(init.body));
-    calls.push(rpc.method);
-    return Response.json({ id: rpc.id, result: { result: { transcription: {
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    calls.push(request.method);
+    return Response.json({ transcription: {
       transcriptionId: "job", status: "completed", text: "private transcript content",
       createdBy: { kind: "actor", id: "another-member" },
-    } } } });
+    } });
   });
   for (const [method, path] of [["GET", "/job"], ["POST", "/job/cancel"]] as const) {
     const response = await f.call(method, path);

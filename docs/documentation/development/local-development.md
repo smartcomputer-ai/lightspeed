@@ -163,7 +163,7 @@ launcher saves persistent CLI and Platform runtime tokens in owner-only files
 under `.lightspeed/cli/` and configures the runtime to accept them. From a second
 terminal, run `target/debug/lightspeed connect dev` after building the CLI.
 Use `--no-token-bootstrap` to require configured or saved tokens. Set
-`LIGHTSPEED_RPC_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_RPC_TOKEN`, or their `_FILE`
+`LIGHTSPEED_API_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_API_TOKEN`, or their `_FILE`
 variants, to supply them. Migrations and universe setup still run. Explicit
 `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private local
 access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
@@ -177,21 +177,21 @@ The runtime starts three HTTP listeners in the full and runtime profiles:
 
 | Listener | Default address | Routes |
 | --- | --- | --- |
-| Private RPC | `127.0.0.1:18080` | `/rpc` |
-| Public ingress | `127.0.0.1:18082` | `/credentials/callback`, `/credentials/client-metadata.json`, `/hooks/bots/…` |
+| Private application API | `127.0.0.1:18080` | `/api/v1/...` |
+| Public ingress | `127.0.0.1:18082` | `/ingress/credentials/callback`, `/ingress/credentials/client-metadata.json`, `/ingress/webhooks/bots/…` |
 | Environment gateway | `127.0.0.1:18083` | Machine registration, control, and worker environment routes |
 
 Set `LIGHTSPEED_GATEWAY_BIND`, `LIGHTSPEED_PUBLIC_BIND`, and
 `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND` to override those binds. The launcher checks
 all three ports before starting infrastructure and waits for all three health
 endpoints. Worker `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` uses the environment
-listener. Keep RPC reachable only by Platform and trusted operator clients.
+listener. Keep the application API reachable only by Platform and trusted operator clients.
 
 `LIGHTSPEED_PUBLIC_BASE_URL` advertises the public callback and webhook origin;
 it defaults from the public bind. Daemon origin validation uses the separate
 `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`, defaulting from the environment bind.
 When putting a reverse proxy in front, configure the advertised origins for their
-respective listeners. Public ingress never serves `/rpc`.
+respective listeners. Public ingress serves no application API routes.
 
 ## Follow a change to its owner
 

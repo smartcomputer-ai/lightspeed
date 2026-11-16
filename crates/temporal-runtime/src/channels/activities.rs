@@ -328,7 +328,7 @@ pub async fn reconcile_delivery(
         )
         .await
     {
-        Ok(response) => Some(response.result.run),
+        Ok(response) => Some(response.run),
         // The run is no longer resolvable (session pruned or force-closed
         // between trigger and reconcile): deliver the canned line instead of
         // wedging the delivery workflow on a permanent error.

@@ -62,12 +62,12 @@ beforeEach(() => {
   profiles = [{ profileId: "shared-support", displayName: "Shared support", revision: 1 }, { profileId: "claimed", revision: 1 }];
   failCreate = false;
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: { bot?: { botId: string } }) => {
-    if (method === "GET" && path === "/api/v1/universes/universe/bots") return { bots };
-    if (method === "GET" && path === "/api/v1/universes/universe/profiles") return profiles;
-    if (method === "GET" && path.startsWith("/api/v1/universes/universe/profiles/")) return { profileId: path.split("/").pop(), revision: 1 };
-    if (method === "PUT" && path.startsWith("/api/v1/universes/universe/profiles/")) return {};
-    if (method === "DELETE" && path.startsWith("/api/v1/universes/universe/profiles/")) return {};
-    if (method === "POST" && path === "/api/v1/universes/universe/bots") {
+    if (method === "GET" && path === "/api/ui/universes/universe/bots") return { bots };
+    if (method === "GET" && path === "/api/ui/universes/universe/profiles") return profiles;
+    if (method === "GET" && path.startsWith("/api/ui/universes/universe/profiles/")) return { profileId: path.split("/").pop(), revision: 1 };
+    if (method === "PUT" && path.startsWith("/api/ui/universes/universe/profiles/")) return {};
+    if (method === "DELETE" && path.startsWith("/api/ui/universes/universe/profiles/")) return {};
+    if (method === "POST" && path === "/api/ui/universes/universe/bots") {
       if (failCreate) throw new Error("bot quota reached");
       return { bot: { botId: body!.bot!.botId } };
     }
@@ -165,11 +165,11 @@ it("creates the bot's own profile, then the bot with the template's triggers, an
   await waitForUi(() => expect(location()).toBe("/u/factory/bots/digest (introduce)"));
 
   expect(calls("PUT")).toEqual([[
-    "PUT", "/api/v1/universes/universe/profiles/digest",
+    "PUT", "/api/ui/universes/universe/profiles/digest",
     { profileId: "digest", displayName: "Digest", description: "Setup of bot digest", config: { features: { web: { fetch: {}, search: {} } } } },
   ]]);
   const [, path, body] = calls("POST")[0]!;
-  expect(path).toBe("/api/v1/universes/universe/bots");
+  expect(path).toBe("/api/ui/universes/universe/bots");
   expect(body.bot).toEqual({
     botId: "digest", displayName: "Digest", description: "Writes the morning digest.", profileId: "digest",
     brief: expect.stringContaining("Every morning you prepare a digest"), runsPerDay: 10, selfConfig: true, emit: false,
@@ -184,7 +184,7 @@ it("removes the profile it just created when the bot cannot be created", async (
   await click(step("Guardrails"));
   await click(createButton());
   await waitForUi(() => expect(dialog()!.textContent).toContain("bot quota reached"));
-  expect(calls("DELETE")).toEqual([["DELETE", "/api/v1/universes/universe/profiles/triage"]]);
+  expect(calls("DELETE")).toEqual([["DELETE", "/api/ui/universes/universe/profiles/triage"]]);
   expect(location()).toBeUndefined();
 });
 

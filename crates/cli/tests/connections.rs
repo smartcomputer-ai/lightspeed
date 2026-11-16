@@ -1,4 +1,6 @@
 //! Exercise the actual CLI process, persisted connections and wire headers.
+#[path = "../src/test_http.rs"]
+mod test_http;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -19,27 +21,14 @@ struct Runtime {
     worker: Option<thread::JoinHandle<()>>,
 }
 impl Runtime {
-    fn start(scope: Value, single: bool) -> Self {
-        Self::with_groups(
-            scope,
-            single,
-            json!(["session", "models", "deployment/universes"]),
-        )
+    fn start(single: bool) -> Self {
+        Self::with_startup_statuses(single, vec![])
     }
 
-    fn with_groups(scope: Value, single: bool, groups: Value) -> Self {
-        Self::with_startup_statuses(scope, single, groups, vec![])
-    }
-
-    fn with_startup_statuses(
-        _scope: Value,
-        single: bool,
-        _groups: Value,
-        statuses: Vec<u16>,
-    ) -> Self {
+    fn with_startup_statuses(single: bool, statuses: Vec<u16>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("local HTTP fixture must bind");
         listener.set_nonblocking(true).unwrap();
-        let endpoint = format!("http://{}/rpc", listener.local_addr().unwrap());
+        let endpoint = format!("http://{}/api/v1", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(vec![]));
         let recorded = requests.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -71,20 +60,17 @@ impl Runtime {
                     assert!(count > 0);
                     bytes.extend_from_slice(&buffer[..count]);
                     if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let headers = String::from_utf8(bytes[..end].to_vec())
-                            .unwrap()
-                            .to_lowercase();
+                        let headers = String::from_utf8(bytes[..end].to_vec()).unwrap();
                         let size: usize = headers
                             .lines()
                             .find_map(|line| line.strip_prefix("content-length: "))
-                            .unwrap()
+                            .unwrap_or("0")
                             .parse()
                             .unwrap();
                         if bytes.len() >= end + 4 + size {
                             break (
-                                headers,
-                                serde_json::from_slice::<Value>(&bytes[end + 4..end + 4 + size])
-                                    .unwrap(),
+                                headers.clone(),
+                                test_http::decode(&headers, &bytes[end + 4..end + 4 + size]),
                             );
                         }
                     }
@@ -99,7 +85,7 @@ impl Runtime {
                 }
                 let result = match method {
                     "initialize" => {
-                        json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"single":single,"tokenName":if single {Value::Null} else {json!("fixture")}}})
+                        json!({"runtime":"runtime","contractRevision":"1","defaultUniverse":if single {json!("00000000-0000-0000-0000-000000000001")} else {Value::Null},"serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "caller":{"single":single,"tokenName":if single {Value::Null} else {json!("fixture")}}})
                     }
                     "deployment/universes/list" => {
                         json!({"universes":universes})
@@ -146,15 +132,18 @@ impl Runtime {
                     "models/list" => json!({"models":[],"providers":[]}),
                     _ => panic!("unexpected method {method}"),
                 };
-                let response = if method == "deployment/universes/read"
+                let (status, response) = if method == "deployment/universes/read"
                     && result["universe"].is_null()
                 {
-                    json!({"id":body["id"],"error":{"code":-32004,"message":"unknown universe"}})
+                    (
+                        404,
+                        json!({"type":"about:blank","title":"Not Found","status":404,"detail":"unknown universe","kind":"notFound"}),
+                    )
                 } else {
-                    json!({"id":body["id"],"result":{"result":result,"notifications":[]}})
-                }
-                .to_string();
-                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+                    (200, result)
+                };
+                let response = response.to_string();
+                write!(stream, "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
             }
         });
         Self {
@@ -186,7 +175,7 @@ fn cli_env(
         .args(args)
         .env("LIGHTSPEED_CONFIG_DIR", dir.join("config"))
         .env_remove("LIGHTSPEED_API_URL")
-        .env_remove("LIGHTSPEED_RPC_TOKEN")
+        .env_remove("LIGHTSPEED_API_TOKEN")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -207,9 +196,9 @@ fn cli_env(
 }
 
 #[test]
-fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
-    let runtime = Runtime::start(json!({"kind":"deployment"}), false);
-    let other = Runtime::start(json!({"kind":"deployment"}), false);
+fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_tokens() {
+    let runtime = Runtime::start(false);
+    let other = Runtime::start(false);
     let directory = tempfile::tempdir().unwrap();
     let dir = directory.path();
     success(cli(
@@ -222,12 +211,12 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
             &runtime.endpoint,
             "--token-stdin",
         ],
-        Some("lsk_original"),
+        Some("lsr_original"),
     ));
     success(cli(dir, &["connect", "use", "saved"], None));
     let overrides = [
         ("LIGHTSPEED_API_URL", other.endpoint.as_str()),
-        ("LIGHTSPEED_RPC_TOKEN", "lsk_replacement"),
+        ("LIGHTSPEED_API_TOKEN", "lsr_replacement"),
     ];
     success(cli_env(
         dir,
@@ -244,7 +233,7 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
             .last()
             .unwrap()
             .1
-            .contains("authorization: bearer lsk_original")
+            .contains("authorization: Bearer lsr_original")
     );
     success(cli_env(dir, &["connect", "status"], None, &overrides));
     assert!(
@@ -255,7 +244,7 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
             .last()
             .unwrap()
             .1
-            .contains("authorization: bearer lsk_replacement")
+            .contains("authorization: Bearer lsr_replacement")
     );
     // An endpoint override alone must never forward the stored secret or downgrade authentication.
     let refused = cli_env(dir, &["connect", "status"], None, &overrides[..1]);
@@ -270,7 +259,7 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
             .1
             .contains("authorization:")
     );
-    // A deliberately supplied replacement remains usable if the old local key was lost.
+    // A deliberately supplied replacement remains usable if the old local token was lost.
     for file in std::fs::read_dir(dir.join("config/credentials")).unwrap() {
         std::fs::remove_file(file.unwrap().path()).unwrap();
     }
@@ -283,7 +272,7 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
             .last()
             .unwrap()
             .1
-            .contains("authorization: bearer lsk_replacement")
+            .contains("authorization: Bearer lsr_replacement")
     );
     assert!(
         !cli(dir, &["--connection", "saved", "connect", "status"], None)
@@ -301,7 +290,7 @@ fn success(output: Output) -> String {
 }
 #[test]
 fn named_connections_universe_selection_and_per_command_override() {
-    let runtime = Runtime::start(json!({"kind":"deployment"}), false);
+    let runtime = Runtime::start(false);
     let directory = tempfile::tempdir().unwrap();
     let dir = directory.path();
     success(cli(
@@ -314,10 +303,10 @@ fn named_connections_universe_selection_and_per_command_override() {
             &runtime.endpoint,
             "--token-stdin",
         ],
-        Some("lsk_fixture_secret"),
+        Some("lsr_fixture_secret"),
     ));
     let list = success(cli(dir, &["connect", "list", "--json"], None));
-    assert!(!list.contains("lsk_fixture_secret"));
+    assert!(!list.contains("lsr_fixture_secret"));
     assert_eq!(
         serde_json::from_str::<Value>(&list).unwrap()[0]["selected"],
         false
@@ -406,15 +395,15 @@ fn named_connections_universe_selection_and_per_command_override() {
     assert!(
         models[0]
             .1
-            .contains("x-lightspeed-universe: 00000000-0000-0000-0000-000000000001")
+            .contains("/universes/00000000-0000-0000-0000-000000000001/")
     );
     assert!(
         models[1]
             .1
-            .contains("x-lightspeed-universe: 00000000-0000-0000-0000-000000000002")
+            .contains("/universes/00000000-0000-0000-0000-000000000002/")
     );
     for (method, headers) in requests.iter() {
-        assert!(headers.contains("authorization: bearer lsk_fixture_secret"));
+        assert!(headers.contains("authorization: Bearer lsr_fixture_secret"));
         if method != "models/list" {
             assert!(!headers.contains("x-lightspeed-universe:"), "{method}");
         }
@@ -443,14 +432,20 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
             .map(|(_, headers)| {
                 headers
                     .lines()
-                    .find_map(|line| line.strip_prefix("x-lightspeed-universe: "))
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .split('/')
+                    .nth(4)
                     .unwrap_or_default()
                     .to_owned()
             })
             .collect()
     };
 
-    let runtime = Runtime::start(json!({"kind":"deployment"}), false);
+    let runtime = Runtime::start(false);
     let directory = tempfile::tempdir().unwrap();
     let dir = directory.path();
     success(cli(
@@ -465,7 +460,7 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
             &runtime.endpoint,
             "--token-stdin",
         ],
-        Some("lsk_fixture_secret"),
+        Some("lsr_fixture_secret"),
     ));
     let saved = success(cli(dir, &["connect", "list", "--json"], None));
     assert_eq!(
@@ -501,17 +496,12 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
 
 #[test]
 fn config_wait_retries_startup_and_applies_declarations_idempotently() {
-    let runtime = Runtime::with_startup_statuses(
-        json!({"kind":"deployment"}),
-        false,
-        json!(["deployment/universes"]),
-        vec![503],
-    );
+    let runtime = Runtime::with_startup_statuses(false, vec![503]);
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("universe.yaml"), "schemaVersion: 1\nkind: universe\nhandle: one\ndisplayName: Research\nmembers: []\ndirectoryGroupMappings:\n  - issuer: https://id.example\n    group: readers\n    role: viewer\n").unwrap();
     let env = [
         ("LIGHTSPEED_API_URL", runtime.endpoint.as_str()),
-        ("LIGHTSPEED_RPC_TOKEN", "lsk_fixture"),
+        ("LIGHTSPEED_API_TOKEN", "lsr_fixture"),
     ];
     let output = cli_env(
         dir.path(),
@@ -606,12 +596,7 @@ fn config_wait_retries_startup_and_applies_declarations_idempotently() {
 #[test]
 fn config_wait_does_not_retry_authentication_or_wait_without_the_flag() {
     for (status, wait) in [(401, true), (403, true), (503, false)] {
-        let runtime = Runtime::with_startup_statuses(
-            json!({"kind":"deployment"}),
-            false,
-            json!(["deployment/universes"]),
-            vec![status],
-        );
+        let runtime = Runtime::with_startup_statuses(false, vec![status]);
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("universe.yaml"),
@@ -629,7 +614,7 @@ fn config_wait_does_not_retry_authentication_or_wait_without_the_flag() {
             None,
             &[
                 ("LIGHTSPEED_API_URL", &runtime.endpoint),
-                ("LIGHTSPEED_RPC_TOKEN", "lsk_fixture"),
+                ("LIGHTSPEED_API_TOKEN", "lsr_fixture"),
             ],
         );
         assert!(!output.status.success());
@@ -639,12 +624,7 @@ fn config_wait_does_not_retry_authentication_or_wait_without_the_flag() {
 
 #[test]
 fn config_wait_has_a_bounded_deadline() {
-    let runtime = Runtime::with_startup_statuses(
-        json!({"kind":"deployment"}),
-        false,
-        json!(["deployment/universes"]),
-        vec![503; 20],
-    );
+    let runtime = Runtime::with_startup_statuses(false, vec![503; 20]);
     let dir = tempfile::tempdir().unwrap();
     let start = std::time::Instant::now();
     let output = cli_env(
@@ -653,7 +633,7 @@ fn config_wait_has_a_bounded_deadline() {
         None,
         &[
             ("LIGHTSPEED_API_URL", &runtime.endpoint),
-            ("LIGHTSPEED_RPC_TOKEN", "lsk_fixture"),
+            ("LIGHTSPEED_API_TOKEN", "lsr_fixture"),
         ],
     );
     assert!(!output.status.success());

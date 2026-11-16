@@ -1,13 +1,14 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ModelDefaults } from "@lightspeed-ai/sdk";
 import type { ApiVariables, AppContext } from "../context.js";
 import { gatewayRoutes, withGateway } from "./gateway.js";
-import { LightspeedRpcError } from "@lightspeed-ai/sdk";
+import { LightspeedApiError } from "@lightspeed-ai/sdk";
 
 const auth = vi.hoisted(() => ({ role: "operator" }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
-  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/rpc" },
+  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/api/v1" },
   handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "operator"; });
@@ -17,21 +18,21 @@ function fixture() {
   const requests: { method: string; params: Record<string, unknown> }[] = [];
   let defaults: ModelDefaults = { revision: 2, agentRun: null, speechToText: null };
   const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
-    expect(new Headers(init.headers).get("x-lightspeed-universe")).toBe("universe");
+    expect(decodeHttpRequest(_url as string | Request | URL, init).universe).toBe("universe");
+    expect(new Headers(init.headers).has("x-lightspeed-universe")).toBe(false);
     expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe("member");
-    const rpc = JSON.parse(String(init.body));
-    requests.push(rpc);
-    if (rpc.method === "models/defaults/put") {
-      if (rpc.params.expectedRevision !== defaults.revision) return Response.json({ id: rpc.id,
-        error: { code: -32009, message: "defaults changed", data: { kind: "conflict", message: "defaults changed" } } });
-      defaults = { ...defaults, [rpc.params.slot]: rpc.params.model, revision: defaults.revision + 1 };
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    requests.push({ method: request.method, params: request.params });
+    if (request.method === "models/defaults/put") {
+      if (request.params.expectedRevision !== defaults.revision) return problemResponse({ type: "about:blank", title: "defaults changed", detail: "defaults changed", status: 409, kind: "conflict" });
+      defaults = { ...defaults, [request.params.slot]: request.params.model, revision: defaults.revision + 1 };
     }
-    return Response.json({ id: rpc.id, result: { result: { defaults }, notifications: [] } });
+    return Response.json({ defaults });
   });
   vi.stubGlobal("fetch", fetch);
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => { c.set("session", { user: { id: "member" } } as ApiVariables["session"]); await next(); });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   const call = (method = "GET", body?: unknown) => app.request("/universe/models/defaults", {
     method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -68,7 +69,7 @@ it.each([
 
 it("preserves the typed missing-default error for web clients", async () => {
   const app = new Hono();
-  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "modelDefaultUnset", message: "Choose a model", modelDefaultSlot: "agentRun" } }); }));
+  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "Choose a model", detail: "Choose a model", status: 409, kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }); }));
   const response = await app.request("/");
   expect(response.status).toBe(400);
   expect(await response.json()).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" });
@@ -76,7 +77,7 @@ it("preserves the typed missing-default error for web clients", async () => {
 
 it("tells web clients a held request is pending and which id to retry with", async () => {
   const app = new Hono();
-  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedRpcError({ code: -32015, message: "still held", data: { kind: "operationPending", message: "still held", submissionId: "submission" } }); }));
+  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "still held", detail: "still held", status: 409, kind: "operationPending", submissionId: "submission" }); }));
   const response = await app.request("/");
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ kind: "operationPending", submissionId: "submission" });

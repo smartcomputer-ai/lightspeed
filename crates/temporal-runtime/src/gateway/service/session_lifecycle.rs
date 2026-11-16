@@ -436,7 +436,7 @@ impl GatewayAgentApi {
     pub(super) async fn restart_session_from_log(
         &self,
         session_id: &SessionId,
-    ) -> Result<AgentApiOutcome<SessionRestartResponse>, AgentApiError> {
+    ) -> Result<SessionRestartResponse, AgentApiError> {
         let lifecycle = SessionLifecycle {
             io: self,
             operation_timeout: self.operation_timeout,
@@ -446,10 +446,10 @@ impl GatewayAgentApi {
             stopped_execution: StoppedExecution::Restart,
         };
         let (loaded, restarted) = lifecycle.restart_requested(session_id).await?;
-        Ok(AgentApiOutcome::new(SessionRestartResponse {
+        Ok(SessionRestartResponse {
             session: self.session_mutation_view(&loaded),
             restarted,
-        }))
+        })
     }
 
     pub(super) async fn start_session_internal(
@@ -459,7 +459,7 @@ impl GatewayAgentApi {
         auto_reject_approvals: bool,
         trusted_workflow_tools: Option<DeclaredSessionWorkflowTools>,
         stopped_execution: StoppedExecution,
-    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+    ) -> Result<SessionStartResponse, AgentApiError> {
         self.authorize_method(METHOD_SESSION_START, None).await?;
         let SessionStartParams {
             session_id,
@@ -643,13 +643,10 @@ impl GatewayAgentApi {
         Ok(self.session_start_response(&loaded))
     }
 
-    fn session_start_response(
-        &self,
-        loaded: &LoadedSession,
-    ) -> AgentApiOutcome<SessionStartResponse> {
-        AgentApiOutcome::new(SessionStartResponse {
+    fn session_start_response(&self, loaded: &LoadedSession) -> SessionStartResponse {
+        SessionStartResponse {
             session: self.session_mutation_view(loaded),
-        })
+        }
     }
 
     async fn validate_session_integration_materialization(

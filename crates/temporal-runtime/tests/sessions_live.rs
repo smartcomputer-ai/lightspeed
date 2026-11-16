@@ -6,10 +6,10 @@ mod support;
 use api::{
     AgentApiErrorKind, AgentApiService, ContextAppendEntry, ContextAppendParams,
     ContextAppendStatus, ContextEntryKindView, ContextMessageRoleView, FeaturesConfig,
-    InitializeParams, InlineAgentProfile, InputItem, ProfileDocument, ProfileInstructions,
-    ProfileSource, RunListParams, RunStartParams, RunStartSource, SessionConfig,
-    SessionConfigPutParams, SessionDeleteParams, SessionEventsReadParams, SessionLifecycleStatus,
-    SessionListParams, SessionReadParams, SessionStartParams, SkillListParams, TimersFeature,
+    InlineAgentProfile, InputItem, ProfileDocument, ProfileInstructions, ProfileSource,
+    RunListParams, RunStartParams, RunStartSource, SessionConfig, SessionConfigPutParams,
+    SessionDeleteParams, SessionEventsReadParams, SessionLifecycleStatus, SessionListParams,
+    SessionReadParams, SessionStartParams, SkillListParams, TimersFeature,
 };
 use api_projection::model_to_api;
 use base64::Engine as _;
@@ -76,7 +76,6 @@ async fn temporal_live_a_failed_start_leaves_nothing_live() -> anyhow::Result<()
                     ..Default::default()
                 })
                 .await?
-                .result
                 .sessions)
         };
 
@@ -302,7 +301,6 @@ async fn run_compaction_live_client(
                     wait_ms: None,
                 })
                 .await?
-                .result
                 .events;
             Ok(!view.active_context.compaction.as_ref().unwrap().pending
                 && events
@@ -328,7 +326,6 @@ async fn run_compaction_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     assert!(events.iter().any(|event| matches!(
         &event.kind,
@@ -463,7 +460,7 @@ async fn temporal_live_event_long_poll_wakes_across_connections_and_falls_back_w
             append(writer.as_ref(), 2)
         );
         written?;
-        let page = page?.result;
+        let page = page?;
         assert_eq!(page.events.len(), 1);
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -477,7 +474,7 @@ async fn temporal_live_event_long_poll_wakes_across_connections_and_falls_back_w
         );
         written?;
         assert_eq!(
-            page?.result.events.len(),
+            page?.events.len(),
             1,
             "the deadline re-read must find writes even without a signal"
         );
@@ -570,7 +567,6 @@ async fn temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution
                 })
                 .await?;
             let row = listed
-                .result
                 .sessions
                 .iter()
                 .find(|session| session.id == session_id.as_str())
@@ -766,8 +762,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
             session_id: session_id.as_str().to_owned(),
             run_limit: None,
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(default_page.session.runs.len(), 20);
     assert!(default_page.has_older_runs);
     assert_eq!(
@@ -790,8 +785,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
             cursor: default_page.next_run_cursor,
             limit: None,
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(older_page.runs.len(), 1);
     assert_eq!(older_page.runs[0].id, run_ids[0]);
     assert!(!older_page.has_older_runs);
@@ -802,8 +796,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
             session_id: session_id.as_str().to_owned(),
             run_limit: Some(3),
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(limited_page.session.runs.len(), 3);
     assert!(limited_page.has_older_runs);
     assert_eq!(
@@ -845,8 +838,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
             session_id: session_id.as_str().to_owned(),
             run_limit: Some(1),
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(fallback.session.runs.len(), 1);
     assert_eq!(fallback.session.runs[0].id, run_ids[20]);
 
@@ -889,8 +881,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
             session_id: session_id.as_str().to_owned(),
             run_id: repair_run.id.clone(),
         })
-        .await?
-        .result;
+        .await?;
     assert_eq!(detail.run.id, repair_run.id);
     assert_eq!(detail.run.status, api::RunStatus::Completed);
     assert!(detail.run.started_at_ms.is_some());
@@ -937,11 +928,6 @@ async fn run_fake_live_client(
         .with_task_queue(task_queue)
         .build();
 
-    let initialized = api.initialize(InitializeParams::default()).await?;
-    assert_eq!(initialized.result.server_info.name, "lightspeed-agent");
-    assert!(initialized.result.capabilities.history_read);
-    assert!(initialized.result.capabilities.event_log);
-
     let started = api
         .start_session(SessionStartParams {
             access: None,
@@ -957,7 +943,7 @@ async fn run_fake_live_client(
             integration: None,
         })
         .await?;
-    assert_eq!(started.result.session.id, session_id.as_str());
+    assert_eq!(started.session.id, session_id.as_str());
     let started_view = read_session_view(&api, &session_id).await?;
     assert!(
         !started_view
@@ -990,7 +976,7 @@ async fn run_fake_live_client(
     let enabled = api
         .put_session_config(SessionConfigPutParams {
             session_id: session_id.as_str().to_owned(),
-            expected_config_revision: Some(started.result.session.config_revision),
+            expected_config_revision: Some(started.session.config_revision),
             config: enabled_config,
         })
         .await?;
@@ -1035,7 +1021,7 @@ async fn run_fake_live_client(
     let selection_enabled = api
         .put_session_config(SessionConfigPutParams {
             session_id: session_id.as_str().to_owned(),
-            expected_config_revision: Some(enabled.result.session.config_revision),
+            expected_config_revision: Some(enabled.session.config_revision),
             config: selection_config,
         })
         .await?;
@@ -1065,7 +1051,7 @@ async fn run_fake_live_client(
     }
     api.put_session_config(SessionConfigPutParams {
         session_id: session_id.as_str().to_owned(),
-        expected_config_revision: Some(selection_enabled.result.session.config_revision),
+        expected_config_revision: Some(selection_enabled.session.config_revision),
         config: disabled_config,
     })
     .await?;
@@ -1096,7 +1082,7 @@ async fn run_fake_live_client(
             config: None,
         })
         .await?;
-    let first_run = wait_for_terminal_run(&api, &session_id, &first.result.run.id).await?;
+    let first_run = wait_for_terminal_run(&api, &session_id, &first.run.id).await?;
     let first_output = final_assistant_text(&first_run).expect("first assistant output");
     assert!(first_output.contains("Fake agent completed run"));
 
@@ -1115,7 +1101,7 @@ async fn run_fake_live_client(
             config: None,
         })
         .await?;
-    let second_run = wait_for_terminal_run(&api, &session_id, &second.result.run.id).await?;
+    let second_run = wait_for_terminal_run(&api, &session_id, &second.run.id).await?;
     let second_output = final_assistant_text(&second_run).expect("second assistant output");
     assert!(second_output.contains("Fake agent completed run"));
 
@@ -1136,7 +1122,7 @@ async fn run_fake_live_client(
             config: None,
         })
         .await?;
-    assert_eq!(retried.result.run.id, second.result.run.id);
+    assert_eq!(retried.run.id, second.run.id);
 
     // Same submission id with different input is a typed rejection.
     let mismatch = api
@@ -1170,7 +1156,7 @@ async fn run_fake_live_client(
             integration: None,
         })
         .await?;
-    assert_eq!(restarted.result.session.id, session_id.as_str());
+    assert_eq!(restarted.session.id, session_id.as_str());
 
     let read = api
         .read_session(SessionReadParams {
@@ -1178,7 +1164,7 @@ async fn run_fake_live_client(
             run_limit: None,
         })
         .await?;
-    assert!(read.result.session.runs.len() >= 2);
+    assert!(read.session.runs.len() >= 2);
 
     let events = api
         .read_session_events(SessionEventsReadParams {
@@ -1190,11 +1176,11 @@ async fn run_fake_live_client(
             limit: Some(64),
         })
         .await?;
-    assert!(!events.result.events.is_empty());
+    assert!(!events.events.is_empty());
 
     // Long-poll at the head: no new events, so the read parks until the
     // wait elapses and returns an empty page with no cursor movement.
-    let head_cursor = events.result.head_cursor;
+    let head_cursor = events.head_cursor;
     let parked_started = std::time::Instant::now();
     let parked = api
         .read_session_events(SessionEventsReadParams {
@@ -1206,8 +1192,8 @@ async fn run_fake_live_client(
             limit: Some(64),
         })
         .await?;
-    assert!(parked.result.events.is_empty());
-    assert!(parked.result.complete);
+    assert!(parked.events.is_empty());
+    assert!(parked.complete);
     assert!(parked_started.elapsed() >= std::time::Duration::from_millis(900));
 
     let handle = live_workflow_handle(&client, &session_id)?;
@@ -1269,7 +1255,6 @@ async fn run_lifecycle_delete_mode(
 
     let listed = api.list_sessions(SessionListParams::default()).await?;
     let open_summary = listed
-        .result
         .sessions
         .iter()
         .find(|summary| summary.id == session_id.as_str())
@@ -1295,7 +1280,6 @@ async fn run_lifecycle_delete_mode(
 
     let listed = api.list_sessions(SessionListParams::default()).await?;
     let closed_summary = listed
-        .result
         .sessions
         .iter()
         .find(|summary| summary.id == session_id.as_str())
@@ -1314,14 +1298,13 @@ async fn run_lifecycle_delete_mode(
         })
         .await?;
     assert_eq!(
-        deleted.result.session.lifecycle_status,
+        deleted.session.lifecycle_status,
         SessionLifecycleStatus::Closed
     );
 
     let listed = api.list_sessions(SessionListParams::default()).await?;
     assert!(
         listed
-            .result
             .sessions
             .iter()
             .all(|summary| summary.id != session_id.as_str())
@@ -1399,7 +1382,7 @@ async fn run_continue_as_new_live_client(
             config: None,
         })
         .await?;
-    let first_run_id = first.result.run.id.clone();
+    let first_run_id = first.run.id.clone();
     let first_run = wait_for_terminal_run(&api, &session_id, &first_run_id).await?;
     assert_eq!(first_run.id, first_run_id);
     let continued_temporal_run_id = live_workflow_handle(&client, &session_id)?
@@ -1427,7 +1410,7 @@ async fn run_continue_as_new_live_client(
             config: None,
         })
         .await?;
-    let second_run = wait_for_terminal_run(&api, &session_id, &second.result.run.id).await?;
+    let second_run = wait_for_terminal_run(&api, &session_id, &second.run.id).await?;
     let second_output = final_assistant_text(&second_run).expect("second assistant output");
     assert!(second_output.contains("Fake agent completed run"));
 
@@ -1438,7 +1421,7 @@ async fn run_continue_as_new_live_client(
         })
         .await?;
     assert!(
-        read.result.session.runs.len() >= 2,
+        read.session.runs.len() >= 2,
         "projected session should include runs committed before and after continue-as-new"
     );
 
@@ -1546,7 +1529,7 @@ async fn run_context_append_live_client(
             }],
         })
         .await?;
-    let borrowed = harness::BlobRef::parse(&uploaded.result.blobs[0].blob_ref)?;
+    let borrowed = harness::BlobRef::parse(&uploaded.blobs[0].blob_ref)?;
     sqlx::query("UPDATE cas_blobs SET created_at_ms = 1, touched_at_ms = 1 WHERE universe_id = $1 AND digest = $2")
         .bind(store.config().universe_id)
         .bind(borrowed.as_str().trim_start_matches("sha256:"))
@@ -1577,7 +1560,6 @@ async fn run_context_append_live_client(
         .await?;
     assert_eq!(
         appended
-            .result
             .results
             .iter()
             .map(|result| (result.key.as_str(), result.status))
@@ -1596,7 +1578,7 @@ async fn run_context_append_live_client(
             > 1,
         "admission must refresh a borrowed ref before signaling the workflow"
     );
-    let first_revision = appended.result.context_revision;
+    let first_revision = appended.context_revision;
 
     // Room events are visible as ordinary user-message context items.
     let read = api
@@ -1606,7 +1588,6 @@ async fn run_context_append_live_client(
         })
         .await?;
     let context_texts: Vec<&str> = read
-        .result
         .session
         .active_context
         .entries
@@ -1647,7 +1628,6 @@ async fn run_context_append_live_client(
         .await?;
     assert_eq!(
         replayed
-            .result
             .results
             .iter()
             .map(|result| (result.key.as_str(), result.status))
@@ -1657,7 +1637,7 @@ async fn run_context_append_live_client(
             ("channel.room.msg-2", ContextAppendStatus::Unchanged)
         ]
     );
-    assert_eq!(replayed.result.context_revision, first_revision);
+    assert_eq!(replayed.context_revision, first_revision);
 
     // Same key with different content replaces the entry, which moves to the
     // end under a new id.
@@ -1676,14 +1656,13 @@ async fn run_context_append_live_client(
         .await?;
     assert_eq!(
         edited
-            .result
             .results
             .iter()
             .map(|result| (result.key.as_str(), result.status))
             .collect::<Vec<_>>(),
         vec![("channel.room.msg-2", ContextAppendStatus::Applied)]
     );
-    assert!(edited.result.context_revision > first_revision);
+    assert!(edited.context_revision > first_revision);
 
     // Invalid input is rejected at admission with a typed error.
     let empty = api
@@ -1731,7 +1710,7 @@ async fn run_context_append_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.run.id).await?;
     let output = final_assistant_text(&run).expect("assistant output");
     assert!(output.contains("Fake agent completed run"));
 
@@ -1805,7 +1784,7 @@ async fn run_admission_failure_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.run.id).await?;
     let output = final_assistant_text(&run).expect("assistant output");
     assert!(output.contains("Fake agent completed run"));
 
@@ -1845,7 +1824,7 @@ async fn run_admission_failure_live_client(
         })
         .await?;
     assert_eq!(
-        session.result.session.lifecycle_status,
+        session.session.lifecycle_status,
         SessionLifecycleStatus::Closed
     );
 
@@ -1908,7 +1887,6 @@ async fn run_openai_live_client(
     let defaults = api
         .read_model_defaults(api::ModelDefaultsReadParams {})
         .await?
-        .result
         .defaults;
     api.put_model_defaults(api::ModelDefaultsPutParams {
         slot: api::ModelDefaultSlot::AgentRun,
@@ -1938,7 +1916,6 @@ async fn run_openai_live_client(
             expected_config_revision: Some(session.config_revision),
         })
         .await?
-        .result
         .session;
     assert_eq!(
         read_session_view(&api, &session_id).await?.config,
@@ -1969,7 +1946,7 @@ async fn run_openai_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.run.id).await?;
     let output = final_assistant_text(&run).expect("OpenAI assistant output");
     let normalized = output.to_lowercase();
     assert!(
@@ -2058,7 +2035,7 @@ async fn run_builtin_tool_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &run.result.run.id).await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.run.id).await?;
     let events = api
         .read_session_events(SessionEventsReadParams {
             direction: Default::default(),
@@ -2069,7 +2046,6 @@ async fn run_builtin_tool_live_client(
             wait_ms: Some(0),
         })
         .await?
-        .result
         .events;
     anyhow::ensure!(
         run.status == api::RunStatus::Completed,
@@ -2191,7 +2167,7 @@ async fn run_session_metadata_live_client(
             integration: None,
         })
         .await?;
-    assert_eq!(started.result.session.id, session_id.as_str());
+    assert_eq!(started.session.id, session_id.as_str());
 
     // Containment: the full map finds it, an extra pair does not.
     let listed = api
@@ -2202,14 +2178,13 @@ async fn run_session_metadata_live_client(
         .await?;
     assert_eq!(
         listed
-            .result
             .sessions
             .iter()
             .map(|summary| summary.id.as_str())
             .collect::<Vec<_>>(),
         vec![session_id.as_str()]
     );
-    assert_eq!(listed.result.sessions[0].metadata, job);
+    assert_eq!(listed.sessions[0].metadata, job);
     let mut extra = job.clone();
     extra.insert("trial".to_owned(), "9".to_owned());
     let listed = api
@@ -2218,17 +2193,17 @@ async fn run_session_metadata_live_client(
             ..Default::default()
         })
         .await?;
-    assert!(listed.result.sessions.is_empty());
+    assert!(listed.sessions.is_empty());
     let read = api
         .read_session(SessionReadParams {
             session_id: session_id.as_str().to_owned(),
             run_limit: None,
         })
         .await?;
-    assert_eq!(read.result.session.metadata, job);
+    assert_eq!(read.session.metadata, job);
 
     // Put replaces the whole map without touching updatedAtMs.
-    let before = read.result.session.updated_at_ms;
+    let before = read.session.updated_at_ms;
     let replaced = api
         .put_session_metadata(api::SessionMetadataPutParams {
             session_id: session_id.as_str().to_owned(),
@@ -2236,17 +2211,17 @@ async fn run_session_metadata_live_client(
         })
         .await?;
     assert_eq!(
-        replaced.result.session.metadata,
+        replaced.session.metadata,
         BTreeMap::from([pair("owner", "live")])
     );
-    assert_eq!(replaced.result.session.updated_at_ms, before);
+    assert_eq!(replaced.session.updated_at_ms, before);
     let listed = api
         .list_sessions(SessionListParams {
             metadata: job.clone(),
             ..Default::default()
         })
         .await?;
-    assert!(listed.result.sessions.is_empty());
+    assert!(listed.sessions.is_empty());
 
     // The registration bounds apply at start and at put.
     let reserved = api
@@ -2319,7 +2294,6 @@ async fn run_provider_rejection_live_client(
             }],
         })
         .await?
-        .result
         .blobs
         .remove(0)
         .blob_ref;
@@ -2347,7 +2321,7 @@ async fn run_provider_rejection_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, run.result.run.id.as_str()).await?;
+    let run = wait_for_terminal_run(&api, &session_id, run.run.id.as_str()).await?;
     assert_eq!(run.status, api::RunStatus::Failed);
 
     let events = api
@@ -2360,7 +2334,6 @@ async fn run_provider_rejection_live_client(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     let (kind, message) = events
         .iter()
@@ -2404,7 +2377,7 @@ async fn run_provider_rejection_live_client(
             },
         }],
     };
-    let replaced = api.replace_context(replace.clone()).await?.result;
+    let replaced = api.replace_context(replace.clone()).await?;
     assert_eq!(
         replaced.results,
         vec![api::ContextReplaceResult {
@@ -2422,7 +2395,7 @@ async fn run_provider_rejection_live_client(
         .expect("replaced entry keeps its id");
     assert_eq!(entry.content.media_handle, None);
     assert_eq!(entry.text.as_deref(), Some(placeholder.as_str()));
-    let retried = api.replace_context(replace).await?.result;
+    let retried = api.replace_context(replace).await?;
     assert_eq!(
         retried.results[0].status,
         api::ContextReplaceStatus::Unchanged

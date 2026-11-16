@@ -944,7 +944,7 @@ mod tests {
 
         let url = build_authorization_url(
             &client,
-            "https://lightspeed.example.com/credentials/callback",
+            "https://lightspeed.example.com/ingress/credentials/callback",
             &["repo".to_owned(), "read:user".to_owned()],
             "state-123",
             "challenge-456",
@@ -954,9 +954,9 @@ mod tests {
         assert!(url.starts_with("https://github.com/login/oauth/authorize?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=Iv1.abc123"));
-        assert!(
-            url.contains("redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fcredentials%2Fcallback")
-        );
+        assert!(url.contains(
+            "redirect_uri=https%3A%2F%2Flightspeed.example.com%2Fingress%2Fcredentials%2Fcallback"
+        ));
         assert!(url.contains("state=state-123"));
         assert!(url.contains("code_challenge=challenge-456"));
         assert!(url.contains("code_challenge_method=S256"));
@@ -975,7 +975,7 @@ mod tests {
             created_by: Attribution::Local,
             state_hash: state_hash("state-123"),
             pkce_verifier_secret: SecretId::new("authsec_pkce"),
-            redirect_uri: "https://lightspeed.example.com/credentials/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/ingress/credentials/callback".to_owned(),
             scopes: Vec::new(),
             audience: None,
             expected_issuer: None,
@@ -1006,7 +1006,8 @@ mod tests {
             auth_method: TokenEndpointAuthMethod::ClientSecretBasic,
             grant: OAuthTokenGrant::AuthorizationCode {
                 code: SecretValue::new("code-1"),
-                redirect_uri: "https://lightspeed.example.com/credentials/callback".to_owned(),
+                redirect_uri: "https://lightspeed.example.com/ingress/credentials/callback"
+                    .to_owned(),
                 code_verifier: SecretValue::new("verifier-1"),
             },
             resource: Some("https://crm.example.com/mcp".to_owned()),

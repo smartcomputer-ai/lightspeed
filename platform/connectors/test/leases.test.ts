@@ -8,7 +8,7 @@ function client(responses: Array<{ token: string; expiresAtMs?: number | null }>
     expect(params).toEqual({ grantId: "grant-1" });
     const next = responses.shift();
     if (next === undefined) throw new Error("no more leases");
-    return { result: { grantId: "grant-1", providerKind: "custom", ...next } };
+    return { grantId: "grant-1", providerKind: "custom", ...next };
   });
   return { call } as unknown as Pick<LightspeedClient, "call"> & { call: typeof call };
 }
@@ -16,24 +16,24 @@ function client(responses: Array<{ token: string; expiresAtMs?: number | null }>
 describe("grant leases", () => {
   it("caches until expiry minus the margin and single-flights concurrent leases", async () => {
     let now = 1_000_000;
-    const rpc = client([
+    const api = client([
       { token: "t1", expiresAtMs: now + 120_000 },
       { token: "t2", expiresAtMs: null },
     ]);
-    const lease = new GrantLease(rpc, "grant-1", () => now);
+    const lease = new GrantLease(api, "grant-1", () => now);
     await expect(Promise.all([lease.get(), lease.get()])).resolves.toEqual(["t1", "t1"]);
-    expect(rpc.call).toHaveBeenCalledOnce();
+    expect(api.call).toHaveBeenCalledOnce();
     now += 120_000 - LEASE_EXPIRY_MARGIN_MS - 1;
     await expect(lease.get()).resolves.toBe("t1");
     now += 1;
     await expect(lease.get()).resolves.toBe("t2");
-    expect(rpc.call).toHaveBeenCalledTimes(2);
+    expect(api.call).toHaveBeenCalledTimes(2);
   });
 
   it("holds a token without expiry for at most five minutes", async () => {
     let now = 5_000;
-    const rpc = client([{ token: "t1" }, { token: "t2" }]);
-    const lease = new GrantLease(rpc, "grant-1", () => now);
+    const api = client([{ token: "t1" }, { token: "t2" }]);
+    const lease = new GrantLease(api, "grant-1", () => now);
     await expect(lease.get()).resolves.toBe("t1");
     now += LEASE_MAX_AGE_MS - 1;
     await expect(lease.get()).resolves.toBe("t1");
@@ -42,12 +42,12 @@ describe("grant leases", () => {
   });
 
   it("re-leases after the provider rejected the token", async () => {
-    const rpc = client([{ token: "t1", expiresAtMs: Date.now() + 3_600_000 }, { token: "t2" }]);
-    const lease = new GrantLease(rpc, "grant-1");
+    const api = client([{ token: "t1", expiresAtMs: Date.now() + 3_600_000 }, { token: "t2" }]);
+    const lease = new GrantLease(api, "grant-1");
     await expect(lease.get()).resolves.toBe("t1");
     lease.invalidate();
     await expect(lease.get()).resolves.toBe("t2");
-    expect(rpc.call).toHaveBeenCalledTimes(2);
+    expect(api.call).toHaveBeenCalledTimes(2);
   });
 
   it("rejects an empty lease", async () => {

@@ -1,10 +1,11 @@
-//! Machine-readable export of the JSON-RPC wire contract.
+//! Machine-readable exports of the public API contracts.
 //!
-//! Renders four artifacts from the method manifest and the schemars-derived
-//! types: a draft-07 JSON Schema bundle of every wire type, a documented method
-//! manifest, an OpenRPC document, and a compact Markdown API reference. The committed copies
+//! Renders a draft-07 JSON Schema bundle of logical inputs and response DTOs,
+//! an HTTP operation catalog, OpenAPI 3.1, and a compact Markdown reference. The committed copies
 //! under `crates/api/contract/` are kept current by `schema_artifacts` integration tests;
 //! regenerate them with `cargo run -p api --bin export-schema`.
+//! The same operation catalog also exports resource HTTP metadata and OpenAPI
+//! 3.1, with a separate JSON Schema 2020-12 view of the authored Rust types.
 
 use std::{collections::BTreeMap, fmt::Write as _};
 
@@ -12,7 +13,8 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
 use crate::{
-    AgentNotification, JsonRpcError, MethodSpec, NOTIFICATION_METHODS, PROTOCOL_VERSION,
+    AgentNotification, BlobPutResult, BlobUploadParams, METHOD_BLOBS_UPLOAD, MethodAccess,
+    MethodSchemas, MethodScope, MethodSpec, UniverseAction, blob_upload_binding,
     deployment_method_manifest, method_manifest,
 };
 
@@ -23,17 +25,25 @@ use crate::{
 pub fn full_method_manifest() -> Vec<MethodSpec> {
     let mut methods = method_manifest();
     methods.extend(deployment_method_manifest());
+    methods.push(MethodSpec {
+        method: METHOD_BLOBS_UPLOAD, notifications:&[], scope:MethodScope::Universe,
+        access:MethodAccess::Universe(UniverseAction::UseResource),
+        summary:"Upload a content-addressed blob",
+        description:"Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.",
+        params_type:"BlobUploadParams", result_type:"BlobPutResult".into(),
+        http:blob_upload_binding(),
+        register_schemas: |g|MethodSchemas {params:g.subschema_for::<BlobUploadParams>(),result:g.subschema_for::<BlobPutResult>()},
+    });
     methods
 }
 
 pub struct ExportedSchemas {
     /// Draft-07 JSON Schema bundle: every wire type under `definitions`.
     pub schema_bundle: Value,
-    /// Method/notification manifest with refs into the schema bundle.
-    pub methods: Value,
-    /// OpenRPC document assembled from the two; for docs tooling only, no
-    /// downstream codegen may depend on it.
-    pub openrpc: Value,
+    /// Resource HTTP routing and input partition metadata.
+    pub http: Value,
+    /// OpenAPI 3.1 resource contract.
+    pub openapi: Value,
     /// Compact generated human reference using the same canonical method
     /// documentation as the machine-readable artifacts.
     pub api_reference: String,
@@ -48,170 +58,184 @@ pub fn export_schemas() -> ExportedSchemas {
     generator.subschema_for::<crate::MethodGroup>();
     generator.subschema_for::<crate::RecommendedRole>();
     generator.subschema_for::<crate::MethodTarget>();
+    // HTTP-only wire types share the SDK's existing draft-07 type pipeline.
+    // Logical DTOs support client generation independently of HTTP codecs.
+    generator.subschema_for::<crate::ConnectionResponse>();
+    generator.subschema_for::<crate::HttpProblem>();
+    generator.subschema_for::<crate::BlobUploadParams>();
 
-    let mut methods = Vec::new();
-    let mut openrpc_methods = Vec::new();
-    let mut api_reference = String::from(
-        "# Lightspeed JSON-RPC API Reference\n\n\
-         Generated from the Rust API method manifest. Parameter and result field details live in \
-         `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n\n\
-         Every configured runtime token can call every method. API family, role and target are metadata \
-         for external gates such as the Platform; the runtime does not enforce caller permissions.\n",
-    );
-    let mut reference_scope = None;
     for spec in full_method_manifest() {
-        if reference_scope != Some(spec.scope) {
-            reference_scope = Some(spec.scope);
-            let title = match spec.scope {
-                crate::MethodScope::Universe => "Universe methods",
-                crate::MethodScope::Connection => "Connection methods",
-                crate::MethodScope::Service => "Service methods",
-                crate::MethodScope::Deployment => "Deployment methods",
-            };
-            write!(api_reference, "\n## {title}\n\n").expect("write string");
-        }
-        let group = crate::MethodGroup::of(spec.method);
-        let role = spec.access.recommended_role();
-        let target = crate::method_target(spec.method);
-        write!(
-            api_reference,
-            "### `{}`\n\n**{}**\n\n{}\n\n- Access: `{}`\n- Group: `{}`\n- Role: `{}`\n- Target: `{}`\n- Params: `{}`\n- Result: `{}`\n\n",
-            spec.method,
-            spec.summary,
-            spec.description,
-            serde_json::to_string(&spec.access).expect("access serializes"),
-            group.map_or("none", |group| group.as_str()),
-            serde_json::to_value(role).expect("role serializes").as_str().unwrap_or("none"),
-            serde_json::to_value(target).expect("target serializes").as_str().unwrap_or("none"),
-            spec.params_type,
-            spec.result_type
-        )
-        .expect("write string");
-        if !spec.notifications.is_empty() {
-            writeln!(
-                api_reference,
-                "- Transport: `text/event-stream`\n- Notifications: {}\n",
-                spec.notifications.join(", ")
-            )
-            .expect("write string");
-        }
-        let schemas = (spec.register_schemas)(&mut generator);
-        let params_schema = serde_json::to_value(&schemas.params).expect("schema serializes");
-        let result_schema = serde_json::to_value(&schemas.result).expect("schema serializes");
-        methods.push(json!({
-            "method": spec.method,
-            "scope": spec.scope.as_str(),
-            "streaming": !spec.notifications.is_empty(),
-            "notifications": spec.notifications,
-            "access": spec.access,
-            "group": group,
-            "role": role,
-            "target": target,
-            "summary": spec.summary,
-            "description": spec.description,
-            "params": { "type": spec.params_type, "schema": params_schema },
-            "result": { "type": spec.result_type, "schema": result_schema },
-        }));
-        openrpc_methods.push(json!({
-            "name": spec.method,
-            "x-lightspeed-streaming": !spec.notifications.is_empty(),
-            "x-lightspeed-notifications": spec.notifications,
-            "x-lightspeed-access": spec.access,
-            "x-lightspeed-group": group,
-            "x-lightspeed-role": role,
-            "x-lightspeed-target": target,
-            "paramStructure": "by-name",
-            "summary": spec.summary,
-            "description": spec.description,
-            "params": [{
-                "name": "params",
-                "required": true,
-                "schema": params_schema,
-            }],
-            "result": { "name": "result", "schema": result_schema },
-        }));
+        (spec.register_schemas)(&mut generator);
     }
-    let notification_schema = serde_json::to_value(generator.subschema_for::<AgentNotification>())
-        .expect("schema serializes");
-    let error_schema =
-        serde_json::to_value(generator.subschema_for::<JsonRpcError>()).expect("schema serializes");
-
+    generator.subschema_for::<AgentNotification>();
     let definitions: BTreeMap<String, Value> =
         generator.take_definitions(true).into_iter().collect();
-
     let schema_bundle = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "Lightspeed Agent API",
-        "description": "All JSON-RPC wire types of the Lightspeed agent API.",
+        "title": "Lightspeed HTTP API",
+        "description": "Logical operation inputs and direct response types for Lightspeed clients.",
         "definitions": definitions,
     });
 
-    let methods_doc = json!({
-        "protocolVersion": PROTOCOL_VERSION,
-        "transport": {
-            "kind": "http-json-rpc",
-            "endpoint": "/rpc",
-            "resultEnvelope": "AgentApiOutcome",
-            "error": { "type": "JsonRpcError", "schema": error_schema },
-        },
-        "methods": methods,
-        "notifications": NOTIFICATION_METHODS,
-        "notificationSchema": notification_schema,
-    });
-
-    let mut openrpc = json!({
-        "openrpc": "1.3.2",
-        "info": {
-            "title": "Lightspeed Agent API",
-            "version": env!("CARGO_PKG_VERSION"),
-            "description":
-                "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the \
-                 AgentApiOutcome envelope; session events are consumed via \
-                 session/events/read cursor pagination. An authenticated \
-                 gateway answers a request without a valid configured token with HTTP \
-                 401 and a JSON-RPC error whose id is null, before it reads \
-                 the request body. An error decided for a request that was \
-                 read is a JSON-RPC error for that request's id.",
-        },
-        "methods": openrpc_methods,
-        "components": { "schemas": schema_bundle["definitions"].clone() },
-    });
-    rewrite_refs(&mut openrpc, "#/definitions/", "#/components/schemas/");
-
+    let (http, openapi) = crate::http_export::export_http_contract();
+    let api_reference = render_http_reference(&http);
     ExportedSchemas {
+        http,
+        openapi,
         schema_bundle,
-        methods: methods_doc,
-        openrpc,
         api_reference,
     }
 }
 
-fn rewrite_refs(value: &mut Value, from: &str, to: &str) {
-    match value {
-        Value::Object(map) => {
-            for (key, entry) in map.iter_mut() {
-                if key == "$ref"
-                    && let Value::String(reference) = entry
-                    && let Some(rest) = reference.strip_prefix(from)
-                {
-                    *reference = format!("{to}{rest}");
+fn render_http_reference(manifest: &Value) -> String {
+    let mut reference = String::from(
+        "# Lightspeed HTTP API Reference\n\n\
+         Generated from the Rust operation catalog. `openapi.json` defines the HTTP request and response shapes; \
+         `http.json` supplies the same route, policy and input-partition metadata to generated adapters.\n\n\
+         Calls use resource URLs under `/api/v1` and return their response DTO directly. \
+         Errors use `application/problem+json` with a stable `kind` and typed extensions. \
+         Universe selection comes from the URL; a caller-supplied `x-lightspeed-universe` header is refused.\n\n\
+         Every configured runtime token can call every operation. API family, role and target metadata \
+         support external gates such as Platform; the runtime does not enforce caller permissions.\n\n\
+         SDK logical inputs and response DTOs use the draft-07 `api.schema.json` bundle.\n\n\
+         Path identifiers are omitted from JSON bodies, including nested identifiers. Query scalars use their \
+         ordinary spelling, arrays repeat the key, and structured values use JSON encoding as declared in OpenAPI. \
+         Unknown query/body fields and duplicate scalar query keys are refused.\n",
+    );
+    let operations = manifest["operations"].as_array().expect("HTTP operations");
+    for (scope, title) in [
+        ("connection", "Connection"),
+        ("universe", "Universe"),
+        ("service", "Service"),
+        ("deployment", "Deployment"),
+    ] {
+        writeln!(reference, "\n## {title} operations\n").expect("write reference");
+        for operation in operations.iter().filter(|o| o["scope"] == scope) {
+            let string = |key: &str| operation[key].as_str().unwrap_or("none");
+            writeln!(
+                reference,
+                "### `{}`\n\n**{}**\n\n{}\n",
+                string("operationId"),
+                string("summary"),
+                string("description")
+            )
+            .expect("write reference");
+            writeln!(
+                reference,
+                "- HTTP: `{} {}`",
+                string("method"),
+                string("path")
+            )
+            .expect("write reference");
+            let statuses: Vec<_> = operation["responses"]
+                .as_object()
+                .expect("responses")
+                .keys()
+                .filter(|s| s.starts_with('2'))
+                .map(|s| format!("`{s}`"))
+                .collect();
+            let selection = if operation["success"] == "createdFlag" {
+                " (`created: true` selects 201; false selects 200)"
+            } else {
+                ""
+            };
+            writeln!(reference, "- Success: {}{}", statuses.join(", "), selection)
+                .expect("write reference");
+            writeln!(reference, "- Transfer: `{}`", string("transfer")).expect("write reference");
+            let query: Vec<_> = operation["queryFields"]
+                .as_array()
+                .expect("query fields")
+                .iter()
+                .map(|q| format!("`{}`", q.as_str().expect("query name")))
+                .collect();
+            writeln!(
+                reference,
+                "- Query: {}",
+                if query.is_empty() {
+                    "none".into()
                 } else {
-                    rewrite_refs(entry, from, to);
+                    query.join(", ")
                 }
+            )
+            .expect("write reference");
+            let path_fields: Vec<_> = operation["pathFields"]
+                .as_array()
+                .expect("path fields")
+                .iter()
+                .map(|p| {
+                    format!(
+                        "`{}` → `{}`",
+                        p["parameter"].as_str().unwrap(),
+                        p["field"].as_str().unwrap()
+                    )
+                })
+                .collect();
+            if !path_fields.is_empty() {
+                writeln!(reference, "- Path input fields: {}", path_fields.join(", "))
+                    .expect("write reference");
             }
-        }
-        Value::Array(entries) => {
-            for entry in entries {
-                rewrite_refs(entry, from, to);
+            let body = if operation["transfer"] == "binaryUpload" {
+                "`application/octet-stream`; `Content-Length` required".to_owned()
+            } else if let Some(properties) = operation["body"]["properties"].as_object() {
+                let fields: Vec<_> = properties
+                    .keys()
+                    .map(|field| format!("`{field}`"))
+                    .collect();
+                if fields.is_empty() {
+                    "empty JSON object or no body".into()
+                } else {
+                    format!("JSON object: {}", fields.join(", "))
+                }
+            } else {
+                "none".into()
+            };
+            writeln!(
+                reference,
+                "- Request body: {body}\n- Access: `{}`\n- Group: `{}`\n- Role: `{}`",
+                operation["access"],
+                string("group"),
+                string("role")
+            )
+            .expect("write reference");
+            if operation["transfer"] == "sse" {
+                writeln!(reference, "- Events: named SSE events with params-only JSON data; `watch/end` ends the stream. Reconnect and refetch; no replay cursor is promised.").expect("write reference");
             }
+            reference.push('\n');
         }
-        _ => {}
     }
+    reference
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_reference_covers_the_http_catalog() {
+        let exported = export_schemas();
+        assert!(
+            exported
+                .api_reference
+                .starts_with("# Lightspeed HTTP API Reference")
+        );
+        assert!(exported.api_reference.contains("application/problem+json"));
+        for operation in exported.http["operations"].as_array().unwrap() {
+            let id = operation["operationId"].as_str().unwrap();
+            let method = operation["method"].as_str().unwrap();
+            let path = operation["path"].as_str().unwrap();
+            assert!(
+                exported.api_reference.contains(&format!("### `{id}`")),
+                "missing {id}"
+            );
+            assert!(
+                exported
+                    .api_reference
+                    .contains(&format!("`{method} {path}`")),
+                "missing {method} {path}"
+            );
+        }
+        assert!(exported.api_reference.contains("### `blobs/upload`"));
+    }
 
     #[test]
     fn method_manifest_methods_are_unique_and_complete() {
@@ -221,7 +245,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 146);
+        assert_eq!(total, 147);
         let streaming: Vec<_> = manifest
             .iter()
             .filter(|spec| !spec.notifications.is_empty())
@@ -270,19 +294,16 @@ mod tests {
     }
 
     #[test]
-    fn exported_method_docs_match_openrpc() {
+    fn exported_operation_docs_match_openapi() {
         let exported = export_schemas();
-        let methods = exported.methods["methods"].as_array().expect("methods");
-        let openrpc = exported.openrpc["methods"]
-            .as_array()
-            .expect("openrpc methods");
-        assert_eq!(methods.len(), openrpc.len());
-        for (method, openrpc) in methods.iter().zip(openrpc) {
-            assert_eq!(method["method"], openrpc["name"]);
-            assert_eq!(method["summary"], openrpc["summary"]);
-            assert_eq!(method["description"], openrpc["description"]);
-            assert_eq!(method["access"], openrpc["x-lightspeed-access"]);
-            assert!(method["access"].is_object());
+        for operation in exported.http["operations"].as_array().unwrap() {
+            let path = operation["path"].as_str().unwrap();
+            let verb = operation["method"].as_str().unwrap().to_ascii_lowercase();
+            let openapi = &exported.openapi["paths"][path][verb];
+            for field in ["operationId", "summary", "description"] {
+                assert_eq!(operation[field], openapi[field]);
+            }
+            assert_eq!(operation["access"], openapi["x-lightspeed-access"]);
         }
     }
 
@@ -312,12 +333,12 @@ mod tests {
         let definitions = exported.schema_bundle["definitions"]
             .as_object()
             .expect("bundle has definitions");
-        for entry in exported.methods["methods"].as_array().expect("methods") {
-            let method = entry["method"].as_str().expect("method name");
+        for entry in exported.http["operations"].as_array().expect("methods") {
+            let method = entry["operationId"].as_str().expect("method name");
             let params = match entry["params"]["schema"]["$ref"].as_str() {
                 Some(reference) => {
                     let name = reference
-                        .strip_prefix("#/definitions/")
+                        .strip_prefix("api.schema.json#/definitions/")
                         .unwrap_or_else(|| panic!("unexpected ref shape: {reference}"));
                     &definitions[name]
                 }
@@ -338,14 +359,8 @@ mod tests {
     #[test]
     fn notification_methods_match_notification_schema_variants() {
         let exported = export_schemas();
-        let variants = exported.methods["notificationSchema"]["oneOf"]
+        let variants = exported.schema_bundle["definitions"]["AgentNotification"]["oneOf"]
             .as_array()
-            .or_else(|| {
-                // The subschema may be a $ref into the bundle.
-                let reference = exported.methods["notificationSchema"]["$ref"].as_str()?;
-                let name = reference.strip_prefix("#/definitions/")?;
-                exported.schema_bundle["definitions"][name]["oneOf"].as_array()
-            })
             .expect("AgentNotification schema exposes oneOf variants");
         let mut schema_methods: Vec<&str> = variants
             .iter()
@@ -356,7 +371,7 @@ mod tests {
             })
             .collect();
         schema_methods.sort_unstable();
-        let mut declared: Vec<&str> = NOTIFICATION_METHODS.to_vec();
+        let mut declared: Vec<&str> = crate::WATCH_NOTIFICATIONS.to_vec();
         declared.sort_unstable();
         assert_eq!(schema_methods, declared);
     }
@@ -369,24 +384,29 @@ mod tests {
             .expect("bundle has definitions");
         let mut references = Vec::new();
         collect_refs(&exported.schema_bundle, &mut references);
-        collect_refs(&exported.methods, &mut references);
+        for operation in exported.http["operations"].as_array().unwrap() {
+            collect_refs(&operation["params"], &mut references);
+            collect_refs(&operation["result"], &mut references);
+        }
         assert!(!references.is_empty());
         for reference in references {
             let name = reference
+                .strip_prefix("api.schema.json")
+                .unwrap_or(&reference)
                 .strip_prefix("#/definitions/")
                 .unwrap_or_else(|| panic!("unexpected ref shape: {reference}"));
             assert!(definitions.contains_key(name), "dangling ref: {reference}");
         }
 
-        let components = exported.openrpc["components"]["schemas"]
+        let components = exported.openapi["components"]["schemas"]
             .as_object()
-            .expect("openrpc has component schemas");
-        let mut openrpc_refs = Vec::new();
-        collect_refs(&exported.openrpc, &mut openrpc_refs);
-        for reference in openrpc_refs {
+            .expect("openapi has component schemas");
+        let mut openapi_refs = Vec::new();
+        collect_refs(&exported.openapi, &mut openapi_refs);
+        for reference in openapi_refs {
             let name = reference
                 .strip_prefix("#/components/schemas/")
-                .unwrap_or_else(|| panic!("unexpected openrpc ref shape: {reference}"));
+                .unwrap_or_else(|| panic!("unexpected openapi ref shape: {reference}"));
             assert!(components.contains_key(name), "dangling ref: {reference}");
         }
     }

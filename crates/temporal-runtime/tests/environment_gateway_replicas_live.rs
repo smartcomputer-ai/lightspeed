@@ -194,13 +194,12 @@ async fn scenario(pool: sqlx::PgPool) -> anyhow::Result<()> {
             expires_at_ms: None,
         }),
     )
-    .await?
-    .result;
+    .await?;
     let sandbox = tempfile::tempdir()?;
     let root = sandbox.path().join("workspace");
     std::fs::create_dir(&root)?;
     let root = root.canonicalize()?;
-    let connect_url = public_url.replace("http://", "ws://") + "/environment-gateway/connect";
+    let connect_url = public_url.replace("http://", "ws://") + "/environments/connect";
     let mut registration = RegistrationConfig::new(
         connect_url.clone(),
         environment_daemon::upgrade::resolve_discovery_url(Some(&connect_url), None)?,
@@ -252,8 +251,7 @@ async fn scenario(pool: sqlx::PgPool) -> anyhow::Result<()> {
 
     // Neither a forged public token nor an unauthenticated peer handoff
     // can open a stream.
-    let mut invalid =
-        format!("ws://{}/environment-gateway/data", addresses[2]).into_client_request()?;
+    let mut invalid = format!("ws://{}/environments/data", addresses[2]).into_client_request()?;
     invalid.headers_mut().insert(
         "authorization",
         HeaderValue::from_static("Bearer invalid.mac"),
@@ -264,12 +262,9 @@ async fn scenario(pool: sqlx::PgPool) -> anyhow::Result<()> {
     assert!(
         matches!(error, tokio_tungstenite::tungstenite::Error::Http(ref response) if response.status().as_u16() == 401)
     );
-    let error = connect_async(format!(
-        "ws://{}/environment-gateway/peer/data",
-        addresses[1]
-    ))
-    .await
-    .expect_err("peer credential is required");
+    let error = connect_async(format!("ws://{}/environments/peer/data", addresses[1]))
+        .await
+        .expect_err("peer credential is required");
     assert!(
         matches!(error, tokio_tungstenite::tungstenite::Error::Http(ref response) if response.status().as_u16() == 401)
     );
@@ -334,9 +329,9 @@ async fn balance(
                 }
             }
             let request = String::from_utf8_lossy(&headers);
-            let index = if request.starts_with("GET /environment-gateway/connect ") {
+            let index = if request.starts_with("GET /environments/connect ") {
                 owner.load(Ordering::Acquire)
-            } else if request.starts_with("GET /environment-gateway/data ") {
+            } else if request.starts_with("GET /environments/data ") {
                 receiver.load(Ordering::Acquire)
             } else {
                 1

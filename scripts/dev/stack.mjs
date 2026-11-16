@@ -90,7 +90,7 @@ async function main() {
     phase = "preparing the development CLI connection";
     const prepared = await prepareCliConnection({ root: repoRoot, env: plan.env, full: plan.profile === "full", noBootstrap: cli.noTokenBootstrap, run: runChecked });
     for (const processPlan of plan.processes) {
-      for (const name of ["LIGHTSPEED_RPC_TOKEN", "LIGHTSPEED_RPC_TOKEN_FILE", "LIGHTSPEED_RPC_TOKEN_CLI", "LIGHTSPEED_RPC_TOKEN_CLI_FILE", "LIGHTSPEED_RPC_TOKEN_PLATFORM", "LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE", "LIGHTSPEED_PLATFORM_RPC_TOKEN", "LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE"]) {
+      for (const name of ["LIGHTSPEED_API_TOKEN", "LIGHTSPEED_API_TOKEN_FILE", "LIGHTSPEED_API_TOKEN_CLI", "LIGHTSPEED_API_TOKEN_CLI_FILE", "LIGHTSPEED_API_TOKEN_PLATFORM", "LIGHTSPEED_API_TOKEN_PLATFORM_FILE", "LIGHTSPEED_PLATFORM_API_TOKEN", "LIGHTSPEED_PLATFORM_API_TOKEN_FILE"]) {
         if (plan.env[name] === undefined) delete processPlan.env[name];
         else processPlan.env[name] = plan.env[name];
       }
@@ -191,7 +191,7 @@ function loadDevEnvironment() {
 }
 
 function createPlan(profile, sourceEnv) {
-  const runtimeRpc = sourceEnv.LIGHTSPEED_API_URL ?? "http://127.0.0.1:18080/rpc";
+  const runtimeApi = sourceEnv.LIGHTSPEED_API_URL ?? "http://127.0.0.1:18080/api/v1";
   const platformDatabaseUrl =
     sourceEnv.LIGHTSPEED_PLATFORM_DATABASE_URL ??
     sourceEnv.LIGHTSPEED_TEST_POSTGRES_URL;
@@ -205,7 +205,7 @@ function createPlan(profile, sourceEnv) {
     sourceEnv.TEMPORAL_ADDRESS ?? `127.0.0.1:${sourceEnv.TEMPORAL_PORT ?? "7233"}`;
   // The focused platform profile talks to whatever runtime LIGHTSPEED_API_URL
   // names; the frontend-only loop is `npm run demo` (in-browser backend).
-  const platformApiUrl = runtimeRpc;
+  const platformApiUrl = runtimeApi;
   const runtimeAuthMode =
     sourceEnv.LIGHTSPEED_AUTH_MODE ?? "authenticated";
   // Local environment daemon: a directly attached `lightspeed-envd` on the
@@ -319,11 +319,11 @@ function createPlan(profile, sourceEnv) {
         args: ["watch", "platform/backend/src/main.ts"],
         cwd: repoRoot,
         env,
-        // First-login bootstrap checks the canonical administrator through RPC.
+        // First-login bootstrap checks the canonical administrator through the HTTP API.
         // Wait for the configured runtime in both full and platform-only loops.
         startAfter: {
           name: "runtime gateway",
-          url: new URL("health", platformApiUrl).href,
+          url: new URL("../../health", `${platformApiUrl.replace(/\/$/, "")}/`).href,
         },
       },
       {

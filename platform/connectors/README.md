@@ -4,12 +4,12 @@
 Lightspeed core. It is **one process serving many accounts across many
 universes**: one grammy long-poller or Baileys socket per account, one Temporal
 activity worker per account queue, all in one Node process. Its only
-dependencies are the core JSON-RPC API and Temporal; it reads no database.
+dependencies are the core HTTP API and Temporal; it reads no database.
 
-The host currently refuses startup, and the development launcher does not
-start it. Its former restricted runtime API key no longer exists. Re-enabling
-it requires a scoped Platform credential; do not give it a full runtime RPC
-token. The implementation below is retained for that integration.
+The development launcher does not start the host. Trusted operators can run it
+manually with an explicit `LIGHTSPEED_CONNECTOR_API_TOKEN`. This is a full
+authority runtime credential; the shared browser API does not expose connector
+service operations. Scoped Platform service credentials remain separate work.
 
 ## What it does
 
@@ -46,10 +46,10 @@ token. The implementation below is retained for that integration.
 
 ## Runtime access
 
-The retained client selects `x-lightspeed-universe: <universeId>` on account
-requests. A future Platform credential must authorize discovery, token leases,
-inbound admission, and blob writes for the connector. Runtime RPC tokens have
-full deployment authority and cannot provide that scope.
+Account requests address `/api/v1/universes/{universe}` in the runtime HTTP API.
+The host supplies its configured bearer token and never uses a universe header.
+Discovery, credential leases and inbound admission require a trusted runtime
+connection; they are deliberately unavailable through Platform's browser API.
 
 For implementing another provider, read
 [Channel connectors](../../docs/documentation/integrating-and-extending/channel-connectors.md)
@@ -58,7 +58,8 @@ in the product manual.
 ## Configuration
 
 See the "Connector host" section of [environment-variable reference](../../docs/documentation/reference/environment-variables.md).
-The retained configuration uses `LIGHTSPEED_API_URL`; WhatsApp additionally needs
+Configuration uses `LIGHTSPEED_API_URL` ending in `/api/v1` and
+`LIGHTSPEED_CONNECTOR_API_TOKEN`; WhatsApp additionally needs
 `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` and
 `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`.
 

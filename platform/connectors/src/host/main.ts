@@ -8,7 +8,7 @@ import { installTemporalMetrics } from "./temporal-metrics.js";
 
 const config = parseHostConfig(process.env);
 installTemporalMetrics("lightspeed-connectors", config.metrics);
-const core = new CoreClient({ endpoint: config.apiUrl, apiKey: config.apiKey });
+const core = new CoreClient({ endpoint: config.apiUrl, apiToken: config.apiToken });
 // One connection for every account worker. TLS and the API key are set on it
 // explicitly from the validated TEMPORAL_* settings.
 const connection = await NativeConnection.connect(temporalConnectionOptions(config.temporal));

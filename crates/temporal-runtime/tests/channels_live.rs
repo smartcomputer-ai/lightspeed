@@ -336,8 +336,7 @@ async fn create_bot_with_chat(
                 pairing_code: None,
             }],
         })
-        .await?
-        .result;
+        .await?;
     let pairing_code = created
         .trigger_secrets
         .get(trigger_id.as_str())
@@ -372,7 +371,6 @@ async fn admit(
             inbound: message,
         })
         .await?
-        .result
         .decision)
 }
 
@@ -438,7 +436,6 @@ async fn channels_live_open_chat_message_round_trips_to_a_reply() -> anyhow::Res
                     cursor: None,
                 })
                 .await?
-                .result
                 .events;
             if events.len() >= 2 && events.iter().all(|event| event.outcome.is_some()) {
                 break events;
@@ -484,7 +481,6 @@ async fn channels_live_open_chat_message_round_trips_to_a_reply() -> anyhow::Res
                 thread_id: None,
             })
             .await?
-            .result
             .conversation
             .expect("conversation workflow running");
         assert_eq!(snapshot.inbound_count, 2);
@@ -521,7 +517,6 @@ async fn channels_live_pairing_gates_a_conversation() -> anyhow::Result<()> {
                 bot_id: None,
             })
             .await?
-            .result
             .pairings;
         assert_eq!(pairings.len(), 1);
         assert_eq!(pairings[0].chat_id, "chat-2");
@@ -673,7 +668,6 @@ async fn channels_live_voice_preparation_preserves_provenance_and_redelivery_ide
             .api
             .read_model_defaults(api::ModelDefaultsReadParams {})
             .await?
-            .result
             .defaults;
         live.api
             .put_model_defaults(api::ModelDefaultsPutParams {
@@ -722,7 +716,6 @@ async fn channels_live_voice_preparation_preserves_provenance_and_redelivery_ide
                 cursor: None,
             })
             .await?
-            .result
             .events;
         let voice = events
             .iter()

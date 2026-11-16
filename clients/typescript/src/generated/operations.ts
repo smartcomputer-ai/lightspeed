@@ -4,7 +4,7 @@
  */
 import type * as Api from "./types.js";
 
-export const METHODS = [
+export const OPERATIONS = [
   "universe/watch",
   "vfs/workspaces/files/read",
   "initialize",
@@ -151,13 +151,14 @@ export const METHODS = [
   "deployment/environment-providers/bindings/put",
   "deployment/environment-providers/bindings/delete",
   "deployment/channels/accounts/list",
+  "blobs/upload",
 ] as const;
 
-export const METHOD_INFO = {
+export const OPERATION_INFO = {
   "universe/watch": {
     scope: "universe",
     streaming: true,
-    notifications: ["session/changed","session/removed","bots/changed","bots/removed","environments/changed","environments/removed","workspaces/changed","workspaces/removed","watch/reset"],
+    notifications: ["bots/changed","bots/removed","environments/changed","environments/removed","session/changed","session/removed","watch/reset","workspaces/changed","workspaces/removed"],
     access: {"action":"read","kind":"universe"},
     summary: "Watch universe list changes",
     description: "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.",
@@ -176,7 +177,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"kind":"connection"},
     summary: "Inspect the Lightspeed protocol",
-    description: "Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
+    description: "Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.",
   },
   "session/start": {
     scope: "universe",
@@ -704,7 +705,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "Read a content-addressed blob",
-    description: "Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.",
+    description: "Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.",
   },
   "blobs/has": {
     scope: "universe",
@@ -1322,29 +1323,32 @@ export const METHOD_INFO = {
     summary: "List channel accounts across universes",
     description: "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
   },
+  "blobs/upload": {
+    scope: "universe",
+    streaming: false,
+    notifications: [],
+    access: {"action":"useResource","kind":"universe"},
+    summary: "Upload a content-addressed blob",
+    description: "Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.",
+  },
 } as const;
 
 export const NOTIFICATIONS = [
-  "session/changed",
-  "session/removed",
   "bots/changed",
   "bots/removed",
   "environments/changed",
   "environments/removed",
+  "session/changed",
+  "session/removed",
+  "watch/reset",
   "workspaces/changed",
   "workspaces/removed",
-  "watch/reset",
-  "session/started",
-  "session/event",
-  "session/runs/started",
-  "session/runs/completed",
-  "error",
 ] as const;
 
-export type Method = (typeof METHODS)[number];
-export type NotificationMethod = (typeof NOTIFICATIONS)[number];
+export type OperationId = (typeof OPERATIONS)[number];
+export type NotificationOperationId = (typeof NOTIFICATIONS)[number];
 
-export interface MethodMap {
+export interface OperationMap {
   /**
    * Watch universe list changes
    *
@@ -1352,7 +1356,7 @@ export interface MethodMap {
    */
   "universe/watch": {
     params: Api.UniverseWatchParams;
-    result: Api.AgentApiOutcomeOfUniverseWatchResponse;
+    result: Api.UniverseWatchResponse;
   };
   /**
    * Read a workspace file
@@ -1361,16 +1365,16 @@ export interface MethodMap {
    */
   "vfs/workspaces/files/read": {
     params: Api.VfsWorkspaceFileReadParams;
-    result: Api.AgentApiOutcomeOfBlobReadResponse;
+    result: Uint8Array;
   };
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
+   * Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.
    */
   "initialize": {
-    params: Api.InitializeParams;
-    result: Api.AgentApiOutcomeOfInitializeResponse;
+    params: Api.ConnectionParams;
+    result: Api.ConnectionResponse;
   };
   /**
    * Start a session
@@ -1379,7 +1383,7 @@ export interface MethodMap {
    */
   "session/start": {
     params: Api.SessionStartParams;
-    result: Api.AgentApiOutcomeOfSessionStartResponse;
+    result: Api.SessionStartResponse;
   };
   /**
    * Read a session
@@ -1388,7 +1392,7 @@ export interface MethodMap {
    */
   "session/read": {
     params: Api.SessionReadParams;
-    result: Api.AgentApiOutcomeOfSessionReadResponse;
+    result: Api.SessionReadResponse;
   };
   /**
    * List sessions
@@ -1397,7 +1401,7 @@ export interface MethodMap {
    */
   "session/list": {
     params: Api.SessionListParams;
-    result: Api.AgentApiOutcomeOfSessionListResponse;
+    result: Api.SessionListResponse;
   };
   /**
    * Replace session configuration
@@ -1406,7 +1410,7 @@ export interface MethodMap {
    */
   "session/config/put": {
     params: Api.SessionConfigPutParams;
-    result: Api.AgentApiOutcomeOfSessionConfigPutResponse;
+    result: Api.SessionConfigPutResponse;
   };
   /**
    * Rename a session
@@ -1415,7 +1419,7 @@ export interface MethodMap {
    */
   "session/rename": {
     params: Api.SessionRenameParams;
-    result: Api.AgentApiOutcomeOfSessionRenameResponse;
+    result: Api.SessionRenameResponse;
   };
   /**
    * Replace session metadata
@@ -1424,7 +1428,7 @@ export interface MethodMap {
    */
   "session/metadata/put": {
     params: Api.SessionMetadataPutParams;
-    result: Api.AgentApiOutcomeOfSessionMetadataPutResponse;
+    result: Api.SessionMetadataPutResponse;
   };
   /**
    * Replace session retention
@@ -1433,7 +1437,7 @@ export interface MethodMap {
    */
   "session/retention/put": {
     params: Api.SessionRetentionPutParams;
-    result: Api.AgentApiOutcomeOfSessionRetentionPutResponse;
+    result: Api.SessionRetentionPutResponse;
   };
   /**
    * Restart a stopped session
@@ -1442,7 +1446,7 @@ export interface MethodMap {
    */
   "session/restart": {
     params: Api.SessionRestartParams;
-    result: Api.AgentApiOutcomeOfSessionRestartResponse;
+    result: Api.SessionRestartResponse;
   };
   /**
    * Close a session
@@ -1451,7 +1455,7 @@ export interface MethodMap {
    */
   "session/close": {
     params: Api.SessionCloseParams;
-    result: Api.AgentApiOutcomeOfSessionCloseResponse;
+    result: Api.SessionCloseResponse;
   };
   /**
    * Delete closed sessions
@@ -1460,7 +1464,7 @@ export interface MethodMap {
    */
   "session/delete": {
     params: Api.SessionDeleteParams;
-    result: Api.AgentApiOutcomeOfSessionDeleteResponse;
+    result: Api.SessionDeleteResponse;
   };
   /**
    * Share a session with the universe
@@ -1469,7 +1473,7 @@ export interface MethodMap {
    */
   "session/share": {
     params: Api.SessionShareParams;
-    result: Api.AgentApiOutcomeOfSessionShareResponse;
+    result: Api.SessionShareResponse;
   };
   /**
    * Read the session event stream
@@ -1478,7 +1482,7 @@ export interface MethodMap {
    */
   "session/events/read": {
     params: Api.SessionEventsReadParams;
-    result: Api.AgentApiOutcomeOfSessionEventsReadResponse;
+    result: Api.SessionEventsReadResponse;
   };
   /**
    * Append keyed session context
@@ -1487,7 +1491,7 @@ export interface MethodMap {
    */
   "session/context/append": {
     params: Api.ContextAppendParams;
-    result: Api.AgentApiOutcomeOfContextAppendResponse;
+    result: Api.ContextAppendResponse;
   };
   /**
    * Remove keyed session context
@@ -1496,7 +1500,7 @@ export interface MethodMap {
    */
   "session/context/remove": {
     params: Api.ContextRemoveParams;
-    result: Api.AgentApiOutcomeOfContextRemoveResponse;
+    result: Api.ContextRemoveResponse;
   };
   /**
    * Replace session context entries
@@ -1505,7 +1509,7 @@ export interface MethodMap {
    */
   "session/context/replace": {
     params: Api.ContextReplaceParams;
-    result: Api.AgentApiOutcomeOfContextReplaceResponse;
+    result: Api.ContextReplaceResponse;
   };
   /**
    * Compact session context
@@ -1514,7 +1518,7 @@ export interface MethodMap {
    */
   "session/context/compact": {
     params: Api.ContextCompactParams;
-    result: Api.AgentApiOutcomeOfContextCompactResponse;
+    result: Api.ContextCompactResponse;
   };
   /**
    * Start an agent run
@@ -1523,7 +1527,7 @@ export interface MethodMap {
    */
   "session/runs/start": {
     params: Api.RunStartParams;
-    result: Api.AgentApiOutcomeOfRunStartResponse;
+    result: Api.RunStartResponse;
   };
   /**
    * List session runs
@@ -1532,7 +1536,7 @@ export interface MethodMap {
    */
   "session/runs/list": {
     params: Api.RunListParams;
-    result: Api.AgentApiOutcomeOfRunListResponse;
+    result: Api.RunListResponse;
   };
   /**
    * Read one session run
@@ -1541,7 +1545,7 @@ export interface MethodMap {
    */
   "session/runs/read": {
     params: Api.RunReadParams;
-    result: Api.AgentApiOutcomeOfRunReadResponse;
+    result: Api.RunReadResponse;
   };
   /**
    * Cancel a run
@@ -1550,7 +1554,7 @@ export interface MethodMap {
    */
   "session/runs/cancel": {
     params: Api.RunCancelParams;
-    result: Api.AgentApiOutcomeOfRunCancelResponse;
+    result: Api.RunCancelResponse;
   };
   /**
    * Decide pending run approvals
@@ -1559,7 +1563,7 @@ export interface MethodMap {
    */
   "session/runs/approvals/decide": {
     params: Api.RunApprovalsDecideParams;
-    result: Api.AgentApiOutcomeOfRunApprovalsDecideResponse;
+    result: Api.RunApprovalsDecideResponse;
   };
   /**
    * Steer the active run
@@ -1568,7 +1572,7 @@ export interface MethodMap {
    */
   "session/runs/steer": {
     params: Api.RunSteerParams;
-    result: Api.AgentApiOutcomeOfRunSteerResponse;
+    result: Api.RunSteerResponse;
   };
   /**
    * List available session skills
@@ -1577,7 +1581,7 @@ export interface MethodMap {
    */
   "session/skills/list": {
     params: Api.SkillListParams;
-    result: Api.AgentApiOutcomeOfSkillListResponse;
+    result: Api.SkillListResponse;
   };
   /**
    * Apply a profile to a session
@@ -1586,7 +1590,7 @@ export interface MethodMap {
    */
   "session/profiles/apply": {
     params: Api.ProfileApplyParams;
-    result: Api.AgentApiOutcomeOfProfileApplyResponse;
+    result: Api.ProfileApplyResponse;
   };
   /**
    * Activate a session environment
@@ -1595,7 +1599,7 @@ export interface MethodMap {
    */
   "session/environments/activate": {
     params: Api.SessionEnvironmentActivateParams;
-    result: Api.AgentApiOutcomeOfSessionEnvironmentActivateResponse;
+    result: Api.SessionEnvironmentActivateResponse;
   };
   /**
    * Deactivate the session environment
@@ -1604,7 +1608,7 @@ export interface MethodMap {
    */
   "session/environments/deactivate": {
     params: Api.SessionEnvironmentDeactivateParams;
-    result: Api.AgentApiOutcomeOfSessionEnvironmentDeactivateResponse;
+    result: Api.SessionEnvironmentDeactivateResponse;
   };
   /**
    * Bind a credential into an environment
@@ -1613,7 +1617,7 @@ export interface MethodMap {
    */
   "environments/credentials/bind": {
     params: Api.EnvironmentCredentialBindParams;
-    result: Api.AgentApiOutcomeOfEnvironmentCredentialBindResponse;
+    result: Api.EnvironmentCredentialBindResponse;
   };
   /**
    * List environment credential bindings
@@ -1622,7 +1626,7 @@ export interface MethodMap {
    */
   "environments/credentials/list": {
     params: Api.EnvironmentCredentialListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentCredentialListResponse;
+    result: Api.EnvironmentCredentialListResponse;
   };
   /**
    * Unbind an environment credential
@@ -1631,7 +1635,7 @@ export interface MethodMap {
    */
   "environments/credentials/unbind": {
     params: Api.EnvironmentCredentialUnbindParams;
-    result: Api.AgentApiOutcomeOfEnvironmentCredentialUnbindResponse;
+    result: Api.EnvironmentCredentialUnbindResponse;
   };
   /**
    * Create an environment
@@ -1640,7 +1644,7 @@ export interface MethodMap {
    */
   "environments/create": {
     params: Api.EnvironmentCreateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentCreateResponse;
+    result: Api.EnvironmentCreateResponse;
   };
   /**
    * Read an environment
@@ -1649,7 +1653,7 @@ export interface MethodMap {
    */
   "environments/read": {
     params: Api.EnvironmentReadParams;
-    result: Api.AgentApiOutcomeOfEnvironmentReadResponse;
+    result: Api.EnvironmentReadResponse;
   };
   /**
    * Update an environment
@@ -1658,7 +1662,7 @@ export interface MethodMap {
    */
   "environments/update": {
     params: Api.EnvironmentUpdateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentUpdateResponse;
+    result: Api.EnvironmentUpdateResponse;
   };
   /**
    * List environments
@@ -1667,7 +1671,7 @@ export interface MethodMap {
    */
   "environments/list": {
     params: Api.EnvironmentListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentListResponse;
+    result: Api.EnvironmentListResponse;
   };
   /**
    * Close an environment
@@ -1676,7 +1680,7 @@ export interface MethodMap {
    */
   "environments/close": {
     params: Api.EnvironmentCloseParams;
-    result: Api.AgentApiOutcomeOfEnvironmentCloseResponse;
+    result: Api.EnvironmentCloseResponse;
   };
   /**
    * Register an external environment
@@ -1685,7 +1689,7 @@ export interface MethodMap {
    */
   "environments/external/create": {
     params: Api.EnvironmentExternalCreateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentExternalCreateResponse;
+    result: Api.EnvironmentExternalCreateResponse;
   };
   /**
    * Declare a registered environment
@@ -1694,7 +1698,7 @@ export interface MethodMap {
    */
   "environments/registered/put": {
     params: Api.EnvironmentRegisteredPutParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegisteredPutResponse;
+    result: Api.EnvironmentRegisteredPutResponse;
   };
   /**
    * Release a declared environment's daemon
@@ -1703,7 +1707,7 @@ export interface MethodMap {
    */
   "environments/registered/release": {
     params: Api.EnvironmentRegisteredReleaseParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse;
+    result: Api.EnvironmentRegisteredReleaseResponse;
   };
   /**
    * Configure environment public ingress
@@ -1712,7 +1716,7 @@ export interface MethodMap {
    */
   "environments/ingress/put": {
     params: Api.EnvironmentIngressPutParams;
-    result: Api.AgentApiOutcomeOfEnvironmentIngressPutResponse;
+    result: Api.EnvironmentIngressPutResponse;
   };
   /**
    * Set environment power
@@ -1721,7 +1725,7 @@ export interface MethodMap {
    */
   "environments/power/put": {
     params: Api.EnvironmentPowerPutParams;
-    result: Api.AgentApiOutcomeOfEnvironmentPowerPutResponse;
+    result: Api.EnvironmentPowerPutResponse;
   };
   /**
    * List environment provider bindings
@@ -1730,7 +1734,7 @@ export interface MethodMap {
    */
   "environments/provider-bindings/list": {
     params: Api.EnvironmentProviderBindingListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse;
+    result: Api.EnvironmentProviderBindingListResponse;
   };
   /**
    * Read an environment provider binding
@@ -1739,7 +1743,7 @@ export interface MethodMap {
    */
   "environments/provider-bindings/read": {
     params: Api.EnvironmentProviderBindingReadParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderBindingReadResponse;
+    result: Api.EnvironmentProviderBindingReadResponse;
   };
   /**
    * List environment templates
@@ -1748,7 +1752,7 @@ export interface MethodMap {
    */
   "environments/templates/list": {
     params: Api.EnvironmentTemplateListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentTemplateListResponse;
+    result: Api.EnvironmentTemplateListResponse;
   };
   /**
    * Read an environment template
@@ -1757,7 +1761,7 @@ export interface MethodMap {
    */
   "environments/templates/read": {
     params: Api.EnvironmentTemplateReadParams;
-    result: Api.AgentApiOutcomeOfEnvironmentTemplateReadResponse;
+    result: Api.EnvironmentTemplateReadResponse;
   };
   /**
    * Create environment jobs
@@ -1766,7 +1770,7 @@ export interface MethodMap {
    */
   "environments/jobs/create": {
     params: Api.EnvironmentJobCreateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentJobCreateResponse;
+    result: Api.EnvironmentJobCreateResponse;
   };
   /**
    * Read environment jobs
@@ -1775,7 +1779,7 @@ export interface MethodMap {
    */
   "environments/jobs/read": {
     params: Api.EnvironmentJobReadParams;
-    result: Api.AgentApiOutcomeOfEnvironmentJobReadResponse;
+    result: Api.EnvironmentJobReadResponse;
   };
   /**
    * Cancel environment jobs
@@ -1784,7 +1788,7 @@ export interface MethodMap {
    */
   "environments/jobs/cancel": {
     params: Api.EnvironmentJobCancelParams;
-    result: Api.AgentApiOutcomeOfEnvironmentJobCancelResponse;
+    result: Api.EnvironmentJobCancelResponse;
   };
   /**
    * Mint an environment registration key
@@ -1793,7 +1797,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/create": {
     params: Api.EnvironmentRegistrationKeyCreateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse;
+    result: Api.EnvironmentRegistrationKeyCreateResponse;
   };
   /**
    * Declare an environment registration key
@@ -1802,7 +1806,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/put": {
     params: Api.EnvironmentRegistrationKeyPutParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse;
+    result: Api.EnvironmentRegistrationKeyPutResponse;
   };
   /**
    * Read an environment registration key
@@ -1811,7 +1815,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/read": {
     params: Api.EnvironmentRegistrationKeyReadParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse;
+    result: Api.EnvironmentRegistrationKeyReadResponse;
   };
   /**
    * List environment registration keys
@@ -1820,7 +1824,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/list": {
     params: Api.EnvironmentRegistrationKeyListParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse;
+    result: Api.EnvironmentRegistrationKeyListResponse;
   };
   /**
    * Update an environment registration key
@@ -1829,7 +1833,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/update": {
     params: Api.EnvironmentRegistrationKeyUpdateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse;
+    result: Api.EnvironmentRegistrationKeyUpdateResponse;
   };
   /**
    * Rotate an environment registration key
@@ -1838,7 +1842,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/rotate": {
     params: Api.EnvironmentRegistrationKeyRotateParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse;
+    result: Api.EnvironmentRegistrationKeyRotateResponse;
   };
   /**
    * Revoke an environment registration key
@@ -1847,7 +1851,7 @@ export interface MethodMap {
    */
   "environments/registration-keys/revoke": {
     params: Api.EnvironmentRegistrationKeyRevokeParams;
-    result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse;
+    result: Api.EnvironmentRegistrationKeyRevokeResponse;
   };
   /**
    * Start transcription
@@ -1856,7 +1860,7 @@ export interface MethodMap {
    */
   "transcriptions/start": {
     params: Api.TranscriptionStartParams;
-    result: Api.AgentApiOutcomeOfTranscriptionResponse;
+    result: Api.TranscriptionResponse;
   };
   /**
    * Read transcription
@@ -1865,7 +1869,7 @@ export interface MethodMap {
    */
   "transcriptions/read": {
     params: Api.TranscriptionReadParams;
-    result: Api.AgentApiOutcomeOfTranscriptionResponse;
+    result: Api.TranscriptionResponse;
   };
   /**
    * Cancel transcription
@@ -1874,7 +1878,7 @@ export interface MethodMap {
    */
   "transcriptions/cancel": {
     params: Api.TranscriptionCancelParams;
-    result: Api.AgentApiOutcomeOfTranscriptionResponse;
+    result: Api.TranscriptionResponse;
   };
   /**
    * Read universe model defaults
@@ -1883,7 +1887,7 @@ export interface MethodMap {
    */
   "models/defaults/read": {
     params: Api.ModelDefaultsReadParams;
-    result: Api.AgentApiOutcomeOfModelDefaultsResponse;
+    result: Api.ModelDefaultsResponse;
   };
   /**
    * Set a universe model default
@@ -1892,7 +1896,7 @@ export interface MethodMap {
    */
   "models/defaults/put": {
     params: Api.ModelDefaultsPutParams;
-    result: Api.AgentApiOutcomeOfModelDefaultsResponse;
+    result: Api.ModelDefaultsResponse;
   };
   /**
    * Discover available models
@@ -1901,7 +1905,7 @@ export interface MethodMap {
    */
   "models/list": {
     params: Api.ModelListParams;
-    result: Api.AgentApiOutcomeOfModelListResponse;
+    result: Api.ModelListResponse;
   };
   /**
    * Create an agent profile
@@ -1910,7 +1914,7 @@ export interface MethodMap {
    */
   "profiles/create": {
     params: Api.ProfileCreateParams;
-    result: Api.AgentApiOutcomeOfProfileCreateResponse;
+    result: Api.ProfileCreateResponse;
   };
   /**
    * Read an agent profile
@@ -1919,7 +1923,7 @@ export interface MethodMap {
    */
   "profiles/read": {
     params: Api.ProfileReadParams;
-    result: Api.AgentApiOutcomeOfProfileReadResponse;
+    result: Api.ProfileReadResponse;
   };
   /**
    * List agent profiles
@@ -1928,7 +1932,7 @@ export interface MethodMap {
    */
   "profiles/list": {
     params: Api.ProfileListParams;
-    result: Api.AgentApiOutcomeOfProfileListResponse;
+    result: Api.ProfileListResponse;
   };
   /**
    * Create or replace an agent profile
@@ -1937,7 +1941,7 @@ export interface MethodMap {
    */
   "profiles/put": {
     params: Api.ProfilePutParams;
-    result: Api.AgentApiOutcomeOfProfilePutResponse;
+    result: Api.ProfilePutResponse;
   };
   /**
    * Delete an agent profile
@@ -1946,7 +1950,7 @@ export interface MethodMap {
    */
   "profiles/delete": {
     params: Api.ProfileDeleteParams;
-    result: Api.AgentApiOutcomeOfProfileDeleteResponse;
+    result: Api.ProfileDeleteResponse;
   };
   /**
    * Store content-addressed blobs
@@ -1955,16 +1959,16 @@ export interface MethodMap {
    */
   "blobs/put": {
     params: Api.BlobPutParams;
-    result: Api.AgentApiOutcomeOfBlobPutResponse;
+    result: Api.BlobPutResponse;
   };
   /**
    * Read a content-addressed blob
    *
-   * Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.
+   * Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.
    */
   "blobs/read": {
     params: Api.BlobReadParams;
-    result: Api.AgentApiOutcomeOfBlobReadResponse;
+    result: Uint8Array;
   };
   /**
    * Check blob availability
@@ -1973,7 +1977,7 @@ export interface MethodMap {
    */
   "blobs/has": {
     params: Api.BlobHasParams;
-    result: Api.AgentApiOutcomeOfBlobHasResponse;
+    result: Api.BlobHasResponse;
   };
   /**
    * Commit a VFS snapshot
@@ -1982,7 +1986,7 @@ export interface MethodMap {
    */
   "vfs/snapshots/commit": {
     params: Api.VfsSnapshotCommitParams;
-    result: Api.AgentApiOutcomeOfVfsSnapshotCommitResponse;
+    result: Api.VfsSnapshotCommitResponse;
   };
   /**
    * Read a VFS snapshot
@@ -1991,7 +1995,7 @@ export interface MethodMap {
    */
   "vfs/snapshots/read": {
     params: Api.VfsSnapshotReadParams;
-    result: Api.AgentApiOutcomeOfVfsSnapshotReadResponse;
+    result: Api.VfsSnapshotReadResponse;
   };
   /**
    * Create a mutable VFS workspace
@@ -2000,7 +2004,7 @@ export interface MethodMap {
    */
   "vfs/workspaces/create": {
     params: Api.VfsWorkspaceCreateParams;
-    result: Api.AgentApiOutcomeOfVfsWorkspaceCreateResponse;
+    result: Api.VfsWorkspaceCreateResponse;
   };
   /**
    * Read a VFS workspace
@@ -2009,7 +2013,7 @@ export interface MethodMap {
    */
   "vfs/workspaces/read": {
     params: Api.VfsWorkspaceReadParams;
-    result: Api.AgentApiOutcomeOfVfsWorkspaceReadResponse;
+    result: Api.VfsWorkspaceReadResponse;
   };
   /**
    * List VFS workspaces
@@ -2018,7 +2022,7 @@ export interface MethodMap {
    */
   "vfs/workspaces/list": {
     params: Api.VfsWorkspaceListParams;
-    result: Api.AgentApiOutcomeOfVfsWorkspaceListResponse;
+    result: Api.VfsWorkspaceListResponse;
   };
   /**
    * Update a VFS workspace
@@ -2027,7 +2031,7 @@ export interface MethodMap {
    */
   "vfs/workspaces/update": {
     params: Api.VfsWorkspaceUpdateParams;
-    result: Api.AgentApiOutcomeOfVfsWorkspaceUpdateResponse;
+    result: Api.VfsWorkspaceUpdateResponse;
   };
   /**
    * Delete a VFS workspace
@@ -2036,7 +2040,7 @@ export interface MethodMap {
    */
   "vfs/workspaces/delete": {
     params: Api.VfsWorkspaceDeleteParams;
-    result: Api.AgentApiOutcomeOfVfsWorkspaceDeleteResponse;
+    result: Api.VfsWorkspaceDeleteResponse;
   };
   /**
    * Create or replace an MCP server record
@@ -2045,7 +2049,7 @@ export interface MethodMap {
    */
   "mcp/servers/put": {
     params: Api.McpServerPutParams;
-    result: Api.AgentApiOutcomeOfMcpServerPutResponse;
+    result: Api.McpServerPutResponse;
   };
   /**
    * Discover MCP server authentication
@@ -2054,7 +2058,7 @@ export interface MethodMap {
    */
   "mcp/servers/auth/discover": {
     params: Api.McpServerAuthDiscoverParams;
-    result: Api.AgentApiOutcomeOfMcpServerAuthDiscoverResponse;
+    result: Api.McpServerAuthDiscoverResponse;
   };
   /**
    * Discover MCP server tools
@@ -2063,7 +2067,7 @@ export interface MethodMap {
    */
   "mcp/servers/tools/discover": {
     params: Api.McpServerToolsDiscoverParams;
-    result: Api.AgentApiOutcomeOfMcpServerToolsDiscoverResponse;
+    result: Api.McpServerToolsDiscoverResponse;
   };
   /**
    * Read an MCP server record
@@ -2072,7 +2076,7 @@ export interface MethodMap {
    */
   "mcp/servers/read": {
     params: Api.McpServerReadParams;
-    result: Api.AgentApiOutcomeOfMcpServerReadResponse;
+    result: Api.McpServerReadResponse;
   };
   /**
    * List MCP server records
@@ -2081,7 +2085,7 @@ export interface MethodMap {
    */
   "mcp/servers/list": {
     params: Api.McpServerListParams;
-    result: Api.AgentApiOutcomeOfMcpServerListResponse;
+    result: Api.McpServerListResponse;
   };
   /**
    * Delete an MCP server record
@@ -2090,7 +2094,7 @@ export interface MethodMap {
    */
   "mcp/servers/delete": {
     params: Api.McpServerDeleteParams;
-    result: Api.AgentApiOutcomeOfMcpServerDeleteResponse;
+    result: Api.McpServerDeleteResponse;
   };
   /**
    * Import a token credential
@@ -2099,7 +2103,7 @@ export interface MethodMap {
    */
   "credentials/grants/import": {
     params: Api.CredentialGrantImportParams;
-    result: Api.AgentApiOutcomeOfCredentialGrantImportResponse;
+    result: Api.CredentialGrantImportResponse;
   };
   /**
    * Lease a retrievable credential grant
@@ -2108,7 +2112,7 @@ export interface MethodMap {
    */
   "credentials/grants/lease": {
     params: Api.CredentialGrantLeaseParams;
-    result: Api.AgentApiOutcomeOfCredentialGrantLeaseResponse;
+    result: Api.CredentialGrantLeaseResponse;
   };
   /**
    * Read credential grant metadata
@@ -2117,7 +2121,7 @@ export interface MethodMap {
    */
   "credentials/grants/read": {
     params: Api.CredentialGrantReadParams;
-    result: Api.AgentApiOutcomeOfCredentialGrantReadResponse;
+    result: Api.CredentialGrantReadResponse;
   };
   /**
    * List credential grants
@@ -2126,7 +2130,7 @@ export interface MethodMap {
    */
   "credentials/grants/list": {
     params: Api.CredentialGrantListParams;
-    result: Api.AgentApiOutcomeOfCredentialGrantListResponse;
+    result: Api.CredentialGrantListResponse;
   };
   /**
    * Declare a token credential
@@ -2135,7 +2139,7 @@ export interface MethodMap {
    */
   "credentials/grants/put": {
     params: Api.CredentialGrantPutParams;
-    result: Api.AgentApiOutcomeOfCredentialGrantPutResponse;
+    result: Api.CredentialGrantPutResponse;
   };
   /**
    * Revoke a credential grant
@@ -2144,7 +2148,7 @@ export interface MethodMap {
    */
   "credentials/grants/revoke": {
     params: Api.CredentialGrantRevokeParams;
-    result: Api.AgentApiOutcomeOfCredentialGrantRevokeResponse;
+    result: Api.CredentialGrantRevokeResponse;
   };
   /**
    * Register an OAuth client
@@ -2153,7 +2157,7 @@ export interface MethodMap {
    */
   "credentials/clients/create": {
     params: Api.CredentialClientCreateParams;
-    result: Api.AgentApiOutcomeOfCredentialClientCreateResponse;
+    result: Api.CredentialClientCreateResponse;
   };
   /**
    * Read OAuth client metadata
@@ -2162,7 +2166,7 @@ export interface MethodMap {
    */
   "credentials/clients/read": {
     params: Api.CredentialClientReadParams;
-    result: Api.AgentApiOutcomeOfCredentialClientReadResponse;
+    result: Api.CredentialClientReadResponse;
   };
   /**
    * List OAuth clients
@@ -2171,7 +2175,7 @@ export interface MethodMap {
    */
   "credentials/clients/list": {
     params: Api.CredentialClientListParams;
-    result: Api.AgentApiOutcomeOfCredentialClientListResponse;
+    result: Api.CredentialClientListResponse;
   };
   /**
    * Delete an OAuth client
@@ -2180,7 +2184,7 @@ export interface MethodMap {
    */
   "credentials/clients/delete": {
     params: Api.CredentialClientDeleteParams;
-    result: Api.AgentApiOutcomeOfCredentialClientDeleteResponse;
+    result: Api.CredentialClientDeleteResponse;
   };
   /**
    * Start an OAuth authorization flow
@@ -2189,7 +2193,7 @@ export interface MethodMap {
    */
   "credentials/flows/start": {
     params: Api.CredentialFlowStartParams;
-    result: Api.AgentApiOutcomeOfCredentialFlowStartResponse;
+    result: Api.CredentialFlowStartResponse;
   };
   /**
    * Read OAuth flow status
@@ -2198,7 +2202,7 @@ export interface MethodMap {
    */
   "credentials/flows/read": {
     params: Api.CredentialFlowStatusParams;
-    result: Api.AgentApiOutcomeOfCredentialFlowStatusResponse;
+    result: Api.CredentialFlowStatusResponse;
   };
   /**
    * Register a credential provider
@@ -2207,7 +2211,7 @@ export interface MethodMap {
    */
   "credentials/providers/create": {
     params: Api.CredentialProviderCreateParams;
-    result: Api.AgentApiOutcomeOfCredentialProviderCreateResponse;
+    result: Api.CredentialProviderCreateResponse;
   };
   /**
    * Declare a credential provider
@@ -2216,7 +2220,7 @@ export interface MethodMap {
    */
   "credentials/providers/put": {
     params: Api.CredentialProviderPutParams;
-    result: Api.AgentApiOutcomeOfCredentialProviderPutResponse;
+    result: Api.CredentialProviderPutResponse;
   };
   /**
    * Read credential provider metadata
@@ -2225,7 +2229,7 @@ export interface MethodMap {
    */
   "credentials/providers/read": {
     params: Api.CredentialProviderReadParams;
-    result: Api.AgentApiOutcomeOfCredentialProviderReadResponse;
+    result: Api.CredentialProviderReadResponse;
   };
   /**
    * List credential providers
@@ -2234,7 +2238,7 @@ export interface MethodMap {
    */
   "credentials/providers/list": {
     params: Api.CredentialProviderListParams;
-    result: Api.AgentApiOutcomeOfCredentialProviderListResponse;
+    result: Api.CredentialProviderListResponse;
   };
   /**
    * Delete a credential provider
@@ -2243,7 +2247,7 @@ export interface MethodMap {
    */
   "credentials/providers/delete": {
     params: Api.CredentialProviderDeleteParams;
-    result: Api.AgentApiOutcomeOfCredentialProviderDeleteResponse;
+    result: Api.CredentialProviderDeleteResponse;
   };
   /**
    * List GitHub App installations
@@ -2252,7 +2256,7 @@ export interface MethodMap {
    */
   "credentials/github/installations/list": {
     params: Api.CredentialGitHubInstallationListParams;
-    result: Api.AgentApiOutcomeOfCredentialGitHubInstallationListResponse;
+    result: Api.CredentialGitHubInstallationListResponse;
   };
   /**
    * Grant access to a GitHub App installation
@@ -2261,7 +2265,7 @@ export interface MethodMap {
    */
   "credentials/github/installations/grant": {
     params: Api.CredentialGitHubInstallationGrantParams;
-    result: Api.AgentApiOutcomeOfCredentialGitHubInstallationGrantResponse;
+    result: Api.CredentialGitHubInstallationGrantResponse;
   };
   /**
    * Create a bot
@@ -2270,7 +2274,7 @@ export interface MethodMap {
    */
   "bots/create": {
     params: Api.BotCreateParams;
-    result: Api.AgentApiOutcomeOfBotCreateResponse;
+    result: Api.BotCreateResponse;
   };
   /**
    * Create or replace a bot document
@@ -2279,7 +2283,7 @@ export interface MethodMap {
    */
   "bots/put": {
     params: Api.BotPutParams;
-    result: Api.AgentApiOutcomeOfBotPutResponse;
+    result: Api.BotPutResponse;
   };
   /**
    * Read a bot
@@ -2288,7 +2292,7 @@ export interface MethodMap {
    */
   "bots/read": {
     params: Api.BotReadParams;
-    result: Api.AgentApiOutcomeOfBotReadResponse;
+    result: Api.BotReadResponse;
   };
   /**
    * List bots
@@ -2297,7 +2301,7 @@ export interface MethodMap {
    */
   "bots/list": {
     params: Api.BotListParams;
-    result: Api.AgentApiOutcomeOfBotListResponse;
+    result: Api.BotListResponse;
   };
   /**
    * Close a bot
@@ -2306,7 +2310,7 @@ export interface MethodMap {
    */
   "bots/close": {
     params: Api.BotCloseParams;
-    result: Api.AgentApiOutcomeOfBotCloseResponse;
+    result: Api.BotCloseResponse;
   };
   /**
    * Delete a bot
@@ -2315,7 +2319,7 @@ export interface MethodMap {
    */
   "bots/delete": {
     params: Api.BotDeleteParams;
-    result: Api.AgentApiOutcomeOfBotDeleteResponse;
+    result: Api.BotDeleteResponse;
   };
   /**
    * Read bot controller state
@@ -2324,7 +2328,7 @@ export interface MethodMap {
    */
   "bots/state/read": {
     params: Api.BotStateReadParams;
-    result: Api.AgentApiOutcomeOfBotStateReadResponse;
+    result: Api.BotStateReadResponse;
   };
   /**
    * Rotate a bot session
@@ -2333,7 +2337,7 @@ export interface MethodMap {
    */
   "bots/sessions/rotate": {
     params: Api.BotSessionRotateParams;
-    result: Api.AgentApiOutcomeOfBotSessionRotateResponse;
+    result: Api.BotSessionRotateResponse;
   };
   /**
    * Create or replace a trigger
@@ -2342,7 +2346,7 @@ export interface MethodMap {
    */
   "bots/triggers/put": {
     params: Api.BotTriggerPutParams;
-    result: Api.AgentApiOutcomeOfBotTriggerPutResponse;
+    result: Api.BotTriggerPutResponse;
   };
   /**
    * Read a trigger
@@ -2351,7 +2355,7 @@ export interface MethodMap {
    */
   "bots/triggers/read": {
     params: Api.BotTriggerReadParams;
-    result: Api.AgentApiOutcomeOfBotTriggerReadResponse;
+    result: Api.BotTriggerReadResponse;
   };
   /**
    * List a bot's triggers
@@ -2360,7 +2364,7 @@ export interface MethodMap {
    */
   "bots/triggers/list": {
     params: Api.BotTriggerListParams;
-    result: Api.AgentApiOutcomeOfBotTriggerListResponse;
+    result: Api.BotTriggerListResponse;
   };
   /**
    * Read a trigger's secrets
@@ -2369,7 +2373,7 @@ export interface MethodMap {
    */
   "bots/triggers/secrets/read": {
     params: Api.BotTriggerSecretsReadParams;
-    result: Api.AgentApiOutcomeOfBotTriggerSecretsReadResponse;
+    result: Api.BotTriggerSecretsReadResponse;
   };
   /**
    * Delete a trigger
@@ -2378,7 +2382,7 @@ export interface MethodMap {
    */
   "bots/triggers/delete": {
     params: Api.BotTriggerDeleteParams;
-    result: Api.AgentApiOutcomeOfBotTriggerDeleteResponse;
+    result: Api.BotTriggerDeleteResponse;
   };
   /**
    * Admit an event manually
@@ -2387,7 +2391,7 @@ export interface MethodMap {
    */
   "bots/events/admit": {
     params: Api.BotEventAdmitParams;
-    result: Api.AgentApiOutcomeOfBotEventAdmitResponse;
+    result: Api.BotEventAdmitResponse;
   };
   /**
    * Replay a stored event
@@ -2396,7 +2400,7 @@ export interface MethodMap {
    */
   "bots/events/replay": {
     params: Api.BotEventReplayParams;
-    result: Api.AgentApiOutcomeOfBotEventReplayResponse;
+    result: Api.BotEventReplayResponse;
   };
   /**
    * List a bot's events
@@ -2405,7 +2409,7 @@ export interface MethodMap {
    */
   "bots/events/list": {
     params: Api.BotEventListParams;
-    result: Api.AgentApiOutcomeOfBotEventListResponse;
+    result: Api.BotEventListResponse;
   };
   /**
    * Read an event by number
@@ -2414,7 +2418,7 @@ export interface MethodMap {
    */
   "bots/events/read": {
     params: Api.BotEventReadParams;
-    result: Api.AgentApiOutcomeOfBotEventReadResponse;
+    result: Api.BotEventReadResponse;
   };
   /**
    * Test a CEL filter
@@ -2423,7 +2427,7 @@ export interface MethodMap {
    */
   "bots/filters/test": {
     params: Api.BotFilterTestParams;
-    result: Api.AgentApiOutcomeOfBotFilterTestResponse;
+    result: Api.BotFilterTestResponse;
   };
   /**
    * Create a channel account
@@ -2432,7 +2436,7 @@ export interface MethodMap {
    */
   "channels/accounts/create": {
     params: Api.ChannelAccountCreateParams;
-    result: Api.AgentApiOutcomeOfChannelAccountCreateResponse;
+    result: Api.ChannelAccountCreateResponse;
   };
   /**
    * Create or replace a channel account
@@ -2441,7 +2445,7 @@ export interface MethodMap {
    */
   "channels/accounts/put": {
     params: Api.ChannelAccountPutParams;
-    result: Api.AgentApiOutcomeOfChannelAccountPutResponse;
+    result: Api.ChannelAccountPutResponse;
   };
   /**
    * Read a channel account
@@ -2450,7 +2454,7 @@ export interface MethodMap {
    */
   "channels/accounts/read": {
     params: Api.ChannelAccountReadParams;
-    result: Api.AgentApiOutcomeOfChannelAccountReadResponse;
+    result: Api.ChannelAccountReadResponse;
   };
   /**
    * List channel accounts
@@ -2459,7 +2463,7 @@ export interface MethodMap {
    */
   "channels/accounts/list": {
     params: Api.ChannelAccountListParams;
-    result: Api.AgentApiOutcomeOfChannelAccountListResponse;
+    result: Api.ChannelAccountListResponse;
   };
   /**
    * Delete a channel account
@@ -2468,7 +2472,7 @@ export interface MethodMap {
    */
   "channels/accounts/delete": {
     params: Api.ChannelAccountDeleteParams;
-    result: Api.AgentApiOutcomeOfChannelAccountDeleteResponse;
+    result: Api.ChannelAccountDeleteResponse;
   };
   /**
    * Admit a provider message
@@ -2477,7 +2481,7 @@ export interface MethodMap {
    */
   "channels/inbound/admit": {
     params: Api.ChannelInboundAdmitParams;
-    result: Api.AgentApiOutcomeOfChannelInboundAdmitResponse;
+    result: Api.ChannelInboundAdmitResponse;
   };
   /**
    * List chat pairings
@@ -2486,7 +2490,7 @@ export interface MethodMap {
    */
   "channels/pairings/list": {
     params: Api.ChannelPairingListParams;
-    result: Api.AgentApiOutcomeOfChannelPairingListResponse;
+    result: Api.ChannelPairingListResponse;
   };
   /**
    * Unpair a conversation
@@ -2495,7 +2499,7 @@ export interface MethodMap {
    */
   "channels/pairings/delete": {
     params: Api.ChannelPairingDeleteParams;
-    result: Api.AgentApiOutcomeOfChannelPairingDeleteResponse;
+    result: Api.ChannelPairingDeleteResponse;
   };
   /**
    * Read a conversation snapshot
@@ -2504,7 +2508,7 @@ export interface MethodMap {
    */
   "channels/conversations/read": {
     params: Api.ChannelConversationReadParams;
-    result: Api.AgentApiOutcomeOfChannelConversationReadResponse;
+    result: Api.ChannelConversationReadResponse;
   };
   /**
    * List deleted universes
@@ -2513,7 +2517,7 @@ export interface MethodMap {
    */
   "deployment/universes/deleted/list": {
     params: Api.DeploymentDeletedUniversesListParams;
-    result: Api.AgentApiOutcomeOfDeploymentDeletedUniversesListResponse;
+    result: Api.DeploymentDeletedUniversesListResponse;
   };
   /**
    * List deleted sessions
@@ -2522,7 +2526,7 @@ export interface MethodMap {
    */
   "deployment/sessions/deleted/list": {
     params: Api.DeploymentDeletedSessionsListParams;
-    result: Api.AgentApiOutcomeOfDeploymentDeletedSessionsListResponse;
+    result: Api.DeploymentDeletedSessionsListResponse;
   };
   /**
    * Permanently delete a session
@@ -2531,7 +2535,7 @@ export interface MethodMap {
    */
   "deployment/sessions/purge": {
     params: Api.DeploymentSessionPurgeParams;
-    result: Api.AgentApiOutcomeOfDeploymentSessionPurgeResponse;
+    result: Api.DeploymentSessionPurgeResponse;
   };
   /**
    * List a universe's deployment provider bindings
@@ -2540,7 +2544,7 @@ export interface MethodMap {
    */
   "deployment/environment-provider-bindings/list": {
     params: Api.DeploymentUniverseReadParams;
-    result: Api.AgentApiOutcomeOfEnvironmentProviderBindingListResponse;
+    result: Api.EnvironmentProviderBindingListResponse;
   };
   /**
    * Create a universe
@@ -2549,7 +2553,7 @@ export interface MethodMap {
    */
   "deployment/universes/create": {
     params: Api.DeploymentUniverseCreateParams;
-    result: Api.AgentApiOutcomeOfDeploymentUniverseCreateResponse;
+    result: Api.DeploymentUniverseCreateResponse;
   };
   /**
    * List universes
@@ -2558,7 +2562,7 @@ export interface MethodMap {
    */
   "deployment/universes/list": {
     params: Api.DeploymentUniverseListParams;
-    result: Api.AgentApiOutcomeOfDeploymentUniverseListResponse;
+    result: Api.DeploymentUniverseListResponse;
   };
   /**
    * Read a universe
@@ -2567,7 +2571,7 @@ export interface MethodMap {
    */
   "deployment/universes/read": {
     params: Api.DeploymentUniverseReadParams;
-    result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
+    result: Api.DeploymentUniverseReadResponse;
   };
   /**
    * Declare universe presentation and access
@@ -2576,7 +2580,7 @@ export interface MethodMap {
    */
   "deployment/universes/configuration/put": {
     params: Api.DeploymentUniverseConfigurationPutParams;
-    result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
+    result: Api.DeploymentUniverseReadResponse;
   };
   /**
    * Rename a universe
@@ -2585,7 +2589,7 @@ export interface MethodMap {
    */
   "deployment/universes/handle/put": {
     params: Api.DeploymentUniverseHandlePutParams;
-    result: Api.AgentApiOutcomeOfDeploymentUniverseReadResponse;
+    result: Api.DeploymentUniverseReadResponse;
   };
   /**
    * Request universe deletion
@@ -2594,7 +2598,7 @@ export interface MethodMap {
    */
   "deployment/universes/delete": {
     params: Api.DeploymentUniverseDeleteParams;
-    result: Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse;
+    result: Api.DeploymentUniverseDeleteResponse;
   };
   /**
    * Put an environment provider
@@ -2603,7 +2607,7 @@ export interface MethodMap {
    */
   "deployment/environment-providers/put": {
     params: Api.DeploymentEnvironmentProviderPutParams;
-    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse;
+    result: Api.DeploymentEnvironmentProviderPutResponse;
   };
   /**
    * List environment providers
@@ -2612,7 +2616,7 @@ export interface MethodMap {
    */
   "deployment/environment-providers/list": {
     params: Api.DeploymentEnvironmentProviderListParams;
-    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse;
+    result: Api.DeploymentEnvironmentProviderListResponse;
   };
   /**
    * Read an environment provider
@@ -2621,7 +2625,7 @@ export interface MethodMap {
    */
   "deployment/environment-providers/read": {
     params: Api.DeploymentEnvironmentProviderReadParams;
-    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse;
+    result: Api.DeploymentEnvironmentProviderReadResponse;
   };
   /**
    * Delete an environment provider
@@ -2630,7 +2634,7 @@ export interface MethodMap {
    */
   "deployment/environment-providers/delete": {
     params: Api.DeploymentEnvironmentProviderDeleteParams;
-    result: Api.AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse;
+    result: Api.DeploymentEnvironmentProviderDeleteResponse;
   };
   /**
    * Put an environment provider binding
@@ -2639,7 +2643,7 @@ export interface MethodMap {
    */
   "deployment/environment-providers/bindings/put": {
     params: Api.DeploymentProviderBindingPutParams;
-    result: Api.AgentApiOutcomeOfDeploymentProviderBindingPutResponse;
+    result: Api.DeploymentProviderBindingPutResponse;
   };
   /**
    * Delete an environment provider binding
@@ -2648,7 +2652,7 @@ export interface MethodMap {
    */
   "deployment/environment-providers/bindings/delete": {
     params: Api.DeploymentProviderBindingDeleteParams;
-    result: Api.AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse;
+    result: Api.DeploymentProviderBindingDeleteResponse;
   };
   /**
    * List channel accounts across universes
@@ -2657,9 +2661,18 @@ export interface MethodMap {
    */
   "deployment/channels/accounts/list": {
     params: Api.DeploymentChannelAccountListParams;
-    result: Api.AgentApiOutcomeOfDeploymentChannelAccountListResponse;
+    result: Api.DeploymentChannelAccountListResponse;
+  };
+  /**
+   * Upload a content-addressed blob
+   *
+   * Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.
+   */
+  "blobs/upload": {
+    params: Api.BlobUploadParams;
+    result: Api.BlobPutResult;
   };
 }
 
-export type MethodParams<M extends Method> = MethodMap[M]["params"];
-export type MethodResult<M extends Method> = MethodMap[M]["result"];
+export type OperationParams<M extends OperationId> = OperationMap[M]["params"];
+export type OperationResult<M extends OperationId> = OperationMap[M]["result"];

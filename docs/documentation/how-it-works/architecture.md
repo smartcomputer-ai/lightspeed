@@ -224,10 +224,10 @@ Background environment loops each have one PostgreSQL advisory-lock leader.
 See [Operations](../deployment/operations.md) for scaling and shutdown behavior.
 
 Runtime HTTP traffic uses three listeners, even when every role runs in one
-process: private RPC for trusted components, public credential callbacks and
+process: private HTTP API for trusted components, public credential callbacks and
 bot webhooks, and the environment gateway for machine traffic. Each listener
 serves only its own routes plus health and readiness probes. The `gateway`
-role owns RPC and public callbacks; `environment-gateway` owns machine routes.
+role owns the HTTP API and public callbacks; `environment-gateway` owns machine routes.
 Credentials held for outbound provider and MCP calls remain in the runtime,
 under the `credentials` crate and `credentials/*` API methods.
 

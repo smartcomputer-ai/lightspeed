@@ -1,15 +1,11 @@
-//! JSON-RPC method and notification names.
+//! Stable operation IDs.
 //!
-//! The first segment of a method name is its addressing scope: `session/`
-//! methods act inside one session (params carry `sessionId`), `deployment/`
-//! methods (see [`crate::deployment`]) address the deployment, and every other
-//! prefix is a universe-scoped catalog or stream. Collection segments are
-//! plural; uncountable facets (`context`, `mcp`) are singular; the
-//! verb is always the last segment.
+//! These opaque identifiers remain stable when HTTP methods or resource paths
+//! change. The operation catalog associates each ID with its route, input and
+//! response types, scope, and policy metadata; clients must use that metadata
+//! instead of inferring addressing rules from an ID's spelling.
 
-pub const PROTOCOL_VERSION: &str = "lightspeed.agent.api.v1";
-
-// ── Protocol handshake ──────────────────────────────────────────────────────
+// ── Connection discovery ──────────────────────────────────────────────────────
 
 pub const METHOD_INITIALIZE: &str = "initialize";
 
@@ -73,6 +69,7 @@ pub const METHOD_PROFILES_DELETE: &str = "profiles/delete";
 
 // ── Universe: content-addressed storage and VFS ─────────────────────────────
 
+pub const METHOD_BLOBS_UPLOAD: &str = "blobs/upload";
 pub const METHOD_BLOBS_PUT: &str = "blobs/put";
 pub const METHOD_BLOBS_READ: &str = "blobs/read";
 pub const METHOD_BLOBS_HAS: &str = "blobs/has";
@@ -183,12 +180,6 @@ pub const METHOD_CHANNELS_PAIRINGS_DELETE: &str = "channels/pairings/delete";
 pub const METHOD_CHANNELS_CONVERSATIONS_READ: &str = "channels/conversations/read";
 
 // ── Notifications ───────────────────────────────────────────────────────────
-
-pub const NOTIFY_SESSION_STARTED: &str = "session/started";
-pub const NOTIFY_SESSION_EVENT: &str = "session/event";
-pub const NOTIFY_SESSION_RUNS_STARTED: &str = "session/runs/started";
-pub const NOTIFY_SESSION_RUNS_COMPLETED: &str = "session/runs/completed";
-pub const NOTIFY_ERROR: &str = "error";
 
 // ── Transcriptions ───────────────────────────────────────────────────────────
 

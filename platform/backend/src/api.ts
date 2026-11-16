@@ -1,3 +1,5 @@
+import { runtimeHttpRoutes, problem } from "./runtime-http.js";
+import type { MiddlewareHandler } from "hono";
 import { declaredRole } from "./declared-universes.js";
 import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withGateway } from "./routes/gateway.js";
@@ -32,21 +34,28 @@ export function buildApp(ctx: AppContext) {
   // bearer tokens).
   app.on(["GET", "POST"], "/api/auth/*", (c) => ctx.auth.handler(c.req.raw));
 
-  const api = new Hono<{ Variables: ApiVariables }>();
-  api.use("*", async (c, next) => {
+  const authenticated: MiddlewareHandler<{ Variables: ApiVariables }> = async (c, next) => {
     const session = await ctx.auth.api.getSession({
       headers: c.req.raw.headers,
     });
     if (!session || !sessionAllowed(session, ctx.env)) {
-      return c.json({ error: "unauthorized" }, 401);
+      return c.req.path.startsWith("/api/v1/") ? problem(c, 401, "unauthenticated", "authentication required") : c.json({ error: "unauthorized" }, 401);
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
       const origin = c.req.header("origin");
-      if (origin && ![ctx.env.baseUrl, ...ctx.env.trustedOrigins].includes(origin)) return c.json({ error: "untrusted origin" }, 403);
+      const site = c.req.header("sec-fetch-site");
+      if ((origin && ![ctx.env.baseUrl, ...ctx.env.trustedOrigins].includes(origin)) || site === "cross-site" || (!origin && c.req.header("cookie") && site !== "same-origin" && site !== "same-site")) return c.req.path.startsWith("/api/v1/") ? problem(c, 403, "forbidden", "untrusted origin") : c.json({ error: "untrusted origin" }, 403);
     }
     c.set("session", session);
     await next();
-  });
+  };
+  const shared = new Hono<{ Variables: ApiVariables }>();
+  shared.use("*", authenticated);
+  shared.route("/", runtimeHttpRoutes(ctx));
+  app.route("/api/v1", shared);
+
+  const api = new Hono<{ Variables: ApiVariables }>();
+  api.use("*", authenticated);
 
   api.get("/me", async (c) => {
     const session = c.get("session");
@@ -103,7 +112,7 @@ export function buildApp(ctx: AppContext) {
   api.route("/admin", environmentDeploymentRoutes(ctx));
   api.route("/channel-accounts", channelAccountAdminRoutes(ctx));
 
-  app.route("/api/v1", api);
+  app.route("/api/ui", api);
 
   registerWebApp(app);
 

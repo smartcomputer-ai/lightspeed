@@ -1183,7 +1183,7 @@ mod tests {
         assert!(!text.contains("ingestUrl"), "{text}");
         assert!(!text.contains("ingestPath"), "{text}");
         assert!(!text.contains("pairingCode"), "{text}");
-        assert!(!text.contains("/hooks/"), "{text}");
+        assert!(!text.contains("/ingress/webhooks/"), "{text}");
     }
 
     #[test]
@@ -1302,7 +1302,7 @@ mod tests {
         assert_eq!(silent["created"], json!(false));
         assert_eq!(silent["trigger"], trigger_tool_view(&webhook));
 
-        let url = "https://example.test/hooks/bots/u-1/triage/github/tok-1234";
+        let url = "https://example.test/ingress/webhooks/bots/u-1/triage/github/tok-1234";
         let created = trigger_put_tool_view(
             &webhook,
             true,

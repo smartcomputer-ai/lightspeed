@@ -136,7 +136,7 @@ mod tests {
         ResolvedConnection {
             name: name.map(str::to_owned),
             endpoint: endpoint.into(),
-            secret: Some("lsk_do_not_display".into()),
+            secret: Some("lsr_do_not_display".into()),
             universe: None,
             caller: Some(api::CallerAccess {
                 single: false,
@@ -160,14 +160,14 @@ mod tests {
             uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"checkout")
         );
         for endpoint in [
-            "http://localhost:18080/rpc",
-            "http://127.0.0.1/rpc",
-            "http://[::1]/rpc",
+            "http://localhost:18080/api/v1",
+            "http://127.0.0.1/api/v1",
+            "http://[::1]/api/v1",
         ] {
             let display = ConnectionDisplay::new(&connection(Some(&name), endpoint), &universe());
             assert!(display.footer.is_none());
             assert!(display.details.contains(&name));
-            assert!(!display.details.contains("lsk_do_not_display"));
+            assert!(!display.details.contains("lsr_do_not_display"));
             assert!(
                 display.header_context[1]
                     .1
@@ -178,10 +178,10 @@ mod tests {
                     .1
                     .contains("customer-a · runtime token")
             );
-            assert!(!display.header_context.iter().any(|(_, value)| value.contains("lsk_do_not_display") || value.contains(&name)));
+            assert!(!display.header_context.iter().any(|(_, value)| value.contains("lsr_do_not_display") || value.contains(&name)));
         }
         let remote = ConnectionDisplay::new(
-            &connection(Some(&name), "https://runtime.example/rpc"),
+            &connection(Some(&name), "https://runtime.example/api/v1"),
             &universe(),
         );
         assert_eq!(
@@ -189,7 +189,7 @@ mod tests {
             Some("runtime.example / customer-a")
         );
         let named = ConnectionDisplay::new(
-            &connection(Some("production"), "http://localhost:18080/rpc"),
+            &connection(Some("production"), "http://localhost:18080/api/v1"),
             &universe(),
         );
         assert_eq!(named.footer.as_deref(), Some("production / customer-a"));
@@ -202,7 +202,7 @@ mod tests {
         universe.universe_id = None;
         universe.unavailable_reason = Some("runtime unavailable".into());
         let display = ConnectionDisplay::new(
-            &connection(Some("production"), "https://runtime.example:8443/rpc"),
+            &connection(Some("production"), "https://runtime.example:8443/api/v1"),
             &universe,
         );
         assert_eq!(display.footer.as_deref(), Some("production / customer-a"));
@@ -216,7 +216,7 @@ mod tests {
         let mut universe = universe();
         universe.handle = None;
         universe.unavailable_reason = Some("runtime unavailable".into());
-        let connection = connection(None, "https://runtime.example:8443/rpc");
+        let connection = connection(None, "https://runtime.example:8443/api/v1");
         let display = ConnectionDisplay::new(&connection, &universe);
         assert_eq!(
             display.footer.as_deref(),

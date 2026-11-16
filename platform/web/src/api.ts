@@ -25,7 +25,7 @@ import type {
 import type { RequestHeader } from "@/lib/request-headers";
 import { failureText, notJsonText, readResponseBody } from "@/lib/response-body";
 
-/// Thin fetch wrapper for /api/v1 (cookie-authenticated, same origin).
+/// Thin fetch wrapper for /api/ui (cookie-authenticated, same origin).
 
 /// `body` is the parsed JSON answer, `null` when there was none, or the
 /// shortened text of an answer that was not JSON. `message` replaces the text
@@ -695,7 +695,7 @@ export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
 }
 
 /// Connector host health, aggregated by the platform backend from each
-/// connector's /healthz (`GET /api/v1/status/channels`). Platform-owned;
+/// connector's /healthz (`GET /api/ui/status/channels`). Platform-owned;
 /// unrelated to the core channel account records.
 export interface ChannelConnectorHealth {
   version: 1;

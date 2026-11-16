@@ -33,7 +33,7 @@ runtime database does not revoke them. A successful `./dev.sh reset` also clears
 the local token files; the next startup generates replacements. Import the new
 handoff with `connect dev` afterward.
 
-Supply `LIGHTSPEED_RPC_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_RPC_TOKEN`, or their
+Supply `LIGHTSPEED_API_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_API_TOKEN`, or their
 `_FILE` variants, to choose tokens yourself. The launcher installs these in the
 runtime configuration and writes protected local files. When the CLI and Platform
 use the same secret, the launcher keeps one runtime token identity (`default` or
@@ -55,21 +55,21 @@ headers. Authentication failures never cause an automatic switch to this mode.
 ## Configure an authenticated runtime without Platform
 
 On the server host, configure stores and secrets as described in
-[Self-hosting](../deployment/self-hosting.md). Generate an RPC token offline:
+[Self-hosting](../deployment/self-hosting.md). Generate an API token offline:
 
 ```bash
 umask 077
 lightspeed token generate-secret > runtime.token
 lightspeed-runtime migrate
 LIGHTSPEED_AUTH_MODE=authenticated \
-  LIGHTSPEED_RPC_TOKEN_FILE="$PWD/runtime.token" lightspeed-runtime
+  LIGHTSPEED_API_TOKEN_FILE="$PWD/runtime.token" lightspeed-runtime
 ```
 
 `generate-secret` needs no runtime connection. A configured token contains at
 least 32 printable ASCII characters without whitespace. Token files may end with
 one LF or CRLF; inline values are used exactly. Optional token names use
-environment suffixes, for example `LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE` and
-`LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE`. Every token has full authority. A token's
+environment suffixes, for example `LIGHTSPEED_API_TOKEN_OPERATOR_FILE` and
+`LIGHTSPEED_API_TOKEN_PLATFORM_FILE`. Every token has full authority. A token's
 name is recorded when a request names no actor; an unnamed token is `default`.
 For rotation, configure a second token, move clients to it, then remove the old
 one and restart the runtime. There is no key table or key-management API.
@@ -78,7 +78,7 @@ From source, replace `lightspeed-runtime` with
 `cargo run -p temporal-runtime --`. On the client:
 
 ```bash
-lightspeed connect add production --url https://runtime.example/rpc
+lightspeed connect add production --url https://runtime.example/api/v1
 lightspeed connect use production
 lightspeed universe create --handle personal
 lightspeed universe use personal
@@ -90,10 +90,10 @@ Environment, stdin and prompt input is stored in a protected local credential
 file; an explicitly supplied file remains externally owned. Use `--single` only
 for a server explicitly configured for single mode.
 
-The CLI address is the private RPC listener, normally port `18080`. The runtime's
+The CLI address is the private HTTP API listener, normally port `18080`. The runtime's
 OAuth callback and client metadata use the separate public listener, normally
-port `18082`, under `/credentials/callback` and
-`/credentials/client-metadata.json`. The public listener does not accept CLI RPC
+port `18082`, under `/ingress/credentials/callback` and
+`/ingress/credentials/client-metadata.json`. The public listener does not accept CLI API
 calls. Credential management methods use the `credentials/*` API family; the CLI
 keeps its `credential`/`credentials` resource command.
 
@@ -120,7 +120,7 @@ The global `--connection` selects a saved endpoint and credential together,
 ignoring ambient connection environment variables. Explicit `--api-url` on
 commands that accept it can override the endpoint, but never forwards a saved
 token to a different endpoint. Without `--connection`, `LIGHTSPEED_API_URL`,
-`LIGHTSPEED_RPC_TOKEN` and `LIGHTSPEED_UNIVERSE` override saved settings.
+`LIGHTSPEED_API_TOKEN` and `LIGHTSPEED_UNIVERSE` override saved settings.
 `--universe` overrides universe selection for one invocation; it does not
 change the saved default. The CLI loads a root `.env` when present, so check
 for old overrides there if the effective connection is unexpected.
@@ -295,7 +295,7 @@ Runtime tokens are loaded from configuration. Generate a secret with
 Never give a runtime token to an agent or store one in its workspace.
 
 To add Platform, configure a named runtime token for it and set
-`LIGHTSPEED_PLATFORM_RPC_TOKEN` or `LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE` on the
+`LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE` on the
 Platform backend to the same value. Use Platform's administrator adoption flow
 to link an existing runtime universe. Platform uses the universe's handle for
 its URLs and caches it for lookups. Creation sends the requested handle to

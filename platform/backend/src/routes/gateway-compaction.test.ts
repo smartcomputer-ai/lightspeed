@@ -1,3 +1,4 @@
+import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
@@ -6,7 +7,7 @@ import { gatewayRoutes } from "./gateway.js";
 const access = vi.hoisted(() => ({ role: "contributor", owner: "user" }));
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/rpc" },
+    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
     role: access.role,
     member: { userId: "user", role: access.role },
   })),
@@ -17,10 +18,10 @@ beforeEach(() => {
   access.owner = "user";
   requests = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
-    const rpc = JSON.parse(String(init.body));
-    requests.push(rpc);
+    const request = decodeHttpRequest(_url as string | Request | URL, init);
+    requests.push({ method: request.method, params: request.params });
     const session = { id: "session", lifecycleStatus: "open", activity: "idle", access: { visibility: "restricted", createdBy: { kind: "actor", id: access.owner } } };
-    return Response.json({ id: rpc.id, result: { result: { session }, notifications: [] } });
+    return Response.json({ session });
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -30,7 +31,7 @@ async function compact() {
     c.set("session", { user: { id: "user" } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsr_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/api/v1", lightspeedApiToken: "lsr_fixture" } } as AppContext));
   return app.request("/universe/sessions/session/context/compact", { method: "POST" });
 }
 it("forwards a contributor's manual compaction to the core API", async () => {

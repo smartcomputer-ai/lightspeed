@@ -1,23 +1,21 @@
 import { LightspeedClient } from "@lightspeed-ai/sdk";
 
-export const UNIVERSE_HEADER = "x-lightspeed-universe";
 
 export interface CoreClientOptions {
-  /** Core JSON-RPC endpoint (`LIGHTSPEED_API_URL`). */
+  /** Core HTTP API endpoint (`LIGHTSPEED_API_URL`). */
   endpoint: string;
-  apiKey: string;
+  apiToken: string;
   fetch?: typeof fetch;
 }
 
 /**
- * The host's view of the core: one endpoint, one service key, and
- * per-call universe scoping. Discovery is deployment-scoped (`deployment/*`
- * never carries a universe header); everything an account does is stamped
- * with that account's universe.
+ * The host's view of the core: one endpoint, one runtime token, and
+ * per-call universe scoping. Discovery addresses the deployment; account
+ * operations carry their universe in the resource URL.
  */
 export class CoreClient {
   private readonly endpoint: string;
-  private readonly apiKey: string;
+  private readonly apiToken: string;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly universes = new Map<string, LightspeedClient>();
   private deploymentClient: LightspeedClient | undefined;
@@ -27,14 +25,14 @@ export class CoreClient {
       throw new TypeError("core endpoint must not be empty");
     }
     this.endpoint = options.endpoint;
-    if (!/^lsk_[A-Za-z0-9_-]+$/.test(options.apiKey)) throw new TypeError("a Lightspeed service API key is required");
-    this.apiKey = options.apiKey;
+    if (!/^[\x21-\x7e]{32,}$/.test(options.apiToken)) throw new TypeError("a Lightspeed runtime API token is required");
+    this.apiToken = options.apiToken;
     this.fetchImpl = options.fetch;
   }
 
-  /** Deployment-scoped `deployment/*` calls: the gateway rejects a universe header on them. */
+  /** Deployment-scoped discovery uses the same configured runtime token. */
   deployment(): LightspeedClient {
-    this.deploymentClient ??= this.create({});
+    this.deploymentClient ??= this.create();
     return this.deploymentClient;
   }
 
@@ -45,19 +43,17 @@ export class CoreClient {
     }
     let client = this.universes.get(universeId);
     if (client === undefined) {
-      client = this.create({
-        [UNIVERSE_HEADER]: universeId,
-
-      });
+      client = this.create(universeId);
       this.universes.set(universeId, client);
     }
     return client;
   }
 
-  private create(headers: Record<string, string>): LightspeedClient {
+  private create(universe?: string): LightspeedClient {
     return new LightspeedClient({
       endpoint: this.endpoint,
-      headers: { ...headers, authorization: `Bearer ${this.apiKey}` },
+      headers: { authorization: `Bearer ${this.apiToken}` },
+      ...(universe ? { universe } : {}),
       ...(this.fetchImpl === undefined ? {} : { fetch: this.fetchImpl }),
     });
   }

@@ -14,6 +14,7 @@
     "platform/web"
   ],
   "scripts": {
+    "check:openapi": "redocly lint crates/api/contract/openapi.json",
     "git:change-stats": "node scripts/git-change-stats.mjs",
     "release:prepare": "node scripts/release/prepare-version.mjs",
     "dev:docs": "npm run dev --workspace @lightspeed-ai/docs --",
@@ -22,7 +23,7 @@
     "check:docs": "npm run check --workspace @lightspeed-ai/docs",
     "build": "npm run build --workspace @lightspeed-ai/sdk && npm run build --workspace @lightspeed-ai/configurator-mcp && npm run build --workspace @lightspeed-ai/platform-web && npm run build:demo --workspace @lightspeed-ai/platform-web",
     "build:web": "npm run build --workspace @lightspeed-ai/platform-web",
-    "check": "npm run check:dev && npm run check:identity && npm run check:generated && npm run typecheck && npm run test:consumers && npm run build",
+    "check": "npm run check:dev && npm run check:identity && npm run check:generated && npm run check:openapi && npm run typecheck && npm run test:consumers && npm run build",
     "check:ci": "npm run check:package-age && npm run check && npm run test:build && npm run test:migrations && npm run test:release-packaging",
     "check:dev": "bash -n dev.sh scripts/dev/env.sh scripts/dev/lib/common.sh scripts/dev/infra/*.sh && node --check scripts/dev/stack.mjs && node --test scripts/dev/*.test.mjs && ./dev.sh --help >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan infra >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan runtime >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan platform >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan demo >/dev/null && LIGHTSPEED_CHANNELS_CONNECTORS= node scripts/dev/stack.mjs --plan full >/dev/null",
     "check:package-age": "node scripts/ci/check-package-age.mjs",
@@ -42,6 +43,7 @@
     "screendiff:demo": "npm run screendiff:demo --workspace @lightspeed-ai/platform-web --"
   },
   "devDependencies": {
+    "@redocly/cli": "2.76.0",
     "@types/node": "^24.19.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
