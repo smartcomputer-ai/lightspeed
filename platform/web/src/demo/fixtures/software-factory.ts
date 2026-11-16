@@ -65,6 +65,7 @@ import {
   type ScriptedEvent,
   mcpDisplay,
 } from "./builders";
+import { PRESENTATION_FILES } from "./software-factory-presentations";
 
 export const SOFTWARE_FACTORY_UNIVERSE_ID = "11111111-1111-4111-8111-111111111111";
 export const SOFTWARE_FACTORY_HANDLE = "software-factory";
@@ -88,7 +89,7 @@ const BOT = {
   ci: "ci-watch",
   scribe: "release-scribe",
 } as const;
-const WORKSPACE = { web: "acme-web", runbooks: "runbooks", specs: "specs" } as const;
+const WORKSPACE = { web: "acme-web", runbooks: "runbooks", specs: "specs", presentations: "presentations" } as const;
 const ENV = {
   ci: "env-ci-runner",
   laptop: "env-priya-laptop",
@@ -1188,6 +1189,15 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
     revision: 9,
     createdAtMs: ago(33 * DAY_MS),
     updatedAtMs: p(1.8),
+  });
+  // Priya's Q3 review of the pipeline and its sources: notes → Word narrative → PowerPoint.
+  workspace(store, universe, {
+    id: WORKSPACE.presentations,
+    displayName: "Presentations",
+    files: PRESENTATION_FILES,
+    revision: 14,
+    createdAtMs: ago(9 * DAY_MS),
+    updatedAtMs: ago(2 * HOUR_MS),
   });
 }
 

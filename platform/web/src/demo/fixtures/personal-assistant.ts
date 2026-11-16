@@ -74,6 +74,7 @@ import {
   mcpDisplay,
 } from "./builders";
 import { TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
+import { PRESENTATION_FILES } from "./personal-assistant-presentations";
 
 export const PERSONAL_ASSISTANT_UNIVERSE_ID = "33333333-3333-4333-8333-333333333333";
 export const PERSONAL_ASSISTANT_HANDLE = "personal-assistant";
@@ -85,7 +86,7 @@ const PROFILE = {
   metrics: "metrics-analyst",
   writer: "briefing-writer",
 } as const;
-const WORKSPACE = { memory: "assistant-memory", skills: "assistant-skills", briefs: "briefs" } as const;
+const WORKSPACE = { memory: "assistant-memory", skills: "assistant-skills", briefs: "briefs", presentations: "presentations" } as const;
 const ENV_MAC_MINI = "env-ada-mac-mini";
 const MCP = { google: "google-workspace", slack: "slack", stripe: "stripe", hubspot: "hubspot", notion: "notion" } as const;
 const GRANT = {
@@ -690,6 +691,7 @@ const MEMORY_RO = link(WORKSPACE.memory, "/memory", "read");
 const SKILLS_RO = link(WORKSPACE.skills, "/skills", "read");
 const BRIEFS_RW = link(WORKSPACE.briefs, "/briefs", "edit");
 const BRIEFS_RO = link(WORKSPACE.briefs, "/briefs", "read");
+const PRESENTATIONS_RW = link(WORKSPACE.presentations, "/presentations", "edit");
 
 const ASSISTANT_LIMITS = { maxDepth: 1, maxConcurrent: 2, runTimeoutMs: 15 * MINUTE_MS };
 const RESEARCH_LIMITS = { maxDepth: 1, maxConcurrent: 3, runTimeoutMs: 10 * MINUTE_MS };
@@ -750,7 +752,7 @@ const WRITER_CONFIG: Record<string, unknown> = {
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
   limits: { maxTurns: 20 },
   features: {
-    vfs: { workspaces: [MEMORY_RO, BRIEFS_RW] },
+    vfs: { workspaces: [MEMORY_RO, BRIEFS_RW, PRESENTATIONS_RW] },
   },
 };
 
@@ -852,6 +854,15 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
     revision: 63,
     createdAtMs: ago(40 * DAY_MS),
     updatedAtMs: t(7, 1),
+  });
+  // The Series A deck and its sources: notes → Word narrative → PowerPoint.
+  workspace(store, universe, {
+    id: WORKSPACE.presentations,
+    displayName: "Presentations",
+    files: PRESENTATION_FILES,
+    revision: 27,
+    createdAtMs: ago(16 * DAY_MS),
+    updatedAtMs: t(12, 2),
   });
 }
 

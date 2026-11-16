@@ -15,7 +15,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { AddIcon, BotIcon, DeleteIcon, FilterIcon, LoadingIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon, SessionIcon } from "@/icons";
+import { AddIcon, BotIcon, ConfigureIcon, DeleteIcon, FilterIcon, LoadingIcon, RemoveIcon, SelectModeIcon, SessionCloseIcon, SessionIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -2106,7 +2106,7 @@ export function SessionDetail({
               className="grow"
             />
           )}
-          actions={embeddedHeader.actions ? [{ kind: "custom", key: "conversation", node: embeddedHeader.actions }] : []}
+          tools={embeddedHeader.actions ? [{ kind: "custom", key: "conversation", node: embeddedHeader.actions }] : []}
         />
       )}
       {!embedded && (
@@ -2117,8 +2117,13 @@ export function SessionDetail({
           back={{ to: backTo, label: "Back to sessions" }}
           title={title}
           tags={meta.length > 0 && <MetaToolbar items={meta} place="header" full label="Session details" className="grow" />}
-          actions={[{
-            kind: "custom",
+          tools={[
+            // A tool for those who can change the settings; readers open them
+            // read-only from the ⋯ menu.
+            ...(canConfigure
+              ? [{ key: "settings", label: "Session settings", icon: <ConfigureIcon />, onSelect: () => setSettingsOpen(true) }]
+              : []),
+            { kind: "custom",
             key: "session",
             node: <SessionActionsMenu
               sessionId={sessionId}

@@ -226,6 +226,17 @@ export const SETTINGS = {
     },
     isEmpty: (items: readonly StoredAttachment[]) => items.length === 0,
   })),
+  /// The mode a workspace file was last shown in (Preview, Source, …), by
+  /// file: one object per workspace, a field per path. Empty: the file's
+  /// provider's default mode. Kept on this device only.
+  workspaceFileMode: defineSettingFamily("workspaceFileMode", (universeId: string, workspaceId: string, path: string) => ({
+    persistence: "device" as const,
+    key: `lightspeed:workspaces:file-modes:${universeId}:${workspaceId}`,
+    field: path,
+    defaultValue: "",
+    parse: (stored: unknown) => (typeof stored === "string" ? stored : undefined),
+    isEmpty: (mode: string) => mode === "",
+  })),
   /// Queued messages being converted to steering, kept so a reload or a lost
   /// response cannot lose them; by session scope.
   queuedSteering: defineSettingFamily("queuedSteering", (scope: string) => ({

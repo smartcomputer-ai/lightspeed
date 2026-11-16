@@ -845,3 +845,10 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   full TypeScript checks, strict Python typing, Python wheel/sdist packaging,
   SDK/Configurator/web/demo builds and documentation build pass. Tests are
   authored but remain on hold.
+
+- 2026-11-17: integrated main's file providers, shared detail-header tools and
+  presentation demo workspaces. Workspace editing retains the UI adapter route
+  under `/api/ui`, current role checks and revision-guarded writes. Preserved
+  filename-derived image media types in the provider host. Full TypeScript
+  checks and SDK/Configurator/web/demo builds pass; added route, filename and
+  image-preview regression coverage without running tests, which remain on hold.

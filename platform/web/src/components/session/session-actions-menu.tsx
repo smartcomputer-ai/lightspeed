@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { CompactIcon, ConfigureIcon, LoadingIcon, MoreIcon, ShareIcon } from "@/icons";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+import { Button, useInButtonGroup } from "@/components/ui/button";
+import { WithTooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,6 +57,8 @@ export function SessionActionsMenu({
 }) {
   const navigate = useNavigate();
   const rowMenu = useRowMenu("session", sessionId);
+  // Ghost and muted on its own; the group's look in a header's tool group.
+  const grouped = useInButtonGroup();
   const compactItem = onCompact && (
     <DropdownMenuItem onClick={onCompact} disabled={Boolean(compactionLabel)}>
       {compactionLabel ? <LoadingIcon className="animate-spin" /> : <CompactIcon />}
@@ -63,20 +67,22 @@ export function SessionActionsMenu({
   );
   return (
     <DropdownMenu open={rowMenu.open} onOpenChange={rowMenu.onOpenChange}>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 text-muted-foreground"
-            aria-label={label}
-            title={label}
-          />
-        }
-      >
-        <MoreIcon />
-      </DropdownMenuTrigger>
+      <WithTooltip content={label}>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant={grouped ? undefined : "ghost"}
+              size="icon-sm"
+              className={cn("shrink-0", !grouped && "text-muted-foreground")}
+              aria-label={label}
+            />
+          }
+        >
+          <MoreIcon />
+        </DropdownMenuTrigger>
+      </WithTooltip>
       <DropdownMenuContent
+        notch
         anchor={rowMenu.anchor}
         align={rowMenu.anchor ? "start" : "end"}
         className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"

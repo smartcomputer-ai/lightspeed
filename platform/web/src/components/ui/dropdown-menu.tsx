@@ -2,6 +2,7 @@ import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 
 import { cn } from "@/lib/utils"
+import { NOTCH_CLASS, NOTCH_OFFSET } from "@/components/ui/notch"
 import { MENU_POPUP_CLASS } from "@/components/ui/menu-styles"
 import { CheckedIcon, SubmenuIcon } from "@/icons";
 
@@ -17,19 +18,24 @@ function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
   return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
 
+/// A dropdown menu's popup. With `notch`, it points at the button that
+/// opened it, as a popover does (see ui/notch): for a small tool button,
+/// such as a ⋯, where the menu would otherwise float loose. Opened at an
+/// `anchor` (a right-click) there is no button, and no notch.
 function DropdownMenuContent({
   align = "start",
   alignOffset = 0,
   side = "bottom",
-  sideOffset = 4,
+  notch = false,
   anchor,
+  sideOffset = notch && !anchor ? NOTCH_OFFSET : 4,
   className,
   ...props
 }: MenuPrimitive.Popup.Props &
   Pick<
     MenuPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
-  >) {
+  > & { notch?: boolean }) {
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -46,6 +52,13 @@ function DropdownMenuContent({
           className={cn(MENU_POPUP_CLASS, className)}
           {...props}
         />
+        {/* Beside the popup, not in it: the popup scrolls and would clip it. */}
+        {notch && !anchor && (
+          <MenuPrimitive.Arrow
+            data-slot="dropdown-menu-notch"
+            className={cn(NOTCH_CLASS, "duration-(--popover-transition-duration) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0")}
+          />
+        )}
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
   )

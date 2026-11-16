@@ -799,12 +799,31 @@ function ButtonsSection() {
       <Specimen
         title="Button group"
         note="ui/button-group: buttons that belong together, joined with square inner corners; secondary unless a button says otherwise"
+        className="grid gap-4"
       >
-        <ButtonGroup aria-label="Actions">
-          <Button><EditIcon data-icon="inline-start" />Edit</Button>
-          <Button variant="destructive"><DeleteIcon data-icon="inline-start" />Delete</Button>
-          <Button variant="default"><SaveIcon data-icon="inline-start" />Save</Button>
-        </ButtonGroup>
+        <div className="grid content-start gap-2">
+          <Caption>actions</Caption>
+          <ButtonGroup aria-label="Actions">
+            <Button><EditIcon data-icon="inline-start" />Edit</Button>
+            <Button variant="destructive"><DeleteIcon data-icon="inline-start" />Delete</Button>
+            <Button variant="default"><SaveIcon data-icon="inline-start" />Save</Button>
+          </ButtonGroup>
+        </div>
+        <div className="grid content-start gap-2">
+          <Caption>mixed: a small save button and small icon-only buttons, as in a file's header</Caption>
+          <div className="flex flex-wrap items-center gap-3">
+            <ButtonGroup aria-label="File">
+              <SaveButton size="sm" dirty />
+              <Button size="icon-sm" aria-label="Download" title="Download"><DownloadIcon /></Button>
+              <Button size="icon-sm" aria-label="More actions" title="More actions"><MoreIcon /></Button>
+            </ButtonGroup>
+            <ButtonGroup aria-label="File, saved">
+              <SaveButton size="sm" dirty={false} />
+              <Button size="icon-sm" aria-label="Download" title="Download"><DownloadIcon /></Button>
+              <Button size="icon-sm" aria-label="More actions" title="More actions"><MoreIcon /></Button>
+            </ButtonGroup>
+          </div>
+        </div>
       </Specimen>
       <Specimen
         title="Toggle group"

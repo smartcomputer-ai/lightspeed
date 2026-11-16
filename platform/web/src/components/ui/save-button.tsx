@@ -34,7 +34,8 @@ function SaveButton({
   saving = false,
   error = false,
   disabled,
-  variant,
+  // Primary while there is something to save, in a group too.
+  variant = "default",
   className,
   onClick,
   children = "Save",

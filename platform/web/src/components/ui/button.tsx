@@ -80,4 +80,10 @@ function Button({
   )
 }
 
-export { Button, ButtonGroupContext, buttonVariants, type ButtonVariant }
+/// Whether this is inside a button group, for buttons that look different
+/// there: a menu's ⋯ is ghost on its own and takes the group's look in one.
+function useInButtonGroup() {
+  return useContext(ButtonGroupContext) !== undefined
+}
+
+export { Button, ButtonGroupContext, buttonVariants, useInButtonGroup, type ButtonVariant }

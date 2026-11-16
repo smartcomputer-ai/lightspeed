@@ -6,9 +6,11 @@ import { cn } from "@/lib/utils"
 /// Marks the button the pointer just pressed, until the pointer leaves it.
 const JUST_PRESSED = "data-just-pressed"
 
+/// The group's child that holds the event's target.
 const buttonOf = (target: EventTarget | null, group: HTMLElement) => {
-  const button = target instanceof Element ? target.closest("[data-slot=button]") : null
-  return button && button.parentElement === group ? button : null
+  let element = target instanceof Element ? target : null
+  while (element && element.parentElement !== group) element = element.parentElement
+  return element
 }
 
 /// A row of buttons that belong together, such as a set of actions or the
@@ -55,12 +57,15 @@ function ButtonGroup({
         className={cn(
           "flex w-fit items-stretch",
           // Joined: only the outer corners are round, and neighbours share
-          // the border between them.
-          "*:data-[slot=button]:not-first:rounded-l-none *:data-[slot=button]:not-first:border-l-0 *:data-[slot=button]:not-last:rounded-r-none",
+          // the border between them. The buttons are the slotted children: a
+          // button, or a menu trigger rendered as one (it carries the
+          // trigger's data-slot). First and last count only those, since an
+          // open menu puts unslotted focus guards around its trigger.
+          "[&>[data-slot]~[data-slot]]:rounded-l-none [&>[data-slot]~[data-slot]]:border-l-0 [&>[data-slot]:has(~[data-slot])]:rounded-r-none",
           // A focus ring is drawn over the neighbours, not under them.
-          "*:data-[slot=button]:focus-visible:relative *:data-[slot=button]:focus-visible:z-10",
+          "*:data-slot:focus-visible:relative *:data-slot:focus-visible:z-10",
           // The chosen button of a toggle, dimmed on hover unless just clicked.
-          "*:data-[slot=button]:aria-pressed:bg-primary *:data-[slot=button]:aria-pressed:text-primary-foreground *:data-[slot=button]:aria-pressed:not-data-just-pressed:hover:bg-primary/80",
+          "*:data-slot:aria-pressed:bg-primary *:data-slot:aria-pressed:text-primary-foreground *:data-slot:aria-pressed:not-data-just-pressed:hover:bg-primary/80",
           className
         )}
         {...props}

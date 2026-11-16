@@ -2,6 +2,8 @@
 
 Status: [todo]
 
+The editor is built as a provider of [U114: File Providers](u114-file-providers.md), which defines the providers, their modes and saving. Monaco is its phase 4.
+
 Create a new component called File Editor. It should support different file formats but foremost right now we want to support source code files. Use the following technology for the formatting and editing. 
 
 https://microsoft.github.io/monaco-editor/

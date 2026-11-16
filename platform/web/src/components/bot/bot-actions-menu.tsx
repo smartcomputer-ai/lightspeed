@@ -1,5 +1,7 @@
 import { ConfigureIcon, LoadingIcon, MoreIcon, PauseIcon, ResumeIcon } from "@/icons";
-import { Button } from "@/components/ui/button";
+import { Button, useInButtonGroup } from "@/components/ui/button";
+import { WithTooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,35 +17,40 @@ import { useRowMenu } from "@/lib/row-menu";
  * A bot's ⋯ menu, shaped like a session's: what can be done to the bot
  * (settings, pausing), then its id. Closing and deleting stay in settings,
  * beside what they end. It is also its list row's right-click menu, opened
- * at the pointer.
+ * at the pointer. With `trigger={false}` it has no ⋯ button and opens only
+ * from the row, for a header that shows its actions as buttons instead.
  */
 export function BotActionsMenu({
   botId,
   onSettings,
   pause,
+  trigger = true,
 }: {
   botId: string;
   onSettings: () => void;
+  /** Whether it has its own ⋯ button; without one, only the list row opens it. */
+  trigger?: boolean;
   /** Offered to managers of an open bot; `enabled` is whether it runs now. */
   pause?: { enabled: boolean; pending: boolean; onToggle: () => void };
 }) {
   const rowMenu = useRowMenu("bot", botId);
+  // Ghost and muted on its own; the group's look in a header's tool group.
+  const grouped = useInButtonGroup();
   return (
     <DropdownMenu open={rowMenu.open} onOpenChange={rowMenu.onOpenChange}>
-      <DropdownMenuTrigger
+      {trigger && <WithTooltip content="Bot actions"><DropdownMenuTrigger
         render={
           <Button
-            variant="ghost"
+            variant={grouped ? undefined : "ghost"}
             size="icon-sm"
-            className="shrink-0 text-muted-foreground"
+            className={cn("shrink-0", !grouped && "text-muted-foreground")}
             aria-label="Bot actions"
-            title="Bot actions"
           />
         }
       >
         {pause?.pending ? <LoadingIcon className="size-3.5 animate-spin" /> : <MoreIcon />}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent anchor={rowMenu.anchor} align={rowMenu.anchor ? "start" : "end"} className="w-80 max-w-[calc(100vw-1rem)]">
+      </DropdownMenuTrigger></WithTooltip>}
+      <DropdownMenuContent notch anchor={rowMenu.anchor} align={rowMenu.anchor ? "start" : "end"} className="w-80 max-w-[calc(100vw-1rem)]">
         <DropdownMenuGroup>
           <DropdownMenuItem onClick={onSettings}>
             <ConfigureIcon /> Bot settings
