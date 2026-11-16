@@ -157,6 +157,44 @@ Records attribute a request to the actor, or else to the token's name.
   classifies 151 methods by hand and a new method arrives classified. The
   test that every method is classified stays.
 
+## Credentials the runtime holds stay, under a clearer name
+
+The runtime has a second thing called "auth": the `auth/*` methods and the
+`auth` crate. It is not about who may call Lightspeed. It is the credentials
+Lightspeed holds to call others: model providers, MCP servers and GitHub.
+
+None of it moves to the Platform. Workers use these credentials in the
+middle of a run, with no person and no Platform in the path, and a run can
+last hours while tokens are refreshed underneath it.
+
+| Piece | What it does |
+| --- | --- |
+| Secret store | Encrypted values, sealed with the deployment's key. |
+| Grants and the broker | Resolves a credential for a model call, an MCP call or an environment; refreshes tokens; mints GitHub installation tokens; keeps tokens away from the agent. |
+| Providers | Model endpoints and GitHub App configuration. |
+| OAuth clients | The registration with each authorization server, needed for refresh. |
+| OAuth flows | Starting a login, the browser callback, exchanging the code. |
+
+The interactive login is the one part with a person in a browser, and the
+Platform could run it and hand the result over as a grant. It stays in the
+runtime: the protocol work is done by the Rust MCP library today, refresh
+would stay in Rust in any case, and a runtime without the Platform keeps the
+ability to log in to an MCP server.
+
+**The rename.** With the key model gone, the two meanings of "auth" are what
+is left to confuse, so this side is renamed to credentials, which is what
+the web app already calls it:
+
+- The `auth/*` methods become `credentials/*`, and the API family in the
+  method classification is renamed with them.
+- The crate, the tables and the public callback path follow. How far that
+  goes is settled when the rename is done; the method names are the part
+  that matters to readers of the contract.
+
+After that, "authentication" and "authorization" mean one thing in
+Lightspeed, the Platform's, and "credentials" means what a universe uses to
+reach other systems.
+
 ## The machine plane is untouched
 
 Machines the runtime uses for compute do not use RPC tokens and will not go
@@ -269,7 +307,9 @@ are regenerated.
    direct connection, the SDKs, the web app's key pages removed, the
    Configurator setup and the connector host switched off.
 4. **The private listener.**
-5. **Documentation,** for review before it lands: the access overview, API
+5. **The rename to credentials.** Mechanical, with the contract and every
+   generated consumer regenerated.
+6. **Documentation,** for review before it lands: the access overview, API
    keys and service access, self-hosting, the environment-variable
    reference, the CLI guide, configuration as code.
 
@@ -286,6 +326,8 @@ are regenerated.
 - `/rpc` is not served on the public listener; the callback, client metadata
   and webhook endpoints are not served on the private one.
 - Every method is still classified in the contract.
+- After the rename, no method or API family named `auth` remains in the
+  contract, and a login to an MCP server still completes end to end.
 - The Platform's member gate passes its existing suite against a runtime in
   the new mode, including the transcription rule it now applies.
 
@@ -306,6 +348,8 @@ Decided, 2026-11-16:
   branch.
 - **Channel connectors are switched off** in this work. Channels are being
   removed for now.
+- **The credentials the runtime holds for calling others stay in the
+  runtime,** and `auth/*` is renamed to `credentials/*`.
 
 ## What this reverses
 
