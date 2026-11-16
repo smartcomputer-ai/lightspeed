@@ -113,7 +113,7 @@ impl Platform {
                     }
                     ("GET", "/nested/api/v1/connection") => (
                         200,
-                        json!({"runtime":"platform","contractRevision":api::HTTP_CONTRACT_REVISION,"caller":{"single":false},"platform":{"principal":{"kind":"user","id":"person","name":"Ada"},"credential":{"kind":"cliSession","id":"session"}}}),
+                        json!({"runtime":"platform","contractRevision":api::HTTP_CONTRACT_REVISION,"caller":{"single":false},"platform":{"principal":{"kind":"user","id":"person","name":"Ada","platformAdmin":false},"credential":{"kind":"cliSession","id":"session"}}}),
                         "",
                     ),
                     // Renewal may accompany a denied operation; the following status/logout

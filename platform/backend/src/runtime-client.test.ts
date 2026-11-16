@@ -60,6 +60,20 @@ describe("method roles", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("keeps composed Platform calls and helpers out of the runtime member gate", async () => {
+    const calls = core();
+    const client = as("owner");
+    for (const request of [
+      () => client.call("platform/accounts/list", {}),
+      () => client.platform.listAccounts(),
+    ]) {
+      const error = await refusal(request());
+      expect(error).toBeInstanceOf(GateRefusal);
+      expect((error as GateRefusal).status).toBe(403);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
   it.each(["viewer", "contributor"] as const)("refuses workspace creation by %s before reaching core", async (role) => {
     const calls = core();
     const error = await refusal(as(role).call("vfs/workspaces/create", {}));

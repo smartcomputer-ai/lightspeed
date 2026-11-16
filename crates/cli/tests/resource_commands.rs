@@ -1363,3 +1363,78 @@ fn a_connection_from_the_environment_needs_no_home_directory() {
         String::from_utf8_lossy(&named.stderr)
     );
 }
+
+#[test]
+fn configuration_resource_requests_stay_on_the_created_and_resolved_uuid() {
+    let runtime = document_runtime();
+    std::fs::write(
+        runtime.directory.path().join("research.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: research\nmcpServers:\n  - serverId: tracker\n    serverUrl: https://tracker.example.com/mcp\n    defaultServerLabel: tracker\n",
+    ).unwrap();
+    for _ in 0..2 {
+        let applied = run_documents(&runtime, &["config", "apply", "-f", "research.yaml"], &[]);
+        assert!(
+            applied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&applied.stderr)
+        );
+    }
+    let requests = runtime.requests.lock().unwrap();
+    let created = requests
+        .iter()
+        .find(|request| request["method"] == "deployment/universes/create")
+        .unwrap();
+    let universe_id = &created["params"]["universeId"];
+    let resources: Vec<_> = requests
+        .iter()
+        .filter(|request| {
+            request["method"]
+                .as_str()
+                .unwrap()
+                .starts_with("mcp/servers/")
+        })
+        .collect();
+    assert!(
+        resources
+            .iter()
+            .any(|request| request["method"] == "mcp/servers/list")
+    );
+    assert!(
+        resources
+            .iter()
+            .any(|request| request["method"] == "mcp/servers/put")
+    );
+    for request in resources {
+        assert_eq!(&request["universe"], universe_id, "{request}");
+    }
+}
+
+#[test]
+fn configuration_does_not_treat_a_malformed_successful_read_as_a_missing_universe() {
+    let runtime = Runtime::start(|method, _| match method {
+        "deployment/universes/read" => json!({"universe":{"handle":"research"}}),
+        _ => panic!("unexpected request {method}"),
+    });
+    std::fs::write(
+        runtime.directory.path().join("research.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: research\n",
+    )
+    .unwrap();
+    let applied = run_documents(&runtime, &["config", "apply", "-f", "research.yaml"], &[]);
+    assert!(!applied.status.success());
+    assert!(
+        String::from_utf8_lossy(&applied.stderr)
+            .contains("server did not return the existing universe UUID")
+    );
+    assert!(
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| matches!(
+                request["method"].as_str(),
+                Some("initialize" | "deployment/universes/read")
+            ))
+    );
+}

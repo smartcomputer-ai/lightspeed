@@ -251,6 +251,7 @@ mod tests {
             kind: "user".into(),
             id: "person".into(),
             name: "Ada".into(),
+            platform_admin: false,
         });
         let display = ConnectionDisplay::new(&connection, &universe());
         assert!(display.details.contains("Principal: Ada"));

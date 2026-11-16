@@ -7,7 +7,8 @@ it, and what to do with the result. Stable identifiers let the application
 recover from a lost HTTP response without creating duplicate work.
 
 The TypeScript client supplies typed HTTP calls and helpers for starting
-runs and waiting for them to finish. Its public types come from the Rust API contract.
+runs and waiting for them to finish. Its runtime types come from the Rust API contract; Platform-native types come
+from the shared Platform contract.
 Build against this client and the public contract so runtime implementation
 changes do not become dependencies of your application. A
 [Python client](../../../clients/python/README.md) covers the same API; what this
@@ -25,10 +26,71 @@ actor attribution. Clients must not supply actor headers to impersonate users.
 Platform-native account, application, grant, and credential routes live under
 `/api/v1/platform`. Their schemas and route descriptors are authored once in
 `platform/shared/src/platform-api.ts` and generated into both SDKs. Use
-TypeScript `client.callPlatform(...)` or Python `client.call_platform(...)`.
+`client.call(operation, params)` in either SDK for both runtime operation IDs,
+such as `profiles/list`, and native Platform IDs, such as
+`platform/accounts/read`. Generated `client.platform` helpers expose the same
+native operations with typed parameter objects: TypeScript
+`client.platform.readAccount({ accountId })` and Python
+`client.platform.read_account({"accountId": account_id})`. Native operations
+require a Platform connection; direct runtimes do not serve them.
 Personal and application keys are managed from the web UI or
 `lightspeed platform api-key`. Use `lightspeed connect login --url DEPLOYMENT_URL`
 for browser-approved CLI access. See [People and roles](../access-and-security/people-and-roles.md).
+
+## Reuse a saved CLI connection
+
+For a local script, first select the connection and resources with the CLI:
+
+```bash
+lightspeed connect login --url https://lightspeed.example --name work
+lightspeed platform account use ACCOUNT_ID
+lightspeed universe use my-universe
+```
+
+The SDK factories load the same named connection, pinned endpoint, credential
+file, and selected account/universe. Omit the name to use the CLI's selected
+connection. They do not open a browser or start a login flow.
+
+In Node.js, import the factory from the Node-only entry point:
+
+```ts
+import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
+
+const client = await createClientFromConnection({ name: "work" });
+if (!client.accountId) throw new Error("Select an account with lightspeed platform account use");
+const { account } = await client.platform.readAccount({ accountId: client.accountId });
+const profiles = await client.call("profiles/list", {});
+console.log(account.name, profiles);
+```
+
+In Python, use the asynchronous factory:
+
+```python
+import asyncio
+from lightspeed_ai import AsyncLightspeedClient
+
+async def main():
+    async with await AsyncLightspeedClient.from_connection("work") as client:
+        if client.account_id is None:
+            raise RuntimeError("Select an account with lightspeed platform account use")
+        account = await client.platform.read_account({"accountId": client.account_id})
+        profiles = await client.call("profiles/list", {})
+        print(account, profiles)
+
+asyncio.run(main())
+```
+
+Both factories reread the credential for each request and handle renewal of
+CLI-owned session credentials. They do not overwrite externally managed secret
+files. A revoked or expired login requires an explicit `lightspeed connect login`;
+there is no automatic login or separate SDK refresh-token protocol. API keys
+retain their own expiry and restrictions. See
+[CLI connections](../using-lightspeed/cli.md#connect-to-platform).
+
+The selected account is exposed as `client.accountId` / `client.account_id`.
+Pass it explicitly in native helper parameter objects; selection does not
+silently fill account fields or grant access. The main TypeScript import stays
+browser-compatible and does not read local CLI files.
 
 ## Resource HTTP API
 
@@ -191,17 +253,28 @@ independent work.
 
 ## Use helpers or `call`
 
-The client has two layers. Named helpers such as `startSession`, `readRun`, and
-`closeSession` cover what most applications need to use sessions, runs, and the resources
-they attach. `client.call(method, params)` reaches every method in the API by its name,
-including administration such as auth, deployment, and channels, which have no helpers.
+Every public runtime and native Platform operation has a typed named helper in
+both SDKs. Runtime helpers live directly on `client`; `client.platform` supplies
+native account, application, credential and access helpers such as
+`client.platform.readAccount({ accountId })`. Python uses matching snake_case
+names. The generators check complete coverage against both operation catalogs.
 
-A helper and its `call` do the same thing, so prefer the helper when there is one. They
-differ in shape: a helper takes the IDs of its target first and everything else in one
-options object, and returns the method's data. `call` takes one params object and one
-options object, and returns the same direct DTO. A few helpers also add behavior: `startRun` and `steerRun` accept
-plain text and generate a submission ID, `awaitRun` combines several calls and has no
-single method behind it, and the blob helpers handle binary transport. The
+Prefer named helpers for application code. `client.call(operation, params)`
+remains a typed alternative for code that selects operations by ID. Runtime
+helpers take target IDs first and the remaining settings in an options object;
+generated `client.platform` helpers take one typed parameter object. Both return
+the operation's data. Python runtime helpers use keyword arguments for settings.
+
+A few helpers add behavior: `startRun` and `steerRun` accept plain text and
+generate a submission ID, and `startRun` also accepts every structured run source
+and terminal notification setting. `awaitRun` combines several operations.
+`watch` streams events, blob downloads return bytes, and `uploadBlob` accepts a
+binary body. `putBlobs` exposes batch blob storage, while `putBlob` stores one
+value and returns its reference. These helpers keep the same server permissions
+and endpoint availability as their underlying operations. Platform admission
+still controls which runtime operations are available and applies account and
+universe policy; account-qualified universe creation uses
+`client.platform.createUniverse`. The
 [client README](../../../clients/typescript/README.md#helpers-and-call) lists them all.
 
 ## Transcribe audio before submitting session input
@@ -535,7 +608,7 @@ rather than failing the call.
 | Bring back a stopped session | `session/restart`; a run that was executing fails, and a parked run keeps waiting. |
 
 The [API reference](../../../crates/api/contract/api-reference.md) describes
-each operation. The client's `METHOD_INFO` exposes the same method metadata. Use [Workflow tools](workflow-tools.md) when another
+each operation. The client's `OPERATION_INFO` exposes the runtime operation metadata. Use [Workflow tools](workflow-tools.md) when another
 durable workflow needs to own or participate in the session.
 
 ## Verify the integration

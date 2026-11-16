@@ -2,7 +2,9 @@ import {
   LightspeedClient,
   LightspeedApiError,
   type CallOptions,
-  type OperationId,
+  type ClientOperationId,
+  type ClientOperationParams,
+  type ClientOperationResult,
   type OperationParams,
   type OperationResult,
   type UniverseWatchParams,
@@ -128,9 +130,10 @@ export class MemberClient extends LightspeedClient {
     return super.openDownload(operation, params, options);
   }
 
-  override async call<M extends OperationId>(method: M, params: OperationParams<M>, options: CallOptions = {}): Promise<OperationResult<M>> {
+  override async call<M extends ClientOperationId>(method: M, params: ClientOperationParams<M>, options: CallOptions = {}): Promise<ClientOperationResult<M>> {
+    if (method.startsWith("platform/")) throw new GateRefusal(403, "Platform operations require the native account authorization gate");
     const authorized = await this.authorizeOperation(method, params as unknown as Record<string, unknown>, options);
-    return authorized.response !== undefined ? authorized.response as OperationResult<M> : super.call(method, authorized.params as OperationParams<M>, options);
+    return authorized.response !== undefined ? authorized.response as ClientOperationResult<M> : super.call(method, authorized.params as ClientOperationParams<M>, options);
   }
 
   async authorizeOperation(method: string, params: Record<string, unknown>, options: CallOptions = {}): Promise<{ params: Record<string, unknown>; response?: OperationResult<"transcriptions/read"> }> {

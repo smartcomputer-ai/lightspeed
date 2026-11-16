@@ -209,3 +209,11 @@ Decided, 2026-11-16:
   existing setting when omitted. Platform enforces Account Admin unprotection
   and mandatory account policy. Unit and live scenarios were authored; none
   were executed. `cargo check --workspace --all-targets --locked` passed.
+
+- 2026-11-17: aligned the configuration-as-code guide with Platform account
+  provisioning and credential restrictions. It distinguishes Creator authority
+  for new universes, Owner authority for universe configuration, and Account
+  Admin authority for clearing protection when account policy permits it.
+  Documented explicit initial Owners for Platform Admin provisioning and
+  `--universe-id` recovery without putting account identity into runtime
+  documents. Tests remain on hold.

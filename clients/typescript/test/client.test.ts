@@ -294,3 +294,31 @@ describe("HTTP client", () => {
   });
 
 });
+
+it("named helpers preserve full run sources, terminal notifications and backward event pagination", async () => {
+  const calls: Array<{ url: URL; body: unknown }> = [];
+  const client = new LightspeedClient({ endpoint: "https://runtime.test", universe: "u", fetch: async (url, init) => {
+    calls.push({ url: new URL(String(url)), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    return Response.json({});
+  } });
+  const source = { type: "input", items: [{ type: "text", text: "hello" }] } as const;
+  await client.startRun("session", { ...source, items: [...source.items] }, { submissionId: null, notifyOnTerminal: { token: "controller" }, config: null });
+  expect(calls[0]!.body).toEqual({ source, submissionId: null, notifyOnTerminal: { token: "controller" }, config: null });
+  await client.readEvents("session", { direction: "backward", before: { seq: 42 }, limit: 10 });
+  expect(calls[1]!.url.searchParams.get("direction")).toBe("backward");
+  expect(JSON.parse(calls[1]!.url.searchParams.get("before")!)).toEqual({ seq: 42 });
+  expect(calls[1]!.url.searchParams.get("limit")).toBe("10");
+});
+
+it("named binary helpers carry streams and raw workspace bytes", async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([9, 8])); controller.close(); } });
+  const client = new LightspeedClient({ endpoint: "https://runtime.test", universe: "u", fetch: async (_url, init) => {
+    if (init?.method === "GET") return new Response(new Uint8Array([255, 0]));
+    expect(init?.body).toBe(stream);
+    expect(new Headers(init?.headers).get("content-length")).toBe("2");
+    expect(new Headers(init?.headers).get("content-type")).toBe("application/octet-stream");
+    return Response.json({ blobRef: "digest", bytes: 2 });
+  } });
+  expect(await client.uploadBlob("digest", stream, { contentLength: 2 })).toEqual({ blobRef: "digest", bytes: 2 });
+  expect(await client.readWorkspaceFile("workspace", "file.bin")).toEqual(new Uint8Array([255, 0]));
+});

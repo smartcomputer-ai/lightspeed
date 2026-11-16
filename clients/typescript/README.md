@@ -7,36 +7,87 @@ browser UI.
 
 A runtime token can call every method in every universe, including reading private
 sessions, so keep it on your server. The client itself also
-runs in a browser; [give it a proxy](#serve-a-browser-ui) instead of a key.
+runs in a browser; use a same-origin Platform session or [give it a proxy](#serve-a-browser-ui) instead of a runtime token.
 
 ## Connect through Platform
 
-Use a personal or application API key with the Platform `/api/v1` endpoint.
-The same runtime methods then enforce the principal's current account and
-universe permissions, narrowed by the key. Omit `actor`: Platform derives it.
-Runtime infrastructure tokens remain full-authority credentials for trusted
-components connecting directly to a runtime.
+Use the deployment origin or `/api/v1` URL with a personal or application API
+key. Runtime resources and native Platform operations share `client.call` and
+one credential. Platform derives the principal; omit `actor`.
 
 ```ts
+import { LightspeedClient } from "@lightspeed-ai/sdk";
+
 const client = new LightspeedClient({
-  endpoint: "https://lightspeed.example/api/v1",
+  endpoint: "https://lightspeed.example",
   token: process.env.LIGHTSPEED_PLATFORM_KEY!,
 });
-const { accounts } = await client.callPlatform("platform/accounts/list", {});
-const { universe } = await client.callPlatform("platform/universes/create", {
+const { accounts } = await client.platform.listAccounts();
+const { universe } = await client.platform.createUniverse({
   accountId: accounts[0]!.id,
   universeId: crypto.randomUUID(), // Keep this ID if retrying creation.
   name: "Experiment",
   handle: "experiment",
 });
+// The same typed operation is available through the common dispatcher.
+const account = await client.call("platform/accounts/read", {
+  accountId: accounts[0]!.id,
+});
 ```
 
-Creation requires an account Creator or Admin and a key that permits creation.
-Native account, application, grant, and credential types are generated from
-Platform's route descriptors. `callPlatform` shares the client's transport and
-credentials with `call`. Key-management routes require an authenticated browser
-session; a key cannot mint a broader credential. Browser-based CLI login is
-separate follow-up work.
+Creation requires an account Creator or Admin and a credential that permits
+creation. Native helpers under `client.platform` are generated from the same
+contract as their routes and types. Each accepts a typed parameter object and
+optional `CallOptions`; helpers without required parameters accept no arguments.
+Account IDs remain explicit parameters. Key-management routes require a human
+browser or CLI session; API keys cannot mint broader credentials.
+
+`ClientOperationId`, `ClientOperationParams`, and `ClientOperationResult` describe
+the composed client. `OperationId` and the corresponding runtime metadata remain
+runtime-only for server adapters. `client.initialize()` returns a discriminated
+`ClientConnectionResponse`: when `runtime === "platform"`, `platform` contains
+the authenticated principal, credential kind, accessible accounts, and restrictions.
+
+Origins, trailing slashes, and deployment base paths normalize consistently:
+`https://example.test/team/` becomes `https://example.test/team/api/v1`.
+Credential-bearing URLs, queries, fragments, and redirects are refused.
+Ordinary construction performs no discovery or implicit universe selection;
+set `universe` explicitly for runtime resource calls. A same-origin browser
+client can use its Platform session cookies without embedding a key.
+
+## Use a saved CLI connection in Node.js
+
+First save a deployment with `lightspeed connect add`, or sign in with
+`lightspeed connect login --url https://lightspeed.example --name work`.
+Then import the Node-only factory:
+
+```ts
+import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
+
+const client = await createClientFromConnection({ name: "work" });
+const { accounts } = await client.platform.listAccounts();
+if (client.accountId) {
+  const applications = await client.platform.listApplications({
+    accountId: client.accountId,
+  });
+}
+```
+
+The factory defaults to the CLI's selected connection. `configDir` overrides the
+configuration directory; otherwise it uses `LIGHTSPEED_CONFIG_DIR`, then
+`XDG_CONFIG_HOME/lightspeed` or `~/.config/lightspeed`. It verifies the saved
+server and credential kinds, reads private credential files for each request,
+and persists renewal of CLI-owned sessions atomically, including renewals on
+denied operations. Imported credential files and API keys are never rewritten.
+It neither logs in automatically nor borrows environment tokens or endpoint
+overrides. Saved HTTPS requirements and explicit CLI development exceptions apply.
+
+`universe` and `account` factory options override selections for this client
+without editing the saved connection. Changing accounts clears the inherited
+universe unless you also supply `universe`. The selected account is available
+as read-only `client.accountId`; helpers still require explicit account IDs.
+Removing or rebinding the named connection stops subsequent authenticated calls.
+This factory is separate from the browser-safe main package entry.
 
 ## Install
 
@@ -63,7 +114,8 @@ import { LightspeedClient } from "@lightspeed-ai/sdk";
 
 const client = new LightspeedClient({
   endpoint: process.env.LIGHTSPEED_API_URL!,
-  token: process.env.LIGHTSPEED_RUNTIME_TOKEN!,
+  token: process.env.LIGHTSPEED_API_TOKEN!,
+  universe: process.env.LIGHTSPEED_UNIVERSE!,
 });
 
 const { session } = await client.startSession({
@@ -96,7 +148,7 @@ and `submissionId` so a retry finds the same session and run. See
 
 | Option | Use |
 | --- | --- |
-| `endpoint` | The HTTP API base URL, `/api/v1` for a direct runtime. |
+| `endpoint` | Deployment origin or `/api/v1` base URL, for runtime or Platform. |
 | `token` | Sent as the bearer credential. |
 | `universe` | The universe's UUID or handle; required for universe methods in authenticated mode. |
 | `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
@@ -111,11 +163,11 @@ must check each user's access itself.
 
 The client has two layers, and you can mix them freely:
 
-- **Named helpers** such as `client.readSession(id)` cover what most applications need.
+- **Named helpers** cover all 148 runtime operations and all 26 native Platform operations.
 - **`client.call(method, params)`** reaches every method in the API, typed, by its name.
 
-A helper and its `call` do the same thing. Prefer the helper when there is one, and use
-`call` for everything else, mainly administration. The two differ in shape:
+Use named helpers for discoverable, typed arguments, or `call` when selecting an
+operation by its stable ID. Authorization is the same for both. The shapes differ:
 
 ```ts
 // A helper: IDs of the target come first, everything else goes in options, and you
@@ -127,40 +179,96 @@ await client.closeSession(sessionId, { force: true, signal });
 const result = await client.call("session/read", { sessionId, runLimit: 5 }, { signal });
 console.log(result.session);
 
-// Administration has no helper.
-const universes = await client.call("deployment/universes/list", {});
+// Administration also has named helpers.
+const universes = await client.listUniverses();
+await client.putUniverseExpiry("universe-id", { expiresAtMs: null });
 ```
 
 Use `watch` for live list changes and `readEvents` for durable session events.
 Both layers reject with the same
 [errors](#handle-errors), and every option also accepts `signal` and `headers`.
 
-| Area | Helpers |
+Helper availability describes the client surface; the deployment still decides
+which operations your credential may use. Platform exposes permitted runtime
+and deployment operations through its policy checks. For account-qualified
+universe creation on Platform, use `client.platform.createUniverse({ accountId,
+... })`; `client.createUniverse(id, options)` addresses the runtime deployment
+operation without adding account ownership.
+
+| Area | Runtime helpers |
 | --- | --- |
-| Connection | `initialize` |
-| Sessions | `startSession`, `readSession`, `listSessions`, `renameSession`, `putSessionMetadata`, `putSessionConfig`, `shareSession`, `restartSession`, `closeSession`, `deleteSession` |
-| Runs | `startRun`, `awaitRun`, `readRun`, `listRuns`, `cancelRun`, `steerRun`, `decideApprovals`, `readEvents` |
-| Session setup | `appendContext`, `compactContext`, `applyProfile`, `listSessionSkills`, `activateEnvironment`, `deactivateEnvironment` |
-| Content | `putBlob`, `readBlobText`, `readBlobBytes` |
-| Profiles | `createProfile`, `readProfile`, `listProfiles`, `putProfile`, `deleteProfile` |
-| Models | `listModels`, `readModelDefaults` |
-| Environments | `createEnvironment`, `readEnvironment`, `listEnvironments`, `closeEnvironment`, `listEnvironmentTemplates` |
-| Workspaces | `createWorkspace`, `readWorkspace`, `listWorkspaces`, `deleteWorkspace`, `readWorkspaceFile` |
-| MCP servers | `readMcpServer`, `listMcpServers` |
-| Bots | `readBot`, `listBots`, `listBotEvents`, `admitBotEvent` |
+| initialize | `initialize` |
+| Sessions | `startSession`, `readSession`, `listSessions`, `renameSession`, `shareSession`, `restartSession`, `closeSession`, `deleteSession` |
+| session/metadata | `putSessionMetadata` |
+| session/config | `putSessionConfig` |
+| session/runs | `listRuns`, `readRun`, `cancelRun`, `decideApprovals`, `startRun`, `steerRun` |
+| session/context | `appendContext`, `compactContext`, `removeContext`, `replaceContext` |
+| session/profiles | `applyProfile` |
+| session/skills | `listSessionSkills` |
+| session/environments | `activateEnvironment`, `deactivateEnvironment` |
+| profiles | `createProfile`, `readProfile`, `listProfiles`, `putProfile`, `deleteProfile` |
+| models | `listModels`, `readModelDefaults`, `putModelDefaults` |
+| Environments | `createEnvironment`, `readEnvironment`, `listEnvironments`, `closeEnvironment`, `updateEnvironment` |
+| environments/templates | `listEnvironmentTemplates`, `readEnvironmentTemplate` |
+| vfs | `createWorkspace`, `readWorkspace`, `listWorkspaces`, `deleteWorkspace`, `readWorkspaceFile`, `commitSnapshot`, `readSnapshot`, `updateWorkspace` |
+| mcp | `readMcpServer`, `listMcpServers`, `putMcpServer`, `discoverMcpServerAuth`, `discoverMcpServerTools`, `deleteMcpServer` |
+| Bots | `readBot`, `listBots`, `createBot`, `putBot`, `closeBot`, `deleteBot` |
+| bots/events | `listBotEvents`, `admitBotEvent`, `replayBotEvent`, `readBotEvent` |
+| session/retention | `putSessionRetention` |
+| environments/credentials | `bindEnvironmentCredential`, `listEnvironmentCredentials`, `unbindEnvironmentCredential` |
+| environments/external | `createExternalEnvironment` |
+| environments/registered | `putRegisteredEnvironment`, `releaseRegisteredEnvironment` |
+| environments/ingress | `putEnvironmentIngress` |
+| environments/power | `putEnvironmentPower` |
+| environments/provider-bindings | `listEnvironmentProviderBindings`, `readEnvironmentProviderBinding` |
+| environments/jobs | `createEnvironmentJobs`, `readEnvironmentJobs`, `cancelEnvironmentJobs` |
+| environments/registration-keys | `createEnvironmentRegistrationKey`, `putEnvironmentRegistrationKey`, `readEnvironmentRegistrationKey`, `listEnvironmentRegistrationKeys`, `updateEnvironmentRegistrationKey`, `rotateEnvironmentRegistrationKey`, `revokeEnvironmentRegistrationKey` |
+| transcriptions | `startTranscription`, `readTranscription`, `cancelTranscription` |
+| blobs | `putBlobs`, `hasBlobs`, `readBlobBytes`, `uploadBlob` |
+| credentials/grants | `importCredentialGrant`, `leaseCredentialGrant`, `readCredentialGrant`, `listCredentialGrants`, `putCredentialGrant`, `revokeCredentialGrant` |
+| credentials/clients | `createCredentialClient`, `readCredentialClient`, `listCredentialClients`, `deleteCredentialClient` |
+| credentials/flows | `startCredentialFlow`, `readCredentialFlow` |
+| credentials/providers | `createCredentialProvider`, `putCredentialProvider`, `readCredentialProvider`, `listCredentialProviders`, `deleteCredentialProvider` |
+| credentials/github | `listGithubInstallations`, `grantGithubInstallation` |
+| bots/state | `readBotState` |
+| bots/sessions | `rotateBotSession` |
+| bots/triggers | `putBotTrigger`, `readBotTrigger`, `listBotTriggers`, `readBotTriggerSecrets`, `deleteBotTrigger` |
+| bots/filters | `testBotFilter` |
+| channels | `createChannelAccount`, `putChannelAccount`, `readChannelAccount`, `listChannelAccounts`, `deleteChannelAccount`, `admitChannelInbound`, `listChannelPairings`, `deleteChannelPairing`, `readChannelConversation` |
+| deployment/universes | `listDeletedUniverses`, `createUniverse`, `listUniverses`, `readUniverse`, `putUniverseConfiguration`, `putUniverseExpiry`, `putUniverseHandle`, `deleteUniverse` |
+| deployment/sessions | `listDeletedSessions`, `purgeSession` |
+| deployment/environment-provider-bindings | `listDeploymentEnvironmentProviderBindings` |
+| deployment/environment-providers | `putEnvironmentProvider`, `listEnvironmentProviders`, `readEnvironmentProvider`, `deleteEnvironmentProvider`, `putUniverseEnvironmentProviderBinding`, `deleteUniverseEnvironmentProviderBinding` |
+| deployment/channels | `listDeploymentChannelAccounts` |
+| universe | `watch` |
+| session/events | `readEvents` |
 
-Everything else stays on `call`: credential grants and providers (`credentials/*`), deployment and universe
-management, channels, registration keys, transcription, and the remaining bot, MCP, and
-environment operations. A few helpers do more than wrap one method:
+Native Platform helpers use `client.platform` and typed parameter objects:
 
-- `startRun` and `steerRun` accept plain text and generate a submission ID if you give none.
+| Area | Platform helpers |
+| --- | --- |
+| session | `readCurrentSession`, `revokeCurrentSession` |
+| credentials | `listPersonalApiKeys`, `createPersonalApiKey`, `revokePersonalApiKey` |
+| applications | `listApplicationApiKeys`, `createApplicationApiKey`, `revokeApplicationApiKey` |
+| accounts | `listAccounts`, `createAccount`, `readAccount`, `updateAccount`, `listAccountMembers`, `putAccountMember`, `removeAccountMember`, `listApplications`, `createApplication`, `updateApplication`, `disableApplication` |
+| universes | `adoptUniverse`, `createUniverse`, `updateUniverse`, `listUniverseGrants`, `putUniverseGrant`, `removeUniverseGrant`, `putUniverseAccessPolicy` |
+
+Additional conveniences include `awaitRun`, `readBlobText`, `putBlob`,
+`openWatch`, and `openDownload`. They compose operations or expose their streams:
+
+- `startRun` accepts plain text, input items, or a full `RunStartSource`; its options
+  include `notifyOnTerminal`. `steerRun` accepts plain text or input items. Both
+  generate a submission ID if you give none.
+- `readEvents` supports forward reads and backward pagination with `direction`
+  and `before`, preserving the complete event-read parameter set.
 - `awaitRun` has no single method behind it. It follows events, checks run state, retries
   reads, and returns the finished run.
 - `putBlob` sends a JSON batch upload; `readBlobText` and `readBlobBytes` download raw bytes.
 - `uploadBlob` uploads bytes or a stream to an expected content digest. `openDownload` returns a streaming response that the caller consumes or cancels.
 
-`OPERATION_INFO` describes every method, `CLIENT_HELPERS` maps each generated helper to its
-method, and the
+`OPERATION_INFO` describes every operation. `CLIENT_HELPERS` maps every canonical
+runtime helper, generated or handwritten, to its operation;
+`PLATFORM_CLIENT_HELPERS` maps the native namespace. The
 [API reference](https://github.com/smartcomputer-ai/lightspeed/blob/main/crates/api/contract/api-reference.md)
 covers them in full. Types are named by the API, and `OperationResult<"session/read">` and
 `SessionEventKindOf<"runFailed">` cover the common cases.

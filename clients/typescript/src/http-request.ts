@@ -1,3 +1,4 @@
+import { normalizeEndpoint } from "./endpoint.js";
 import { HTTP_OPERATIONS } from "./generated/http.js";
 import type { OperationId, OperationParams } from "./generated/operations.js";
 
@@ -25,9 +26,7 @@ export function prepareHttpRequest<M extends OperationId>(
   if (pathname.includes("{universe}")) {
     pathname = pathname.replace("{universe}", segment(options.universe, "universe"));
   }
-  const endpoint = new URL(options.endpoint);
-  if (endpoint.search || endpoint.hash) throw new TypeError("API endpoint must not contain a query or fragment");
-  const url = new URL(endpoint.toString().replace(/\/$/, "") + pathname.slice("/api/v1".length));
+  const url = new URL(normalizeEndpoint(options.endpoint) + pathname.slice("/api/v1".length));
   for (const parameter of binding.parameters) {
     if (parameter.in !== "query") continue;
     const value = take(remaining, parameter.name);

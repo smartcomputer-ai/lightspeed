@@ -3,6 +3,7 @@
 import argparse
 import ast
 import json
+import keyword
 import pprint
 import re
 import subprocess
@@ -62,15 +63,77 @@ def render_workflow_manifest() -> str:
     ])
 
 
-def helper_inventory() -> list:
+def helper_inventory() -> dict:
     return json.loads(subprocess.check_output(
-        [
-            "node", "--input-type=module", "-e",
-            "import { HELPERS } from './scripts/helpers.mjs'; console.log(JSON.stringify(HELPERS));",
-        ],
-        cwd=CLIENTS / "typescript",
-        text=True,
+        ["node", "--input-type=module", "-e",
+         "import { HELPERS, MANUAL_HELPERS, ALL_HELPERS, validateHelpers } from './scripts/helpers.mjs'; "
+         "import fs from 'node:fs'; validateHelpers(JSON.parse(fs.readFileSync('../../crates/api/contract/http.json')).operations); "
+         "console.log(JSON.stringify({generated:HELPERS, manual:MANUAL_HELPERS, all:ALL_HELPERS}));"],
+        cwd=CLIENTS / "typescript", text=True,
     ))
+
+
+def validate_python_helpers(inventory: dict, methods: dict, schema: dict) -> None:
+    tree = ast.parse((OUTPUT / "client.py").read_text())
+    client = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AsyncLightspeedClient")
+    handwritten = {node.name: node for node in client.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    seen = set()
+    operations = set()
+    for operation, name, *_ in inventory["all"]:
+        python_name = snake_case(name)
+        if not python_name.isidentifier() or keyword.iskeyword(python_name) or python_name in seen:
+            raise ValueError(f"invalid or colliding Python helper {python_name}")
+        if operation not in methods or operation in operations:
+            raise ValueError(f"invalid or duplicate helper operation {operation}")
+        seen.add(python_name)
+        operations.add(operation)
+    if operations != set(methods):
+        raise ValueError(f"missing Python helper operations: {set(methods) - operations}")
+    for _, name, *_ in inventory["generated"]:
+        if snake_case(name) in handwritten or snake_case(name) in {"call", "platform"}:
+            raise ValueError(f"generated helper collides with handwritten API: {name}")
+    for operation, name, *_ in inventory["manual"]:
+        python_name = snake_case(name)
+        if python_name not in handwritten:
+            raise ValueError(f"manual helper {python_name} is not implemented")
+        function = handwritten[python_name]
+        arguments = {arg.arg: ast.unparse(arg.annotation) if arg.annotation else "" for arg in [*function.args.args, *function.args.kwonlyargs]}
+        entry = methods[operation]
+        params_name = reference(entry["params"]["schema"])
+        properties = schema[params_name].get("properties", {})
+        if params_name not in arguments.get("params", ""):
+            for field in properties:
+                argument = "input" if field in {"source", "items"} else snake_case(field)
+                if argument not in arguments or not arguments[argument] or "Any" in arguments[argument]:
+                    raise ValueError(f"manual helper {python_name} does not expose typed field {field}")
+            if "source" in properties and "RunStartSource" not in arguments.get("input", ""):
+                raise ValueError(f"manual helper {python_name} must accept the complete run source")
+        result = ast.unparse(function.returns) if function.returns else ""
+        expected = "AsyncIterator[AgentNotification]" if entry["transfer"] == "sse" else entry["result"]["type"]
+        if result != expected:
+            raise ValueError(f"manual helper {python_name} must return {expected}, got {result}")
+        if entry["transfer"] == "binaryUpload" and ("bytes" not in arguments.get("body", "") or "AsyncIterator[bytes]" not in arguments.get("body", "") or "content_length" not in arguments):
+            raise ValueError(f"manual helper {python_name} must expose bytes, streams and content_length")
+
+
+def readme_helpers(inventory: dict) -> str:
+    groups = {}
+    for operation, name, *_ in inventory["all"]:
+        group = "Connection" if operation == "initialize" else operation.split("/")[0].replace("-", " ").title()
+        groups.setdefault(group, []).append(snake_case(name))
+    lines = ["<!-- BEGIN GENERATED HELPERS -->", "| Runtime area | Named helpers |", "| --- | --- |"]
+    for group, names in groups.items():
+        lines.append(f"| {group} | " + ", ".join(f"`{name}`" for name in names) + " |")
+    lines.extend(["", "| Native Platform area | `client.platform` helpers |", "| --- | --- |"])
+    native = json.loads((PLATFORM_CONTRACT / "http.json").read_text())["operations"]
+    groups = {}
+    for operation in native:
+        group = operation["operationId"].split("/")[1].title()
+        groups.setdefault(group, []).append(snake_case(operation["helper"]["name"]))
+    for group, names in groups.items():
+        lines.append(f"| {group} | " + ", ".join(f"`{name}`" for name in names) + " |")
+    lines.extend(["<!-- END GENERATED HELPERS -->", ""])
+    return "\n".join(lines)
 
 
 class QualifyTypes(ast.NodeTransformer):
@@ -126,9 +189,17 @@ def docstring(summary: str, description: str, arguments: dict[str, str]) -> list
 def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fields: dict) -> list[str]:
     method = entry["method"]
     params = reference(entry["params"]["schema"])
-    data = "bytes" if entry["result"]["type"] == "bytes" else "Api." + reference(entry["result"]["schema"])
+    data = "ClientConnectionResponse" if method == "initialize" else "bytes" if entry["result"]["type"] == "bytes" else "Api." + reference(entry["result"]["schema"])
     required = schema[params].get("required", [])
     properties = schema[params].get("properties", {})
+    arguments = {"self", "headers"}
+    for field in properties:
+        argument = snake_case(field)
+        if not argument.isidentifier() or keyword.iskeyword(argument) or argument in arguments:
+            raise ValueError(f"{method}: parameter {field} collides with a Python helper argument")
+        arguments.add(argument)
+    if len(set(targets)) != len(targets):
+        raise ValueError(f"{method}: duplicate target arguments")
     if any(target not in required for target in targets):
         raise ValueError(f"{method}: target IDs must be required")
     args = [f"{snake_case(target)}: {fields[params][target]}" for target in targets]
@@ -142,7 +213,7 @@ def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fiel
     described = {
         snake_case(key): properties[key]["description"]
         for key in [*targets, *(key for key in properties if key not in targets)]
-        if properties[key].get("description")
+        if isinstance(properties[key], dict) and properties[key].get("description")
     }
     lines = [
         "",
@@ -161,7 +232,9 @@ def render_helper(entry: dict, name: str, targets: list[str], schema: dict, fiel
 
 def render_client(models: str, manifest: dict, schema: dict) -> str:
     methods = {entry["method"]: entry for entry in manifest["methods"]}
-    helpers = helper_inventory()
+    inventory = helper_inventory()
+    validate_python_helpers(inventory, methods, schema)
+    helpers = inventory["generated"]
     fields = field_types(models)
     lines = [
         BANNER.rstrip(),
@@ -171,6 +244,8 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         "from collections.abc import AsyncIterator",
         "",
         "from . import types as Api",
+        "from . import platform_types as Platform",
+        "from ._connection_types import ClientConnectionResponse",
         "from ._options import UNSET, HeadersInput, Unset",
         "",
         "OPERATIONS = (",
@@ -187,7 +262,9 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
         info = {key: entry[key] for key in ("scope", "access", "summary", "description", "streaming", "notifications")}
         lines.append(f"    {method!r}: {info!r},")
     lines.extend(["}", "", "CLIENT_HELPERS = {"])
-    lines.extend(f"    {snake_case(name)!r}: {method!r}," for method, name, *_ in helpers)
+    lines.extend(f"    {snake_case(name)!r}: {method!r}," for method, name, *_ in inventory["all"])
+    lines.extend(["}", "", "MANUAL_CLIENT_HELPERS = {"])
+    lines.extend(f"    {snake_case(name)!r}: {method!r}," for method, name, *_ in inventory["manual"])
     lines.extend([
         "}", "", "", "class GeneratedClient:",
         "    async def _invoke(",
@@ -199,30 +276,60 @@ def render_client(models: str, manifest: dict, schema: dict) -> str:
     ])
     for method, entry in methods.items():
         params = reference(entry["params"]["schema"])
-        result = "Never" if entry["transfer"] == "sse" else "bytes" if entry["result"]["type"] == "bytes" else "Api." + reference(entry["result"]["schema"])
+        result = "ClientConnectionResponse" if method == "initialize" else "Never" if entry["transfer"] == "sse" else "bytes" if entry["result"]["type"] == "bytes" else "Api." + reference(entry["result"]["schema"])
+        optional = " | None = None" if not schema[params].get("required") else ""
         lines.extend([
             "    @overload",
-            f"    async def call(self, method: Literal[{method!r}], params: Api.{params},",
+            f"    async def call(self, method: Literal[{method!r}], params: Api.{params}{optional},",
             f"                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> {result}: ...",
+        ])
+    native_schema = json.loads((PLATFORM_CONTRACT / "platform.schema.json").read_text())["definitions"]
+    for entry in json.loads((PLATFORM_CONTRACT / "http.json").read_text())["operations"]:
+        optional = " | None = None" if not native_schema[entry["params"]].get("required") else ""
+        lines.extend([
+            "    @overload",
+            f"    async def call(self, method: Literal[{entry['operationId']!r}], params: Platform.{entry['params']}{optional},",
+            f"                   *, headers: HeadersInput | None = None) -> Platform.{entry['result']}: ...",
         ])
     lines.extend([
         "",
-        "    async def call(self, method: str, params: object,",
+        "    async def call(self, method: str, params: object = None,",
         "                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Any:",
         '        """Call an HTTP operation and return its direct DTO or bytes."""',
-        "        return await self._invoke(method, cast(dict[str, Any], params), headers, body, content_length)",
+        "        return await self._invoke(method, cast(dict[str, Any], params) if params is not None else {}, headers, body, content_length)",
     ])
     for method, name, *targets in helpers:
         lines.extend(render_helper(methods[method], snake_case(name), targets, schema, fields))
     return "\n".join(lines) + "\n"
 
 
+def render_connection_types(models: str, schema: dict) -> str:
+    definition = schema["ConnectionResponse"]
+    fields = field_types(models)["ConnectionResponse"]
+    lines = [BANNER.rstrip(), "from typing import Literal, NotRequired, TypedDict", "from . import types as Api", "from .platform_types import PlatformConnectionDetails", "", "class _ConnectionFields(TypedDict):"]
+    for name in definition["properties"]:
+        if name == "runtime":
+            continue
+        annotation = fields[name]
+        if name not in definition.get("required", []):
+            annotation = f"NotRequired[{annotation}]"
+        lines.append(f"    {name}: {annotation}")
+    lines.extend(["", "class RuntimeConnectionResponse(_ConnectionFields):", '    runtime: Literal["runtime"]', "", "class PlatformConnectionResponse(_ConnectionFields):", '    runtime: Literal["platform"]', "    platform: PlatformConnectionDetails", "", "ClientConnectionResponse = RuntimeConnectionResponse | PlatformConnectionResponse", ""])
+    return "\n".join(lines)
+
+
 def render_platform() -> str:
     operations = json.loads((PLATFORM_CONTRACT / "http.json").read_text())["operations"]
-    lines = [BANNER.rstrip(), "from __future__ import annotations", "from typing import Any, Literal, overload", "from . import platform_types as Api", "from ._options import HeadersInput", "", "PLATFORM_OPERATIONS: dict[str, Any] = " + pprint.pformat({op["operationId"]: {"method": op["method"], "path": op["path"]} for op in operations}, sort_dicts=False), "", "class GeneratedPlatformClient:", "    async def _invoke_platform(self, operation: str, params: dict[str, Any], headers: HeadersInput | None = None) -> Any:", "        raise NotImplementedError", ""]
+    schema = json.loads((PLATFORM_CONTRACT / "platform.schema.json").read_text())["definitions"]
+    lines = [BANNER.rstrip(), "from __future__ import annotations", "from typing import Any, Protocol, cast", "from collections.abc import Awaitable", "from . import platform_types as Api", "from ._options import HeadersInput", "", "PLATFORM_OPERATIONS: dict[str, Any] = " + pprint.pformat({op["operationId"]: {"method": op["method"], "path": op["path"], "helper": op["helper"]} for op in operations}, sort_dicts=False), "", "class NativeInvoker(Protocol):", "    def __call__(self, operation: str, params: dict[str, Any], headers: HeadersInput | None = None) -> Awaitable[Any]: ...", "", "class PlatformApi:", '    """Typed native Platform helpers generated from its shared operation catalog."""', "    def __init__(self, invoke: NativeInvoker) -> None:", "        self._invoke = invoke", ""]
+    names = set()
     for op in operations:
-        lines.extend(["    @overload", f"    async def call_platform(self, operation: Literal[{op['operationId']!r}], params: Api.{op['params']}, *, headers: HeadersInput | None = None) -> Api.{op['result']}: ...", ""])
-    lines.extend(["    async def call_platform(self, operation: str, params: Any, *, headers: HeadersInput | None = None) -> Any:", '        """Call a native Platform operation using the same credentials and transport."""', "        return await self._invoke_platform(operation, dict(params), headers)", ""])
+        name = snake_case(op["helper"]["name"])
+        if name in names or name in {"__init__", "_invoke"} or not name.isidentifier() or keyword.iskeyword(name):
+            raise ValueError(f"invalid or duplicate Platform helper {name}")
+        names.add(name)
+        optional = " | None = None" if not schema[op["params"]].get("required") else ""
+        lines.extend([f"    async def {name}(self, params: Api.{op['params']}{optional}, *, headers: HeadersInput | None = None) -> Api.{op['result']}:", f"        return cast(Api.{op['result']}, await self._invoke({op['operationId']!r}, dict(params or {{}}), headers))", ""])
     return "\n".join(lines)
 
 
@@ -247,12 +354,23 @@ def main() -> None:
         "_platform.py": render_platform(),
         "types.py": BANNER + models,
         "_generated.py": render_client(models, manifest, schema),
+        "_connection_types.py": render_connection_types(models, schema),
         "workflow_types.py": BANNER + model_types(WORKFLOW_CONTRACT / "workflow.schema.json"),
         "_workflow_manifest.py": render_workflow_manifest(),
         "_http.py": BANNER + "from typing import Any\n\n"
         + f"HTTP_CONTRACT_REVISION = {http_contract['contractRevision']!r}\n"
         + "HTTP_OPERATIONS: dict[str, Any] = " + pprint.pformat(http_operations, sort_dicts=False) + "\n",
     }
+    readme = PACKAGE / "README.md"
+    current_readme = readme.read_text()
+    helper_table = readme_helpers(helper_inventory()).rstrip()
+    expected_readme, replacements = re.subn(r"<!-- BEGIN GENERATED HELPERS -->.*?<!-- END GENERATED HELPERS -->", lambda _: helper_table, current_readme, flags=re.S)
+    if replacements != 1:
+        raise ValueError("README must contain exactly one generated helper inventory")
+    if args.check and expected_readme != current_readme:
+        sys.exit("README helper inventory is stale. Run python scripts/generate.py.")
+    if not args.check:
+        readme.write_text(expected_readme)
     for filename, content in generated.items():
         path = OUTPUT / filename
         if args.check:

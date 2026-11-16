@@ -37,6 +37,7 @@ pub struct PlatformPrincipal {
     pub kind: String,
     pub id: String,
     pub name: String,
+    pub platform_admin: bool,
 }
 
 #[derive(Deserialize)]
@@ -806,7 +807,13 @@ pub async fn handle(
                 .connections
                 .get(&name)
                 .context("unknown connection")?;
-            verify(saved_resolved(&name, saved)?).await?;
+            let verified = verify(saved_resolved(&name, saved)?).await?;
+            let saved = config
+                .connections
+                .get_mut(&name)
+                .expect("selected connection exists");
+            saved.credential_kind = verified.credential_kind;
+            saved.server_kind = verified.server_kind;
             config.selected = Some(name.clone());
             save_at(&dir, &config)?;
             if json {
@@ -915,6 +922,8 @@ pub async fn handle(
             }
             let verified = verify(saved_resolved(&name, &saved)?).await?;
             saved.universe = verified.universe;
+            saved.credential_kind = verified.credential_kind;
+            saved.server_kind = verified.server_kind;
             config.connections.insert(name.clone(), saved);
             config.selected = Some(name.clone());
             save_at(&dir, &config)?;

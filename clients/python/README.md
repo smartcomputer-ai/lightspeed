@@ -14,19 +14,20 @@ sessions, so keep it on your server.
 
 ## Connect through Platform
 
-Pass a personal or application key to the Platform `/api/v1` endpoint. Runtime
+Pass a personal or application key to the Platform deployment URL. Runtime
 operations use the principal's current permissions intersected with key
 restrictions. Omit `actor`; Platform derives attribution. Direct runtime tokens
 remain full-authority infrastructure credentials.
 
 ```python
 from uuid import uuid4
+from lightspeed_ai import AsyncLightspeedClient
 
 async with AsyncLightspeedClient(
-    "https://lightspeed.example/api/v1", token=platform_key
+    "https://lightspeed.example", token=platform_key
 ) as client:
-    accounts = await client.call_platform("platform/accounts/list", {})
-    created = await client.call_platform("platform/universes/create", {
+    accounts = await client.platform.list_accounts()
+    created = await client.platform.create_universe({
         "accountId": accounts["accounts"][0]["id"],
         "universeId": str(uuid4()),  # Keep this ID if retrying creation.
         "name": "Experiment",
@@ -34,11 +35,35 @@ async with AsyncLightspeedClient(
     })
 ```
 
-Creation requires Creator or Admin access and a credential that permits it.
-`call_platform` has generated operation-specific parameter and result types in
-`lightspeed_ai.platform_types`. It shares credentials and transport with
-`call`. Key management requires an authenticated browser session; API keys
-cannot mint other keys.
+Creation requires Creator or Admin access and a credential that permits it. Platform
+administrators supply an explicit `initialOwner` when provisioning. Native helpers
+take one parameter dictionary using API field names. The same operations are
+available through typed `client.call`, for example
+`await client.call("platform/accounts/list")`. Native parameter and result types
+live in `lightspeed_ai.platform_types`.
+
+For local scripts, reuse the named or selected connection saved by `lightspeed login`
+or `lightspeed connect add`:
+
+```python
+async with await AsyncLightspeedClient.from_connection("work") as client:
+    accounts = await client.platform.list_accounts()
+    if client.account_id is not None:
+        account = await client.platform.read_account({"accountId": client.account_id})
+```
+
+The factory verifies the server's credential kind and imports the saved endpoint,
+credential, account and universe together. It does not start login or read ambient
+endpoint/token overrides. `config_dir`, `account` and `universe` can be supplied
+explicitly. Changing accounts clears an inherited universe; a selected account never
+silently chooses the server's suggested universe. Account IDs remain explicit in
+native request parameters. Saved CLI session credentials are reread for each request
+and renewed only in their owned private file; API keys and externally managed files
+are never rewritten. Replacing or removing a saved connection invalidates an existing
+imported client.
+
+An imported human CLI session can manage personal keys, or application keys when
+its user is an account Admin. API keys cannot mint other keys.
 
 ## Install
 
@@ -70,6 +95,7 @@ async def main() -> None:
     async with AsyncLightspeedClient(
         os.environ["LIGHTSPEED_API_URL"],
         token=os.environ["LIGHTSPEED_RUNTIME_TOKEN"],
+        universe=os.environ["LIGHTSPEED_UNIVERSE"],
     ) as client:
         started = await client.start_session(
             display_name="Repository summary",
@@ -136,13 +162,16 @@ covers them in depth.
 
 ## Connect
 
-`AsyncLightspeedClient(endpoint, ...)` takes the gateway's `/api/v1` URL and these keyword
+`AsyncLightspeedClient(endpoint, ...)` accepts a deployment origin, base path or
+`/api/v1` URL, including a trailing slash. It rejects URL credentials, query parameters
+and fragments. Both runtime and Platform requests refuse redirects, including when
+a custom HTTPX client normally follows them. The constructor accepts these keyword
 arguments:
 
 | Argument | Use |
 | --- | --- |
 | `token` | Sent as the bearer credential. Omit it only for a gateway in single mode. |
-| `universe` | The universe's UUID or handle; required for universe methods in authenticated mode. |
+| `universe` | The universe's UUID or handle; supply it for universe operations when constructing a client directly. |
 | `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
 | `headers` | Extra headers, or a function returning them for each request, which may be async. These override the arguments above. |
 | `http_client` | An `httpx.AsyncClient` to send with, for custom transports, timeouts, or tests. |
@@ -157,14 +186,20 @@ the token can do, so your application must check each user's access itself.
 
 ## Helpers and `call`
 
-The client has two layers, and you can mix them freely:
+You can use named helpers or operation IDs:
 
-- **Named helpers** such as `client.read_session(session_id)` cover what most
-  applications need.
-- **`client.call(method, params)`** reaches every method in the API, typed, by its name.
+- **Named helpers** cover every runtime operation, including deployment administration,
+  credentials, bots, channels, environments and binary transfers.
+- **`client.platform` helpers** such as `list_accounts()` and `read_account({"accountId": id})` cover native Platform operations.
+- **`client.call(operation, params)`** reaches runtime and native Platform operations with generated parameter and result types. Empty parameters can be omitted when the operation has no required fields.
 
-A helper and its `call` do the same thing. Prefer the helper when there is one, and use
-`call` for everything else, mainly administration. The two differ in shape:
+`await client.initialize()` returns `ClientConnectionResponse`, a runtime/Platform
+union. When `info["runtime"] == "platform"`, `info["platform"]` contains typed
+principal, credential, account and restriction details.
+
+Every operation has a named helper. `call` remains useful when dispatching by an
+operation ID. Both preserve the same wire parameters and response DTOs; the helpers
+below add typed positional target IDs and keyword arguments:
 
 ```python
 # A helper: IDs of the target come first, everything else is a keyword argument, and
@@ -176,9 +211,15 @@ await client.close_session(session_id, force=True)
 result = await client.call("session/read", {"sessionId": session_id, "runLimit": 5})
 print(result["session"])
 
-# Administration has no helper.
-universes = await client.call("deployment/universes/list", {})
+# Deployment administration is also available through named helpers.
+universes = await client.list_universes()
 ```
+
+Runtime helper availability does not change server authorization. For example,
+`client.create_universe(...)` is runtime deployment administration; through Platform,
+use `client.platform.create_universe({"accountId": account_id, "name": "Work"})`
+to apply account ownership, quota and protection policy. Platform continues to deny
+infrastructure and service-only operations where required.
 
 Use `watch` for live list changes and `read_events` for durable session events.
 Both layers raise the same
@@ -187,26 +228,46 @@ Both layers raise the same
 An argument you leave out is not sent. Passing `None` sends `null`, which a method can
 treat differently from an absent field, so pass it only when you mean it.
 
-| Area | Helpers |
+<!-- BEGIN GENERATED HELPERS -->
+| Runtime area | Named helpers |
 | --- | --- |
 | Connection | `initialize` |
-| Sessions | `start_session`, `read_session`, `list_sessions`, `rename_session`, `put_session_metadata`, `put_session_config`, `share_session`, `restart_session`, `close_session`, `delete_session` |
-| Runs | `start_run`, `await_run`, `read_run`, `list_runs`, `cancel_run`, `steer_run`, `decide_approvals`, `read_events` |
-| Session setup | `append_context`, `compact_context`, `apply_profile`, `list_session_skills`, `activate_environment`, `deactivate_environment` |
-| Content | `put_blob`, `read_blob_text`, `read_blob_bytes` |
+| Session | `start_session`, `read_session`, `list_sessions`, `rename_session`, `put_session_metadata`, `put_session_config`, `share_session`, `restart_session`, `close_session`, `delete_session`, `list_runs`, `read_run`, `cancel_run`, `decide_approvals`, `append_context`, `compact_context`, `apply_profile`, `list_session_skills`, `activate_environment`, `deactivate_environment`, `put_session_retention`, `remove_context`, `replace_context`, `start_run`, `steer_run`, `read_events` |
 | Profiles | `create_profile`, `read_profile`, `list_profiles`, `put_profile`, `delete_profile` |
-| Models | `list_models`, `read_model_defaults` |
-| Environments | `create_environment`, `read_environment`, `list_environments`, `close_environment`, `list_environment_templates` |
-| Workspaces | `create_workspace`, `read_workspace`, `list_workspaces`, `delete_workspace`, `read_workspace_file` |
-| MCP servers | `read_mcp_server`, `list_mcp_servers` |
-| Bots | `read_bot`, `list_bots`, `list_bot_events`, `admit_bot_event` |
+| Models | `list_models`, `read_model_defaults`, `put_model_defaults` |
+| Environments | `create_environment`, `read_environment`, `list_environments`, `close_environment`, `list_environment_templates`, `bind_environment_credential`, `list_environment_credentials`, `unbind_environment_credential`, `update_environment`, `create_external_environment`, `put_registered_environment`, `release_registered_environment`, `put_environment_ingress`, `put_environment_power`, `list_environment_provider_bindings`, `read_environment_provider_binding`, `read_environment_template`, `create_environment_jobs`, `read_environment_jobs`, `cancel_environment_jobs`, `create_environment_registration_key`, `put_environment_registration_key`, `read_environment_registration_key`, `list_environment_registration_keys`, `update_environment_registration_key`, `rotate_environment_registration_key`, `revoke_environment_registration_key` |
+| Vfs | `create_workspace`, `read_workspace`, `list_workspaces`, `delete_workspace`, `read_workspace_file`, `commit_snapshot`, `read_snapshot`, `update_workspace` |
+| Mcp | `read_mcp_server`, `list_mcp_servers`, `put_mcp_server`, `discover_mcp_server_auth`, `discover_mcp_server_tools`, `delete_mcp_server` |
+| Bots | `read_bot`, `list_bots`, `list_bot_events`, `admit_bot_event`, `create_bot`, `put_bot`, `close_bot`, `delete_bot`, `read_bot_state`, `rotate_bot_session`, `put_bot_trigger`, `read_bot_trigger`, `list_bot_triggers`, `read_bot_trigger_secrets`, `delete_bot_trigger`, `replay_bot_event`, `read_bot_event`, `test_bot_filter` |
+| Transcriptions | `start_transcription`, `read_transcription`, `cancel_transcription` |
+| Blobs | `put_blobs`, `has_blobs`, `read_blob_bytes`, `upload_blob` |
+| Credentials | `import_credential_grant`, `lease_credential_grant`, `read_credential_grant`, `list_credential_grants`, `put_credential_grant`, `revoke_credential_grant`, `create_credential_client`, `read_credential_client`, `list_credential_clients`, `delete_credential_client`, `start_credential_flow`, `read_credential_flow`, `create_credential_provider`, `put_credential_provider`, `read_credential_provider`, `list_credential_providers`, `delete_credential_provider`, `list_github_installations`, `grant_github_installation` |
+| Channels | `create_channel_account`, `put_channel_account`, `read_channel_account`, `list_channel_accounts`, `delete_channel_account`, `admit_channel_inbound`, `list_channel_pairings`, `delete_channel_pairing`, `read_channel_conversation` |
+| Deployment | `list_deleted_universes`, `list_deleted_sessions`, `purge_session`, `list_deployment_environment_provider_bindings`, `create_universe`, `list_universes`, `read_universe`, `put_universe_configuration`, `put_universe_expiry`, `put_universe_handle`, `delete_universe`, `put_environment_provider`, `list_environment_providers`, `read_environment_provider`, `delete_environment_provider`, `put_universe_environment_provider_binding`, `delete_universe_environment_provider_binding`, `list_deployment_channel_accounts` |
+| Universe | `watch` |
 
-Everything else stays on `call`: credential grants and providers (`credentials/*`), deployment and universe
-management, channels, registration keys, transcription, and the remaining bot, MCP, and
-environment operations. A few helpers do more than wrap one method:
+| Native Platform area | `client.platform` helpers |
+| --- | --- |
+| Session | `read_current_session`, `revoke_current_session` |
+| Credentials | `list_personal_api_keys`, `create_personal_api_key`, `revoke_personal_api_key` |
+| Applications | `list_application_api_keys`, `create_application_api_key`, `revoke_application_api_key` |
+| Accounts | `list_accounts`, `create_account`, `read_account`, `update_account`, `list_account_members`, `put_account_member`, `remove_account_member`, `list_applications`, `create_application`, `update_application`, `disable_application` |
+| Universes | `adopt_universe`, `create_universe`, `update_universe`, `list_universe_grants`, `put_universe_grant`, `remove_universe_grant`, `put_universe_access_policy` |
+<!-- END GENERATED HELPERS -->
 
-- `start_run` and `steer_run` accept plain text and generate a submission ID if you
-  give none.
+Some helpers preserve higher-level behavior:
+
+- `start_run` accepts plain text, input items, or the complete `RunStartSource`,
+  including `notify_on_terminal` in its options. `steer_run` accepts plain text or
+  input items. Both generate a submission ID if you give none.
+- `read_events` supports forward and backward reads, including `after`, `before`,
+  `direction`, `limit` and `wait_ms`.
+- `upload_blob` accepts bytes or an async byte stream; supply `content_length` for
+  streams. Its return type is `BlobPutResult`. `read_workspace_file` and
+  `read_blob_bytes` return bytes. Use `open_download` for a response stream that
+  closes when its async context manager exits.
+- `watch` yields typed notifications from named SSE events and reconnects by default.
+  It never tries to decode the stream as a JSON response.
 - `await_run` has no single method behind it. It follows events, checks run state,
   retries reads, and returns the finished run.
 - `put_blob` sends a JSON batch upload; `read_blob_text` and `read_blob_bytes` download raw bytes.
@@ -281,7 +342,8 @@ def failure_message(event: SessionEventView) -> str | None:
 
 The package also exports what it knows about the API itself: `OPERATIONS` and
 `NOTIFICATIONS` list the names, `OPERATION_INFO` describes every method, and
-`CLIENT_HELPERS` maps each generated helper to its method.
+`CLIENT_HELPERS` maps all named runtime helpers to their operations;
+`MANUAL_CLIENT_HELPERS` identifies the transport and ergonomic implementations.
 
 ## Handle errors
 
@@ -384,12 +446,6 @@ Store each final resolution under its completion key before sending it, because 
 recovery query answers from those keys. A bound receiver takes `EmissionEnvelope` in its
 `DELIVER_EMISSION_SIGNAL` handler and checks it with `parse_emission_envelope`.
 
-## Not in this package
-
-The TypeScript SDK also ships a request handler for serving a browser UI without
-exposing the key. It has no Python equivalent: a Python application that renders its UI
-on the server calls this client there.
-
 ## Develop this package
 
 The types, method tables, and most helpers are generated from the committed contracts in
@@ -397,8 +453,12 @@ The types, method tables, and most helpers are generated from the committed cont
 `types.py`, `_generated.py`, `workflow_types.py`, or `_workflow_manifest.py` under
 `src/lightspeed_ai/` by hand. Helpers come from the TypeScript SDK's
 inventory, [`clients/typescript/scripts/helpers.mjs`](../typescript/scripts/helpers.mjs),
-which the generator reads with Node.js; add a new one there and to the table above. A
-helper that needs behavior of its own goes in `src/lightspeed_ai/client.py`.
+which the generator reads with Node.js. It requires one named helper for every
+runtime operation, rejects name collisions and missing implementations, and checks
+that handwritten helpers expose the complete wire parameters and transport. The
+helper table above is generated from that same inventory. Helpers that need behavior
+of their own live in `src/lightspeed_ai/client.py`; native Platform names come from
+its shared contract.
 
 With [uv](https://docs.astral.sh/uv/) and Node.js installed, from `clients/python`:
 

@@ -97,13 +97,15 @@ pub(crate) async fn universe(base: &ResolvedConnection, universe: &str) -> Resul
         bail!("universe {universe} does not exist");
     }
     let read = probe
-        .call("deployment/universes/read", json!({ "universe": universe }))
+        .call(
+            "deployment/universes/read",
+            json!({ "universe": probe.universe_id }),
+        )
         .await?;
     let handle = read["universe"]["handle"]
         .as_str()
         .context("the universe has no handle")?
         .to_owned();
-    let target = connect(base, Some(&handle)).await?;
     let mut exported = Exported {
         schema_version: SCHEMA_VERSION,
         kind: Some(Kind::Universe),
@@ -123,7 +125,7 @@ pub(crate) async fn universe(base: &ResolvedConnection, universe: &str) -> Resul
         },
         ..Exported::default()
     };
-    read_sections(&target, &universe_resources(), &mut exported).await?;
+    read_sections(&probe, &universe_resources(), &mut exported).await?;
     Ok(exported)
 }
 

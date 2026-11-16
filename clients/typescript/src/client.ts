@@ -1,4 +1,7 @@
-import { PLATFORM_OPERATIONS, type PlatformOperationId, type PlatformOperationParams, type PlatformOperationResult } from "./generated/platform.js";
+import { normalizeEndpoint } from "./endpoint.js";
+import type { ClientConnectionResponse, ClientOperationId, ClientOperationParams, ClientOperationResult } from "./operations.js";
+import { PlatformHelpers } from "./generated/platform-helpers.js";
+import { PLATFORM_OPERATIONS, type PlatformOperationId, type PlatformOperationParams } from "./generated/platform.js";
 import { readEventStream } from "./event-stream.js";
 import type { AgentNotification, UniverseWatchParams } from "./generated/types.js";
 import type {
@@ -7,7 +10,7 @@ import type {
   RunStartResponse,
   RunSteerParams,
   RunSteerResponse,
-  RunStartConfig,
+  RunStartSource,
   RunStartParams,
   RunStatus,
   RunView,
@@ -39,10 +42,15 @@ export interface CallOptions {
 }
 
 export interface LightspeedClientOptions {
-  /** The HTTP API base URL, ending in `/api/v1` for a direct runtime. */
+  /** Deployment origin or API base URL; base paths and trailing slashes are supported. */
   endpoint: string | URL;
-  /** Sent as the bearer credential. Omit it only for a gateway in single mode. */
-  token?: string;
+  /** Bearer credential or per-request provider. Omit for a single runtime,
+   * header-based authentication, or same-origin Platform browser session cookies. */
+  token?: string | (() => string | undefined | Promise<string | undefined>);
+  /** Saved account context; native helpers still take accountId explicitly. */
+  accountId?: string;
+  /** Persist a rotated CLI session only when this request used the expected credential. */
+  onSessionToken?: (token: string, previousToken: string) => void | Promise<void>;
   /**
    * The universe a request addresses, as its UUID or its handle.
    */
@@ -69,20 +77,9 @@ export interface WatchOptions extends CallOptions {
   reconnect?: boolean;
 }
 
-export interface StartRunOptions extends CallOptions {
-  config?: RunStartConfig | null;
-  submissionId?: string | null;
-}
-
-export interface SteerRunOptions extends CallOptions {
-  submissionId?: string | null;
-}
-
-export interface ReadEventsOptions extends CallOptions {
-  after?: EventCursor | null;
-  limit?: number | null;
-  waitMs?: number | null;
-}
+export type StartRunOptions = Omit<RunStartParams, "sessionId" | "source"> & CallOptions;
+export type SteerRunOptions = Omit<RunSteerParams, "sessionId" | "runId" | "items"> & CallOptions;
+export type ReadEventsOptions = Omit<SessionEventsReadParams, "sessionId"> & CallOptions;
 
 export type TerminalRunStatus = Extract<RunStatus, "completed" | "failed" | "cancelled">;
 
@@ -127,6 +124,8 @@ export class LightspeedClient extends LightspeedHelpers {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly headers: LightspeedClientOptions["headers"];
+  readonly accountId: string | undefined;
+  readonly platform: PlatformHelpers;
 
   constructor(endpoint: string | URL);
   constructor(options: LightspeedClientOptions);
@@ -138,10 +137,17 @@ export class LightspeedClient extends LightspeedHelpers {
     if (!fetchImpl) {
       throw new LightspeedTransportError("LightspeedClient requires a fetch implementation");
     }
-    this.options = resolved;
-    this.endpoint = resolved.endpoint.toString();
+    this.endpoint = normalizeEndpoint(resolved.endpoint);
+    this.options = { ...resolved, endpoint: this.endpoint };
+    this.accountId = resolved.accountId;
+    this.platform = new PlatformHelpers(this);
     this.fetchImpl = fetchImpl;
     this.headers = resolved.headers;
+  }
+
+  /** Discover runtime or Platform identity with a discriminated typed result. */
+  override initialize(options: CallOptions = {}): Promise<ClientConnectionResponse> {
+    return this.call("initialize", {}, options);
   }
 
   /** A client like this one whose requests are attributed to `actor`. */
@@ -196,25 +202,30 @@ export class LightspeedClient extends LightspeedHelpers {
     }
   }
 
-  async call<M extends OperationId>(
+  async call<M extends ClientOperationId>(
     operation: M,
-    params: OperationParams<M>,
+    params: ClientOperationParams<M>,
     options: CallOptions = {},
-  ): Promise<OperationResult<M>> {
-    if (OPERATION_INFO[operation].streaming) throw new LightspeedTransportError("Use watch() for universe/watch");
-    const response = await this.request(operation, params, options);
-    if (HTTP_OPERATIONS[operation].transfer === "binaryDownload") {
-      try { return new Uint8Array(await response.arrayBuffer()) as OperationResult<M>; }
+  ): Promise<ClientOperationResult<M>> {
+    if (Object.hasOwn(PLATFORM_OPERATIONS, operation)) {
+      return await this.requestPlatform(operation as PlatformOperationId, params as PlatformOperationParams<PlatformOperationId>, options) as ClientOperationResult<M>;
+    }
+    const runtimeOperation = operation as OperationId;
+    if (!Object.hasOwn(OPERATION_INFO, runtimeOperation)) throw new TypeError(`Unknown operation: ${operation}`);
+    if (OPERATION_INFO[runtimeOperation].streaming) throw new LightspeedTransportError("Use watch() for universe/watch");
+    const response = await this.request(runtimeOperation, params as OperationParams<OperationId>, options);
+    if (HTTP_OPERATIONS[runtimeOperation].transfer === "binaryDownload") {
+      try { return new Uint8Array(await response.arrayBuffer()) as ClientOperationResult<M>; }
       catch (cause) {
         options.signal?.throwIfAborted();
         throw new LightspeedTransportError("Download interrupted", { cause });
       }
     }
-    return await this.readBody(response, options.signal) as OperationResult<M>;
+    return await this.readBody(response, options.signal) as ClientOperationResult<M>;
   }
 
   /** Native account, application, credential, and universe management on Platform. */
-  async callPlatform<K extends PlatformOperationId>(operation: K, params: PlatformOperationParams<K>, options: Pick<CallOptions, "headers" | "signal"> = {}): Promise<PlatformOperationResult<K>> {
+  private async requestPlatform(operation: PlatformOperationId, params: PlatformOperationParams<PlatformOperationId>, options: CallOptions): Promise<unknown> {
     const spec = PLATFORM_OPERATIONS[operation];
     const body = { ...params } as Record<string, unknown>;
     const path = spec.path.replace(/\{([^}]+)\}/g, (_, field: string) => {
@@ -230,7 +241,7 @@ export class LightspeedClient extends LightspeedHelpers {
       method: spec.method, headers, ...(options.signal ? { signal: options.signal } : {}),
       ...(spec.method === "GET" || !Object.keys(body).length ? {} : { body: JSON.stringify(body) }),
     }, options.signal);
-    return await this.readBody(response, options.signal) as PlatformOperationResult<K>;
+    return await this.readBody(response, options.signal);
   }
 
   /** Open a download without buffering it. The caller consumes or cancels its body. */
@@ -274,10 +285,23 @@ export class LightspeedClient extends LightspeedHelpers {
     let response: Response;
     try {
       const { fetchImpl } = this;
-      response = await fetchImpl(url, init);
+      response = await fetchImpl(url, { ...init, redirect: "manual" });
     } catch (cause) {
       signal?.throwIfAborted();
       throw new LightspeedTransportError(`Lightspeed API request failed: ${errorMessage(cause)}`, { cause });
+    }
+    const expected = new URL(url);
+    if (response.redirected || response.status >= 300 && response.status < 400 || response.type === "opaqueredirect" ||
+        (response.url && new URL(response.url).origin !== expected.origin)) {
+      await response.body?.cancel();
+      throw new LightspeedTransportError("Lightspeed API redirects are not allowed");
+    }
+    const rotated = response.headers.get("set-auth-token");
+    const authorization = new Headers(init.headers).get("authorization");
+    if (rotated && this.options.onSessionToken && authorization?.startsWith("Bearer ")) {
+      if (rotated.length > 4096 || /[^\x21-\x7e]/.test(rotated)) { await response.body?.cancel(); throw new LightspeedTransportError("Invalid renewed session credential"); }
+      try { await this.options.onSessionToken(rotated, authorization.slice(7)); }
+      catch (error) { await response.body?.cancel(); throw error; }
     }
     if (!response.ok) await this.readBody(response, signal);
     return response;
@@ -289,18 +313,17 @@ export class LightspeedClient extends LightspeedHelpers {
    */
   async startRun(
     sessionId: string,
-    input: string | InputItem[],
+    input: string | InputItem[] | RunStartSource,
     options: StartRunOptions = {},
   ): Promise<RunStartResponse> {
+    const { signal: _signal, headers: _headers, body: _body, contentLength: _length, ...fields } = options;
     const params: RunStartParams = {
+      ...fields,
       sessionId,
-      source: { type: "input", items: inputItems(input) },
-      submissionId:
-        options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
+      source: typeof input === "string" || Array.isArray(input)
+        ? { type: "input", items: inputItems(input) } : input,
+      submissionId: options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
     };
-    if ("config" in options) {
-      params.config = options.config ?? null;
-    }
     const result = await this.call("session/runs/start", params, callOptions(options));
     return result;
   }
@@ -312,12 +335,10 @@ export class LightspeedClient extends LightspeedHelpers {
     input: string | InputItem[],
     options: SteerRunOptions = {},
   ): Promise<RunSteerResponse> {
+    const { signal: _signal, headers: _headers, body: _body, contentLength: _length, ...fields } = options;
     const params: RunSteerParams = {
-      sessionId,
-      runId,
-      items: inputItems(input),
-      submissionId:
-        options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
+      ...fields, sessionId, runId, items: inputItems(input),
+      submissionId: options.submissionId === undefined ? generateSubmissionId() : options.submissionId,
     };
     const result = await this.call("session/runs/steer", params, callOptions(options));
     return result;
@@ -327,16 +348,8 @@ export class LightspeedClient extends LightspeedHelpers {
     sessionId: string,
     options: ReadEventsOptions = {},
   ): Promise<SessionEventsReadResponse> {
-    const params: SessionEventsReadParams = { sessionId };
-    if (options.after !== undefined) {
-      params.after = options.after;
-    }
-    if (options.limit !== undefined) {
-      params.limit = options.limit;
-    }
-    if (options.waitMs !== undefined) {
-      params.waitMs = options.waitMs;
-    }
+    const { signal: _signal, headers: _headers, body: _body, contentLength: _length, ...fields } = options;
+    const params: SessionEventsReadParams = { ...fields, sessionId };
     const result = await this.call("session/events/read", params, callOptions(options));
     return result;
   }
@@ -497,9 +510,8 @@ export class LightspeedClient extends LightspeedHelpers {
   private async buildHeaders(callHeaders: HeadersInit | undefined): Promise<Headers> {
     const headers = new Headers();
     headers.set("accept", "application/json");
-    if (this.options.token !== undefined) {
-      headers.set("authorization", `Bearer ${this.options.token}`);
-    }
+    const token = typeof this.options.token === "function" ? await this.options.token() : this.options.token;
+    if (token !== undefined) headers.set("authorization", `Bearer ${token}`);
     if (this.options.actor !== undefined) {
       headers.set("x-lightspeed-actor", this.options.actor);
     }

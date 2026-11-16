@@ -7,7 +7,8 @@
 
 from . import types, platform_types
 from ._platform import PLATFORM_OPERATIONS
-from ._generated import CLIENT_HELPERS, OPERATION_INFO, OPERATIONS, NOTIFICATIONS
+from ._connection_types import ClientConnectionResponse, PlatformConnectionResponse, RuntimeConnectionResponse
+from ._generated import CLIENT_HELPERS, MANUAL_CLIENT_HELPERS, OPERATION_INFO, OPERATIONS, NOTIFICATIONS
 from .client import TERMINAL_STATUSES, AsyncLightspeedClient, AwaitRunResult, generate_submission_id
 from .errors import LightspeedApiError, LightspeedTransportError
 from .timeline import RunTimelineItem, run_timeline
@@ -16,6 +17,10 @@ __all__ = [
     "AsyncLightspeedClient",
     "AwaitRunResult",
     "CLIENT_HELPERS",
+    "MANUAL_CLIENT_HELPERS",
+    "ClientConnectionResponse",
+    "PlatformConnectionResponse",
+    "RuntimeConnectionResponse",
     "LightspeedApiError",
     "LightspeedTransportError",
     "OPERATIONS",

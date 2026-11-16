@@ -1,9 +1,19 @@
 import { z } from "zod";
-import { CREDENTIAL_OPERATIONS } from "./credential-api.js";
-import { SESSION_OPERATIONS } from "./session-api.js";
+import { CREDENTIAL_OPERATIONS, credentialRestrictionsSchema } from "./credential-api.js";
+import { SESSION_OPERATIONS, platformSessionViewSchema } from "./session-api.js";
 
 export const accountRoleSchema = z.enum(["member", "creator", "admin"]);
 export type AccountRole = z.infer<typeof accountRoleSchema>;
+/** Platform's extension to common connection discovery; core owns the common fields. */
+export const platformConnectionDetailsSchema = z.object({
+  principal: platformSessionViewSchema.shape.principal.omit({ email: true }).extend({
+    platformAdmin: z.boolean().describe("Whether the principal is a Platform Admin. Credential restrictions still apply to every operation."),
+  }),
+  credential: platformSessionViewSchema.shape.credential,
+  accounts: z.array(z.object({ id: z.string(), name: z.string(), role: accountRoleSchema })),
+  restrictions: credentialRestrictionsSchema,
+});
+export type PlatformConnectionDetails = z.infer<typeof platformConnectionDetailsSchema>;
 export const principalRefSchema = z.object({ kind: z.enum(["user", "application"]), id: z.string().min(1) }).strict();
 export type PrincipalRef = z.infer<typeof principalRefSchema>;
 const universeRole = z.enum(["viewer", "contributor", "operator", "owner"]);
@@ -55,24 +65,24 @@ const universePath = { universe: id };
 export const PLATFORM_OPERATIONS = {
   ...SESSION_OPERATIONS,
   ...CREDENTIAL_OPERATIONS,
-  "platform/accounts/list": { method: "GET", path: "/api/v1/platform/accounts", params: z.object({}).strict(), result: z.object({ accounts: z.array(accountViewSchema), canCreate: z.boolean() }) },
-  "platform/accounts/create": { method: "POST", path: "/api/v1/platform/accounts", params: accountCreateSchema, result: z.object({ account: accountViewSchema }) },
-  "platform/accounts/read": { method: "GET", path: "/api/v1/platform/accounts/{accountId}", params: z.object(accountPath).strict(), result: z.object({ account: accountViewSchema }) },
-  "platform/accounts/update": { method: "PATCH", path: "/api/v1/platform/accounts/{accountId}", params: accountUpdateSchema.extend(accountPath), result: z.object({ account: accountViewSchema }) },
-  "platform/accounts/members/list": { method: "GET", path: "/api/v1/platform/accounts/{accountId}/members", params: z.object(accountPath).strict(), result: z.object({ members: z.array(accountMemberViewSchema) }) },
-  "platform/accounts/members/put": { method: "PUT", path: "/api/v1/platform/accounts/{accountId}/members/{userId}", params: accountMemberPutSchema.extend(accountPath), result: z.object({ member: accountMemberViewSchema }) },
-  "platform/accounts/members/delete": { method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/members/{userId}", params: z.object({ ...accountPath, userId: id }).strict(), result: ok },
-  "platform/accounts/applications/list": { method: "GET", path: "/api/v1/platform/accounts/{accountId}/applications", params: z.object(accountPath).strict(), result: z.object({ applications: z.array(applicationViewSchema) }) },
-  "platform/accounts/applications/create": { method: "POST", path: "/api/v1/platform/accounts/{accountId}/applications", params: applicationCreateSchema.extend(accountPath), result: z.object({ application: applicationViewSchema }) },
-  "platform/accounts/applications/update": { method: "PATCH", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}", params: applicationUpdateSchema.extend({ ...accountPath, applicationId: id }), result: z.object({ application: applicationViewSchema }) },
-  "platform/accounts/applications/delete": { method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}", params: z.object({ ...accountPath, applicationId: id }).strict(), result: ok },
-  "platform/universes/adopt": { method: "POST", path: "/api/v1/platform/accounts/{accountId}/universes/adopt", params: accountUniverseAdoptSchema.extend(accountPath), result: z.object({ universe: platformUniverseViewSchema }) },
-  "platform/universes/create": { method: "POST", path: "/api/v1/platform/accounts/{accountId}/universes", params: accountUniverseCreateSchema.extend(accountPath), result: z.object({ universe: platformUniverseViewSchema }) },
-  "platform/universes/update": { method: "PATCH", path: "/api/v1/platform/universes/{universe}", params: universeLifecycleUpdateSchema.extend(universePath), result: z.object({ universe: platformUniverseViewSchema }) },
-  "platform/universes/grants/list": { method: "GET", path: "/api/v1/platform/universes/{universe}/grants", params: z.object(universePath).strict(), result: z.object({ grants: z.array(universeGrantViewSchema) }) },
-  "platform/universes/grants/put": { method: "PUT", path: "/api/v1/platform/universes/{universe}/grants", params: universeGrantPutSchema.extend(universePath), result: z.object({ grant: universeGrantViewSchema }) },
-  "platform/universes/grants/delete": { method: "DELETE", path: "/api/v1/platform/universes/{universe}/grants/{grantId}", params: z.object({ ...universePath, grantId: id }).strict(), result: ok },
-  "platform/universes/access-policy/put": { method: "PUT", path: "/api/v1/platform/universes/{universe}/access-policy", params: z.object({ ...universePath, policy: universeAccessPolicySchema }).strict(), result: z.object({ policy: universeAccessPolicySchema }) },
+  "platform/accounts/list": { helper: { name: "listAccounts" }, method: "GET", path: "/api/v1/platform/accounts", params: z.object({}).strict(), result: z.object({ accounts: z.array(accountViewSchema), canCreate: z.boolean() }) },
+  "platform/accounts/create": { helper: { name: "createAccount" }, method: "POST", path: "/api/v1/platform/accounts", params: accountCreateSchema, result: z.object({ account: accountViewSchema }) },
+  "platform/accounts/read": { helper: { name: "readAccount" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}", params: z.object(accountPath).strict(), result: z.object({ account: accountViewSchema }) },
+  "platform/accounts/update": { helper: { name: "updateAccount" }, method: "PATCH", path: "/api/v1/platform/accounts/{accountId}", params: accountUpdateSchema.extend(accountPath), result: z.object({ account: accountViewSchema }) },
+  "platform/accounts/members/list": { helper: { name: "listAccountMembers" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}/members", params: z.object(accountPath).strict(), result: z.object({ members: z.array(accountMemberViewSchema) }) },
+  "platform/accounts/members/put": { helper: { name: "putAccountMember" }, method: "PUT", path: "/api/v1/platform/accounts/{accountId}/members/{userId}", params: accountMemberPutSchema.extend(accountPath), result: z.object({ member: accountMemberViewSchema }) },
+  "platform/accounts/members/delete": { helper: { name: "removeAccountMember" }, method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/members/{userId}", params: z.object({ ...accountPath, userId: id }).strict(), result: ok },
+  "platform/accounts/applications/list": { helper: { name: "listApplications" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}/applications", params: z.object(accountPath).strict(), result: z.object({ applications: z.array(applicationViewSchema) }) },
+  "platform/accounts/applications/create": { helper: { name: "createApplication" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/applications", params: applicationCreateSchema.extend(accountPath), result: z.object({ application: applicationViewSchema }) },
+  "platform/accounts/applications/update": { helper: { name: "updateApplication" }, method: "PATCH", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}", params: applicationUpdateSchema.extend({ ...accountPath, applicationId: id }), result: z.object({ application: applicationViewSchema }) },
+  "platform/accounts/applications/delete": { helper: { name: "disableApplication" }, method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}", params: z.object({ ...accountPath, applicationId: id }).strict(), result: ok },
+  "platform/universes/adopt": { helper: { name: "adoptUniverse" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/universes/adopt", params: accountUniverseAdoptSchema.extend(accountPath), result: z.object({ universe: platformUniverseViewSchema }) },
+  "platform/universes/create": { helper: { name: "createUniverse" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/universes", params: accountUniverseCreateSchema.extend(accountPath), result: z.object({ universe: platformUniverseViewSchema }) },
+  "platform/universes/update": { helper: { name: "updateUniverse" }, method: "PATCH", path: "/api/v1/platform/universes/{universe}", params: universeLifecycleUpdateSchema.extend(universePath), result: z.object({ universe: platformUniverseViewSchema }) },
+  "platform/universes/grants/list": { helper: { name: "listUniverseGrants" }, method: "GET", path: "/api/v1/platform/universes/{universe}/grants", params: z.object(universePath).strict(), result: z.object({ grants: z.array(universeGrantViewSchema) }) },
+  "platform/universes/grants/put": { helper: { name: "putUniverseGrant" }, method: "PUT", path: "/api/v1/platform/universes/{universe}/grants", params: universeGrantPutSchema.extend(universePath), result: z.object({ grant: universeGrantViewSchema }) },
+  "platform/universes/grants/delete": { helper: { name: "removeUniverseGrant" }, method: "DELETE", path: "/api/v1/platform/universes/{universe}/grants/{grantId}", params: z.object({ ...universePath, grantId: id }).strict(), result: ok },
+  "platform/universes/access-policy/put": { helper: { name: "putUniverseAccessPolicy" }, method: "PUT", path: "/api/v1/platform/universes/{universe}/access-policy", params: z.object({ ...universePath, policy: universeAccessPolicySchema }).strict(), result: z.object({ policy: universeAccessPolicySchema }) },
 } as const;
 export type PlatformOperationId = keyof typeof PLATFORM_OPERATIONS;
 export type PlatformOperationParams<K extends PlatformOperationId> = z.input<typeof PLATFORM_OPERATIONS[K]["params"]>;

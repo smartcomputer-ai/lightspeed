@@ -10,6 +10,7 @@ import pytest
 
 from lightspeed_ai import (
     CLIENT_HELPERS,
+    MANUAL_CLIENT_HELPERS,
     OPERATION_INFO,
     OPERATIONS,
     NOTIFICATIONS,
@@ -415,14 +416,18 @@ def test_operation_lists_and_documentation_come_from_the_contract():
     contract = json.loads((Path(__file__).resolve().parents[3] / "crates/api/contract/http.json").read_text())
     assert list(OPERATIONS) == [entry["operationId"] for entry in contract["operations"]] == list(OPERATION_INFO)
     assert set(NOTIFICATIONS) == set(HTTP_OPERATIONS["universe/watch"]["events"]["events"])
-    assert set(CLIENT_HELPERS.values()) <= set(OPERATIONS)
+    assert set(CLIENT_HELPERS.values()) == set(OPERATIONS)
+    assert len(CLIENT_HELPERS) == len(OPERATIONS)
+    assert set(MANUAL_CLIENT_HELPERS) <= set(CLIENT_HELPERS)
 
 
 def test_every_direct_helper_is_available_and_documented():
     for name, method in CLIENT_HELPERS.items():
         helper = getattr(AsyncLightspeedClient, name)
         assert callable(helper)
-        assert helper.__doc__.startswith(OPERATION_INFO[method]["summary"]), name
+        assert helper.__doc__, name
+        if name not in MANUAL_CLIENT_HELPERS:
+            assert helper.__doc__.startswith(OPERATION_INFO[method]["summary"]), name
 
 
 def test_readme_documents_every_helper():
@@ -505,3 +510,68 @@ async def test_binary_upload_and_streaming_download():
         async with client.open_download("blobs/read", {"blobRef": "sha256:test"}) as response:
             assert await response.aread() == b"abc"
         assert response.is_closed
+
+
+async def test_named_administration_helpers_preserve_targets_nulls_and_query_maps():
+    requests = []
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"result": len(requests)})
+    account = {"accountId": "channel/account", "provider": "telegram", "providerAccountId": "bot", "displayName": "Bot", "settings": {}}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        client = AsyncLightspeedClient("https://runtime.test/base", universe="u", http_client=http)
+        await client.list_universes(metadata={"team": "build"})
+        await client.put_universe_configuration("target", protected=False, display_name=None)
+        await client.put_credential_grant("grant/one", token="secret", expires_at_ms=None)
+        await client.put_channel_account(account=account, expected_revision=7)
+        await client.read_bot_event("bot/one", seq=12)
+        await client.put_environment_provider("provider/one", controller_endpoint="https://controller.test", credential=None, clear_credential=True)
+    assert json.loads(requests[0].url.params["metadata"]) == {"team": "build"}
+    assert requests[0].url.path == "/base/api/v1/universes"
+    assert requests[1].url.path == "/base/api/v1/universes/target/configuration"
+    assert json.loads(requests[1].content) == {"protected": False, "displayName": None}
+    assert requests[2].url.raw_path == b"/base/api/v1/universes/u/credentials/grants/grant%2Fone"
+    assert json.loads(requests[2].content) == {"token": "secret", "expiresAtMs": None}
+    assert requests[3].url.raw_path == b"/base/api/v1/universes/u/channels/accounts/channel%2Faccount"
+    assert json.loads(requests[3].content) == {"account": {key: value for key, value in account.items() if key != "accountId"}, "expectedRevision": 7}
+    assert account["accountId"] == "channel/account", "helper must not mutate caller-owned nested input"
+    assert requests[4].url.raw_path == b"/base/api/v1/universes/u/bots/bot%2Fone/events/12"
+    assert requests[5].url.raw_path == b"/base/api/v1/environment-providers/provider%2Fone"
+    assert json.loads(requests[5].content) == {"controllerEndpoint": "https://controller.test", "credential": None, "clearCredential": True}
+
+
+async def test_manual_run_and_event_helpers_expose_every_wire_field():
+    requests = []
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"run": {}, "events": []})
+    source = {"type": "input", "items": [{"type": "text", "text": "Ready"}]}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        client = AsyncLightspeedClient("https://runtime.test", universe="u", http_client=http)
+        await client.start_run("session", source, submission_id="retry", config=None, notify_on_terminal={"token": "done"})
+        await client.read_events("session", direction="backward", before={"seq": 22}, after=None, limit=9, wait_ms=0)
+    assert json.loads(requests[0].content) == {"source": source, "submissionId": "retry", "config": None, "notifyOnTerminal": {"token": "done"}}
+    assert dict(requests[1].url.params) == {"direction": "backward", "before": '{"seq":22}', "limit": "9", "waitMs": "0"}
+
+
+async def test_named_binary_helpers_use_bytes_streams_and_valid_declared_lengths():
+    requests = []
+    async def body():
+        yield b"a"
+        yield b"bc"
+    async def handle(request):
+        requests.append(request)
+        if request.method == "PUT":
+            assert await request.aread() == b"abc"
+            assert request.headers["content-length"] == "3"
+            assert request.headers["content-type"] == "application/octet-stream"
+            return httpx.Response(200, json={"blobRef": "sha256:bytes", "bytes": 3})
+        return httpx.Response(200, content=b"\x00\xff")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        client = AsyncLightspeedClient("https://runtime.test", universe="u", http_client=http)
+        with pytest.raises(ValueError, match="content_length"):
+            await client.upload_blob("sha256:bytes", body())
+        assert requests == []
+        assert await client.upload_blob("sha256:bytes", body(), content_length=3) == {"blobRef": "sha256:bytes", "bytes": 3}
+        assert await client.read_workspace_file("workspace", "/file") == b"\x00\xff"
+    assert requests[-1].url.params["path"] == "/file"

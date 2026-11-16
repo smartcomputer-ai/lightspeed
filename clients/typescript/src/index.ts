@@ -43,3 +43,7 @@ export type { ServerSentEvent } from "./event-stream.js";
 export { PLATFORM_OPERATIONS } from "./generated/platform.js";
 export type { PlatformOperationId, PlatformOperationMap, PlatformOperationParams, PlatformOperationResult } from "./generated/platform.js";
 export type * from "./generated/platform-types.js";
+
+export { normalizeEndpoint } from "./endpoint.js";
+export type { ClientConnectionResponse, ClientOperationId, ClientOperationMap, ClientOperationParams, ClientOperationResult } from "./operations.js";
+export { PLATFORM_CLIENT_HELPERS } from "./generated/platform-helpers.js";

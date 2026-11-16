@@ -779,8 +779,9 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
 
 - The account hierarchy, personal/application authentication, Platform-owned
   resource catalog, and unified CLI with browser-approved sessions are now
-  implemented in P209. Range support and a single composed SDK surface remain
-  separate work; native calls use generated `callPlatform` / `call_platform`.
+  implemented in P209. Both SDKs now accept runtime and native operation IDs
+  through `call`, with generated `client.platform` native helpers and optional
+  saved CLI connection reuse. Range support remains separate work.
 
 - 2026-11-16: core implementation started after `cargo test --workspace
   --locked` passed on the simplification baseline (3,378 passed, 366 ignored).
@@ -826,3 +827,21 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   verification now use the HTTP contract revision instead of the retired RPC
   protocol label. CLI compilation, help rendering, TypeScript/Python checks and
   production web builds pass; no test suites were run in this slice.
+
+- 2026-11-17: the SDK operation surface now composes runtime and native Platform
+  contracts over one `call` transport, with generated native helper methods.
+  Node and Python factories reuse saved CLI credentials and session renewal
+  without automatic login. Tests remain on hold.
+
+- 2026-11-17: completed named SDK helpers for all 148 runtime operations and
+  all 26 native Platform operations in TypeScript and Python. A shared runtime
+  helper inventory drives both generators: 142 generated methods and six
+  handwritten helpers for streaming, binary transport, and ergonomic run/event
+  inputs. Generation rejects missing coverage, unknown operations, duplicate
+  names and implementation collisions. Run helpers now expose every source and
+  terminal notification option; event helpers support backward pagination.
+  Generic typed `call` remains available. Independent catalog comparison
+  confirms matching coverage and names in both languages. Generation consistency,
+  full TypeScript checks, strict Python typing, Python wheel/sdist packaging,
+  SDK/Configurator/web/demo builds and documentation build pass. Tests are
+  authored but remain on hold.

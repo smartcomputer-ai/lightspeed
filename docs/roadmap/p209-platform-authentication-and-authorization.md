@@ -307,6 +307,16 @@ native DTOs remain TypeScript-owned. The obsolete `lightspeed-platform` workspac
 is removed; deployment-user suspension and company identity administration remain
 web features rather than exposing browser-private endpoints to CLI credentials.
 
+Both SDKs compose runtime and Platform-native operation IDs into `client.call`.
+Native helpers are generated under `client.platform` and take typed parameter
+objects; account IDs remain explicit. Node's `createClientFromConnection` from
+`@lightspeed-ai/sdk/node` and Python's asynchronous
+`AsyncLightspeedClient.from_connection` reuse saved CLI connection credentials
+and renewal. They expose the selected account as `accountId` / `account_id`,
+reread credentials for each request, and do not perform automatic login or
+rewrite externally managed secret files. The main TypeScript entry point
+remains browser-safe.
+
 An application's own end-user attribution is optional future behavior. If
 introduced, it must be explicitly authorized, namespaced under the verified
 application, and never replace the authenticated application identity used
@@ -368,6 +378,21 @@ mapping behavior during that migration.
 Configuration application runs as the authenticated user or application,
 with normal role and token checks. Account selection, initial Owner grants,
 quotas and protection policy apply to declared universe creation too.
+Creator authority permits creating universes and grants the creator initial
+Owner access; it does not grant access to other existing universes. A key
+limited to existing universe UUIDs cannot create universes, regardless of its
+principal's account role. Account membership, grants and access policies stay
+in their native Platform APIs rather than becoming universe document sections.
+
+Environment-provider bindings are deployment infrastructure allocations.
+Their mutation remains Platform Admin-only: account and universe roles do not
+entitle a principal to arbitrary deployment providers, and this design does
+not yet include account-level provider entitlements. Ordinary account
+automation consumes providers allocated by a deployment administrator and
+omits `environmentProviders` from its documents. A deployment administrator
+can reconcile allocation in a separate universe document. Provider
+registration itself remains outside declarative universe configuration.
+
 Supplied-secret key declarations are deferred until their fit with the API
 Key plugin is established; they are not a reason to maintain an independent
 legacy key implementation. Generated API keys cover the first release.
@@ -562,8 +587,9 @@ broader request auditing remain follow-up work.
   company admission and overlapping managed rotation are implemented. Watch
   connections reconnect after at most one minute for fresh admission.
 - Added native account, application, grant and credential routes from shared
-  Zod descriptors, exported JSON Schema/HTTP catalogs, TypeScript
-  `callPlatform` and Python `call_platform`. Web account management, key
+  Zod descriptors and exported JSON Schema/HTTP catalogs. Both SDKs now expose
+  native operations through unified `call` and generated `client.platform`
+  helpers. Web account management, key
   management, account-qualified creation, grants, protection and expiry use
   the same services. Admin adoption and repair retain explicit account/Owner
   assignment. Configurator uses a scoped application key and brokered runtime
@@ -605,3 +631,40 @@ broader request auditing remain follow-up work.
   `api` command stays at the root. Updated current CLI examples and access
   guides. Tests remain on hold; this documentation revision does not claim
   additional behavioral validation.
+
+- 2026-11-17: composed runtime and native Platform operations into one SDK
+  `call` surface and generated `client.platform` helpers from the native
+  contract. Added Node-only and Python saved-connection factories with explicit
+  account context and CLI-session renewal. Documentation now uses these
+  surfaces; behavioral tests remain on hold.
+
+- SDK completion verification: both generators reproduce current artifacts;
+  full TypeScript checks, strict Python typing, Python wheel/sdist and
+  TypeScript package-content checks, SDK/Configurator/web/demo builds,
+  documentation build, CLI all-target compilation, and release metadata checks
+  pass. Added typed runtime/Platform discovery and contract collision checks.
+  The runtime member gate explicitly refuses native Platform calls, including
+  generated helpers. Development connection imports persist verified credential
+  provenance for SDK reuse. Regression coverage is authored; tests and Clippy
+  remain on hold, and no live authentication checks were run.
+
+- 2026-11-17: both SDKs now have named helpers for the complete runtime and
+  native Platform catalogs (148 runtime and 26 native operations). Runtime
+  names share one inventory across languages, with snake_case names in Python;
+  native names remain contract-owned under `client.platform`. This adds no
+  permissions or proxy admission: the selected endpoint applies its existing
+  account, universe and credential policy. Catalog parity, generation, type,
+  packaging and build checks pass; behavioral tests remain on hold.
+
+- 2026-11-17: reviewed declarative configuration against the account model.
+  Updated the configuration-as-code guide for application/personal keys,
+  browser-authorized CLI connections, account-qualified creation, explicit
+  administrative initial Owners, UUID recovery, credential ceilings and
+  protected-universe policy. Pipeline examples now use a Platform application
+  key, and obsolete deployment-export syntax was removed. Provider allocation
+  remains deployment administration; account-level provider delegation is not
+  implemented. Configuration planning reports changed provider allocations as
+  conflicts for non-admin principals before any document writes, while
+  unchanged bindings remain acceptable. Server admission remains authoritative
+  for credential ceilings and current access on every request. Tests remain on
+  hold.

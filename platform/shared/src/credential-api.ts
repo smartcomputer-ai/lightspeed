@@ -25,10 +25,10 @@ const applicationPath = { accountId: z.string().min(1), applicationId: z.uuid() 
 const keyId = z.string().min(1);
 
 export const CREDENTIAL_OPERATIONS = {
-  "platform/credentials/list": { method: "GET", path: "/api/v1/platform/credentials", params: z.object({}).strict(), result: listed },
-  "platform/credentials/create": { method: "POST", path: "/api/v1/platform/credentials", params: credentialCreateSchema, result: created },
-  "platform/credentials/revoke": { method: "DELETE", path: "/api/v1/platform/credentials/{keyId}", params: z.object({ keyId }).strict(), result: revoked },
-  "platform/applications/credentials/list": { method: "GET", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials", params: z.object(applicationPath).strict(), result: listed },
-  "platform/applications/credentials/create": { method: "POST", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials", params: credentialCreateSchema.extend(applicationPath), result: created },
-  "platform/applications/credentials/revoke": { method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}", params: z.object({ ...applicationPath, keyId }).strict(), result: revoked },
+  "platform/credentials/list": { helper: { name: "listPersonalApiKeys" }, method: "GET", path: "/api/v1/platform/credentials", params: z.object({}).strict(), result: listed },
+  "platform/credentials/create": { helper: { name: "createPersonalApiKey" }, method: "POST", path: "/api/v1/platform/credentials", params: credentialCreateSchema, result: created },
+  "platform/credentials/revoke": { helper: { name: "revokePersonalApiKey" }, method: "DELETE", path: "/api/v1/platform/credentials/{keyId}", params: z.object({ keyId }).strict(), result: revoked },
+  "platform/applications/credentials/list": { helper: { name: "listApplicationApiKeys" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials", params: z.object(applicationPath).strict(), result: listed },
+  "platform/applications/credentials/create": { helper: { name: "createApplicationApiKey" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials", params: credentialCreateSchema.extend(applicationPath), result: created },
+  "platform/applications/credentials/revoke": { helper: { name: "revokeApplicationApiKey" }, method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}", params: z.object({ ...applicationPath, keyId }).strict(), result: revoked },
 } as const;

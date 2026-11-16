@@ -414,7 +414,11 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 The unified `lightspeed` CLI stores runtime and Platform connections under
 `LIGHTSPEED_CONFIG_DIR`, or `$XDG_CONFIG_HOME/lightspeed` /
 `$HOME/.config/lightspeed`. `connect login --url` and `connect add --url` select the
-deployment; `--connection` chooses a saved connection. See [CLI connections](../using-lightspeed/cli.md).
+deployment; `--connection` chooses a saved connection. The Node SDK
+`createClientFromConnection` and Python `AsyncLightspeedClient.from_connection`
+use the same configuration directory unless one is supplied explicitly.
+See [CLI connections](../using-lightspeed/cli.md) and
+[SDK connection reuse](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
 
 ## Connector host
 

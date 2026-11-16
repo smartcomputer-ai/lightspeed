@@ -2,6 +2,9 @@
   "operations": [
     {
       "operationId": "platform/session/read",
+      "helper": {
+        "name": "readCurrentSession"
+      },
       "method": "GET",
       "path": "/api/v1/platform/session",
       "params": "PlatformSessionReadParams",
@@ -9,6 +12,9 @@
     },
     {
       "operationId": "platform/session/revoke",
+      "helper": {
+        "name": "revokeCurrentSession"
+      },
       "method": "DELETE",
       "path": "/api/v1/platform/session",
       "params": "PlatformSessionRevokeParams",
@@ -16,6 +22,9 @@
     },
     {
       "operationId": "platform/credentials/list",
+      "helper": {
+        "name": "listPersonalApiKeys"
+      },
       "method": "GET",
       "path": "/api/v1/platform/credentials",
       "params": "PlatformCredentialsListParams",
@@ -23,6 +32,9 @@
     },
     {
       "operationId": "platform/credentials/create",
+      "helper": {
+        "name": "createPersonalApiKey"
+      },
       "method": "POST",
       "path": "/api/v1/platform/credentials",
       "params": "PlatformCredentialsCreateParams",
@@ -30,6 +42,9 @@
     },
     {
       "operationId": "platform/credentials/revoke",
+      "helper": {
+        "name": "revokePersonalApiKey"
+      },
       "method": "DELETE",
       "path": "/api/v1/platform/credentials/{keyId}",
       "params": "PlatformCredentialsRevokeParams",
@@ -37,6 +52,9 @@
     },
     {
       "operationId": "platform/applications/credentials/list",
+      "helper": {
+        "name": "listApplicationApiKeys"
+      },
       "method": "GET",
       "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials",
       "params": "PlatformApplicationsCredentialsListParams",
@@ -44,6 +62,9 @@
     },
     {
       "operationId": "platform/applications/credentials/create",
+      "helper": {
+        "name": "createApplicationApiKey"
+      },
       "method": "POST",
       "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials",
       "params": "PlatformApplicationsCredentialsCreateParams",
@@ -51,6 +72,9 @@
     },
     {
       "operationId": "platform/applications/credentials/revoke",
+      "helper": {
+        "name": "revokeApplicationApiKey"
+      },
       "method": "DELETE",
       "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}",
       "params": "PlatformApplicationsCredentialsRevokeParams",
@@ -58,6 +82,9 @@
     },
     {
       "operationId": "platform/accounts/list",
+      "helper": {
+        "name": "listAccounts"
+      },
       "method": "GET",
       "path": "/api/v1/platform/accounts",
       "params": "PlatformAccountsListParams",
@@ -65,6 +92,9 @@
     },
     {
       "operationId": "platform/accounts/create",
+      "helper": {
+        "name": "createAccount"
+      },
       "method": "POST",
       "path": "/api/v1/platform/accounts",
       "params": "PlatformAccountsCreateParams",
@@ -72,6 +102,9 @@
     },
     {
       "operationId": "platform/accounts/read",
+      "helper": {
+        "name": "readAccount"
+      },
       "method": "GET",
       "path": "/api/v1/platform/accounts/{accountId}",
       "params": "PlatformAccountsReadParams",
@@ -79,6 +112,9 @@
     },
     {
       "operationId": "platform/accounts/update",
+      "helper": {
+        "name": "updateAccount"
+      },
       "method": "PATCH",
       "path": "/api/v1/platform/accounts/{accountId}",
       "params": "PlatformAccountsUpdateParams",
@@ -86,6 +122,9 @@
     },
     {
       "operationId": "platform/accounts/members/list",
+      "helper": {
+        "name": "listAccountMembers"
+      },
       "method": "GET",
       "path": "/api/v1/platform/accounts/{accountId}/members",
       "params": "PlatformAccountsMembersListParams",
@@ -93,6 +132,9 @@
     },
     {
       "operationId": "platform/accounts/members/put",
+      "helper": {
+        "name": "putAccountMember"
+      },
       "method": "PUT",
       "path": "/api/v1/platform/accounts/{accountId}/members/{userId}",
       "params": "PlatformAccountsMembersPutParams",
@@ -100,6 +142,9 @@
     },
     {
       "operationId": "platform/accounts/members/delete",
+      "helper": {
+        "name": "removeAccountMember"
+      },
       "method": "DELETE",
       "path": "/api/v1/platform/accounts/{accountId}/members/{userId}",
       "params": "PlatformAccountsMembersDeleteParams",
@@ -107,6 +152,9 @@
     },
     {
       "operationId": "platform/accounts/applications/list",
+      "helper": {
+        "name": "listApplications"
+      },
       "method": "GET",
       "path": "/api/v1/platform/accounts/{accountId}/applications",
       "params": "PlatformAccountsApplicationsListParams",
@@ -114,6 +162,9 @@
     },
     {
       "operationId": "platform/accounts/applications/create",
+      "helper": {
+        "name": "createApplication"
+      },
       "method": "POST",
       "path": "/api/v1/platform/accounts/{accountId}/applications",
       "params": "PlatformAccountsApplicationsCreateParams",
@@ -121,6 +172,9 @@
     },
     {
       "operationId": "platform/accounts/applications/update",
+      "helper": {
+        "name": "updateApplication"
+      },
       "method": "PATCH",
       "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}",
       "params": "PlatformAccountsApplicationsUpdateParams",
@@ -128,6 +182,9 @@
     },
     {
       "operationId": "platform/accounts/applications/delete",
+      "helper": {
+        "name": "disableApplication"
+      },
       "method": "DELETE",
       "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}",
       "params": "PlatformAccountsApplicationsDeleteParams",
@@ -135,6 +192,9 @@
     },
     {
       "operationId": "platform/universes/adopt",
+      "helper": {
+        "name": "adoptUniverse"
+      },
       "method": "POST",
       "path": "/api/v1/platform/accounts/{accountId}/universes/adopt",
       "params": "PlatformUniversesAdoptParams",
@@ -142,6 +202,9 @@
     },
     {
       "operationId": "platform/universes/create",
+      "helper": {
+        "name": "createUniverse"
+      },
       "method": "POST",
       "path": "/api/v1/platform/accounts/{accountId}/universes",
       "params": "PlatformUniversesCreateParams",
@@ -149,6 +212,9 @@
     },
     {
       "operationId": "platform/universes/update",
+      "helper": {
+        "name": "updateUniverse"
+      },
       "method": "PATCH",
       "path": "/api/v1/platform/universes/{universe}",
       "params": "PlatformUniversesUpdateParams",
@@ -156,6 +222,9 @@
     },
     {
       "operationId": "platform/universes/grants/list",
+      "helper": {
+        "name": "listUniverseGrants"
+      },
       "method": "GET",
       "path": "/api/v1/platform/universes/{universe}/grants",
       "params": "PlatformUniversesGrantsListParams",
@@ -163,6 +232,9 @@
     },
     {
       "operationId": "platform/universes/grants/put",
+      "helper": {
+        "name": "putUniverseGrant"
+      },
       "method": "PUT",
       "path": "/api/v1/platform/universes/{universe}/grants",
       "params": "PlatformUniversesGrantsPutParams",
@@ -170,6 +242,9 @@
     },
     {
       "operationId": "platform/universes/grants/delete",
+      "helper": {
+        "name": "removeUniverseGrant"
+      },
       "method": "DELETE",
       "path": "/api/v1/platform/universes/{universe}/grants/{grantId}",
       "params": "PlatformUniversesGrantsDeleteParams",
@@ -177,6 +252,9 @@
     },
     {
       "operationId": "platform/universes/access-policy/put",
+      "helper": {
+        "name": "putUniverseAccessPolicy"
+      },
       "method": "PUT",
       "path": "/api/v1/platform/universes/{universe}/access-policy",
       "params": "PlatformUniversesAccessPolicyPutParams",

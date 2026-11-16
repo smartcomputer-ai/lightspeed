@@ -11,15 +11,14 @@ class PlatformApi(TypedDict):
     pass
 
 
-class PlatformSessionReadParams(TypedDict):
-    pass
-
-
 class Principal(TypedDict):
     kind: Literal['user', 'application']
     id: str
     name: str
-    email: str | None
+    platformAdmin: bool
+    """
+    Whether the principal is a Platform Admin. Credential restrictions still apply to every operation.
+    """
 
 
 class Credential(TypedDict):
@@ -27,28 +26,10 @@ class Credential(TypedDict):
     id: str
 
 
-class Session(TypedDict):
+class Account(TypedDict):
     id: str
-    createdAt: str
-    expiresAt: str
-
-
-class PlatformSessionReadResult(TypedDict):
-    principal: Principal
-    credential: Credential
-    session: Session | None
-
-
-class PlatformSessionRevokeParams(TypedDict):
-    pass
-
-
-class PlatformSessionRevokeResult(TypedDict):
-    revoked: Literal[True]
-
-
-class PlatformCredentialsListParams(TypedDict):
-    pass
+    name: str
+    role: Literal['member', 'creator', 'admin']
 
 
 AccountId: TypeAlias = str
@@ -68,37 +49,49 @@ class Restrictions(TypedDict):
     allowUniverseCreation: NotRequired[bool]
 
 
-class Credential1(TypedDict):
-    id: str
-    name: str
-    prefix: str | None
-    start: str | None
-    createdAt: str
-    expiresAt: str
-    enabled: bool
-    lastUsedAt: str | None
+class PlatformConnectionDetails(TypedDict):
+    principal: Principal
+    credential: Credential
+    accounts: list[Account]
     restrictions: Restrictions
 
 
-class PlatformCredentialsListResult(TypedDict):
-    credentials: list[Credential1]
+class PlatformSessionReadParams(TypedDict):
+    pass
+
+
+class Principal1(TypedDict):
+    kind: Literal['user', 'application']
+    id: str
+    name: str
+    email: str | None
+
+
+class Session(TypedDict):
+    id: str
+    createdAt: str
+    expiresAt: str
+
+
+class PlatformSessionReadResult(TypedDict):
+    principal: Principal1
+    credential: Credential
+    session: Session | None
+
+
+class PlatformSessionRevokeParams(TypedDict):
+    pass
+
+
+class PlatformSessionRevokeResult(TypedDict):
+    revoked: Literal[True]
+
+
+class PlatformCredentialsListParams(TypedDict):
+    pass
 
 
 class Restrictions1(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
-    universeIds: NotRequired[list[UniverseId]]
-    operations: NotRequired[list[Operation]]
-    readOnly: NotRequired[bool]
-    allowUniverseCreation: NotRequired[bool]
-
-
-class PlatformCredentialsCreateParams(TypedDict):
-    name: str
-    expiresInDays: NotRequired[int]
-    restrictions: NotRequired[Restrictions1]
-
-
-class Restrictions2(TypedDict):
     accountIds: NotRequired[list[AccountId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
@@ -115,25 +108,25 @@ class Credential2(TypedDict):
     expiresAt: str
     enabled: bool
     lastUsedAt: str | None
-    restrictions: Restrictions2
+    restrictions: Restrictions1
 
 
-class PlatformCredentialsCreateResult(TypedDict):
-    credential: Credential2
-    secret: str
+class PlatformCredentialsListResult(TypedDict):
+    credentials: list[Credential2]
 
 
-class PlatformCredentialsRevokeParams(TypedDict):
-    keyId: str
+class Restrictions2(TypedDict):
+    accountIds: NotRequired[list[AccountId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
 
 
-class PlatformCredentialsRevokeResult(TypedDict):
-    revoked: Literal[True]
-
-
-class PlatformApplicationsCredentialsListParams(TypedDict):
-    accountId: str
-    applicationId: str
+class PlatformCredentialsCreateParams(TypedDict):
+    name: str
+    expiresInDays: NotRequired[int]
+    restrictions: NotRequired[Restrictions2]
 
 
 class Restrictions3(TypedDict):
@@ -156,27 +149,25 @@ class Credential3(TypedDict):
     restrictions: Restrictions3
 
 
-class PlatformApplicationsCredentialsListResult(TypedDict):
-    credentials: list[Credential3]
+class PlatformCredentialsCreateResult(TypedDict):
+    credential: Credential3
+    secret: str
 
 
-class Restrictions4(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
-    universeIds: NotRequired[list[UniverseId]]
-    operations: NotRequired[list[Operation]]
-    readOnly: NotRequired[bool]
-    allowUniverseCreation: NotRequired[bool]
+class PlatformCredentialsRevokeParams(TypedDict):
+    keyId: str
 
 
-class PlatformApplicationsCredentialsCreateParams(TypedDict):
-    name: str
-    expiresInDays: NotRequired[int]
-    restrictions: NotRequired[Restrictions4]
+class PlatformCredentialsRevokeResult(TypedDict):
+    revoked: Literal[True]
+
+
+class PlatformApplicationsCredentialsListParams(TypedDict):
     accountId: str
     applicationId: str
 
 
-class Restrictions5(TypedDict):
+class Restrictions4(TypedDict):
     accountIds: NotRequired[list[AccountId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
@@ -193,11 +184,51 @@ class Credential4(TypedDict):
     expiresAt: str
     enabled: bool
     lastUsedAt: str | None
-    restrictions: Restrictions5
+    restrictions: Restrictions4
+
+
+class PlatformApplicationsCredentialsListResult(TypedDict):
+    credentials: list[Credential4]
+
+
+class Restrictions5(TypedDict):
+    accountIds: NotRequired[list[AccountId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class PlatformApplicationsCredentialsCreateParams(TypedDict):
+    name: str
+    expiresInDays: NotRequired[int]
+    restrictions: NotRequired[Restrictions5]
+    accountId: str
+    applicationId: str
+
+
+class Restrictions6(TypedDict):
+    accountIds: NotRequired[list[AccountId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class Credential5(TypedDict):
+    id: str
+    name: str
+    prefix: str | None
+    start: str | None
+    createdAt: str
+    expiresAt: str
+    enabled: bool
+    lastUsedAt: str | None
+    restrictions: Restrictions6
 
 
 class PlatformApplicationsCredentialsCreateResult(TypedDict):
-    credential: Credential4
+    credential: Credential5
     secret: str
 
 
@@ -237,7 +268,7 @@ class MembershipPolicy(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account(TypedDict):
+class Account1(TypedDict):
     id: str
     name: str
     slug: str
@@ -252,7 +283,7 @@ class Account(TypedDict):
 
 
 class PlatformAccountsListResult(TypedDict):
-    accounts: list[Account]
+    accounts: list[Account1]
     canCreate: bool
 
 
@@ -282,7 +313,7 @@ class MembershipPolicy1(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account1(TypedDict):
+class Account2(TypedDict):
     id: str
     name: str
     slug: str
@@ -297,7 +328,7 @@ class Account1(TypedDict):
 
 
 class PlatformAccountsCreateResult(TypedDict):
-    account: Account1
+    account: Account2
 
 
 class PlatformAccountsReadParams(TypedDict):
@@ -320,7 +351,7 @@ class MembershipPolicy2(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account2(TypedDict):
+class Account3(TypedDict):
     id: str
     name: str
     slug: str
@@ -335,7 +366,7 @@ class Account2(TypedDict):
 
 
 class PlatformAccountsReadResult(TypedDict):
-    account: Account2
+    account: Account3
 
 
 class Members6(TypedDict):
@@ -380,7 +411,7 @@ class MembershipPolicy4(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account3(TypedDict):
+class Account4(TypedDict):
     id: str
     name: str
     slug: str
@@ -395,7 +426,7 @@ class Account3(TypedDict):
 
 
 class PlatformAccountsUpdateResult(TypedDict):
-    account: Account3
+    account: Account4
 
 
 class PlatformAccountsMembersListParams(TypedDict):
@@ -551,7 +582,7 @@ class PlatformUniversesGrantsListParams(TypedDict):
     universe: str
 
 
-class Principal1(TypedDict):
+class Principal2(TypedDict):
     kind: Literal['user', 'application']
     id: str
 
@@ -559,7 +590,7 @@ class Principal1(TypedDict):
 class Grant(TypedDict):
     id: str
     universeId: str
-    principal: Principal1
+    principal: Principal2
     role: Literal['viewer', 'contributor', 'operator', 'owner']
     name: str
     createdAt: str
@@ -570,7 +601,7 @@ class PlatformUniversesGrantsListResult(TypedDict):
 
 
 class PlatformUniversesGrantsPutParams(TypedDict):
-    principal: Principal1
+    principal: Principal2
     role: Literal['viewer', 'contributor', 'operator', 'owner']
     universe: str
 
@@ -578,7 +609,7 @@ class PlatformUniversesGrantsPutParams(TypedDict):
 class Grant1(TypedDict):
     id: str
     universeId: str
-    principal: Principal1
+    principal: Principal2
     role: Literal['viewer', 'contributor', 'operator', 'owner']
     name: str
     createdAt: str

@@ -22,11 +22,19 @@ Keys cannot mint other keys. Human browser and CLI sessions manage credentials.
 Send `Authorization: Bearer <key>` to the Platform `/api/v1` base URL. Runtime
 resource routes are shared with the direct runtime API; native account,
 application, grant, and credential operations are under `/api/v1/platform`.
-The TypeScript client's `callPlatform` and Python client's `call_platform`
-consume the native generated contract. Regular `call` uses runtime operations
-with the same Platform credentials. `lightspeed connect login --url DEPLOYMENT_URL`
+Both SDKs use `client.call` for runtime and native Platform operation IDs.
+Generated `client.platform` helpers provide typed native parameter objects
+without a separate transport or authentication path. `lightspeed connect login --url DEPLOYMENT_URL`
 uses browser-approved device authorization for a human CLI session;
 `lightspeed connect add` accepts API keys. See [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
+
+Local scripts can reuse a saved CLI connection through the Node-only
+`createClientFromConnection` factory from `@lightspeed-ai/sdk/node` or Python's
+`await AsyncLightspeedClient.from_connection(...)`. These factories reread the
+saved credential per request and renew CLI-owned session credentials without
+starting login or rewriting externally managed secret files. The selected
+account remains explicit in native helper parameters. See
+[Reuse a saved CLI connection](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
 
 Optional account IDs, universe UUIDs, operation IDs, and read-only restrictions
 narrow a key's authority. They never grant permissions its principal lacks.

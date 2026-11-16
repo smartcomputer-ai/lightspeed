@@ -3,6 +3,46 @@
 export interface PlatformApi {}
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformConnectionDetails".
+ */
+export interface PlatformConnectionDetails {
+  principal: {
+    kind: "user" | "application";
+    id: string;
+    name: string;
+    /**
+     * Whether the principal is a Platform Admin. Credential restrictions still apply to every operation.
+     */
+    platformAdmin: boolean;
+  };
+  credential: {
+    kind: "session" | "cliSession" | "personalKey" | "applicationKey";
+    id: string;
+  };
+  accounts: {
+    id: string;
+    name: string;
+    role: "member" | "creator" | "admin";
+  }[];
+  restrictions: {
+    /**
+     * @maxItems 1000
+     */
+    accountIds?: string[];
+    /**
+     * @maxItems 1000
+     */
+    universeIds?: string[];
+    /**
+     * @maxItems 1000
+     */
+    operations?: string[];
+    readOnly?: boolean;
+    allowUniverseCreation?: boolean;
+  };
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformSessionReadParams".
  */
 export interface PlatformSessionReadParams {}

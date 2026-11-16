@@ -4,6 +4,136 @@
   "type": "object",
   "additionalProperties": false,
   "definitions": {
+    "PlatformConnectionDetails": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user",
+                "application"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "platformAdmin": {
+              "type": "boolean",
+              "description": "Whether the principal is a Platform Admin. Credential restrictions still apply to every operation."
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "name",
+            "platformAdmin"
+          ],
+          "additionalProperties": false
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "session",
+                "cliSession",
+                "personalKey",
+                "applicationKey"
+              ]
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "accounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "restrictions": {
+          "type": "object",
+          "properties": {
+            "accountIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "principal",
+        "credential",
+        "accounts",
+        "restrictions"
+      ],
+      "additionalProperties": false
+    },
     "PlatformSessionReadParams": {
       "type": "object",
       "properties": {},

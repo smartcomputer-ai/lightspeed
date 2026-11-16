@@ -36,7 +36,11 @@
     "./schema/workflow.json": "./schema/workflow.json",
     "./release.json": "./release.json",
     "./schema/platform.schema.json": "./schema/platform.schema.json",
-    "./schema/platform-http.json": "./schema/platform-http.json"
+    "./schema/platform-http.json": "./schema/platform-http.json",
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
   },
   "files": [
     "dist",

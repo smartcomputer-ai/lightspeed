@@ -26,6 +26,17 @@ pub(crate) struct Target {
 }
 
 impl Target {
+    /// Pin all subsequent requests to the resolved resource, even if its handle
+    /// is renamed or reused while reconciliation is in progress.
+    pub(crate) fn select_universe(&mut self, universe_id: String) {
+        let connection = crate::connection::ResolvedConnection {
+            universe: Some(universe_id.clone()),
+            ..self.api.connection().clone()
+        };
+        self.api = HttpAgentApi::with_connection(connection);
+        self.universe_id = Some(universe_id);
+    }
+
     /// Whether there is anything to read: a universe that does not exist yet
     /// has no state.
     pub(crate) fn exists(&self) -> bool {

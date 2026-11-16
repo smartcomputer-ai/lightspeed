@@ -6,7 +6,7 @@ import type { CallOptions } from "../client.js";
 import type { OperationId, OperationParams, OperationResult } from "./operations.js";
 import type * as Api from "./types.js";
 
-/** Helper name to the API method it calls. See scripts/helpers.mjs for which methods have one. */
+/** Canonical named helpers covering every runtime operation, including handwritten transports. */
 export const CLIENT_HELPERS = {
   initialize: "initialize",
   startSession: "session/start",
@@ -52,6 +52,110 @@ export const CLIENT_HELPERS = {
   listBots: "bots/list",
   listBotEvents: "bots/events/list",
   admitBotEvent: "bots/events/admit",
+  putSessionRetention: "session/retention/put",
+  removeContext: "session/context/remove",
+  replaceContext: "session/context/replace",
+  bindEnvironmentCredential: "environments/credentials/bind",
+  listEnvironmentCredentials: "environments/credentials/list",
+  unbindEnvironmentCredential: "environments/credentials/unbind",
+  updateEnvironment: "environments/update",
+  createExternalEnvironment: "environments/external/create",
+  putRegisteredEnvironment: "environments/registered/put",
+  releaseRegisteredEnvironment: "environments/registered/release",
+  putEnvironmentIngress: "environments/ingress/put",
+  putEnvironmentPower: "environments/power/put",
+  listEnvironmentProviderBindings: "environments/provider-bindings/list",
+  readEnvironmentProviderBinding: "environments/provider-bindings/read",
+  readEnvironmentTemplate: "environments/templates/read",
+  createEnvironmentJobs: "environments/jobs/create",
+  readEnvironmentJobs: "environments/jobs/read",
+  cancelEnvironmentJobs: "environments/jobs/cancel",
+  createEnvironmentRegistrationKey: "environments/registration-keys/create",
+  putEnvironmentRegistrationKey: "environments/registration-keys/put",
+  readEnvironmentRegistrationKey: "environments/registration-keys/read",
+  listEnvironmentRegistrationKeys: "environments/registration-keys/list",
+  updateEnvironmentRegistrationKey: "environments/registration-keys/update",
+  rotateEnvironmentRegistrationKey: "environments/registration-keys/rotate",
+  revokeEnvironmentRegistrationKey: "environments/registration-keys/revoke",
+  startTranscription: "transcriptions/start",
+  readTranscription: "transcriptions/read",
+  cancelTranscription: "transcriptions/cancel",
+  putModelDefaults: "models/defaults/put",
+  putBlobs: "blobs/put",
+  hasBlobs: "blobs/has",
+  commitSnapshot: "vfs/snapshots/commit",
+  readSnapshot: "vfs/snapshots/read",
+  updateWorkspace: "vfs/workspaces/update",
+  putMcpServer: "mcp/servers/put",
+  discoverMcpServerAuth: "mcp/servers/auth/discover",
+  discoverMcpServerTools: "mcp/servers/tools/discover",
+  deleteMcpServer: "mcp/servers/delete",
+  importCredentialGrant: "credentials/grants/import",
+  leaseCredentialGrant: "credentials/grants/lease",
+  readCredentialGrant: "credentials/grants/read",
+  listCredentialGrants: "credentials/grants/list",
+  putCredentialGrant: "credentials/grants/put",
+  revokeCredentialGrant: "credentials/grants/revoke",
+  createCredentialClient: "credentials/clients/create",
+  readCredentialClient: "credentials/clients/read",
+  listCredentialClients: "credentials/clients/list",
+  deleteCredentialClient: "credentials/clients/delete",
+  startCredentialFlow: "credentials/flows/start",
+  readCredentialFlow: "credentials/flows/read",
+  createCredentialProvider: "credentials/providers/create",
+  putCredentialProvider: "credentials/providers/put",
+  readCredentialProvider: "credentials/providers/read",
+  listCredentialProviders: "credentials/providers/list",
+  deleteCredentialProvider: "credentials/providers/delete",
+  listGithubInstallations: "credentials/github/installations/list",
+  grantGithubInstallation: "credentials/github/installations/grant",
+  createBot: "bots/create",
+  putBot: "bots/put",
+  closeBot: "bots/close",
+  deleteBot: "bots/delete",
+  readBotState: "bots/state/read",
+  rotateBotSession: "bots/sessions/rotate",
+  putBotTrigger: "bots/triggers/put",
+  readBotTrigger: "bots/triggers/read",
+  listBotTriggers: "bots/triggers/list",
+  readBotTriggerSecrets: "bots/triggers/secrets/read",
+  deleteBotTrigger: "bots/triggers/delete",
+  replayBotEvent: "bots/events/replay",
+  readBotEvent: "bots/events/read",
+  testBotFilter: "bots/filters/test",
+  createChannelAccount: "channels/accounts/create",
+  putChannelAccount: "channels/accounts/put",
+  readChannelAccount: "channels/accounts/read",
+  listChannelAccounts: "channels/accounts/list",
+  deleteChannelAccount: "channels/accounts/delete",
+  admitChannelInbound: "channels/inbound/admit",
+  listChannelPairings: "channels/pairings/list",
+  deleteChannelPairing: "channels/pairings/delete",
+  readChannelConversation: "channels/conversations/read",
+  listDeletedUniverses: "deployment/universes/deleted/list",
+  listDeletedSessions: "deployment/sessions/deleted/list",
+  purgeSession: "deployment/sessions/purge",
+  listDeploymentEnvironmentProviderBindings: "deployment/environment-provider-bindings/list",
+  createUniverse: "deployment/universes/create",
+  listUniverses: "deployment/universes/list",
+  readUniverse: "deployment/universes/read",
+  putUniverseConfiguration: "deployment/universes/configuration/put",
+  putUniverseExpiry: "deployment/universes/expiry/put",
+  putUniverseHandle: "deployment/universes/handle/put",
+  deleteUniverse: "deployment/universes/delete",
+  putEnvironmentProvider: "deployment/environment-providers/put",
+  listEnvironmentProviders: "deployment/environment-providers/list",
+  readEnvironmentProvider: "deployment/environment-providers/read",
+  deleteEnvironmentProvider: "deployment/environment-providers/delete",
+  putUniverseEnvironmentProviderBinding: "deployment/environment-providers/bindings/put",
+  deleteUniverseEnvironmentProviderBinding: "deployment/environment-providers/bindings/delete",
+  listDeploymentChannelAccounts: "deployment/channels/accounts/list",
+  watch: "universe/watch",
+  startRun: "session/runs/start",
+  steerRun: "session/runs/steer",
+  readEvents: "session/events/read",
+  readBlobBytes: "blobs/read",
+  uploadBlob: "blobs/upload",
 } as const;
 
 export abstract class LightspeedHelpers {
@@ -66,7 +170,7 @@ export abstract class LightspeedHelpers {
     target: object,
     options: CallOptions,
   ): Promise<OperationResult<M>> {
-    const { signal, headers, ...params } = options;
+    const { signal, headers, body, contentLength, ...params } = options;
     const call: CallOptions = {};
     if (signal) {
       call.signal = signal;
@@ -101,7 +205,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
    */
-  readSession(sessionId: string, options: Omit<Api.SessionReadParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionReadResponse> {
+  readSession(sessionId: Api.SessionReadParams["sessionId"], options: Omit<Api.SessionReadParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionReadResponse> {
     return this.invoke("session/read", { sessionId }, options);
   }
 
@@ -119,7 +223,7 @@ export abstract class LightspeedHelpers {
    *
    * Sets the display name, or clears it when displayName is omitted.
    */
-  renameSession(sessionId: string, options: Omit<Api.SessionRenameParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionRenameResponse> {
+  renameSession(sessionId: Api.SessionRenameParams["sessionId"], options: Omit<Api.SessionRenameParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionRenameResponse> {
     return this.invoke("session/rename", { sessionId }, options);
   }
 
@@ -128,7 +232,7 @@ export abstract class LightspeedHelpers {
    *
    * Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.
    */
-  putSessionMetadata(sessionId: string, options: Omit<Api.SessionMetadataPutParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionMetadataPutResponse> {
+  putSessionMetadata(sessionId: Api.SessionMetadataPutParams["sessionId"], options: Omit<Api.SessionMetadataPutParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionMetadataPutResponse> {
     return this.invoke("session/metadata/put", { sessionId }, options);
   }
 
@@ -137,7 +241,7 @@ export abstract class LightspeedHelpers {
    *
    * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.
    */
-  putSessionConfig(sessionId: string, options: Omit<Api.SessionConfigPutParams, "sessionId"> & CallOptions): Promise<Api.SessionConfigPutResponse> {
+  putSessionConfig(sessionId: Api.SessionConfigPutParams["sessionId"], options: Omit<Api.SessionConfigPutParams, "sessionId"> & CallOptions): Promise<Api.SessionConfigPutResponse> {
     return this.invoke("session/config/put", { sessionId }, options);
   }
 
@@ -146,7 +250,7 @@ export abstract class LightspeedHelpers {
    *
    * Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
    */
-  shareSession(sessionId: string, options: Omit<Api.SessionShareParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionShareResponse> {
+  shareSession(sessionId: Api.SessionShareParams["sessionId"], options: Omit<Api.SessionShareParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionShareResponse> {
     return this.invoke("session/share", { sessionId }, options);
   }
 
@@ -155,7 +259,7 @@ export abstract class LightspeedHelpers {
    *
    * Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.
    */
-  restartSession(sessionId: string, options: Omit<Api.SessionRestartParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionRestartResponse> {
+  restartSession(sessionId: Api.SessionRestartParams["sessionId"], options: Omit<Api.SessionRestartParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionRestartResponse> {
     return this.invoke("session/restart", { sessionId }, options);
   }
 
@@ -164,7 +268,7 @@ export abstract class LightspeedHelpers {
    *
    * Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
    */
-  closeSession(sessionId: string, options: Omit<Api.SessionCloseParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionCloseResponse> {
+  closeSession(sessionId: Api.SessionCloseParams["sessionId"], options: Omit<Api.SessionCloseParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionCloseResponse> {
     return this.invoke("session/close", { sessionId }, options);
   }
 
@@ -173,7 +277,7 @@ export abstract class LightspeedHelpers {
    *
    * Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
    */
-  deleteSession(sessionId: string, options: Omit<Api.SessionDeleteParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionDeleteResponse> {
+  deleteSession(sessionId: Api.SessionDeleteParams["sessionId"], options: Omit<Api.SessionDeleteParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionDeleteResponse> {
     return this.invoke("session/delete", { sessionId }, options);
   }
 
@@ -182,7 +286,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.
    */
-  listRuns(sessionId: string, options: Omit<Api.RunListParams, "sessionId"> & CallOptions = {}): Promise<Api.RunListResponse> {
+  listRuns(sessionId: Api.RunListParams["sessionId"], options: Omit<Api.RunListParams, "sessionId"> & CallOptions = {}): Promise<Api.RunListResponse> {
     return this.invoke("session/runs/list", { sessionId }, options);
   }
 
@@ -191,7 +295,7 @@ export abstract class LightspeedHelpers {
    *
    * Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
    */
-  readRun(sessionId: string, runId: string, options: Omit<Api.RunReadParams, "sessionId" | "runId"> & CallOptions = {}): Promise<Api.RunReadResponse> {
+  readRun(sessionId: Api.RunReadParams["sessionId"], runId: Api.RunReadParams["runId"], options: Omit<Api.RunReadParams, "sessionId" | "runId"> & CallOptions = {}): Promise<Api.RunReadResponse> {
     return this.invoke("session/runs/read", { sessionId, runId }, options);
   }
 
@@ -200,7 +304,7 @@ export abstract class LightspeedHelpers {
    *
    * Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
    */
-  cancelRun(sessionId: string, runId: string, options: Omit<Api.RunCancelParams, "sessionId" | "runId"> & CallOptions = {}): Promise<Api.RunCancelResponse> {
+  cancelRun(sessionId: Api.RunCancelParams["sessionId"], runId: Api.RunCancelParams["runId"], options: Omit<Api.RunCancelParams, "sessionId" | "runId"> & CallOptions = {}): Promise<Api.RunCancelResponse> {
     return this.invoke("session/runs/cancel", { sessionId, runId }, options);
   }
 
@@ -209,7 +313,7 @@ export abstract class LightspeedHelpers {
    *
    * Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.
    */
-  decideApprovals(sessionId: string, runId: string, options: Omit<Api.RunApprovalsDecideParams, "sessionId" | "runId"> & CallOptions): Promise<Api.RunApprovalsDecideResponse> {
+  decideApprovals(sessionId: Api.RunApprovalsDecideParams["sessionId"], runId: Api.RunApprovalsDecideParams["runId"], options: Omit<Api.RunApprovalsDecideParams, "sessionId" | "runId"> & CallOptions): Promise<Api.RunApprovalsDecideResponse> {
     return this.invoke("session/runs/approvals/decide", { sessionId, runId }, options);
   }
 
@@ -218,7 +322,7 @@ export abstract class LightspeedHelpers {
    *
    * Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.
    */
-  appendContext(sessionId: string, options: Omit<Api.ContextAppendParams, "sessionId"> & CallOptions): Promise<Api.ContextAppendResponse> {
+  appendContext(sessionId: Api.ContextAppendParams["sessionId"], options: Omit<Api.ContextAppendParams, "sessionId"> & CallOptions): Promise<Api.ContextAppendResponse> {
     return this.invoke("session/context/append", { sessionId }, options);
   }
 
@@ -227,7 +331,7 @@ export abstract class LightspeedHelpers {
    *
    * Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.
    */
-  compactContext(sessionId: string, options: Omit<Api.ContextCompactParams, "sessionId"> & CallOptions = {}): Promise<Api.ContextCompactResponse> {
+  compactContext(sessionId: Api.ContextCompactParams["sessionId"], options: Omit<Api.ContextCompactParams, "sessionId"> & CallOptions = {}): Promise<Api.ContextCompactResponse> {
     return this.invoke("session/context/compact", { sessionId }, options);
   }
 
@@ -236,7 +340,7 @@ export abstract class LightspeedHelpers {
    *
    * Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
    */
-  applyProfile(sessionId: string, options: Omit<Api.ProfileApplyParams, "sessionId"> & CallOptions): Promise<Api.ProfileApplyResponse> {
+  applyProfile(sessionId: Api.ProfileApplyParams["sessionId"], options: Omit<Api.ProfileApplyParams, "sessionId"> & CallOptions): Promise<Api.ProfileApplyResponse> {
     return this.invoke("session/profiles/apply", { sessionId }, options);
   }
 
@@ -245,7 +349,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.
    */
-  listSessionSkills(sessionId: string, options: Omit<Api.SkillListParams, "sessionId"> & CallOptions = {}): Promise<Api.SkillListResponse> {
+  listSessionSkills(sessionId: Api.SkillListParams["sessionId"], options: Omit<Api.SkillListParams, "sessionId"> & CallOptions = {}): Promise<Api.SkillListResponse> {
     return this.invoke("session/skills/list", { sessionId }, options);
   }
 
@@ -254,7 +358,7 @@ export abstract class LightspeedHelpers {
    *
    * Selects an attached, live universe environment for environment-targeted tools while the session is idle.
    */
-  activateEnvironment(sessionId: string, environmentId: string, options: Omit<Api.SessionEnvironmentActivateParams, "sessionId" | "environmentId"> & CallOptions = {}): Promise<Api.SessionEnvironmentActivateResponse> {
+  activateEnvironment(sessionId: Api.SessionEnvironmentActivateParams["sessionId"], environmentId: Api.SessionEnvironmentActivateParams["environmentId"], options: Omit<Api.SessionEnvironmentActivateParams, "sessionId" | "environmentId"> & CallOptions = {}): Promise<Api.SessionEnvironmentActivateResponse> {
     return this.invoke("session/environments/activate", { sessionId, environmentId }, options);
   }
 
@@ -263,7 +367,7 @@ export abstract class LightspeedHelpers {
    *
    * Clears active environment selection without changing or closing the universe environment.
    */
-  deactivateEnvironment(sessionId: string, options: Omit<Api.SessionEnvironmentDeactivateParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionEnvironmentDeactivateResponse> {
+  deactivateEnvironment(sessionId: Api.SessionEnvironmentDeactivateParams["sessionId"], options: Omit<Api.SessionEnvironmentDeactivateParams, "sessionId"> & CallOptions = {}): Promise<Api.SessionEnvironmentDeactivateResponse> {
     return this.invoke("session/environments/deactivate", { sessionId }, options);
   }
 
@@ -281,7 +385,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns the complete profile document and current revision.
    */
-  readProfile(profileId: string, options: Omit<Api.ProfileReadParams, "profileId"> & CallOptions = {}): Promise<Api.ProfileReadResponse> {
+  readProfile(profileId: Api.ProfileReadParams["profileId"], options: Omit<Api.ProfileReadParams, "profileId"> & CallOptions = {}): Promise<Api.ProfileReadResponse> {
     return this.invoke("profiles/read", { profileId }, options);
   }
 
@@ -308,7 +412,7 @@ export abstract class LightspeedHelpers {
    *
    * Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
    */
-  deleteProfile(profileId: string, options: Omit<Api.ProfileDeleteParams, "profileId"> & CallOptions = {}): Promise<Api.ProfileDeleteResponse> {
+  deleteProfile(profileId: Api.ProfileDeleteParams["profileId"], options: Omit<Api.ProfileDeleteParams, "profileId"> & CallOptions = {}): Promise<Api.ProfileDeleteResponse> {
     return this.invoke("profiles/delete", { profileId }, options);
   }
 
@@ -344,7 +448,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.
    */
-  readEnvironment(environmentId: string, options: Omit<Api.EnvironmentReadParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentReadResponse> {
+  readEnvironment(environmentId: Api.EnvironmentReadParams["environmentId"], options: Omit<Api.EnvironmentReadParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentReadResponse> {
     return this.invoke("environments/read", { environmentId }, options);
   }
 
@@ -362,7 +466,7 @@ export abstract class LightspeedHelpers {
    *
    * Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.
    */
-  closeEnvironment(environmentId: string, options: Omit<Api.EnvironmentCloseParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentCloseResponse> {
+  closeEnvironment(environmentId: Api.EnvironmentCloseParams["environmentId"], options: Omit<Api.EnvironmentCloseParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentCloseResponse> {
     return this.invoke("environments/close", { environmentId }, options);
   }
 
@@ -389,7 +493,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns workspace metadata, current head snapshot, and revision for safe updates.
    */
-  readWorkspace(workspaceId: string, options: Omit<Api.VfsWorkspaceReadParams, "workspaceId"> & CallOptions = {}): Promise<Api.VfsWorkspaceReadResponse> {
+  readWorkspace(workspaceId: Api.VfsWorkspaceReadParams["workspaceId"], options: Omit<Api.VfsWorkspaceReadParams, "workspaceId"> & CallOptions = {}): Promise<Api.VfsWorkspaceReadResponse> {
     return this.invoke("vfs/workspaces/read", { workspaceId }, options);
   }
 
@@ -407,7 +511,7 @@ export abstract class LightspeedHelpers {
    *
    * Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
    */
-  deleteWorkspace(workspaceId: string, options: Omit<Api.VfsWorkspaceDeleteParams, "workspaceId"> & CallOptions = {}): Promise<Api.VfsWorkspaceDeleteResponse> {
+  deleteWorkspace(workspaceId: Api.VfsWorkspaceDeleteParams["workspaceId"], options: Omit<Api.VfsWorkspaceDeleteParams, "workspaceId"> & CallOptions = {}): Promise<Api.VfsWorkspaceDeleteResponse> {
     return this.invoke("vfs/workspaces/delete", { workspaceId }, options);
   }
 
@@ -416,7 +520,7 @@ export abstract class LightspeedHelpers {
    *
    * Reads bytes at a path in the current workspace head.
    */
-  readWorkspaceFile(workspaceId: string, path: string, options: Omit<Api.VfsWorkspaceFileReadParams, "workspaceId" | "path"> & CallOptions = {}): Promise<Uint8Array> {
+  readWorkspaceFile(workspaceId: Api.VfsWorkspaceFileReadParams["workspaceId"], path: Api.VfsWorkspaceFileReadParams["path"], options: Omit<Api.VfsWorkspaceFileReadParams, "workspaceId" | "path"> & CallOptions = {}): Promise<Uint8Array> {
     return this.invoke("vfs/workspaces/files/read", { workspaceId, path }, options);
   }
 
@@ -425,7 +529,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.
    */
-  readMcpServer(serverId: string, options: Omit<Api.McpServerReadParams, "serverId"> & CallOptions = {}): Promise<Api.McpServerReadResponse> {
+  readMcpServer(serverId: Api.McpServerReadParams["serverId"], options: Omit<Api.McpServerReadParams, "serverId"> & CallOptions = {}): Promise<Api.McpServerReadResponse> {
     return this.invoke("mcp/servers/read", { serverId }, options);
   }
 
@@ -443,7 +547,7 @@ export abstract class LightspeedHelpers {
    *
    * Returns the bot record, its current revision, and lifecycle columns.
    */
-  readBot(botId: string, options: Omit<Api.BotReadParams, "botId"> & CallOptions = {}): Promise<Api.BotReadResponse> {
+  readBot(botId: Api.BotReadParams["botId"], options: Omit<Api.BotReadParams, "botId"> & CallOptions = {}): Promise<Api.BotReadResponse> {
     return this.invoke("bots/read", { botId }, options);
   }
 
@@ -461,7 +565,7 @@ export abstract class LightspeedHelpers {
    *
    * Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.
    */
-  listBotEvents(botId: string, options: Omit<Api.BotEventListParams, "botId"> & CallOptions = {}): Promise<Api.BotEventListResponse> {
+  listBotEvents(botId: Api.BotEventListParams["botId"], options: Omit<Api.BotEventListParams, "botId"> & CallOptions = {}): Promise<Api.BotEventListResponse> {
     return this.invoke("bots/events/list", { botId }, options);
   }
 
@@ -470,7 +574,889 @@ export abstract class LightspeedHelpers {
    *
    * Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.
    */
-  admitBotEvent(botId: string, options: Omit<Api.BotEventAdmitParams, "botId"> & CallOptions): Promise<Api.BotEventAdmitResponse> {
+  admitBotEvent(botId: Api.BotEventAdmitParams["botId"], options: Omit<Api.BotEventAdmitParams, "botId"> & CallOptions): Promise<Api.BotEventAdmitResponse> {
     return this.invoke("bots/events/admit", { botId }, options);
+  }
+
+  /**
+   * Replace session retention
+   *
+   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+   */
+  putSessionRetention(sessionId: Api.SessionRetentionPutParams["sessionId"], options: Omit<Api.SessionRetentionPutParams, "sessionId"> & CallOptions): Promise<Api.SessionRetentionPutResponse> {
+    return this.invoke("session/retention/put", { sessionId }, options);
+  }
+
+  /**
+   * Remove keyed session context
+   *
+   * Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
+   */
+  removeContext(sessionId: Api.ContextRemoveParams["sessionId"], options: Omit<Api.ContextRemoveParams, "sessionId"> & CallOptions): Promise<Api.ContextRemoveResponse> {
+    return this.invoke("session/context/remove", { sessionId }, options);
+  }
+
+  /**
+   * Replace session context entries
+   *
+   * Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
+   */
+  replaceContext(sessionId: Api.ContextReplaceParams["sessionId"], options: Omit<Api.ContextReplaceParams, "sessionId"> & CallOptions): Promise<Api.ContextReplaceResponse> {
+    return this.invoke("session/context/replace", { sessionId }, options);
+  }
+
+  /**
+   * Bind a credential into an environment
+   *
+   * Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.
+   */
+  bindEnvironmentCredential(environmentId: Api.EnvironmentCredentialBindParams["environmentId"], envName: Api.EnvironmentCredentialBindParams["envName"], options: Omit<Api.EnvironmentCredentialBindParams, "environmentId" | "envName"> & CallOptions): Promise<Api.EnvironmentCredentialBindResponse> {
+    return this.invoke("environments/credentials/bind", { environmentId, envName }, options);
+  }
+
+  /**
+   * List environment credential bindings
+   *
+   * Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.
+   */
+  listEnvironmentCredentials(environmentId: Api.EnvironmentCredentialListParams["environmentId"], options: Omit<Api.EnvironmentCredentialListParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentCredentialListResponse> {
+    return this.invoke("environments/credentials/list", { environmentId }, options);
+  }
+
+  /**
+   * Unbind an environment credential
+   *
+   * Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.
+   */
+  unbindEnvironmentCredential(environmentId: Api.EnvironmentCredentialUnbindParams["environmentId"], envName: Api.EnvironmentCredentialUnbindParams["envName"], options: Omit<Api.EnvironmentCredentialUnbindParams, "environmentId" | "envName"> & CallOptions = {}): Promise<Api.EnvironmentCredentialUnbindResponse> {
+    return this.invoke("environments/credentials/unbind", { environmentId, envName }, options);
+  }
+
+  /**
+   * Update an environment
+   *
+   * Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.
+   */
+  updateEnvironment(environmentId: Api.EnvironmentUpdateParams["environmentId"], options: Omit<Api.EnvironmentUpdateParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentUpdateResponse> {
+    return this.invoke("environments/update", { environmentId }, options);
+  }
+
+  /**
+   * Register an external environment
+   *
+   * Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.
+   */
+  createExternalEnvironment(options: Api.EnvironmentExternalCreateParams & CallOptions): Promise<Api.EnvironmentExternalCreateResponse> {
+    return this.invoke("environments/external/create", {  }, options);
+  }
+
+  /**
+   * Declare a registered environment
+   *
+   * Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
+   */
+  putRegisteredEnvironment(environmentId: Api.EnvironmentRegisteredPutParams["environmentId"], options: Omit<Api.EnvironmentRegisteredPutParams, "environmentId"> & CallOptions): Promise<Api.EnvironmentRegisteredPutResponse> {
+    return this.invoke("environments/registered/put", { environmentId }, options);
+  }
+
+  /**
+   * Release a declared environment's daemon
+   *
+   * Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
+   */
+  releaseRegisteredEnvironment(environmentId: Api.EnvironmentRegisteredReleaseParams["environmentId"], options: Omit<Api.EnvironmentRegisteredReleaseParams, "environmentId"> & CallOptions = {}): Promise<Api.EnvironmentRegisteredReleaseResponse> {
+    return this.invoke("environments/registered/release", { environmentId }, options);
+  }
+
+  /**
+   * Configure environment public ingress
+   *
+   * Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
+   */
+  putEnvironmentIngress(environmentId: Api.EnvironmentIngressPutParams["environmentId"], options: Omit<Api.EnvironmentIngressPutParams, "environmentId"> & CallOptions): Promise<Api.EnvironmentIngressPutResponse> {
+    return this.invoke("environments/ingress/put", { environmentId }, options);
+  }
+
+  /**
+   * Set environment power
+   *
+   * Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.
+   */
+  putEnvironmentPower(environmentId: Api.EnvironmentPowerPutParams["environmentId"], options: Omit<Api.EnvironmentPowerPutParams, "environmentId"> & CallOptions): Promise<Api.EnvironmentPowerPutResponse> {
+    return this.invoke("environments/power/put", { environmentId }, options);
+  }
+
+  /**
+   * List environment provider bindings
+   *
+   * Lists this universe's bindings to deployment providers and whether each is enabled.
+   */
+  listEnvironmentProviderBindings(options: Api.EnvironmentProviderBindingListParams & CallOptions = {}): Promise<Api.EnvironmentProviderBindingListResponse> {
+    return this.invoke("environments/provider-bindings/list", {  }, options);
+  }
+
+  /**
+   * Read an environment provider binding
+   *
+   * Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
+   */
+  readEnvironmentProviderBinding(providerId: Api.EnvironmentProviderBindingReadParams["providerId"], options: Omit<Api.EnvironmentProviderBindingReadParams, "providerId"> & CallOptions = {}): Promise<Api.EnvironmentProviderBindingReadResponse> {
+    return this.invoke("environments/provider-bindings/read", { providerId }, options);
+  }
+
+  /**
+   * Read an environment template
+   *
+   * Returns one template, read live from a bound provider's controller.
+   */
+  readEnvironmentTemplate(providerId: Api.EnvironmentTemplateReadParams["providerId"], templateId: Api.EnvironmentTemplateReadParams["templateId"], options: Omit<Api.EnvironmentTemplateReadParams, "providerId" | "templateId"> & CallOptions = {}): Promise<Api.EnvironmentTemplateReadResponse> {
+    return this.invoke("environments/templates/read", { providerId, templateId }, options);
+  }
+
+  /**
+   * Create environment jobs
+   *
+   * Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.
+   */
+  createEnvironmentJobs(environmentId: Api.EnvironmentJobCreateParams["environmentId"], options: Omit<Api.EnvironmentJobCreateParams, "environmentId"> & CallOptions): Promise<Api.EnvironmentJobCreateResponse> {
+    return this.invoke("environments/jobs/create", { environmentId }, options);
+  }
+
+  /**
+   * Read environment jobs
+   *
+   * Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.
+   */
+  readEnvironmentJobs(options: Api.EnvironmentJobReadParams & CallOptions): Promise<Api.EnvironmentJobReadResponse> {
+    return this.invoke("environments/jobs/read", {  }, options);
+  }
+
+  /**
+   * Cancel environment jobs
+   *
+   * Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
+   */
+  cancelEnvironmentJobs(options: Api.EnvironmentJobCancelParams & CallOptions): Promise<Api.EnvironmentJobCancelResponse> {
+    return this.invoke("environments/jobs/cancel", {  }, options);
+  }
+
+  /**
+   * Mint an environment registration key
+   *
+   * Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.
+   */
+  createEnvironmentRegistrationKey(options: Api.EnvironmentRegistrationKeyCreateParams & CallOptions): Promise<Api.EnvironmentRegistrationKeyCreateResponse> {
+    return this.invoke("environments/registration-keys/create", {  }, options);
+  }
+
+  /**
+   * Declare an environment registration key
+   *
+   * Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.
+   */
+  putEnvironmentRegistrationKey(registrationKeyId: Api.EnvironmentRegistrationKeyPutParams["registrationKeyId"], options: Omit<Api.EnvironmentRegistrationKeyPutParams, "registrationKeyId"> & CallOptions): Promise<Api.EnvironmentRegistrationKeyPutResponse> {
+    return this.invoke("environments/registration-keys/put", { registrationKeyId }, options);
+  }
+
+  /**
+   * Read an environment registration key
+   *
+   * Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.
+   */
+  readEnvironmentRegistrationKey(registrationKeyId: Api.EnvironmentRegistrationKeyReadParams["registrationKeyId"], options: Omit<Api.EnvironmentRegistrationKeyReadParams, "registrationKeyId"> & CallOptions = {}): Promise<Api.EnvironmentRegistrationKeyReadResponse> {
+    return this.invoke("environments/registration-keys/read", { registrationKeyId }, options);
+  }
+
+  /**
+   * List environment registration keys
+   *
+   * Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.
+   */
+  listEnvironmentRegistrationKeys(options: Api.EnvironmentRegistrationKeyListParams & CallOptions = {}): Promise<Api.EnvironmentRegistrationKeyListResponse> {
+    return this.invoke("environments/registration-keys/list", {  }, options);
+  }
+
+  /**
+   * Update an environment registration key
+   *
+   * Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.
+   */
+  updateEnvironmentRegistrationKey(registrationKeyId: Api.EnvironmentRegistrationKeyUpdateParams["registrationKeyId"], options: Omit<Api.EnvironmentRegistrationKeyUpdateParams, "registrationKeyId"> & CallOptions): Promise<Api.EnvironmentRegistrationKeyUpdateResponse> {
+    return this.invoke("environments/registration-keys/update", { registrationKeyId }, options);
+  }
+
+  /**
+   * Rotate an environment registration key
+   *
+   * Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.
+   */
+  rotateEnvironmentRegistrationKey(registrationKeyId: Api.EnvironmentRegistrationKeyRotateParams["registrationKeyId"], options: Omit<Api.EnvironmentRegistrationKeyRotateParams, "registrationKeyId"> & CallOptions = {}): Promise<Api.EnvironmentRegistrationKeyRotateResponse> {
+    return this.invoke("environments/registration-keys/rotate", { registrationKeyId }, options);
+  }
+
+  /**
+   * Revoke an environment registration key
+   *
+   * Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.
+   */
+  revokeEnvironmentRegistrationKey(registrationKeyId: Api.EnvironmentRegistrationKeyRevokeParams["registrationKeyId"], options: Omit<Api.EnvironmentRegistrationKeyRevokeParams, "registrationKeyId"> & CallOptions = {}): Promise<Api.EnvironmentRegistrationKeyRevokeResponse> {
+    return this.invoke("environments/registration-keys/revoke", { registrationKeyId }, options);
+  }
+
+  /**
+   * Start transcription
+   *
+   * Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
+   */
+  startTranscription(options: Api.TranscriptionStartParams & CallOptions): Promise<Api.TranscriptionResponse> {
+    return this.invoke("transcriptions/start", {  }, options);
+  }
+
+  /**
+   * Read transcription
+   *
+   * Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.
+   */
+  readTranscription(transcriptionId: Api.TranscriptionReadParams["transcriptionId"], options: Omit<Api.TranscriptionReadParams, "transcriptionId"> & CallOptions = {}): Promise<Api.TranscriptionResponse> {
+    return this.invoke("transcriptions/read", { transcriptionId }, options);
+  }
+
+  /**
+   * Cancel transcription
+   *
+   * Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.
+   */
+  cancelTranscription(transcriptionId: Api.TranscriptionCancelParams["transcriptionId"], options: Omit<Api.TranscriptionCancelParams, "transcriptionId"> & CallOptions = {}): Promise<Api.TranscriptionResponse> {
+    return this.invoke("transcriptions/cancel", { transcriptionId }, options);
+  }
+
+  /**
+   * Set a universe model default
+   *
+   * Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+   */
+  putModelDefaults(options: Api.ModelDefaultsPutParams & CallOptions): Promise<Api.ModelDefaultsResponse> {
+    return this.invoke("models/defaults/put", {  }, options);
+  }
+
+  /**
+   * Store content-addressed blobs
+   *
+   * Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
+   */
+  putBlobs(options: Api.BlobPutParams & CallOptions = {}): Promise<Api.BlobPutResponse> {
+    return this.invoke("blobs/put", {  }, options);
+  }
+
+  /**
+   * Check blob availability
+   *
+   * Checks a batch of content references without returning blob bodies, preserving request order.
+   */
+  hasBlobs(options: Api.BlobHasParams & CallOptions = {}): Promise<Api.BlobHasResponse> {
+    return this.invoke("blobs/has", {  }, options);
+  }
+
+  /**
+   * Commit a VFS snapshot
+   *
+   * Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
+   */
+  commitSnapshot(options: Api.VfsSnapshotCommitParams & CallOptions): Promise<Api.VfsSnapshotCommitResponse> {
+    return this.invoke("vfs/snapshots/commit", {  }, options);
+  }
+
+  /**
+   * Read a VFS snapshot
+   *
+   * Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
+   */
+  readSnapshot(snapshotRef: Api.VfsSnapshotReadParams["snapshotRef"], options: Omit<Api.VfsSnapshotReadParams, "snapshotRef"> & CallOptions = {}): Promise<Api.VfsSnapshotReadResponse> {
+    return this.invoke("vfs/snapshots/read", { snapshotRef }, options);
+  }
+
+  /**
+   * Update a VFS workspace
+   *
+   * Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
+   */
+  updateWorkspace(workspaceId: Api.VfsWorkspaceUpdateParams["workspaceId"], options: Omit<Api.VfsWorkspaceUpdateParams, "workspaceId"> & CallOptions): Promise<Api.VfsWorkspaceUpdateResponse> {
+    return this.invoke("vfs/workspaces/update", { workspaceId }, options);
+  }
+
+  /**
+   * Create or replace an MCP server record
+   *
+   * Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
+   */
+  putMcpServer(options: Api.McpServerPutParams & CallOptions): Promise<Api.McpServerPutResponse> {
+    return this.invoke("mcp/servers/put", {  }, options);
+  }
+
+  /**
+   * Discover MCP server authentication
+   *
+   * Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.
+   */
+  discoverMcpServerAuth(options: Api.McpServerAuthDiscoverParams & CallOptions): Promise<Api.McpServerAuthDiscoverResponse> {
+    return this.invoke("mcp/servers/auth/discover", {  }, options);
+  }
+
+  /**
+   * Discover MCP server tools
+   *
+   * Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.
+   */
+  discoverMcpServerTools(serverId: Api.McpServerToolsDiscoverParams["serverId"], options: Omit<Api.McpServerToolsDiscoverParams, "serverId"> & CallOptions = {}): Promise<Api.McpServerToolsDiscoverResponse> {
+    return this.invoke("mcp/servers/tools/discover", { serverId }, options);
+  }
+
+  /**
+   * Delete an MCP server record
+   *
+   * Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
+   */
+  deleteMcpServer(serverId: Api.McpServerDeleteParams["serverId"], options: Omit<Api.McpServerDeleteParams, "serverId"> & CallOptions = {}): Promise<Api.McpServerDeleteResponse> {
+    return this.invoke("mcp/servers/delete", { serverId }, options);
+  }
+
+  /**
+   * Import a token credential
+   *
+   * Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
+   */
+  importCredentialGrant(options: Api.CredentialGrantImportParams & CallOptions): Promise<Api.CredentialGrantImportResponse> {
+    return this.invoke("credentials/grants/import", {  }, options);
+  }
+
+  /**
+   * Lease a retrievable credential grant
+   *
+   * Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
+   */
+  leaseCredentialGrant(grantId: Api.CredentialGrantLeaseParams["grantId"], options: Omit<Api.CredentialGrantLeaseParams, "grantId"> & CallOptions = {}): Promise<Api.CredentialGrantLeaseResponse> {
+    return this.invoke("credentials/grants/lease", { grantId }, options);
+  }
+
+  /**
+   * Read credential grant metadata
+   *
+   * Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
+   */
+  readCredentialGrant(grantId: Api.CredentialGrantReadParams["grantId"], options: Omit<Api.CredentialGrantReadParams, "grantId"> & CallOptions = {}): Promise<Api.CredentialGrantReadResponse> {
+    return this.invoke("credentials/grants/read", { grantId }, options);
+  }
+
+  /**
+   * List credential grants
+   *
+   * Lists non-secret grant metadata for the universe, optionally filtered by status.
+   */
+  listCredentialGrants(options: Api.CredentialGrantListParams & CallOptions = {}): Promise<Api.CredentialGrantListResponse> {
+    return this.invoke("credentials/grants/list", {  }, options);
+  }
+
+  /**
+   * Declare a token credential
+   *
+   * Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
+   */
+  putCredentialGrant(grantId: Api.CredentialGrantPutParams["grantId"], options: Omit<Api.CredentialGrantPutParams, "grantId"> & CallOptions): Promise<Api.CredentialGrantPutResponse> {
+    return this.invoke("credentials/grants/put", { grantId }, options);
+  }
+
+  /**
+   * Revoke a credential grant
+   *
+   * Marks the grant unusable by token consumers while retaining non-secret audit metadata.
+   */
+  revokeCredentialGrant(grantId: Api.CredentialGrantRevokeParams["grantId"], options: Omit<Api.CredentialGrantRevokeParams, "grantId"> & CallOptions = {}): Promise<Api.CredentialGrantRevokeResponse> {
+    return this.invoke("credentials/grants/revoke", { grantId }, options);
+  }
+
+  /**
+   * Register an OAuth client
+   *
+   * Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
+   */
+  createCredentialClient(options: Api.CredentialClientCreateParams & CallOptions): Promise<Api.CredentialClientCreateResponse> {
+    return this.invoke("credentials/clients/create", {  }, options);
+  }
+
+  /**
+   * Read OAuth client metadata
+   *
+   * Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
+   */
+  readCredentialClient(clientId: Api.CredentialClientReadParams["clientId"], options: Omit<Api.CredentialClientReadParams, "clientId"> & CallOptions = {}): Promise<Api.CredentialClientReadResponse> {
+    return this.invoke("credentials/clients/read", { clientId }, options);
+  }
+
+  /**
+   * List OAuth clients
+   *
+   * Lists non-secret OAuth client registrations in the universe.
+   */
+  listCredentialClients(options: Api.CredentialClientListParams & CallOptions = {}): Promise<Api.CredentialClientListResponse> {
+    return this.invoke("credentials/clients/list", {  }, options);
+  }
+
+  /**
+   * Delete an OAuth client
+   *
+   * Deletes the client registration and its stored client secret; grants already created from it remain separate records.
+   */
+  deleteCredentialClient(clientId: Api.CredentialClientDeleteParams["clientId"], options: Omit<Api.CredentialClientDeleteParams, "clientId"> & CallOptions = {}): Promise<Api.CredentialClientDeleteResponse> {
+    return this.invoke("credentials/clients/delete", { clientId }, options);
+  }
+
+  /**
+   * Start an OAuth authorization flow
+   *
+   * Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.
+   */
+  startCredentialFlow(clientId: Api.CredentialFlowStartParams["clientId"], options: Omit<Api.CredentialFlowStartParams, "clientId"> & CallOptions = {}): Promise<Api.CredentialFlowStartResponse> {
+    return this.invoke("credentials/flows/start", { clientId }, options);
+  }
+
+  /**
+   * Read OAuth flow status
+   *
+   * Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
+   */
+  readCredentialFlow(flowId: Api.CredentialFlowStatusParams["flowId"], options: Omit<Api.CredentialFlowStatusParams, "flowId"> & CallOptions = {}): Promise<Api.CredentialFlowStatusResponse> {
+    return this.invoke("credentials/flows/read", { flowId }, options);
+  }
+
+  /**
+   * Register a credential provider
+   *
+   * Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
+   */
+  createCredentialProvider(options: Api.CredentialProviderCreateParams & CallOptions): Promise<Api.CredentialProviderCreateResponse> {
+    return this.invoke("credentials/providers/create", {  }, options);
+  }
+
+  /**
+   * Declare a credential provider
+   *
+   * Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
+   */
+  putCredentialProvider(providerId: Api.CredentialProviderPutParams["providerId"], options: Omit<Api.CredentialProviderPutParams, "providerId"> & CallOptions): Promise<Api.CredentialProviderPutResponse> {
+    return this.invoke("credentials/providers/put", { providerId }, options);
+  }
+
+  /**
+   * Read credential provider metadata
+   *
+   * Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
+   */
+  readCredentialProvider(providerId: Api.CredentialProviderReadParams["providerId"], options: Omit<Api.CredentialProviderReadParams, "providerId"> & CallOptions = {}): Promise<Api.CredentialProviderReadResponse> {
+    return this.invoke("credentials/providers/read", { providerId }, options);
+  }
+
+  /**
+   * List credential providers
+   *
+   * Lists non-secret model/GitHub provider registrations for the universe.
+   */
+  listCredentialProviders(options: Api.CredentialProviderListParams & CallOptions = {}): Promise<Api.CredentialProviderListResponse> {
+    return this.invoke("credentials/providers/list", {  }, options);
+  }
+
+  /**
+   * Delete a credential provider
+   *
+   * Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
+   */
+  deleteCredentialProvider(providerId: Api.CredentialProviderDeleteParams["providerId"], options: Omit<Api.CredentialProviderDeleteParams, "providerId"> & CallOptions = {}): Promise<Api.CredentialProviderDeleteResponse> {
+    return this.invoke("credentials/providers/delete", { providerId }, options);
+  }
+
+  /**
+   * List GitHub App installations
+   *
+   * Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
+   */
+  listGithubInstallations(providerId: Api.CredentialGitHubInstallationListParams["providerId"], options: Omit<Api.CredentialGitHubInstallationListParams, "providerId"> & CallOptions = {}): Promise<Api.CredentialGitHubInstallationListResponse> {
+    return this.invoke("credentials/github/installations/list", { providerId }, options);
+  }
+
+  /**
+   * Grant access to a GitHub App installation
+   *
+   * Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
+   */
+  grantGithubInstallation(providerId: Api.CredentialGitHubInstallationGrantParams["providerId"], options: Omit<Api.CredentialGitHubInstallationGrantParams, "providerId"> & CallOptions): Promise<Api.CredentialGitHubInstallationGrantResponse> {
+    return this.invoke("credentials/github/installations/grant", { providerId }, options);
+  }
+
+  /**
+   * Create a bot
+   *
+   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
+   */
+  createBot(options: Api.BotCreateParams & CallOptions): Promise<Api.BotCreateResponse> {
+    return this.invoke("bots/create", {  }, options);
+  }
+
+  /**
+   * Create or replace a bot document
+   *
+   * Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.
+   */
+  putBot(options: Api.BotPutParams & CallOptions): Promise<Api.BotPutResponse> {
+    return this.invoke("bots/put", {  }, options);
+  }
+
+  /**
+   * Close a bot
+   *
+   * Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.
+   */
+  closeBot(botId: Api.BotCloseParams["botId"], options: Omit<Api.BotCloseParams, "botId"> & CallOptions = {}): Promise<Api.BotCloseResponse> {
+    return this.invoke("bots/close", { botId }, options);
+  }
+
+  /**
+   * Delete a bot
+   *
+   * Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
+   */
+  deleteBot(botId: Api.BotDeleteParams["botId"], options: Omit<Api.BotDeleteParams, "botId"> & CallOptions = {}): Promise<Api.BotDeleteResponse> {
+    return this.invoke("bots/delete", { botId }, options);
+  }
+
+  /**
+   * Read bot controller state
+   *
+   * Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.
+   */
+  readBotState(botId: Api.BotStateReadParams["botId"], options: Omit<Api.BotStateReadParams, "botId"> & CallOptions = {}): Promise<Api.BotStateReadResponse> {
+    return this.invoke("bots/state/read", { botId }, options);
+  }
+
+  /**
+   * Rotate a bot session
+   *
+   * Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.
+   */
+  rotateBotSession(botId: Api.BotSessionRotateParams["botId"], sessionId: Api.BotSessionRotateParams["sessionId"], options: Omit<Api.BotSessionRotateParams, "botId" | "sessionId"> & CallOptions = {}): Promise<Api.BotSessionRotateResponse> {
+    return this.invoke("bots/sessions/rotate", { botId, sessionId }, options);
+  }
+
+  /**
+   * Create or replace a trigger
+   *
+   * Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
+   */
+  putBotTrigger(botId: Api.BotTriggerPutParams["botId"], options: Omit<Api.BotTriggerPutParams, "botId"> & CallOptions): Promise<Api.BotTriggerPutResponse> {
+    return this.invoke("bots/triggers/put", { botId }, options);
+  }
+
+  /**
+   * Read a trigger
+   *
+   * Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
+   */
+  readBotTrigger(botId: Api.BotTriggerReadParams["botId"], triggerId: Api.BotTriggerReadParams["triggerId"], options: Omit<Api.BotTriggerReadParams, "botId" | "triggerId"> & CallOptions = {}): Promise<Api.BotTriggerReadResponse> {
+    return this.invoke("bots/triggers/read", { botId, triggerId }, options);
+  }
+
+  /**
+   * List a bot's triggers
+   *
+   * Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+   */
+  listBotTriggers(botId: Api.BotTriggerListParams["botId"], options: Omit<Api.BotTriggerListParams, "botId"> & CallOptions = {}): Promise<Api.BotTriggerListResponse> {
+    return this.invoke("bots/triggers/list", { botId }, options);
+  }
+
+  /**
+   * Read a trigger's secrets
+   *
+   * Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+   */
+  readBotTriggerSecrets(botId: Api.BotTriggerSecretsReadParams["botId"], triggerId: Api.BotTriggerSecretsReadParams["triggerId"], options: Omit<Api.BotTriggerSecretsReadParams, "botId" | "triggerId"> & CallOptions = {}): Promise<Api.BotTriggerSecretsReadResponse> {
+    return this.invoke("bots/triggers/secrets/read", { botId, triggerId }, options);
+  }
+
+  /**
+   * Delete a trigger
+   *
+   * Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
+   */
+  deleteBotTrigger(botId: Api.BotTriggerDeleteParams["botId"], triggerId: Api.BotTriggerDeleteParams["triggerId"], options: Omit<Api.BotTriggerDeleteParams, "botId" | "triggerId"> & CallOptions = {}): Promise<Api.BotTriggerDeleteResponse> {
+    return this.invoke("bots/triggers/delete", { botId, triggerId }, options);
+  }
+
+  /**
+   * Replay a stored event
+   *
+   * Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.
+   */
+  replayBotEvent(botId: Api.BotEventReplayParams["botId"], options: Omit<Api.BotEventReplayParams, "botId"> & CallOptions): Promise<Api.BotEventReplayResponse> {
+    return this.invoke("bots/events/replay", { botId }, options);
+  }
+
+  /**
+   * Read an event by number
+   *
+   * Returns the event row and its full stored envelope document.
+   */
+  readBotEvent(botId: Api.BotEventReadParams["botId"], options: Omit<Api.BotEventReadParams, "botId"> & CallOptions): Promise<Api.BotEventReadResponse> {
+    return this.invoke("bots/events/read", { botId }, options);
+  }
+
+  /**
+   * Test a CEL filter
+   *
+   * Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.
+   */
+  testBotFilter(botId: Api.BotFilterTestParams["botId"], options: Omit<Api.BotFilterTestParams, "botId"> & CallOptions): Promise<Api.BotFilterTestResponse> {
+    return this.invoke("bots/filters/test", { botId }, options);
+  }
+
+  /**
+   * Create a channel account
+   *
+   * Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
+   */
+  createChannelAccount(options: Api.ChannelAccountCreateParams & CallOptions): Promise<Api.ChannelAccountCreateResponse> {
+    return this.invoke("channels/accounts/create", {  }, options);
+  }
+
+  /**
+   * Create or replace a channel account
+   *
+   * Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
+   */
+  putChannelAccount(options: Api.ChannelAccountPutParams & CallOptions): Promise<Api.ChannelAccountPutResponse> {
+    return this.invoke("channels/accounts/put", {  }, options);
+  }
+
+  /**
+   * Read a channel account
+   *
+   * Returns the account document and revision.
+   */
+  readChannelAccount(accountId: Api.ChannelAccountReadParams["accountId"], options: Omit<Api.ChannelAccountReadParams, "accountId"> & CallOptions = {}): Promise<Api.ChannelAccountReadResponse> {
+    return this.invoke("channels/accounts/read", { accountId }, options);
+  }
+
+  /**
+   * List channel accounts
+   *
+   * Lists this universe's provider accounts, optionally by provider.
+   */
+  listChannelAccounts(options: Api.ChannelAccountListParams & CallOptions = {}): Promise<Api.ChannelAccountListResponse> {
+    return this.invoke("channels/accounts/list", {  }, options);
+  }
+
+  /**
+   * Delete a channel account
+   *
+   * Removes the account and its pairings; chat triggers that reference it stop serving conversations.
+   */
+  deleteChannelAccount(accountId: Api.ChannelAccountDeleteParams["accountId"], options: Omit<Api.ChannelAccountDeleteParams, "accountId"> & CallOptions = {}): Promise<Api.ChannelAccountDeleteResponse> {
+    return this.invoke("channels/accounts/delete", { accountId }, options);
+  }
+
+  /**
+   * Admit a provider message
+   *
+   * Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
+   */
+  admitChannelInbound(accountId: Api.ChannelInboundAdmitParams["accountId"], options: Omit<Api.ChannelInboundAdmitParams, "accountId"> & CallOptions): Promise<Api.ChannelInboundAdmitResponse> {
+    return this.invoke("channels/inbound/admit", { accountId }, options);
+  }
+
+  /**
+   * List chat pairings
+   *
+   * Lists conversations paired to chat triggers, optionally by account or bot.
+   */
+  listChannelPairings(options: Api.ChannelPairingListParams & CallOptions = {}): Promise<Api.ChannelPairingListResponse> {
+    return this.invoke("channels/pairings/list", {  }, options);
+  }
+
+  /**
+   * Unpair a conversation
+   *
+   * Removes one pairing; the conversation must present the pairing code again to reconnect.
+   */
+  deleteChannelPairing(accountId: Api.ChannelPairingDeleteParams["accountId"], chatId: Api.ChannelPairingDeleteParams["chatId"], options: Omit<Api.ChannelPairingDeleteParams, "accountId" | "chatId"> & CallOptions = {}): Promise<Api.ChannelPairingDeleteResponse> {
+    return this.invoke("channels/pairings/delete", { accountId, chatId }, options);
+  }
+
+  /**
+   * Read a conversation snapshot
+   *
+   * Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
+   */
+  readChannelConversation(accountId: Api.ChannelConversationReadParams["accountId"], chatId: Api.ChannelConversationReadParams["chatId"], options: Omit<Api.ChannelConversationReadParams, "accountId" | "chatId"> & CallOptions = {}): Promise<Api.ChannelConversationReadResponse> {
+    return this.invoke("channels/conversations/read", { accountId, chatId }, options);
+  }
+
+  /**
+   * List deleted universes
+   *
+   * Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.
+   */
+  listDeletedUniverses(options: Api.DeploymentDeletedUniversesListParams & CallOptions = {}): Promise<Api.DeploymentDeletedUniversesListResponse> {
+    return this.invoke("deployment/universes/deleted/list", {  }, options);
+  }
+
+  /**
+   * List deleted sessions
+   *
+   * Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
+   */
+  listDeletedSessions(universe: Api.DeploymentDeletedSessionsListParams["universe"], options: Omit<Api.DeploymentDeletedSessionsListParams, "universe"> & CallOptions = {}): Promise<Api.DeploymentDeletedSessionsListResponse> {
+    return this.invoke("deployment/sessions/deleted/list", { universe }, options);
+  }
+
+  /**
+   * Permanently delete a session
+   *
+   * Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.
+   */
+  purgeSession(universe: Api.DeploymentSessionPurgeParams["universe"], sessionId: Api.DeploymentSessionPurgeParams["sessionId"], options: Omit<Api.DeploymentSessionPurgeParams, "universe" | "sessionId"> & CallOptions = {}): Promise<Api.DeploymentSessionPurgeResponse> {
+    return this.invoke("deployment/sessions/purge", { universe, sessionId }, options);
+  }
+
+  /**
+   * List a universe's deployment provider bindings
+   *
+   * Deployment configuration inventory of one universe's provider bindings.
+   */
+  listDeploymentEnvironmentProviderBindings(universe: Api.DeploymentUniverseReadParams["universe"], options: Omit<Api.DeploymentUniverseReadParams, "universe"> & CallOptions = {}): Promise<Api.EnvironmentProviderBindingListResponse> {
+    return this.invoke("deployment/environment-provider-bindings/list", { universe }, options);
+  }
+
+  /**
+   * Create a universe
+   *
+   * Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.
+   */
+  createUniverse(universeId: Api.DeploymentUniverseCreateParams["universeId"], options: Omit<Api.DeploymentUniverseCreateParams, "universeId"> & CallOptions = {}): Promise<Api.DeploymentUniverseCreateResponse> {
+    return this.invoke("deployment/universes/create", { universeId }, options);
+  }
+
+  /**
+   * List universes
+   *
+   * Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.
+   */
+  listUniverses(options: Api.DeploymentUniverseListParams & CallOptions = {}): Promise<Api.DeploymentUniverseListResponse> {
+    return this.invoke("deployment/universes/list", {  }, options);
+  }
+
+  /**
+   * Read a universe
+   *
+   * Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound.
+   */
+  readUniverse(universe: Api.DeploymentUniverseReadParams["universe"], options: Omit<Api.DeploymentUniverseReadParams, "universe"> & CallOptions = {}): Promise<Api.DeploymentUniverseReadResponse> {
+    return this.invoke("deployment/universes/read", { universe }, options);
+  }
+
+  /**
+   * Update universe configuration
+   *
+   * Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.
+   */
+  putUniverseConfiguration(universe: Api.DeploymentUniverseConfigurationPutParams["universe"], options: Omit<Api.DeploymentUniverseConfigurationPutParams, "universe"> & CallOptions = {}): Promise<Api.DeploymentUniverseReadResponse> {
+    return this.invoke("deployment/universes/configuration/put", { universe }, options);
+  }
+
+  /**
+   * Set or clear universe expiry
+   *
+   * Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.
+   */
+  putUniverseExpiry(universe: Api.DeploymentUniverseExpiryPutParams["universe"], options: Omit<Api.DeploymentUniverseExpiryPutParams, "universe"> & CallOptions): Promise<Api.DeploymentUniverseReadResponse> {
+    return this.invoke("deployment/universes/expiry/put", { universe }, options);
+  }
+
+  /**
+   * Rename a universe
+   *
+   * Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
+   */
+  putUniverseHandle(universe: Api.DeploymentUniverseHandlePutParams["universe"], options: Omit<Api.DeploymentUniverseHandlePutParams, "universe"> & CallOptions): Promise<Api.DeploymentUniverseReadResponse> {
+    return this.invoke("deployment/universes/handle/put", { universe }, options);
+  }
+
+  /**
+   * Request universe deletion
+   *
+   * Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
+   */
+  deleteUniverse(universe: Api.DeploymentUniverseDeleteParams["universe"], options: Omit<Api.DeploymentUniverseDeleteParams, "universe"> & CallOptions = {}): Promise<Api.DeploymentUniverseDeleteResponse> {
+    return this.invoke("deployment/universes/delete", { universe }, options);
+  }
+
+  /**
+   * Put an environment provider
+   *
+   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+   */
+  putEnvironmentProvider(providerId: Api.DeploymentEnvironmentProviderPutParams["providerId"], options: Omit<Api.DeploymentEnvironmentProviderPutParams, "providerId"> & CallOptions): Promise<Api.DeploymentEnvironmentProviderPutResponse> {
+    return this.invoke("deployment/environment-providers/put", { providerId }, options);
+  }
+
+  /**
+   * List environment providers
+   *
+   * Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
+   */
+  listEnvironmentProviders(options: Api.DeploymentEnvironmentProviderListParams & CallOptions = {}): Promise<Api.DeploymentEnvironmentProviderListResponse> {
+    return this.invoke("deployment/environment-providers/list", {  }, options);
+  }
+
+  /**
+   * Read an environment provider
+   *
+   * Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
+   */
+  readEnvironmentProvider(providerId: Api.DeploymentEnvironmentProviderReadParams["providerId"], options: Omit<Api.DeploymentEnvironmentProviderReadParams, "providerId"> & CallOptions = {}): Promise<Api.DeploymentEnvironmentProviderReadResponse> {
+    return this.invoke("deployment/environment-providers/read", { providerId }, options);
+  }
+
+  /**
+   * Delete an environment provider
+   *
+   * Deletes a deployment provider only when no universe binding and no non-closed environment references it.
+   */
+  deleteEnvironmentProvider(providerId: Api.DeploymentEnvironmentProviderDeleteParams["providerId"], options: Omit<Api.DeploymentEnvironmentProviderDeleteParams, "providerId"> & CallOptions = {}): Promise<Api.DeploymentEnvironmentProviderDeleteResponse> {
+    return this.invoke("deployment/environment-providers/delete", { providerId }, options);
+  }
+
+  /**
+   * Put an environment provider binding
+   *
+   * Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
+   */
+  putUniverseEnvironmentProviderBinding(universe: Api.DeploymentProviderBindingPutParams["universe"], providerId: Api.DeploymentProviderBindingPutParams["providerId"], options: Omit<Api.DeploymentProviderBindingPutParams, "universe" | "providerId"> & CallOptions): Promise<Api.DeploymentProviderBindingPutResponse> {
+    return this.invoke("deployment/environment-providers/bindings/put", { universe, providerId }, options);
+  }
+
+  /**
+   * Delete an environment provider binding
+   *
+   * Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
+   */
+  deleteUniverseEnvironmentProviderBinding(universe: Api.DeploymentProviderBindingDeleteParams["universe"], providerId: Api.DeploymentProviderBindingDeleteParams["providerId"], options: Omit<Api.DeploymentProviderBindingDeleteParams, "universe" | "providerId"> & CallOptions = {}): Promise<Api.DeploymentProviderBindingDeleteResponse> {
+    return this.invoke("deployment/environment-providers/bindings/delete", { universe, providerId }, options);
+  }
+
+  /**
+   * List channel accounts across universes
+   *
+   * The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
+   */
+  listDeploymentChannelAccounts(options: Api.DeploymentChannelAccountListParams & CallOptions = {}): Promise<Api.DeploymentChannelAccountListResponse> {
+    return this.invoke("deployment/channels/accounts/list", {  }, options);
   }
 }

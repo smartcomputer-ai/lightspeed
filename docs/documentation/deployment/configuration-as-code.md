@@ -15,18 +15,68 @@ They use the public API. A document holds what you would otherwise pass
 to the API one resource at a time, so anything `apply` does can also be done
 by hand.
 
-Service settings are not part of a document. Roles, addresses, storage and
+Service settings are not part of a document. Process roles, addresses, storage and
 Temporal connections stay with the chart or Compose file that starts the
 services; see [Configure a deployment](configuration.md).
 
 ## Before you start
 
-- Use a configured runtime token. It has full authority over the deployment;
-  keep it in the operator or pipeline secret store, outside agent workspaces.
+- Through Platform, use an application API key for a pipeline, a personal API
+  key, or a saved browser-authorized CLI connection. A key acts as its user or
+  application; it does not carry a separate universe role.
 - Connect with `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_TOKEN`, or a saved CLI
-  connection. See [Runtime access](../access-and-security/api-keys-and-service-access.md).
-- Documents configure universes. Runtime tokens belong in service configuration;
+  connection. Select the account for new universes with `--account ACCOUNT_ID`
+  or `lightspeed platform account use ACCOUNT_ID`. See
+  [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
+- Direct runtime connections also work. Use a configured runtime token when
+  authentication is enabled, or an explicitly selected unauthenticated single
+  runtime connection. Runtime tokens have full deployment authority and belong
+  in infrastructure secret stores, outside agent workspaces. See
+  [Runtime access](../access-and-security/api-keys-and-service-access.md).
+- Documents configure universes. Account membership, access grants, API keys,
+  and deployment service configuration have separate APIs;
   `apiKeys` sections and `kind: deployment` documents are not supported.
+
+### Platform permissions
+
+The principal's current permissions and the key's restrictions both apply to
+every request. Choose authority for the work the document will perform:
+
+| Work | Required authority |
+| --- | --- |
+| Create missing universes in an account | Account Creator or Account Admin; Platform Admin also has account authority. |
+| Reconcile ordinary resources in an existing universe | Universe Operator or Owner; Account Admin has Owner access throughout its account. |
+| Change universe `displayName`, `metadata`, or enable `protected` | Universe Owner. |
+| Clear `protected` | Account Admin or Platform Admin, and account policy must permit unprotected universes. |
+| Change `environmentProviders` allocation bindings | Platform Admin; see [Environment provider allocation](#environment-provider-allocation). |
+
+A Creator becomes the first Owner of each universe it creates. Creator alone
+does not grant access to other existing universes; give the principal a
+universe grant when needed. Platform Admin creation requires an explicit
+`--owner-user USER_ID` or `--owner-application APPLICATION_ID`. Account Admins
+can also use these flags to assign another initial Owner in the account.
+
+For automation that creates universes, use an account-scoped key with creation
+allowed. A key restricted to existing universe UUIDs cannot create another
+universe, even when its principal is an Admin or Creator. Such a key can
+reconcile the universes in its scope, within the principal's granted role.
+Operation restrictions must allow discovery, universe reads, the resource
+reads used by `diff`, and the writes needed by `apply`; creation also needs
+`platform/universes/create`. A read-only key cannot apply changes.
+
+For example, using a saved Platform connection:
+
+```bash
+lightspeed --connection automation --account ACCOUNT_ID config diff -f config/
+lightspeed --connection automation --account ACCOUNT_ID config apply -f config/
+```
+
+The account selection and initial Owner are connection/command context, so the
+same universe document can be promoted across accounts and deployments.
+Account selection chooses where missing universes are created; it does not
+restrict existing-handle lookup to that account. Handles identify universes
+across the deployment. Restrict the key to the intended account when the
+pipeline must not reconcile a universe in another account.
 
 ## Write a universe document
 
@@ -84,6 +134,11 @@ profiles:
 creates it when no universe has that handle, so the same file works in every
 deployment. The universe's UUID never appears in a document.
 
+Creation plans print a provisioning UUID. To retry an interrupted creation,
+pass the printed UUID with `config apply --universe-id UUID -f FILE`; use the
+same flag with `diff` to inspect that retry. This flag requires exactly one
+document and refuses a handle that already resolves to a different UUID.
+
 `schemaVersion` identifies the layout of the file. It is not a revision of
 your configuration, and it plays no part in deciding what changed.
 
@@ -107,6 +162,31 @@ the fields.
 | `registrationKeys` | `environments/registration-keys/put` | `registrationKeyId` |
 | `environments` | see below | `environmentId` |
 | `profiles` | `profiles/put` (the `profile` object) | `profileId` |
+
+### Environment provider allocation
+
+`environmentProviders` enables or disables a universe's allocation to an
+existing deployment environment provider. This grants access to deployment
+infrastructure, so Platform keeps changes under Platform Admin authority.
+Account Admin and universe Owner do not imply permission to allocate any
+deployment provider.
+
+An account pipeline should normally omit this section and use a provider
+already allocated to its universe by a deployment administrator. It can then
+declare `source.type: provisioned` environments using that provider with
+Universe Operator authority. Deployment administrators can manage the
+allocation in a separate universe document containing `handle` and
+`environmentProviders`, using a Platform Admin key whose restrictions permit
+the target universe and operation. Provider registration itself remains
+deployment administration and is not a document section.
+
+When a Platform principal is not a Platform Admin, `diff` and `apply` report
+changed allocation bindings as conflicts before writing any document. An
+unchanged binding is allowed. This checks the principal's allocation authority;
+the server still checks current credential restrictions and policy on each
+request, and access can change between planning and applying.
+
+### Environment entries
 
 An environment entry has an `environmentId`, an optional `displayName` and
 `metadata`, and a `source` that says what kind of environment it is:
@@ -323,7 +403,6 @@ See [Managing universes](multi-tenancy.md).
 ```bash
 lightspeed --universe research config export -o config/universes/research.yaml
 lightspeed --universe research config export -o research.json --profiles-dir profiles
-lightspeed config export --deployment
 ```
 
 The exported document is in a normal form: entries ordered by id, fields the
@@ -341,7 +420,9 @@ credentials created through a sign-in flow.
 To promote a universe from one deployment to another, export it, review the
 file, and apply it against the other deployment with that deployment's
 secrets. To start a new universe from an existing one, change `handle` in the
-exported file.
+exported file. Review exported `environmentProviders` allocations separately:
+the destination provider must exist, and changing allocations through Platform
+requires Platform Admin authority.
 
 ## Run it from a pipeline
 
@@ -369,10 +450,10 @@ spec:
       containers:
         - name: apply
           image: <the runtime image of your release>
-          command: ["/usr/local/bin/lightspeed", "config", "apply", "-f", "/config"]
+          command: ["/usr/local/bin/lightspeed", "--account", "ACCOUNT_ID", "config", "apply", "-f", "/config"]
           env:
             - name: LIGHTSPEED_API_URL
-              value: http://lightspeed-runtime:18080/api/v1
+              value: https://lightspeed.example/api/v1
             - name: LIGHTSPEED_API_TOKEN
               valueFrom:
                 secretKeyRef: { name: lightspeed-config, key: api-token }
@@ -387,7 +468,10 @@ spec:
 ```
 
 The job takes its connection from `LIGHTSPEED_API_URL` and
-`LIGHTSPEED_API_TOKEN`. It needs no home directory and no saved connection, and
+`LIGHTSPEED_API_TOKEN`. Store the Platform application key in the `api-token`
+Secret entry and replace `ACCOUNT_ID` with its account. Give the application
+Creator authority to create its own universes, or the necessary grants to
+reconcile existing ones. It needs no home directory and no saved connection, and
 it writes nothing to the container's filesystem, so a read-only root
 filesystem works.
 
@@ -396,7 +480,8 @@ form `{ file: /var/run/secrets/tracker/token }` reads a mounted Secret, as
 `{ env: … }` reads one injected as a variable. The image runs as user and
 group 65532: files mounted with the default mode are readable; if you
 restrict a Secret's mode, set the pod's `fsGroup` to 65532 and use mode
-`0440`. Give it a configured runtime token as described under
+`0440`. Keep the authentication key separate from the outbound service
+credentials declared in the document, as described under
 [Before you start](#before-you-start).
 The image's default command is still the server, so name the CLI as the
 job's `command`.
@@ -412,6 +497,7 @@ be deployed in either order.
   session retention defaults cannot be declared yet.
 - Deployment environment providers
   (`deployment/environment-providers/put`) cannot be declared yet; a universe
-  document can only enable an existing one.
+  document can only enable or disable an existing allocation, with deployment
+  administration authority.
 - Credentials created through an OAuth sign-in cannot be declared. A document
   can refer to one by its `grantId`.

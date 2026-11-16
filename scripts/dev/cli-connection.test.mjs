@@ -19,6 +19,8 @@ test("tokens persist privately without any API-key provisioning", async t => {
   const f = fixture(t);
   const first = await prepareCliConnection({ ...f, full: true });
   const handoff = JSON.parse(readFileSync(first.handoff));
+  assert.equal(handoff.credentialKind, "runtimeToken");
+  assert.equal(handoff.serverKind, "runtime");
   const secret = readFileSync(handoff.credentialFile, "utf8");
   const platform = readFileSync(first.tokenEnvironment.LIGHTSPEED_PLATFORM_API_TOKEN_FILE, "utf8");
   assert.ok(secret.length >= 32);
@@ -74,6 +76,8 @@ test("single mode writes a credential-free handoff with its selected universe", 
   const handoff = JSON.parse(readFileSync(result.handoff));
   assert.equal(handoff.single, true);
   assert.equal(handoff.credentialFile, undefined);
+  assert.equal(handoff.credentialKind, "none");
+  assert.equal(handoff.serverKind, "runtime");
   assert.equal(handoff.universe, f.env.LIGHTSPEED_PG_UNIVERSE_ID);
   assert.deepEqual(result.tokenEnvironment, {});
 });

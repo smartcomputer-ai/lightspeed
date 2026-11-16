@@ -59,7 +59,7 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
   const universe = env.LIGHTSPEED_PG_UNIVERSE_ID;
   await run("development universe", "cargo", ["run", "-p", "temporal-runtime", "--", "universe", "create", "--universe-id", universe, "--handle", "development"], env);
   if (env.LIGHTSPEED_AUTH_MODE === "single") {
-    writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: true, ownedCredential: false, universe }, null, 2));
+    writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: true, credentialKind: "none", serverKind: "runtime", ownedCredential: false, universe }, null, 2));
     return { handoff, tokenEnvironment: {} };
   }
   if (env.LIGHTSPEED_AUTH_MODE !== "authenticated") throw new DevError("Expected single or authenticated runtime mode.");
@@ -102,7 +102,7 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
     delete env.LIGHTSPEED_API_TOKEN_CLI_FILE;
   }
   Object.assign(env, tokenEnvironment);
-  writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: false, credentialFile: cli.file, ownedCredential: false, universe }, null, 2));
+  writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: false, credentialKind: "runtimeToken", serverKind: "runtime", credentialFile: cli.file, ownedCredential: false, universe }, null, 2));
   return { handoff, tokenEnvironment };
 }
 

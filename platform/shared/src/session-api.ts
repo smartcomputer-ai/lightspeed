@@ -6,6 +6,6 @@ export const platformSessionViewSchema = z.object({
   session: z.object({ id: z.string(), createdAt: z.string().datetime(), expiresAt: z.string().datetime() }).nullable(),
 });
 export const SESSION_OPERATIONS = {
-  "platform/session/read": { method: "GET", path: "/api/v1/platform/session", params: z.object({}).strict(), result: platformSessionViewSchema },
-  "platform/session/revoke": { method: "DELETE", path: "/api/v1/platform/session", params: z.object({}).strict(), result: z.object({ revoked: z.literal(true) }) },
+  "platform/session/read": { helper: { name: "readCurrentSession" }, method: "GET", path: "/api/v1/platform/session", params: z.object({}).strict(), result: platformSessionViewSchema },
+  "platform/session/revoke": { helper: { name: "revokeCurrentSession" }, method: "DELETE", path: "/api/v1/platform/session", params: z.object({}).strict(), result: z.object({ revoked: z.literal(true) }) },
 } as const;

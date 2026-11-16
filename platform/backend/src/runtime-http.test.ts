@@ -3,20 +3,22 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
 import type { AppContext, ApiVariables } from "./context.js";
+import type { AuthContext, CredentialRestrictions } from "./auth-context.js";
 import { runtimeHttpRoutes } from "./runtime-http.js";
 import { ADMIN_OPERATIONS, DENIED_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
 
 const mocks = vi.hoisted(() => ({ access: vi.fn(), create: vi.fn(), remove: vi.fn(), handle: vi.fn() }));
 vi.mock("./routes/universes.js", () => ({ universeForRuntimeReference: mocks.access, listUniverseAccesses: vi.fn(async () => []), deleteManagedUniverse: mocks.remove, renameManagedUniverse: vi.fn(), updateUniverseLifecycle: vi.fn() }));
 vi.mock("./universe-handles.js", () => ({ requireAvailableCachedHandle: mocks.handle }));
+vi.mock("./account-access.js", () => ({ listAccountsForPrincipal: vi.fn(async () => []) }));
 const runtimeUniverse = "00000000-0000-0000-0000-000000000001";
 const token = "platform-test-token-12345678901234567890";
 const connection = { runtime: "runtime", contractRevision: "1", caller: { single: false, tokenName: "platform" }, serverInfo: { name: "Lightspeed", version: "1" } };
 const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, gatewayUrl: null, features: {} }, handle: "acme", role, member: { userId: "alice", role } });
 
-function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false) {
-  const auth = userSubject("alice", platformAdmin);
-  mocks.access.mockResolvedValue({ ...access(role), auth, accountRole: platformAdmin ? "admin" : "member", account: { id: "account", requireProtected: false } });
+function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false, options: { auth?: AuthContext; accountRole?: "admin" | "creator" | "member" } = {}) {
+  const auth = options.auth ?? userSubject("alice", platformAdmin);
+  mocks.access.mockResolvedValue({ ...access(role), auth, accountRole: options.accountRole ?? (platformAdmin ? "admin" : "member"), account: { id: "account", requireProtected: false } });
   const ctx = { db: { select: () => ({ from: () => ({ where: async () => [], then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([]).then(resolve) }) }) }, env: { lightspeedApiUrl: endpoint, lightspeedApiToken: token } } as unknown as AppContext;
   const result = new Hono<{ Variables: ApiVariables }>();
   result.use("*", async (c, next) => { c.set("auth", auth); c.set("session", { user: { id: "alice", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
@@ -122,8 +124,87 @@ describe("shared resource API admission", () => {
     const calls = runtime(); mocks.remove.mockResolvedValue({ state: "deleting" });
     const response = await app("owner", undefined, true).request(path(""), { method: "DELETE" });
     expect(response.status).toBe(200);
-    expect(mocks.remove).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ handle: "acme" }), "alice");
+    expect(mocks.remove).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ handle: "acme" }));
     expect(calls).toHaveLength(1);
+  });
+  it.each(["member", "creator", "admin"] as const)("does not let an account %s who owns a universe allocate deployment providers", async accountRole => {
+    const calls = runtime();
+    const api = app("owner", undefined, false, { accountRole });
+    for (const method of ["PUT", "DELETE"]) {
+      const response = await api.request(path("/deployment-provider-bindings/compute"), {
+        method,
+        ...(method === "PUT" ? { body: '{"enabled":true}', headers: { "content-type": "application/json" } } : {}),
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ kind: "forbidden", detail: "platform admin required" });
+    }
+    expect(mocks.access).not.toHaveBeenCalled();
+    expect(calls.every(call => call.url.pathname.endsWith("/connection"))).toBe(true);
+  });
+  it.each(["PUT", "DELETE"])("allows scoped Platform Admin %s requests to manage a universe's provider bindings", async method => {
+    const auth = userSubject("alice", true);
+    const operation = method === "PUT" ? "deployment/environment-providers/bindings/put" : "deployment/environment-providers/bindings/delete";
+    auth.credential = { kind: "personalKey", id: "admin-key", restrictions: { accountIds: ["account"], universeIds: [runtimeUniverse], operations: [operation] } };
+    let forwarded = "";
+    const calls = runtime(async (_url, init) => {
+      forwarded = await new Response(init.body).text();
+      return Response.json({ binding: { universeId: runtimeUniverse, providerId: "compute", enabled: true } });
+    });
+    const response = await app("owner", undefined, true, { auth }).request(path("/deployment-provider-bindings/compute"), {
+      method,
+      ...(method === "PUT" ? { body: '{"enabled":true}', headers: { "content-type": "application/json" } } : {}),
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.url.pathname).toBe(`/api/v1/universes/${runtimeUniverse}/deployment-provider-bindings/compute`);
+    expect(calls[1]!.init.method).toBe(method);
+    expect(forwarded).toBe(method === "PUT" ? '{"enabled":true}' : "");
+    expect(new Headers(calls[1]!.init.headers).get("x-lightspeed-actor")).toBe("alice");
+  });
+  it.each([
+    ["read-only", { readOnly: true }],
+    ["another account", { accountIds: ["another-account"] }],
+    ["another universe", { universeIds: ["00000000-0000-0000-0000-000000000002"] }],
+    ["another operation", { operations: ["environments/provider-bindings/list"] }],
+  ] satisfies Array<[string, CredentialRestrictions]>)("honors %s restrictions on a Platform Admin binding key", async (_label, restrictions) => {
+    const auth = userSubject("alice", true);
+    auth.credential = { kind: "personalKey", id: "admin-key", restrictions };
+    const calls = runtime();
+    const api = app("owner", undefined, true, { auth });
+    for (const method of ["PUT", "DELETE"]) {
+      const response = await api.request(path("/deployment-provider-bindings/compute"), {
+        method,
+        ...(method === "PUT" ? { body: '{"enabled":true}', headers: { "content-type": "application/json" } } : {}),
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ kind: "forbidden" });
+    }
+    expect(calls.every(call => call.url.pathname.endsWith("/connection"))).toBe(true);
+  });
+  it("requires a Platform-owned universe for administrative binding writes", async () => {
+    const calls = runtime();
+    const api = app("owner", undefined, true);
+    mocks.access.mockResolvedValue(null);
+    const response = await api.request(path("/deployment-provider-bindings/compute"), { method: "PUT", body: '{"enabled":true}' });
+    expect(response.status).toBe(404);
+    expect(calls).toHaveLength(1);
+  });
+  it.each([false, true])("reports live user Platform Admin authority (%s) in discovery", async platformAdmin => {
+    runtime();
+    const response = await app("owner", undefined, platformAdmin).request("/api/v1/connection");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ platform: { principal: { kind: "user", id: "alice", platformAdmin } } });
+  });
+  it("reports application authority without implying deployment administration", async () => {
+    const principal = { kind: "application", id: "pipeline", accountId: "account", platformAdmin: false, application: { id: "pipeline", name: "Pipeline" } } as Extract<AuthContext["principal"], { kind: "application" }>;
+    const auth: AuthContext = { principal, actorId: "application:pipeline", credential: { kind: "applicationKey", id: "pipeline-key", restrictions: {} } };
+    const calls = runtime();
+    const api = app("owner", undefined, false, { auth, accountRole: "admin" });
+    const response = await api.request("/api/v1/connection");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ platform: { principal: { kind: "application", id: "pipeline", platformAdmin: false } } });
+    expect((await api.request(path("/deployment-provider-bindings/compute"), { method: "PUT", body: '{"enabled":true}' })).status).toBe(403);
+    expect(calls.every(call => call.url.pathname.endsWith("/connection"))).toBe(true);
   });
   it("does not expose the upstream credential name in Platform discovery", async () => {
     runtime(); const response = await app().request("/api/v1/connection");

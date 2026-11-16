@@ -5,6 +5,8 @@ from typing import Any, Literal, Never, cast, overload
 from collections.abc import AsyncIterator
 
 from . import types as Api
+from . import platform_types as Platform
+from ._connection_types import ClientConnectionResponse
 from ._options import UNSET, HeadersInput, Unset
 
 OPERATIONS = (
@@ -366,6 +368,119 @@ CLIENT_HELPERS = {
     'list_bots': 'bots/list',
     'list_bot_events': 'bots/events/list',
     'admit_bot_event': 'bots/events/admit',
+    'put_session_retention': 'session/retention/put',
+    'remove_context': 'session/context/remove',
+    'replace_context': 'session/context/replace',
+    'bind_environment_credential': 'environments/credentials/bind',
+    'list_environment_credentials': 'environments/credentials/list',
+    'unbind_environment_credential': 'environments/credentials/unbind',
+    'update_environment': 'environments/update',
+    'create_external_environment': 'environments/external/create',
+    'put_registered_environment': 'environments/registered/put',
+    'release_registered_environment': 'environments/registered/release',
+    'put_environment_ingress': 'environments/ingress/put',
+    'put_environment_power': 'environments/power/put',
+    'list_environment_provider_bindings': 'environments/provider-bindings/list',
+    'read_environment_provider_binding': 'environments/provider-bindings/read',
+    'read_environment_template': 'environments/templates/read',
+    'create_environment_jobs': 'environments/jobs/create',
+    'read_environment_jobs': 'environments/jobs/read',
+    'cancel_environment_jobs': 'environments/jobs/cancel',
+    'create_environment_registration_key': 'environments/registration-keys/create',
+    'put_environment_registration_key': 'environments/registration-keys/put',
+    'read_environment_registration_key': 'environments/registration-keys/read',
+    'list_environment_registration_keys': 'environments/registration-keys/list',
+    'update_environment_registration_key': 'environments/registration-keys/update',
+    'rotate_environment_registration_key': 'environments/registration-keys/rotate',
+    'revoke_environment_registration_key': 'environments/registration-keys/revoke',
+    'start_transcription': 'transcriptions/start',
+    'read_transcription': 'transcriptions/read',
+    'cancel_transcription': 'transcriptions/cancel',
+    'put_model_defaults': 'models/defaults/put',
+    'put_blobs': 'blobs/put',
+    'has_blobs': 'blobs/has',
+    'commit_snapshot': 'vfs/snapshots/commit',
+    'read_snapshot': 'vfs/snapshots/read',
+    'update_workspace': 'vfs/workspaces/update',
+    'put_mcp_server': 'mcp/servers/put',
+    'discover_mcp_server_auth': 'mcp/servers/auth/discover',
+    'discover_mcp_server_tools': 'mcp/servers/tools/discover',
+    'delete_mcp_server': 'mcp/servers/delete',
+    'import_credential_grant': 'credentials/grants/import',
+    'lease_credential_grant': 'credentials/grants/lease',
+    'read_credential_grant': 'credentials/grants/read',
+    'list_credential_grants': 'credentials/grants/list',
+    'put_credential_grant': 'credentials/grants/put',
+    'revoke_credential_grant': 'credentials/grants/revoke',
+    'create_credential_client': 'credentials/clients/create',
+    'read_credential_client': 'credentials/clients/read',
+    'list_credential_clients': 'credentials/clients/list',
+    'delete_credential_client': 'credentials/clients/delete',
+    'start_credential_flow': 'credentials/flows/start',
+    'read_credential_flow': 'credentials/flows/read',
+    'create_credential_provider': 'credentials/providers/create',
+    'put_credential_provider': 'credentials/providers/put',
+    'read_credential_provider': 'credentials/providers/read',
+    'list_credential_providers': 'credentials/providers/list',
+    'delete_credential_provider': 'credentials/providers/delete',
+    'list_github_installations': 'credentials/github/installations/list',
+    'grant_github_installation': 'credentials/github/installations/grant',
+    'create_bot': 'bots/create',
+    'put_bot': 'bots/put',
+    'close_bot': 'bots/close',
+    'delete_bot': 'bots/delete',
+    'read_bot_state': 'bots/state/read',
+    'rotate_bot_session': 'bots/sessions/rotate',
+    'put_bot_trigger': 'bots/triggers/put',
+    'read_bot_trigger': 'bots/triggers/read',
+    'list_bot_triggers': 'bots/triggers/list',
+    'read_bot_trigger_secrets': 'bots/triggers/secrets/read',
+    'delete_bot_trigger': 'bots/triggers/delete',
+    'replay_bot_event': 'bots/events/replay',
+    'read_bot_event': 'bots/events/read',
+    'test_bot_filter': 'bots/filters/test',
+    'create_channel_account': 'channels/accounts/create',
+    'put_channel_account': 'channels/accounts/put',
+    'read_channel_account': 'channels/accounts/read',
+    'list_channel_accounts': 'channels/accounts/list',
+    'delete_channel_account': 'channels/accounts/delete',
+    'admit_channel_inbound': 'channels/inbound/admit',
+    'list_channel_pairings': 'channels/pairings/list',
+    'delete_channel_pairing': 'channels/pairings/delete',
+    'read_channel_conversation': 'channels/conversations/read',
+    'list_deleted_universes': 'deployment/universes/deleted/list',
+    'list_deleted_sessions': 'deployment/sessions/deleted/list',
+    'purge_session': 'deployment/sessions/purge',
+    'list_deployment_environment_provider_bindings': 'deployment/environment-provider-bindings/list',
+    'create_universe': 'deployment/universes/create',
+    'list_universes': 'deployment/universes/list',
+    'read_universe': 'deployment/universes/read',
+    'put_universe_configuration': 'deployment/universes/configuration/put',
+    'put_universe_expiry': 'deployment/universes/expiry/put',
+    'put_universe_handle': 'deployment/universes/handle/put',
+    'delete_universe': 'deployment/universes/delete',
+    'put_environment_provider': 'deployment/environment-providers/put',
+    'list_environment_providers': 'deployment/environment-providers/list',
+    'read_environment_provider': 'deployment/environment-providers/read',
+    'delete_environment_provider': 'deployment/environment-providers/delete',
+    'put_universe_environment_provider_binding': 'deployment/environment-providers/bindings/put',
+    'delete_universe_environment_provider_binding': 'deployment/environment-providers/bindings/delete',
+    'list_deployment_channel_accounts': 'deployment/channels/accounts/list',
+    'watch': 'universe/watch',
+    'start_run': 'session/runs/start',
+    'steer_run': 'session/runs/steer',
+    'read_events': 'session/events/read',
+    'read_blob_bytes': 'blobs/read',
+    'upload_blob': 'blobs/upload',
+}
+
+MANUAL_CLIENT_HELPERS = {
+    'watch': 'universe/watch',
+    'start_run': 'session/runs/start',
+    'steer_run': 'session/runs/steer',
+    'read_events': 'session/events/read',
+    'read_blob_bytes': 'blobs/read',
+    'upload_blob': 'blobs/upload',
 }
 
 
@@ -377,22 +492,22 @@ class GeneratedClient:
         raise NotImplementedError
 
     @overload
-    async def call(self, method: Literal['universe/watch'], params: Api.UniverseWatchParams,
+    async def call(self, method: Literal['universe/watch'], params: Api.UniverseWatchParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Never: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/files/read'], params: Api.VfsWorkspaceFileReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> bytes: ...
     @overload
-    async def call(self, method: Literal['initialize'], params: Api.ConnectionParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ConnectionResponse: ...
+    async def call(self, method: Literal['initialize'], params: Api.ConnectionParams | None = None,
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> ClientConnectionResponse: ...
     @overload
-    async def call(self, method: Literal['session/start'], params: Api.SessionStartParams,
+    async def call(self, method: Literal['session/start'], params: Api.SessionStartParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionStartResponse: ...
     @overload
     async def call(self, method: Literal['session/read'], params: Api.SessionReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionReadResponse: ...
     @overload
-    async def call(self, method: Literal['session/list'], params: Api.SessionListParams,
+    async def call(self, method: Literal['session/list'], params: Api.SessionListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.SessionListResponse: ...
     @overload
     async def call(self, method: Literal['session/config/put'], params: Api.SessionConfigPutParams,
@@ -482,7 +597,7 @@ class GeneratedClient:
     async def call(self, method: Literal['environments/update'], params: Api.EnvironmentUpdateParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentUpdateResponse: ...
     @overload
-    async def call(self, method: Literal['environments/list'], params: Api.EnvironmentListParams,
+    async def call(self, method: Literal['environments/list'], params: Api.EnvironmentListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentListResponse: ...
     @overload
     async def call(self, method: Literal['environments/close'], params: Api.EnvironmentCloseParams,
@@ -503,13 +618,13 @@ class GeneratedClient:
     async def call(self, method: Literal['environments/power/put'], params: Api.EnvironmentPowerPutParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentPowerPutResponse: ...
     @overload
-    async def call(self, method: Literal['environments/provider-bindings/list'], params: Api.EnvironmentProviderBindingListParams,
+    async def call(self, method: Literal['environments/provider-bindings/list'], params: Api.EnvironmentProviderBindingListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingListResponse: ...
     @overload
     async def call(self, method: Literal['environments/provider-bindings/read'], params: Api.EnvironmentProviderBindingReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingReadResponse: ...
     @overload
-    async def call(self, method: Literal['environments/templates/list'], params: Api.EnvironmentTemplateListParams,
+    async def call(self, method: Literal['environments/templates/list'], params: Api.EnvironmentTemplateListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentTemplateListResponse: ...
     @overload
     async def call(self, method: Literal['environments/templates/read'], params: Api.EnvironmentTemplateReadParams,
@@ -533,7 +648,7 @@ class GeneratedClient:
     async def call(self, method: Literal['environments/registration-keys/read'], params: Api.EnvironmentRegistrationKeyReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyReadResponse: ...
     @overload
-    async def call(self, method: Literal['environments/registration-keys/list'], params: Api.EnvironmentRegistrationKeyListParams,
+    async def call(self, method: Literal['environments/registration-keys/list'], params: Api.EnvironmentRegistrationKeyListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentRegistrationKeyListResponse: ...
     @overload
     async def call(self, method: Literal['environments/registration-keys/update'], params: Api.EnvironmentRegistrationKeyUpdateParams,
@@ -554,13 +669,13 @@ class GeneratedClient:
     async def call(self, method: Literal['transcriptions/cancel'], params: Api.TranscriptionCancelParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.TranscriptionResponse: ...
     @overload
-    async def call(self, method: Literal['models/defaults/read'], params: Api.ModelDefaultsReadParams,
+    async def call(self, method: Literal['models/defaults/read'], params: Api.ModelDefaultsReadParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ModelDefaultsResponse: ...
     @overload
     async def call(self, method: Literal['models/defaults/put'], params: Api.ModelDefaultsPutParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ModelDefaultsResponse: ...
     @overload
-    async def call(self, method: Literal['models/list'], params: Api.ModelListParams,
+    async def call(self, method: Literal['models/list'], params: Api.ModelListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ModelListResponse: ...
     @overload
     async def call(self, method: Literal['profiles/create'], params: Api.ProfileCreateParams,
@@ -569,7 +684,7 @@ class GeneratedClient:
     async def call(self, method: Literal['profiles/read'], params: Api.ProfileReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileReadResponse: ...
     @overload
-    async def call(self, method: Literal['profiles/list'], params: Api.ProfileListParams,
+    async def call(self, method: Literal['profiles/list'], params: Api.ProfileListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileListResponse: ...
     @overload
     async def call(self, method: Literal['profiles/put'], params: Api.ProfilePutParams,
@@ -578,13 +693,13 @@ class GeneratedClient:
     async def call(self, method: Literal['profiles/delete'], params: Api.ProfileDeleteParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ProfileDeleteResponse: ...
     @overload
-    async def call(self, method: Literal['blobs/put'], params: Api.BlobPutParams,
+    async def call(self, method: Literal['blobs/put'], params: Api.BlobPutParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResponse: ...
     @overload
     async def call(self, method: Literal['blobs/read'], params: Api.BlobReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> bytes: ...
     @overload
-    async def call(self, method: Literal['blobs/has'], params: Api.BlobHasParams,
+    async def call(self, method: Literal['blobs/has'], params: Api.BlobHasParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobHasResponse: ...
     @overload
     async def call(self, method: Literal['vfs/snapshots/commit'], params: Api.VfsSnapshotCommitParams,
@@ -593,13 +708,13 @@ class GeneratedClient:
     async def call(self, method: Literal['vfs/snapshots/read'], params: Api.VfsSnapshotReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsSnapshotReadResponse: ...
     @overload
-    async def call(self, method: Literal['vfs/workspaces/create'], params: Api.VfsWorkspaceCreateParams,
+    async def call(self, method: Literal['vfs/workspaces/create'], params: Api.VfsWorkspaceCreateParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceCreateResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/read'], params: Api.VfsWorkspaceReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceReadResponse: ...
     @overload
-    async def call(self, method: Literal['vfs/workspaces/list'], params: Api.VfsWorkspaceListParams,
+    async def call(self, method: Literal['vfs/workspaces/list'], params: Api.VfsWorkspaceListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.VfsWorkspaceListResponse: ...
     @overload
     async def call(self, method: Literal['vfs/workspaces/update'], params: Api.VfsWorkspaceUpdateParams,
@@ -620,7 +735,7 @@ class GeneratedClient:
     async def call(self, method: Literal['mcp/servers/read'], params: Api.McpServerReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerReadResponse: ...
     @overload
-    async def call(self, method: Literal['mcp/servers/list'], params: Api.McpServerListParams,
+    async def call(self, method: Literal['mcp/servers/list'], params: Api.McpServerListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.McpServerListResponse: ...
     @overload
     async def call(self, method: Literal['mcp/servers/delete'], params: Api.McpServerDeleteParams,
@@ -635,7 +750,7 @@ class GeneratedClient:
     async def call(self, method: Literal['credentials/grants/read'], params: Api.CredentialGrantReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantReadResponse: ...
     @overload
-    async def call(self, method: Literal['credentials/grants/list'], params: Api.CredentialGrantListParams,
+    async def call(self, method: Literal['credentials/grants/list'], params: Api.CredentialGrantListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialGrantListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/grants/put'], params: Api.CredentialGrantPutParams,
@@ -650,7 +765,7 @@ class GeneratedClient:
     async def call(self, method: Literal['credentials/clients/read'], params: Api.CredentialClientReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialClientReadResponse: ...
     @overload
-    async def call(self, method: Literal['credentials/clients/list'], params: Api.CredentialClientListParams,
+    async def call(self, method: Literal['credentials/clients/list'], params: Api.CredentialClientListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialClientListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/clients/delete'], params: Api.CredentialClientDeleteParams,
@@ -671,7 +786,7 @@ class GeneratedClient:
     async def call(self, method: Literal['credentials/providers/read'], params: Api.CredentialProviderReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderReadResponse: ...
     @overload
-    async def call(self, method: Literal['credentials/providers/list'], params: Api.CredentialProviderListParams,
+    async def call(self, method: Literal['credentials/providers/list'], params: Api.CredentialProviderListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.CredentialProviderListResponse: ...
     @overload
     async def call(self, method: Literal['credentials/providers/delete'], params: Api.CredentialProviderDeleteParams,
@@ -692,7 +807,7 @@ class GeneratedClient:
     async def call(self, method: Literal['bots/read'], params: Api.BotReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotReadResponse: ...
     @overload
-    async def call(self, method: Literal['bots/list'], params: Api.BotListParams,
+    async def call(self, method: Literal['bots/list'], params: Api.BotListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotListResponse: ...
     @overload
     async def call(self, method: Literal['bots/close'], params: Api.BotCloseParams,
@@ -746,7 +861,7 @@ class GeneratedClient:
     async def call(self, method: Literal['channels/accounts/read'], params: Api.ChannelAccountReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountReadResponse: ...
     @overload
-    async def call(self, method: Literal['channels/accounts/list'], params: Api.ChannelAccountListParams,
+    async def call(self, method: Literal['channels/accounts/list'], params: Api.ChannelAccountListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountListResponse: ...
     @overload
     async def call(self, method: Literal['channels/accounts/delete'], params: Api.ChannelAccountDeleteParams,
@@ -755,7 +870,7 @@ class GeneratedClient:
     async def call(self, method: Literal['channels/inbound/admit'], params: Api.ChannelInboundAdmitParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelInboundAdmitResponse: ...
     @overload
-    async def call(self, method: Literal['channels/pairings/list'], params: Api.ChannelPairingListParams,
+    async def call(self, method: Literal['channels/pairings/list'], params: Api.ChannelPairingListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelPairingListResponse: ...
     @overload
     async def call(self, method: Literal['channels/pairings/delete'], params: Api.ChannelPairingDeleteParams,
@@ -764,7 +879,7 @@ class GeneratedClient:
     async def call(self, method: Literal['channels/conversations/read'], params: Api.ChannelConversationReadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelConversationReadResponse: ...
     @overload
-    async def call(self, method: Literal['deployment/universes/deleted/list'], params: Api.DeploymentDeletedUniversesListParams,
+    async def call(self, method: Literal['deployment/universes/deleted/list'], params: Api.DeploymentDeletedUniversesListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentDeletedUniversesListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/sessions/deleted/list'], params: Api.DeploymentDeletedSessionsListParams,
@@ -779,7 +894,7 @@ class GeneratedClient:
     async def call(self, method: Literal['deployment/universes/create'], params: Api.DeploymentUniverseCreateParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseCreateResponse: ...
     @overload
-    async def call(self, method: Literal['deployment/universes/list'], params: Api.DeploymentUniverseListParams,
+    async def call(self, method: Literal['deployment/universes/list'], params: Api.DeploymentUniverseListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentUniverseListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/universes/read'], params: Api.DeploymentUniverseReadParams,
@@ -800,7 +915,7 @@ class GeneratedClient:
     async def call(self, method: Literal['deployment/environment-providers/put'], params: Api.DeploymentEnvironmentProviderPutParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentEnvironmentProviderPutResponse: ...
     @overload
-    async def call(self, method: Literal['deployment/environment-providers/list'], params: Api.DeploymentEnvironmentProviderListParams,
+    async def call(self, method: Literal['deployment/environment-providers/list'], params: Api.DeploymentEnvironmentProviderListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentEnvironmentProviderListResponse: ...
     @overload
     async def call(self, method: Literal['deployment/environment-providers/read'], params: Api.DeploymentEnvironmentProviderReadParams,
@@ -815,18 +930,96 @@ class GeneratedClient:
     async def call(self, method: Literal['deployment/environment-providers/bindings/delete'], params: Api.DeploymentProviderBindingDeleteParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentProviderBindingDeleteResponse: ...
     @overload
-    async def call(self, method: Literal['deployment/channels/accounts/list'], params: Api.DeploymentChannelAccountListParams,
+    async def call(self, method: Literal['deployment/channels/accounts/list'], params: Api.DeploymentChannelAccountListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentChannelAccountListResponse: ...
     @overload
     async def call(self, method: Literal['blobs/upload'], params: Api.BlobUploadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResult: ...
+    @overload
+    async def call(self, method: Literal['platform/session/read'], params: Platform.PlatformSessionReadParams | None = None,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformSessionReadResult: ...
+    @overload
+    async def call(self, method: Literal['platform/session/revoke'], params: Platform.PlatformSessionRevokeParams | None = None,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformSessionRevokeResult: ...
+    @overload
+    async def call(self, method: Literal['platform/credentials/list'], params: Platform.PlatformCredentialsListParams | None = None,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformCredentialsListResult: ...
+    @overload
+    async def call(self, method: Literal['platform/credentials/create'], params: Platform.PlatformCredentialsCreateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformCredentialsCreateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/credentials/revoke'], params: Platform.PlatformCredentialsRevokeParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformCredentialsRevokeResult: ...
+    @overload
+    async def call(self, method: Literal['platform/applications/credentials/list'], params: Platform.PlatformApplicationsCredentialsListParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformApplicationsCredentialsListResult: ...
+    @overload
+    async def call(self, method: Literal['platform/applications/credentials/create'], params: Platform.PlatformApplicationsCredentialsCreateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformApplicationsCredentialsCreateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/applications/credentials/revoke'], params: Platform.PlatformApplicationsCredentialsRevokeParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformApplicationsCredentialsRevokeResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/list'], params: Platform.PlatformAccountsListParams | None = None,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsListResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/create'], params: Platform.PlatformAccountsCreateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsCreateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/read'], params: Platform.PlatformAccountsReadParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsReadResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/update'], params: Platform.PlatformAccountsUpdateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsUpdateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/members/list'], params: Platform.PlatformAccountsMembersListParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsMembersListResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/members/put'], params: Platform.PlatformAccountsMembersPutParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsMembersPutResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/members/delete'], params: Platform.PlatformAccountsMembersDeleteParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsMembersDeleteResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/applications/list'], params: Platform.PlatformAccountsApplicationsListParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsApplicationsListResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/applications/create'], params: Platform.PlatformAccountsApplicationsCreateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsApplicationsCreateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/applications/update'], params: Platform.PlatformAccountsApplicationsUpdateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsApplicationsUpdateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/accounts/applications/delete'], params: Platform.PlatformAccountsApplicationsDeleteParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformAccountsApplicationsDeleteResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/adopt'], params: Platform.PlatformUniversesAdoptParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesAdoptResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/create'], params: Platform.PlatformUniversesCreateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesCreateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/update'], params: Platform.PlatformUniversesUpdateParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesUpdateResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/grants/list'], params: Platform.PlatformUniversesGrantsListParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesGrantsListResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/grants/put'], params: Platform.PlatformUniversesGrantsPutParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesGrantsPutResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/grants/delete'], params: Platform.PlatformUniversesGrantsDeleteParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesGrantsDeleteResult: ...
+    @overload
+    async def call(self, method: Literal['platform/universes/access-policy/put'], params: Platform.PlatformUniversesAccessPolicyPutParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesAccessPolicyPutResult: ...
 
-    async def call(self, method: str, params: object,
+    async def call(self, method: str, params: object = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Any:
         """Call an HTTP operation and return its direct DTO or bytes."""
-        return await self._invoke(method, cast(dict[str, Any], params), headers, body, content_length)
+        return await self._invoke(method, cast(dict[str, Any], params) if params is not None else {}, headers, body, content_length)
 
-    async def initialize(self, *, headers: HeadersInput | None = None) -> Api.ConnectionResponse:
+    async def initialize(self, *, headers: HeadersInput | None = None) -> ClientConnectionResponse:
         """Inspect the runtime connection
 
         Returns runtime identity, HTTP contract revision and configured-token attribution before
@@ -834,7 +1027,7 @@ class GeneratedClient:
         are refused.
         """
         params: dict[str, Any] = {}
-        return cast(Api.ConnectionResponse, await self._invoke('initialize', params, headers))
+        return cast(ClientConnectionResponse, await self._invoke('initialize', params, headers))
 
     async def start_session(self, *, access: Api.AccessInput | None | Unset = UNSET, config: Api.SessionConfig | None | Unset = UNSET, delete_after_close_ms: int | None | Unset = UNSET, display_name: str | None | Unset = UNSET, integration: Api.SessionIntegrationInput | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, profile: Api.ProfileSource | None | Unset = UNSET, session_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.SessionStartResponse:
         """Start a session
@@ -1495,3 +1688,1472 @@ class GeneratedClient:
         params['botId'] = bot_id
         params['event'] = event
         return cast(Api.BotEventAdmitResponse, await self._invoke('bots/events/admit', params, headers))
+
+    async def put_session_retention(self, session_id: str, *, delete_after_close_ms: int | None, headers: HeadersInput | None = None) -> Api.SessionRetentionPutResponse:
+        """Replace session retention
+
+        Sets the positive close-relative automatic soft-deletion duration on a retention root, or
+        clears it with null. Delegated children inherit the root policy and cannot override it.
+        Retention does not permanently delete stored history.
+
+        Args:
+            delete_after_close_ms: Positive duration enables automatic tree soft deletion; null
+                disables it.
+        """
+        params: dict[str, Any] = {}
+        params['deleteAfterCloseMs'] = delete_after_close_ms
+        params['sessionId'] = session_id
+        return cast(Api.SessionRetentionPutResponse, await self._invoke('session/retention/put', params, headers))
+
+    async def remove_context(self, session_id: str, *, keys: list[str], headers: HeadersInput | None = None) -> Api.ContextRemoveResponse:
+        """Remove keyed session context
+
+        Removes active entries by stable key with per-key results. Missing keys are idempotent
+        no-ops; runtime-reserved run keys cannot be removed.
+
+        Args:
+            keys: Active context keys to remove. Removing a key that is already absent is a per-key
+                no-op (`absent`), so retries are idempotent. Keys under reserved namespaces (`run`,
+                `run.*`, `runtime`, `runtime.*`) are rejected request-level.
+        """
+        params: dict[str, Any] = {}
+        params['keys'] = keys
+        params['sessionId'] = session_id
+        return cast(Api.ContextRemoveResponse, await self._invoke('session/context/remove', params, headers))
+
+    async def replace_context(self, session_id: str, *, entries: list[Api.ContextReplaceEntry], headers: HeadersInput | None = None) -> Api.ContextReplaceResponse:
+        """Replace session context entries
+
+        Replaces active tool results and user messages in place by entry id, with per-entry results,
+        e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds,
+        so a tool result takes only text and its call stays answered. Refused while a run is active;
+        ids no longer in context report absent.
+        """
+        params: dict[str, Any] = {}
+        params['entries'] = entries
+        params['sessionId'] = session_id
+        return cast(Api.ContextReplaceResponse, await self._invoke('session/context/replace', params, headers))
+
+    async def bind_environment_credential(self, environment_id: str, env_name: str, *, source: Api.EnvironmentCredentialSourceView, headers: HeadersInput | None = None) -> Api.EnvironmentCredentialBindResponse:
+        """Bind a credential into an environment
+
+        Maps an environment variable name to a retrievable credential grant or to a model API key
+        provider's stored key. Commands in the environment receive the plain value, so a brokered
+        grant and any other provider credential are refused. Requires configuring resources in the
+        universe. The response exposes only the source handle, never secret material.
+        """
+        params: dict[str, Any] = {}
+        params['envName'] = env_name
+        params['environmentId'] = environment_id
+        params['source'] = source
+        return cast(Api.EnvironmentCredentialBindResponse, await self._invoke('environments/credentials/bind', params, headers))
+
+    async def list_environment_credentials(self, environment_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentCredentialListResponse:
+        """List environment credential bindings
+
+        Returns variable names and credential source handles for a universe environment; resolved
+        secret values are never returned.
+        """
+        params: dict[str, Any] = {}
+        params['environmentId'] = environment_id
+        return cast(Api.EnvironmentCredentialListResponse, await self._invoke('environments/credentials/list', params, headers))
+
+    async def unbind_environment_credential(self, environment_id: str, env_name: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentCredentialUnbindResponse:
+        """Unbind an environment credential
+
+        Removes one variable-to-credential mapping without deleting the underlying grant or provider
+        credential.
+        """
+        params: dict[str, Any] = {}
+        params['envName'] = env_name
+        params['environmentId'] = environment_id
+        return cast(Api.EnvironmentCredentialUnbindResponse, await self._invoke('environments/credentials/unbind', params, headers))
+
+    async def update_environment(self, environment_id: str, *, display_name: str | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentUpdateResponse:
+        """Update an environment
+
+        Replaces the display name and caller metadata of an environment of any kind. Refused for a
+        closed environment.
+
+        Args:
+            display_name: The new display name; omit to clear it.
+            metadata: The complete new caller metadata; omit or `{}` to clear it.
+        """
+        params: dict[str, Any] = {}
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        params['environmentId'] = environment_id
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        return cast(Api.EnvironmentUpdateResponse, await self._invoke('environments/update', params, headers))
+
+    async def create_external_environment(self, *, display_name: str | None | Unset = UNSET, endpoint: str, environment_id: str | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, request_id: str, headers: HeadersInput | None = None) -> Api.EnvironmentExternalCreateResponse:
+        """Register an external environment
+
+        Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to
+        the caller. Idempotent per requestId. Reachability is checked on use.
+
+        Args:
+            endpoint: `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
+                Lightspeed.
+            environment_id: The id profiles and bindings use for the environment. Omit it to have
+                one allocated. An id already in use is a conflict.
+            request_id: Stable caller-generated retry identity, unique inside the universe.
+        """
+        params: dict[str, Any] = {}
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        params['endpoint'] = endpoint
+        if environment_id is not UNSET:
+            params['environmentId'] = environment_id
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        params['requestId'] = request_id
+        return cast(Api.EnvironmentExternalCreateResponse, await self._invoke('environments/external/create', params, headers))
+
+    async def put_registered_environment(self, environment_id: str, *, display_name: str | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, name: str, registration_key_id: str, headers: HeadersInput | None = None) -> Api.EnvironmentRegisteredPutResponse:
+        """Declare a registered environment
+
+        Declares a fixed machine as an open environment with a chosen id before its daemon
+        registers. The first daemon its persistent key admits under the given name is bound to it;
+        until then it is away and tools wait. Repeating it changes nothing; display name and
+        metadata converge. The key and name are fixed. Conflict: an id or name in use.
+
+        Args:
+            environment_id: The id profiles and bindings use for the environment.
+            name: The name the daemon registers under: 1 to 128 bytes without control characters,
+                unique among the open environments of the key. It cannot be changed afterwards.
+            registration_key_id: The persistent registration key whose daemons may fill it. It
+                cannot be changed afterwards.
+        """
+        params: dict[str, Any] = {}
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        params['environmentId'] = environment_id
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        params['name'] = name
+        params['registrationKeyId'] = registration_key_id
+        return cast(Api.EnvironmentRegisteredPutResponse, await self._invoke('environments/registered/put', params, headers))
+
+    async def release_registered_environment(self, environment_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentRegisteredReleaseResponse:
+        """Release a declared environment's daemon
+
+        Forgets the daemon bound to a declared environment and ends its connection, so another
+        daemon identity may bind under the same key and name. The environment keeps its id, its
+        name, its credential bindings and every reference to it. No effect when no daemon is bound.
+        Refused for an environment that was not declared.
+        """
+        params: dict[str, Any] = {}
+        params['environmentId'] = environment_id
+        return cast(Api.EnvironmentRegisteredReleaseResponse, await self._invoke('environments/registered/release', params, headers))
+
+    async def put_environment_ingress(self, environment_id: str, *, enabled: bool, headers: HeadersInput | None = None) -> Api.EnvironmentIngressPutResponse:
+        """Configure environment public ingress
+
+        Synchronously ensures or removes public ingress of an open provisioned environment through
+        its provider; source.publicEndpoint carries the reported endpoint. Rejected when the
+        provider offers no ingress; an internal error, safe to retry, when the provider is
+        unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
+
+        Args:
+            enabled: Ensure (`true`) or remove (`false`) the provider's public ingress.
+        """
+        params: dict[str, Any] = {}
+        params['enabled'] = enabled
+        params['environmentId'] = environment_id
+        return cast(Api.EnvironmentIngressPutResponse, await self._invoke('environments/ingress/put', params, headers))
+
+    async def put_environment_power(self, environment_id: str, *, power: Api.EnvironmentPowerStateView, headers: HeadersInput | None = None) -> Api.EnvironmentPowerPutResponse:
+        """Set environment power
+
+        Synchronously moves an open provisioned environment's target to running, paused, suspended,
+        or stopped via its provider and records the observation; the provider may also change power
+        on idle. Rejected without provider power control or when the template lacks the state; an
+        internal error, safe to retry, when the provider is unreachable or times out.
+
+        Args:
+            power: Power state to move the target to; one of its template's `powerStates`.
+        """
+        params: dict[str, Any] = {}
+        params['environmentId'] = environment_id
+        params['power'] = power
+        return cast(Api.EnvironmentPowerPutResponse, await self._invoke('environments/power/put', params, headers))
+
+    async def list_environment_provider_bindings(self, *, headers: HeadersInput | None = None) -> Api.EnvironmentProviderBindingListResponse:
+        """List environment provider bindings
+
+        Lists this universe's bindings to deployment providers and whether each is enabled.
+        """
+        params: dict[str, Any] = {}
+        return cast(Api.EnvironmentProviderBindingListResponse, await self._invoke('environments/provider-bindings/list', params, headers))
+
+    async def read_environment_provider_binding(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentProviderBindingReadResponse:
+        """Read an environment provider binding
+
+        Returns this universe's binding to one provider. Templates and physical resource, network,
+        and ingress policy remain provider-owned.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        return cast(Api.EnvironmentProviderBindingReadResponse, await self._invoke('environments/provider-bindings/read', params, headers))
+
+    async def read_environment_template(self, provider_id: str, template_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentTemplateReadResponse:
+        """Read an environment template
+
+        Returns one template, read live from a bound provider's controller.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        params['templateId'] = template_id
+        return cast(Api.EnvironmentTemplateReadResponse, await self._invoke('environments/templates/read', params, headers))
+
+    async def create_environment_jobs(self, environment_id: str, *, jobs: list[Api.SessionJobStartSpecInput], request_id: str, headers: HeadersInput | None = None) -> Api.EnvironmentJobCreateResponse:
+        """Create environment jobs
+
+        Starts a dependency-aware job group on one environment instance, injecting its configured
+        credentials at provider start. requestId is the retry identity; jobs are owned by the
+        instance, not a session. A powered-down environment wakes on its data route; the call fails
+        with environmentNotReady while it wakes or reconnects; retry with backoff.
+        """
+        params: dict[str, Any] = {}
+        params['environmentId'] = environment_id
+        params['jobs'] = jobs
+        params['requestId'] = request_id
+        return cast(Api.EnvironmentJobCreateResponse, await self._invoke('environments/jobs/create', params, headers))
+
+    async def read_environment_jobs(self, *, after: int | None | Unset = UNSET, jobs: list[Api.SessionJobHandleInput], max_bytes: int | None | Unset = UNSET, tail_bytes: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentJobReadResponse:
+        """Read environment jobs
+
+        Reads selected job handles with bounded output from a byte offset or the output tail;
+        continue from each entry's outputNext and poll on the returned status.
+
+        Args:
+            after: Byte offset to read each job's output from: a previous entry's `outputNext`.
+                Omitted with `tailBytes` omitted reads from the start.
+            max_bytes: Most output bytes per job; omit for the server's default page.
+            tail_bytes: Read each job's last `tailBytes` of output instead; excludes `after`.
+        """
+        params: dict[str, Any] = {}
+        if after is not UNSET:
+            params['after'] = after
+        params['jobs'] = jobs
+        if max_bytes is not UNSET:
+            params['maxBytes'] = max_bytes
+        if tail_bytes is not UNSET:
+            params['tailBytes'] = tail_bytes
+        return cast(Api.EnvironmentJobReadResponse, await self._invoke('environments/jobs/read', params, headers))
+
+    async def cancel_environment_jobs(self, *, force: bool | Unset = UNSET, jobs: list[Api.SessionJobHandleInput], scope: Api.SessionJobCancelScopeView | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentJobCancelResponse:
+        """Cancel environment jobs
+
+        Requests cancellation for selected jobs, optionally including dependents. Force is
+        provider-specific escalation; inspect each per-job result.
+        """
+        params: dict[str, Any] = {}
+        if force is not UNSET:
+            params['force'] = force
+        params['jobs'] = jobs
+        if scope is not UNSET:
+            params['scope'] = scope
+        return cast(Api.EnvironmentJobCancelResponse, await self._invoke('environments/jobs/cancel', params, headers))
+
+    async def create_environment_registration_key(self, *, declared_only: bool | Unset = UNSET, display_name: str, ephemeral_disconnect_grace_ms: int | None | Unset = UNSET, expires_at_ms: int | None | Unset = UNSET, identity_mode: Api.EnvironmentIdentityModeView, max_active_environments: int | None | Unset = UNSET, offline_close_after_ms: int | None | Unset = UNSET, registration_key_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyCreateResponse:
+        """Mint an environment registration key
+
+        Creates a reusable universe-scoped key that lets outbound envd daemons register as
+        environments. The plaintext secret is returned exactly once; only its hash is stored.
+        Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry
+        are the key's policy. Treat the secret like a cluster-join credential.
+
+        Args:
+            declared_only: Persistent keys only: admit only daemons whose registration name matches
+                an environment declared under this key.
+            display_name: Group name for the environments this key admits.
+            ephemeral_disconnect_grace_ms: Disconnect grace for ephemeral environments; omit for the
+                default.
+            identity_mode: Immutable once the key exists.
+            max_active_environments: Non-closed environments the key may have at once; omit for
+                unlimited.
+            offline_close_after_ms: Persistent keys only: close environments whose daemon has been
+                away longer than this; omit to keep them open.
+            registration_key_id: The key's id within the universe: 1-128 ASCII letters, digits,
+                underscores, hyphens, dots or colons, starting with a letter or digit. Omit it to
+                have one allocated.
+        """
+        params: dict[str, Any] = {}
+        if declared_only is not UNSET:
+            params['declaredOnly'] = declared_only
+        params['displayName'] = display_name
+        if ephemeral_disconnect_grace_ms is not UNSET:
+            params['ephemeralDisconnectGraceMs'] = ephemeral_disconnect_grace_ms
+        if expires_at_ms is not UNSET:
+            params['expiresAtMs'] = expires_at_ms
+        params['identityMode'] = identity_mode
+        if max_active_environments is not UNSET:
+            params['maxActiveEnvironments'] = max_active_environments
+        if offline_close_after_ms is not UNSET:
+            params['offlineCloseAfterMs'] = offline_close_after_ms
+        if registration_key_id is not UNSET:
+            params['registrationKeyId'] = registration_key_id
+        return cast(Api.EnvironmentRegistrationKeyCreateResponse, await self._invoke('environments/registration-keys/create', params, headers))
+
+    async def put_environment_registration_key(self, registration_key_id: str, *, declared_only: bool | Unset = UNSET, display_name: str, ephemeral_disconnect_grace_ms: int | None | Unset = UNSET, expires_at_ms: int | None | Unset = UNSET, identity_mode: Api.EnvironmentIdentityModeView, max_active_environments: int | None | Unset = UNSET, offline_close_after_ms: int | None | Unset = UNSET, secret: Api.EnvironmentRegistrationSecretView, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyPutResponse:
+        """Declare an environment registration key
+
+        Makes the key of this id exist with this policy and answer to exactly the supplied secret.
+        Repeating it changes nothing. A missing key is created; a different secret retires the
+        previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or
+        a secret that is or was a key's.
+
+        Args:
+            declared_only: Persistent keys only: admit only daemons whose registration name matches
+                an environment declared under this key.
+            display_name: Group name for the environments this key admits.
+            ephemeral_disconnect_grace_ms: Disconnect grace for ephemeral environments; omit for the
+                default.
+            identity_mode: Immutable once the key exists.
+            max_active_environments: Non-closed environments the key may have at once; omit for
+                unlimited.
+            offline_close_after_ms: Persistent keys only: close environments whose daemon has been
+                away longer than this; omit to keep them open.
+            secret: The secret daemons register with: `lsrk_` followed by 32 random bytes encoded as
+                base64url without padding. Generate it with a cryptographic random source.
+        """
+        params: dict[str, Any] = {}
+        if declared_only is not UNSET:
+            params['declaredOnly'] = declared_only
+        params['displayName'] = display_name
+        if ephemeral_disconnect_grace_ms is not UNSET:
+            params['ephemeralDisconnectGraceMs'] = ephemeral_disconnect_grace_ms
+        if expires_at_ms is not UNSET:
+            params['expiresAtMs'] = expires_at_ms
+        params['identityMode'] = identity_mode
+        if max_active_environments is not UNSET:
+            params['maxActiveEnvironments'] = max_active_environments
+        if offline_close_after_ms is not UNSET:
+            params['offlineCloseAfterMs'] = offline_close_after_ms
+        params['registrationKeyId'] = registration_key_id
+        params['secret'] = secret
+        return cast(Api.EnvironmentRegistrationKeyPutResponse, await self._invoke('environments/registration-keys/put', params, headers))
+
+    async def read_environment_registration_key(self, registration_key_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyReadResponse:
+        """Read an environment registration key
+
+        Returns the key's display prefix, policy, status, and derived environment counts; never the
+        secret or its hash.
+        """
+        params: dict[str, Any] = {}
+        params['registrationKeyId'] = registration_key_id
+        return cast(Api.EnvironmentRegistrationKeyReadResponse, await self._invoke('environments/registration-keys/read', params, headers))
+
+    async def list_environment_registration_keys(self, *, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyListResponse:
+        """List environment registration keys
+
+        Lists this universe's registration keys with policy, status, and derived counts. Each key is
+        the group of the environments it admitted.
+        """
+        params: dict[str, Any] = {}
+        return cast(Api.EnvironmentRegistrationKeyListResponse, await self._invoke('environments/registration-keys/list', params, headers))
+
+    async def update_environment_registration_key(self, registration_key_id: str, *, declared_only: bool | Unset = UNSET, display_name: str, ephemeral_disconnect_grace_ms: int | None | Unset = UNSET, expires_at_ms: int | None | Unset = UNSET, max_active_environments: int | None | Unset = UNSET, offline_close_after_ms: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyUpdateResponse:
+        """Update an environment registration key
+
+        Replaces a key's editable policy: display name, active limit, disconnect grace, offline
+        close-after, and expiry; an omitted field is unset. The identity mode is immutable. The
+        active limit and expiry apply to later admissions; a changed disconnect grace or offline
+        close-after applies at the next sweep to environments whose daemon is away.
+
+        Args:
+            declared_only: Persistent keys only: admit only daemons whose registration name matches
+                an environment declared under this key.
+            display_name: Group name for the environments this key admits.
+            ephemeral_disconnect_grace_ms: Disconnect grace for ephemeral environments; omit for the
+                default.
+            max_active_environments: Non-closed environments the key may have at once; omit for
+                unlimited.
+            offline_close_after_ms: Persistent keys only: close environments whose daemon has been
+                away longer than this; omit to keep them open.
+        """
+        params: dict[str, Any] = {}
+        if declared_only is not UNSET:
+            params['declaredOnly'] = declared_only
+        params['displayName'] = display_name
+        if ephemeral_disconnect_grace_ms is not UNSET:
+            params['ephemeralDisconnectGraceMs'] = ephemeral_disconnect_grace_ms
+        if expires_at_ms is not UNSET:
+            params['expiresAtMs'] = expires_at_ms
+        if max_active_environments is not UNSET:
+            params['maxActiveEnvironments'] = max_active_environments
+        if offline_close_after_ms is not UNSET:
+            params['offlineCloseAfterMs'] = offline_close_after_ms
+        params['registrationKeyId'] = registration_key_id
+        return cast(Api.EnvironmentRegistrationKeyUpdateResponse, await self._invoke('environments/registration-keys/update', params, headers))
+
+    async def rotate_environment_registration_key(self, registration_key_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyRotateResponse:
+        """Rotate an environment registration key
+
+        Replaces the key's secret and display prefix and retires the old secret at once. The key
+        keeps its id, group, policy, and the environments it admitted; daemons already registered
+        are unaffected because they never present the key again. Returns the new secret once.
+        Refused for a revoked key.
+        """
+        params: dict[str, Any] = {}
+        params['registrationKeyId'] = registration_key_id
+        return cast(Api.EnvironmentRegistrationKeyRotateResponse, await self._invoke('environments/registration-keys/rotate', params, headers))
+
+    async def revoke_environment_registration_key(self, registration_key_id: str, *, close_environments: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentRegistrationKeyRevokeResponse:
+        """Revoke an environment registration key
+
+        Stops the key from admitting new daemon identities; already registered daemons keep
+        reconnecting. With closeEnvironments, also closes every non-closed environment the key
+        admitted. Idempotent.
+
+        Args:
+            close_environments: Also close every non-closed environment the key admitted.
+        """
+        params: dict[str, Any] = {}
+        if close_environments is not UNSET:
+            params['closeEnvironments'] = close_environments
+        params['registrationKeyId'] = registration_key_id
+        return cast(Api.EnvironmentRegistrationKeyRevokeResponse, await self._invoke('environments/registration-keys/revoke', params, headers))
+
+    async def start_transcription(self, *, audio: Api.TranscriptionAudio, idempotency_key: str, language: str | None | Unset = UNSET, model: Api.ModelConfig | None | Unset = UNSET, prompt: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.TranscriptionResponse:
+        """Start transcription
+
+        Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No
+        session or run is created.
+
+        Args:
+            idempotency_key: Scoped to the requester. Matching retries rejoin the original job,
+                including after defaults change; changed requests conflict. Identity is retained for
+                the Temporal namespace's workflow-history retention period.
+        """
+        params: dict[str, Any] = {}
+        params['audio'] = audio
+        params['idempotencyKey'] = idempotency_key
+        if language is not UNSET:
+            params['language'] = language
+        if model is not UNSET:
+            params['model'] = model
+        if prompt is not UNSET:
+            params['prompt'] = prompt
+        return cast(Api.TranscriptionResponse, await self._invoke('transcriptions/start', params, headers))
+
+    async def read_transcription(self, transcription_id: str, *, headers: HeadersInput | None = None) -> Api.TranscriptionResponse:
+        """Read transcription
+
+        Read status and transcript text. Caller visibility is enforced by the external gate.
+        Unsubmitted CAS results may expire.
+        """
+        params: dict[str, Any] = {}
+        params['transcriptionId'] = transcription_id
+        return cast(Api.TranscriptionResponse, await self._invoke('transcriptions/read', params, headers))
+
+    async def cancel_transcription(self, transcription_id: str, *, headers: HeadersInput | None = None) -> Api.TranscriptionResponse:
+        """Cancel transcription
+
+        Cancel unfinished transcription. Repeated cancellation is safe; completed results remain
+        unchanged. Caller ownership is enforced by the external gate.
+        """
+        params: dict[str, Any] = {}
+        params['transcriptionId'] = transcription_id
+        return cast(Api.TranscriptionResponse, await self._invoke('transcriptions/cancel', params, headers))
+
+    async def put_model_defaults(self, *, expected_revision: int | None | Unset = UNSET, model: Api.ModelConfig | None, slot: Api.ModelDefaultSlot, headers: HeadersInput | None = None) -> Api.ModelDefaultsResponse:
+        """Set a universe model default
+
+        Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if
+        the defaults changed since. Existing sessions and admitted work keep their model. Validates
+        the purpose and protocol without contacting provider discovery.
+
+        Args:
+            expected_revision: Write only if the defaults are still at this revision, as returned by
+                read or put; zero for a universe with no updates. Omit it to write whatever the
+                current revision is.
+            model: Complete selection, or explicit null to clear this slot. Required.
+        """
+        params: dict[str, Any] = {}
+        if expected_revision is not UNSET:
+            params['expectedRevision'] = expected_revision
+        params['model'] = model
+        params['slot'] = slot
+        return cast(Api.ModelDefaultsResponse, await self._invoke('models/defaults/put', params, headers))
+
+    async def put_blobs(self, *, blobs: list[Api.BlobPutItem] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BlobPutResponse:
+        """Store content-addressed blobs
+
+        Decodes and stores a batch of base64 payloads, returning immutable content references in
+        request order. Re-uploading identical bytes is naturally deduplicated.
+        """
+        params: dict[str, Any] = {}
+        if blobs is not UNSET:
+            params['blobs'] = blobs
+        return cast(Api.BlobPutResponse, await self._invoke('blobs/put', params, headers))
+
+    async def has_blobs(self, *, blob_refs: list[str] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BlobHasResponse:
+        """Check blob availability
+
+        Checks a batch of content references without returning blob bodies, preserving request
+        order.
+        """
+        params: dict[str, Any] = {}
+        if blob_refs is not UNSET:
+            params['blobRefs'] = blob_refs
+        return cast(Api.BlobHasResponse, await self._invoke('blobs/has', params, headers))
+
+    async def commit_snapshot(self, *, manifest: Any, headers: HeadersInput | None = None) -> Api.VfsSnapshotCommitResponse:
+        """Commit a VFS snapshot
+
+        Validates and stores an immutable filesystem manifest. Upload referenced file blobs first;
+        the returned snapshot ref is content-addressed.
+        """
+        params: dict[str, Any] = {}
+        params['manifest'] = manifest
+        return cast(Api.VfsSnapshotCommitResponse, await self._invoke('vfs/snapshots/commit', params, headers))
+
+    async def read_snapshot(self, snapshot_ref: str, *, headers: HeadersInput | None = None) -> Api.VfsSnapshotReadResponse:
+        """Read a VFS snapshot
+
+        Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain
+        separate blobs.
+        """
+        params: dict[str, Any] = {}
+        params['snapshotRef'] = snapshot_ref
+        return cast(Api.VfsSnapshotReadResponse, await self._invoke('vfs/snapshots/read', params, headers))
+
+    async def update_workspace(self, workspace_id: str, *, display_name: str | None | Unset = UNSET, expected_revision: int | None | Unset = UNSET, snapshot_ref: str, headers: HeadersInput | None = None) -> Api.VfsWorkspaceUpdateResponse:
+        """Update a VFS workspace
+
+        Moves the workspace head to an existing snapshot, which requires use of the workspace, and
+        updates its display name, which requires configuring it. Pass expectedRevision from a read
+        to prevent lost updates.
+        """
+        params: dict[str, Any] = {}
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if expected_revision is not UNSET:
+            params['expectedRevision'] = expected_revision
+        params['snapshotRef'] = snapshot_ref
+        params['workspaceId'] = workspace_id
+        return cast(Api.VfsWorkspaceUpdateResponse, await self._invoke('vfs/workspaces/update', params, headers))
+
+    async def put_mcp_server(self, *, expected_revision: int | None | Unset = UNSET, server: Api.McpServerInput, headers: HeadersInput | None = None) -> Api.McpServerPutResponse:
+        """Create or replace an MCP server record
+
+        Stores the complete catalog document with its optional credential grant. A new server is
+        attributed to the caller. Use expectedRevision when replacing; token material is never
+        accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of
+        it.
+
+        Args:
+            expected_revision: Checked only when the server already exists; absent replaces (or
+                creates) unconditionally.
+        """
+        params: dict[str, Any] = {}
+        if expected_revision is not UNSET:
+            params['expectedRevision'] = expected_revision
+        params['server'] = server
+        return cast(Api.McpServerPutResponse, await self._invoke('mcp/servers/put', params, headers))
+
+    async def discover_mcp_server_auth(self, *, server_url: str, headers: HeadersInput | None = None) -> Api.McpServerAuthDiscoverResponse:
+        """Discover MCP server authentication
+
+        Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth
+        client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual
+        auth selection.
+        """
+        params: dict[str, Any] = {}
+        params['serverUrl'] = server_url
+        return cast(Api.McpServerAuthDiscoverResponse, await self._invoke('mcp/servers/auth/discover', params, headers))
+
+    async def discover_mcp_server_tools(self, server_id: str, *, headers: HeadersInput | None = None) -> Api.McpServerToolsDiscoverResponse:
+        """Discover MCP server tools
+
+        Connects directly to the configured MCP server with its current universe credential and
+        returns one bounded live tools/list result. The inventory is never persisted or cached and
+        no tool is invoked.
+        """
+        params: dict[str, Any] = {}
+        params['serverId'] = server_id
+        return cast(Api.McpServerToolsDiscoverResponse, await self._invoke('mcp/servers/tools/discover', params, headers))
+
+    async def delete_mcp_server(self, server_id: str, *, headers: HeadersInput | None = None) -> Api.McpServerDeleteResponse:
+        """Delete an MCP server record
+
+        Deletes the catalog document. Existing session configs that reference it are not silently
+        rewritten and may need explicit reconfiguration.
+        """
+        params: dict[str, Any] = {}
+        params['serverId'] = server_id
+        return cast(Api.McpServerDeleteResponse, await self._invoke('mcp/servers/delete', params, headers))
+
+    async def import_credential_grant(self, *, audience: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, expires_at_ms: int | None | Unset = UNSET, exposure: Api.CredentialGrantExposure | Unset = UNSET, grant_id: str | None | Unset = UNSET, metadata: Any | Unset = UNSET, provider_id: str | None | Unset = UNSET, scopes: list[str] | Unset = UNSET, subject_hint: str | None | Unset = UNSET, token: str, headers: HeadersInput | None = None) -> Api.CredentialGrantImportResponse:
+        """Import a token credential
+
+        Accepts a plaintext token, encrypts it immediately, and returns only grant
+        metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a
+        retrievable credential can be leased to a service or bound into an environment.
+
+        Args:
+            metadata: Non-secret, caller-defined metadata stored on the grant and returned by reads
+                (for example which product a pasted subscription token belongs to). Must be a JSON
+                object; never put secret material here.
+        """
+        params: dict[str, Any] = {}
+        if audience is not UNSET:
+            params['audience'] = audience
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if expires_at_ms is not UNSET:
+            params['expiresAtMs'] = expires_at_ms
+        if exposure is not UNSET:
+            params['exposure'] = exposure
+        if grant_id is not UNSET:
+            params['grantId'] = grant_id
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        if provider_id is not UNSET:
+            params['providerId'] = provider_id
+        if scopes is not UNSET:
+            params['scopes'] = scopes
+        if subject_hint is not UNSET:
+            params['subjectHint'] = subject_hint
+        params['token'] = token
+        return cast(Api.CredentialGrantImportResponse, await self._invoke('credentials/grants/import', params, headers))
+
+    async def lease_credential_grant(self, grant_id: str, *, audience: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.CredentialGrantLeaseResponse:
+        """Lease a retrievable credential grant
+
+        Service callers only. Resolves the current access token through the broker, records the
+        lease, and returns it once. Cache only in memory until expiry minus margin (or at most five
+        minutes without expiry), re-lease after target 401/403, and never persist or place the token
+        in workflow payloads.
+        """
+        params: dict[str, Any] = {}
+        if audience is not UNSET:
+            params['audience'] = audience
+        params['grantId'] = grant_id
+        return cast(Api.CredentialGrantLeaseResponse, await self._invoke('credentials/grants/lease', params, headers))
+
+    async def read_credential_grant(self, grant_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialGrantReadResponse:
+        """Read credential grant metadata
+
+        Returns creator attribution, provider binding, scopes, audience, expiry, status, and
+        token-presence flags; access and refresh token values are never returned.
+        """
+        params: dict[str, Any] = {}
+        params['grantId'] = grant_id
+        return cast(Api.CredentialGrantReadResponse, await self._invoke('credentials/grants/read', params, headers))
+
+    async def list_credential_grants(self, *, status: Api.CredentialGrantStatus | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.CredentialGrantListResponse:
+        """List credential grants
+
+        Lists non-secret grant metadata for the universe, optionally filtered by status.
+        """
+        params: dict[str, Any] = {}
+        if status is not UNSET:
+            params['status'] = status
+        return cast(Api.CredentialGrantListResponse, await self._invoke('credentials/grants/list', params, headers))
+
+    async def put_credential_grant(self, grant_id: str, *, audience: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, dry_run: bool | Unset = UNSET, expires_at_ms: int | None | Unset = UNSET, exposure: Api.CredentialGrantExposure | Unset = UNSET, metadata: Any | Unset = UNSET, provider_id: str | None | Unset = UNSET, scopes: list[str] | Unset = UNSET, subject_hint: str | None | Unset = UNSET, token: str, headers: HeadersInput | None = None) -> Api.CredentialGrantPutResponse:
+        """Declare a token credential
+
+        Makes the token credential of this id exist with these settings and hold exactly the
+        supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is
+        created; a different token replaces the stored one for everything referencing the id.
+        Conflict: another kind of grant, a revoked one, or changed exposure.
+
+        Args:
+            dry_run: Report what the declaration would do without doing it.
+            expires_at_ms: When the token expires. Absent means it does not expire.
+            exposure: Whether the plain token may be leased to a service or bound into an
+                environment. It cannot be changed afterwards.
+            metadata: Non-secret, caller-defined metadata. Must be a JSON object; never put secret
+                material here.
+            provider_id: Label recorded on the credential; `static` when absent. It cannot be
+                changed afterwards.
+        """
+        params: dict[str, Any] = {}
+        if audience is not UNSET:
+            params['audience'] = audience
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if dry_run is not UNSET:
+            params['dryRun'] = dry_run
+        if expires_at_ms is not UNSET:
+            params['expiresAtMs'] = expires_at_ms
+        if exposure is not UNSET:
+            params['exposure'] = exposure
+        params['grantId'] = grant_id
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        if provider_id is not UNSET:
+            params['providerId'] = provider_id
+        if scopes is not UNSET:
+            params['scopes'] = scopes
+        if subject_hint is not UNSET:
+            params['subjectHint'] = subject_hint
+        params['token'] = token
+        return cast(Api.CredentialGrantPutResponse, await self._invoke('credentials/grants/put', params, headers))
+
+    async def revoke_credential_grant(self, grant_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialGrantRevokeResponse:
+        """Revoke a credential grant
+
+        Marks the grant unusable by token consumers while retaining non-secret audit metadata.
+        """
+        params: dict[str, Any] = {}
+        params['grantId'] = grant_id
+        return cast(Api.CredentialGrantRevokeResponse, await self._invoke('credentials/grants/revoke', params, headers))
+
+    async def create_credential_client(self, *, audience: str | None | Unset = UNSET, authorization_endpoint: str, authorization_response_iss_parameter_supported: bool | Unset = UNSET, authorization_server_issuer: str | None | Unset = UNSET, authorization_server_scopes_supported: list[str] | Unset = UNSET, client_id: str | None | Unset = UNSET, client_secret: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, provider_id: str | None | Unset = UNSET, provider_kind: Api.CredentialProviderKind, remote_client_id: str, scopes_default: list[str] | Unset = UNSET, token_endpoint: str, token_endpoint_auth_method: Api.TokenEndpointAuthMethod | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.CredentialClientCreateResponse:
+        """Register an OAuth client
+
+        Stores provider endpoints and client identity; an optional plaintext client secret is
+        encrypted and represented thereafter only by hasClientSecret.
+        """
+        params: dict[str, Any] = {}
+        if audience is not UNSET:
+            params['audience'] = audience
+        params['authorizationEndpoint'] = authorization_endpoint
+        if authorization_response_iss_parameter_supported is not UNSET:
+            params['authorizationResponseIssParameterSupported'] = authorization_response_iss_parameter_supported
+        if authorization_server_issuer is not UNSET:
+            params['authorizationServerIssuer'] = authorization_server_issuer
+        if authorization_server_scopes_supported is not UNSET:
+            params['authorizationServerScopesSupported'] = authorization_server_scopes_supported
+        if client_id is not UNSET:
+            params['clientId'] = client_id
+        if client_secret is not UNSET:
+            params['clientSecret'] = client_secret
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if provider_id is not UNSET:
+            params['providerId'] = provider_id
+        params['providerKind'] = provider_kind
+        params['remoteClientId'] = remote_client_id
+        if scopes_default is not UNSET:
+            params['scopesDefault'] = scopes_default
+        params['tokenEndpoint'] = token_endpoint
+        if token_endpoint_auth_method is not UNSET:
+            params['tokenEndpointAuthMethod'] = token_endpoint_auth_method
+        return cast(Api.CredentialClientCreateResponse, await self._invoke('credentials/clients/create', params, headers))
+
+    async def read_credential_client(self, client_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialClientReadResponse:
+        """Read OAuth client metadata
+
+        Returns endpoints, public client identity, defaults, and secret-presence state; the client
+        secret is never returned.
+        """
+        params: dict[str, Any] = {}
+        params['clientId'] = client_id
+        return cast(Api.CredentialClientReadResponse, await self._invoke('credentials/clients/read', params, headers))
+
+    async def list_credential_clients(self, *, headers: HeadersInput | None = None) -> Api.CredentialClientListResponse:
+        """List OAuth clients
+
+        Lists non-secret OAuth client registrations in the universe.
+        """
+        params: dict[str, Any] = {}
+        return cast(Api.CredentialClientListResponse, await self._invoke('credentials/clients/list', params, headers))
+
+    async def delete_credential_client(self, client_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialClientDeleteResponse:
+        """Delete an OAuth client
+
+        Deletes the client registration and its stored client secret; grants already created from it
+        remain separate records.
+        """
+        params: dict[str, Any] = {}
+        params['clientId'] = client_id
+        return cast(Api.CredentialClientDeleteResponse, await self._invoke('credentials/clients/delete', params, headers))
+
+    async def start_credential_flow(self, client_id: str, *, audience: str | None | Unset = UNSET, exposure: Api.CredentialGrantExposure | Unset = UNSET, scopes: list[str] | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.CredentialFlowStartResponse:
+        """Start an OAuth authorization flow
+
+        Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a
+        browser authorization URL containing one-time state. Treat the URL as sensitive and poll
+        credentials/flows/read for completion.
+        """
+        params: dict[str, Any] = {}
+        if audience is not UNSET:
+            params['audience'] = audience
+        params['clientId'] = client_id
+        if exposure is not UNSET:
+            params['exposure'] = exposure
+        if scopes is not UNSET:
+            params['scopes'] = scopes
+        return cast(Api.CredentialFlowStartResponse, await self._invoke('credentials/flows/start', params, headers))
+
+    async def read_credential_flow(self, flow_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialFlowStatusResponse:
+        """Read OAuth flow status
+
+        Polls a flow's pending/completed/failed/expired state and returns the resulting grant id
+        when authorization succeeds; no token value is exposed.
+        """
+        params: dict[str, Any] = {}
+        params['flowId'] = flow_id
+        return cast(Api.CredentialFlowStatusResponse, await self._invoke('credentials/flows/read', params, headers))
+
+    async def create_credential_provider(self, *, config: Api.CredentialProviderConfigInput, credential: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, provider_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.CredentialProviderCreateResponse:
+        """Register a credential provider
+
+        Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted
+        on receipt and later represented only by configuration plus hasCredential.
+        """
+        params: dict[str, Any] = {}
+        params['config'] = config
+        if credential is not UNSET:
+            params['credential'] = credential
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if provider_id is not UNSET:
+            params['providerId'] = provider_id
+        return cast(Api.CredentialProviderCreateResponse, await self._invoke('credentials/providers/create', params, headers))
+
+    async def put_credential_provider(self, provider_id: str, *, config: Api.CredentialProviderConfigInput, credential: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, dry_run: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.CredentialProviderPutResponse:
+        """Declare a credential provider
+
+        Makes the provider of this id exist with this configuration and credential. Repeating it
+        changes nothing. A missing provider is created; one that differs is rewritten in place after
+        the new settings validate, atomically, and its old credential deleted. Sessions and
+        environment variables referencing the id keep working.
+
+        Args:
+            credential: The provider's credential, for the kinds that take one. Absent leaves the
+                provider without a credential.
+            dry_run: Report what the declaration would do without doing it.
+        """
+        params: dict[str, Any] = {}
+        params['config'] = config
+        if credential is not UNSET:
+            params['credential'] = credential
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if dry_run is not UNSET:
+            params['dryRun'] = dry_run
+        params['providerId'] = provider_id
+        return cast(Api.CredentialProviderPutResponse, await self._invoke('credentials/providers/put', params, headers))
+
+    async def read_credential_provider(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialProviderReadResponse:
+        """Read credential provider metadata
+
+        Returns provider kind, non-secret configuration, credential-presence state, and status;
+        stored credentials are never returned.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        return cast(Api.CredentialProviderReadResponse, await self._invoke('credentials/providers/read', params, headers))
+
+    async def list_credential_providers(self, *, headers: HeadersInput | None = None) -> Api.CredentialProviderListResponse:
+        """List credential providers
+
+        Lists non-secret model/GitHub provider registrations for the universe.
+        """
+        params: dict[str, Any] = {}
+        return cast(Api.CredentialProviderListResponse, await self._invoke('credentials/providers/list', params, headers))
+
+    async def delete_credential_provider(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialProviderDeleteResponse:
+        """Delete a credential provider
+
+        Deletes the provider registration and its directly stored credential; separately stored
+        grants remain independent records.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        return cast(Api.CredentialProviderDeleteResponse, await self._invoke('credentials/providers/delete', params, headers))
+
+    async def list_github_installations(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.CredentialGitHubInstallationListResponse:
+        """List GitHub App installations
+
+        Uses the registered GitHub App provider credential to query accessible installations and
+        returns account/permission metadata without tokens.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        return cast(Api.CredentialGitHubInstallationListResponse, await self._invoke('credentials/github/installations/list', params, headers))
+
+    async def grant_github_installation(self, provider_id: str, *, display_name: str | None | Unset = UNSET, exposure: Api.CredentialGrantExposure | Unset = UNSET, grant_id: str | None | Unset = UNSET, installation_id: int, headers: HeadersInput | None = None) -> Api.CredentialGitHubInstallationGrantResponse:
+        """Grant access to a GitHub App installation
+
+        Creates or refreshes a universe credential grant for one accessible installation. This
+        method never returns a token: the broker mints short-lived installation tokens when the
+        grant is used. Brokered is the default; only a grant created retrievable can be bound into
+        an environment or leased to a service.
+        """
+        params: dict[str, Any] = {}
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if exposure is not UNSET:
+            params['exposure'] = exposure
+        if grant_id is not UNSET:
+            params['grantId'] = grant_id
+        params['installationId'] = installation_id
+        params['providerId'] = provider_id
+        return cast(Api.CredentialGitHubInstallationGrantResponse, await self._invoke('credentials/github/installations/grant', params, headers))
+
+    async def create_bot(self, *, bot: Api.BotInput, triggers: list[Api.BotTriggerInput] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotCreateResponse:
+        """Create a bot
+
+        Creates the bot record, optionally with its triggers, and starts its controller. Fails if
+        the bot id exists; a trigger failure rolls the bot back. Returns the created triggers'
+        ingest paths and pairing codes by trigger id.
+
+        Args:
+            triggers: Triggers created with the bot in one go; a failure rolls the bot back.
+        """
+        params: dict[str, Any] = {}
+        params['bot'] = bot
+        if triggers is not UNSET:
+            params['triggers'] = triggers
+        return cast(Api.BotCreateResponse, await self._invoke('bots/create', params, headers))
+
+    async def put_bot(self, *, bot: Api.BotInput, expected_revision: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotPutResponse:
+        """Create or replace a bot document
+
+        Replaces the mutable configuration whole and signals the controller, which applies it at its
+        next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only
+        edits.
+
+        Args:
+            expected_revision: Checked only when the bot already exists; absent replaces (or
+                creates) unconditionally.
+        """
+        params: dict[str, Any] = {}
+        params['bot'] = bot
+        if expected_revision is not UNSET:
+            params['expectedRevision'] = expected_revision
+        return cast(Api.BotPutResponse, await self._invoke('bots/put', params, headers))
+
+    async def close_bot(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotCloseResponse:
+        """Close a bot
+
+        Terminal and idempotent: disables every trigger, drops schedules, and tells the controller
+        to archive pending events and force-close its sessions. Returns once signalled; follow
+        bots/state/read for closing to closed.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        return cast(Api.BotCloseResponse, await self._invoke('bots/close', params, headers))
+
+    async def delete_bot(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotDeleteResponse:
+        """Delete a bot
+
+        Closes the bot if needed, waits for its controller to complete, retains its session history,
+        and removes the record so the bot id is free again.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        return cast(Api.BotDeleteResponse, await self._invoke('bots/delete', params, headers))
+
+    async def read_bot_state(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotStateReadResponse:
+        """Read bot controller state
+
+        Queries the controller workflow for its live snapshot (sessions, buffers, active and recent
+        deliveries, budget) and lists sub-agent descendants. The controller is absent until the
+        bot's first event.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        return cast(Api.BotStateReadResponse, await self._invoke('bots/state/read', params, headers))
+
+    async def rotate_bot_session(self, bot_id: Api.BotId, session_id: str, *, headers: HeadersInput | None = None) -> Api.BotSessionRotateResponse:
+        """Rotate a bot session
+
+        Asks the controller to close one of the bot's sessions at its next idle boundary and
+        continue on a fresh generation; queued deliveries follow.
+
+        Args:
+            session_id: One of the bot's sessions (main or routed); the controller closes it at its
+                next idle boundary and continues on a successor generation.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['sessionId'] = session_id
+        return cast(Api.BotSessionRotateResponse, await self._invoke('bots/sessions/rotate', params, headers))
+
+    async def put_bot_trigger(self, bot_id: Api.BotId, *, expected_revision: int | None | Unset = UNSET, trigger: Api.BotTriggerInput, headers: HeadersInput | None = None) -> Api.BotTriggerPutResponse:
+        """Create or replace a trigger
+
+        Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per
+        conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the
+        cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code
+        beside the view.
+
+        Args:
+            expected_revision: Checked only when the trigger already exists; absent replaces (or
+                creates) unconditionally.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        if expected_revision is not UNSET:
+            params['expectedRevision'] = expected_revision
+        params['trigger'] = trigger
+        return cast(Api.BotTriggerPutResponse, await self._invoke('bots/triggers/put', params, headers))
+
+    async def read_bot_trigger(self, bot_id: Api.BotId, trigger_id: Api.BotTriggerId, *, headers: HeadersInput | None = None) -> Api.BotTriggerReadResponse:
+        """Read a trigger
+
+        Returns one trigger with its incidents and cursor. The ingest path and pairing code are
+        never part of it; bots/triggers/secrets/read returns them.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['triggerId'] = trigger_id
+        return cast(Api.BotTriggerReadResponse, await self._invoke('bots/triggers/read', params, headers))
+
+    async def list_bot_triggers(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotTriggerListResponse:
+        """List a bot's triggers
+
+        Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        return cast(Api.BotTriggerListResponse, await self._invoke('bots/triggers/list', params, headers))
+
+    async def read_bot_trigger_secrets(self, bot_id: Api.BotId, trigger_id: Api.BotTriggerId, *, headers: HeadersInput | None = None) -> Api.BotTriggerSecretsReadResponse:
+        """Read a trigger's secrets
+
+        Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot,
+        or a chat trigger's pairing code, which connects a conversation to it. Both are absent for
+        other triggers. Needs bot management, unlike reading the trigger.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['triggerId'] = trigger_id
+        return cast(Api.BotTriggerSecretsReadResponse, await self._invoke('bots/triggers/secrets/read', params, headers))
+
+    async def delete_bot_trigger(self, bot_id: Api.BotId, trigger_id: Api.BotTriggerId, *, headers: HeadersInput | None = None) -> Api.BotTriggerDeleteResponse:
+        """Delete a trigger
+
+        Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep
+        their history.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['triggerId'] = trigger_id
+        return cast(Api.BotTriggerDeleteResponse, await self._invoke('bots/triggers/delete', params, headers))
+
+    async def replay_bot_event(self, bot_id: Api.BotId, *, seq: int, headers: HeadersInput | None = None) -> Api.BotEventReplayResponse:
+        """Replay a stored event
+
+        Re-admits the stored envelope as a fresh event with the original routing; the replay never
+        coalesces.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['seq'] = seq
+        return cast(Api.BotEventReplayResponse, await self._invoke('bots/events/replay', params, headers))
+
+    async def read_bot_event(self, bot_id: Api.BotId, *, seq: int, headers: HeadersInput | None = None) -> Api.BotEventReadResponse:
+        """Read an event by number
+
+        Returns the event row and its full stored envelope document.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['seq'] = seq
+        return cast(Api.BotEventReadResponse, await self._invoke('bots/events/read', params, headers))
+
+    async def test_bot_filter(self, bot_id: Api.BotId, *, filter: str, limit: int | None | Unset = UNSET, payload: Any | Unset = UNSET, headers: HeadersInput | None = None) -> Api.BotFilterTestResponse:
+        """Test a CEL filter
+
+        Evaluates a filter against one payload or a sample of recent stored events, reporting
+        matches and evaluation errors without changing anything.
+
+        Args:
+            filter: CEL over `{event, data, headers}`.
+            limit: How many recent stored events to sample when no payload is given.
+            payload: A document to test instead of stored events: `{kind?, data?, headers?}`.
+        """
+        params: dict[str, Any] = {}
+        params['botId'] = bot_id
+        params['filter'] = filter
+        if limit is not UNSET:
+            params['limit'] = limit
+        if payload is not UNSET:
+            params['payload'] = payload
+        return cast(Api.BotFilterTestResponse, await self._invoke('bots/filters/test', params, headers))
+
+    async def create_channel_account(self, *, account: Api.ChannelAccountInput, headers: HeadersInput | None = None) -> Api.ChannelAccountCreateResponse:
+        """Create a channel account
+
+        Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a
+        retrievable grant reference; no token is accepted here.
+        """
+        params: dict[str, Any] = {}
+        params['account'] = account
+        return cast(Api.ChannelAccountCreateResponse, await self._invoke('channels/accounts/create', params, headers))
+
+    async def put_channel_account(self, *, account: Api.ChannelAccountInput, expected_revision: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelAccountPutResponse:
+        """Create or replace a channel account
+
+        Replaces the account document whole; pass expectedRevision when replacing. The connector
+        host picks the change up on its next discovery pass.
+        """
+        params: dict[str, Any] = {}
+        params['account'] = account
+        if expected_revision is not UNSET:
+            params['expectedRevision'] = expected_revision
+        return cast(Api.ChannelAccountPutResponse, await self._invoke('channels/accounts/put', params, headers))
+
+    async def read_channel_account(self, account_id: Api.ChannelAccountId, *, headers: HeadersInput | None = None) -> Api.ChannelAccountReadResponse:
+        """Read a channel account
+
+        Returns the account document and revision.
+        """
+        params: dict[str, Any] = {}
+        params['accountId'] = account_id
+        return cast(Api.ChannelAccountReadResponse, await self._invoke('channels/accounts/read', params, headers))
+
+    async def list_channel_accounts(self, *, provider: Api.ChannelProvider | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelAccountListResponse:
+        """List channel accounts
+
+        Lists this universe's provider accounts, optionally by provider.
+        """
+        params: dict[str, Any] = {}
+        if provider is not UNSET:
+            params['provider'] = provider
+        return cast(Api.ChannelAccountListResponse, await self._invoke('channels/accounts/list', params, headers))
+
+    async def delete_channel_account(self, account_id: Api.ChannelAccountId, *, headers: HeadersInput | None = None) -> Api.ChannelAccountDeleteResponse:
+        """Delete a channel account
+
+        Removes the account and its pairings; chat triggers that reference it stop serving
+        conversations.
+        """
+        params: dict[str, Any] = {}
+        params['accountId'] = account_id
+        return cast(Api.ChannelAccountDeleteResponse, await self._invoke('channels/accounts/delete', params, headers))
+
+    async def admit_channel_inbound(self, account_id: Api.ChannelAccountId, *, inbound: Api.ChannelInbound, headers: HeadersInput | None = None) -> Api.ChannelInboundAdmitResponse:
+        """Admit a provider message
+
+        Service callers only. Resolves the chat trigger for the conversation, applies pairing, and
+        signals the conversation workflow. Returns the decision so the connector can send pairing
+        prompts itself; acknowledge the provider only after this returns.
+        """
+        params: dict[str, Any] = {}
+        params['accountId'] = account_id
+        params['inbound'] = inbound
+        return cast(Api.ChannelInboundAdmitResponse, await self._invoke('channels/inbound/admit', params, headers))
+
+    async def list_channel_pairings(self, *, account_id: Api.ChannelAccountId | None | Unset = UNSET, bot_id: Api.BotId | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelPairingListResponse:
+        """List chat pairings
+
+        Lists conversations paired to chat triggers, optionally by account or bot.
+        """
+        params: dict[str, Any] = {}
+        if account_id is not UNSET:
+            params['accountId'] = account_id
+        if bot_id is not UNSET:
+            params['botId'] = bot_id
+        return cast(Api.ChannelPairingListResponse, await self._invoke('channels/pairings/list', params, headers))
+
+    async def delete_channel_pairing(self, account_id: Api.ChannelAccountId, chat_id: str, *, headers: HeadersInput | None = None) -> Api.ChannelPairingDeleteResponse:
+        """Unpair a conversation
+
+        Removes one pairing; the conversation must present the pairing code again to reconnect.
+        """
+        params: dict[str, Any] = {}
+        params['accountId'] = account_id
+        params['chatId'] = chat_id
+        return cast(Api.ChannelPairingDeleteResponse, await self._invoke('channels/pairings/delete', params, headers))
+
+    async def read_channel_conversation(self, account_id: Api.ChannelAccountId, chat_id: str, *, thread_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelConversationReadResponse:
+        """Read a conversation snapshot
+
+        Queries the conversation workflow's live state for one chat, for debugging; absent when no
+        workflow exists yet.
+        """
+        params: dict[str, Any] = {}
+        params['accountId'] = account_id
+        params['chatId'] = chat_id
+        if thread_id is not UNSET:
+            params['threadId'] = thread_id
+        return cast(Api.ChannelConversationReadResponse, await self._invoke('channels/conversations/read', params, headers))
+
+    async def list_deleted_universes(self, *, after: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentDeletedUniversesListResponse:
+        """List deleted universes
+
+        Permanent deletion records, newest first, with resource counts and unconfirmed provider
+        targets.
+
+        Args:
+            after: Opaque exclusive cursor; each page contains at most 100 entries.
+        """
+        params: dict[str, Any] = {}
+        if after is not UNSET:
+            params['after'] = after
+        return cast(Api.DeploymentDeletedUniversesListResponse, await self._invoke('deployment/universes/deleted/list', params, headers))
+
+    async def list_deleted_sessions(self, universe: str, *, after: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentDeletedSessionsListResponse:
+        """List deleted sessions
+
+        Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable
+        through universe-scoped methods.
+
+        Args:
+            universe: The universe's UUID or handle.
+            after: Exclusive session ID cursor; each page contains at most 100 entries.
+        """
+        params: dict[str, Any] = {}
+        if after is not UNSET:
+            params['after'] = after
+        params['universe'] = universe
+        return cast(Api.DeploymentDeletedSessionsListResponse, await self._invoke('deployment/sessions/deleted/list', params, headers))
+
+    async def purge_session(self, universe: str, session_id: str, *, headers: HeadersInput | None = None) -> Api.DeploymentSessionPurgeResponse:
+        """Permanently delete a session
+
+        Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected
+        session that has not been soft-deleted. Releases event, checkpoint and blob references;
+        unreferenced blobs follow normal garbage collection. Does not delete external workspaces,
+        environments, backups or Temporal history.
+
+        Args:
+            universe: The universe's UUID or handle.
+        """
+        params: dict[str, Any] = {}
+        params['sessionId'] = session_id
+        params['universe'] = universe
+        return cast(Api.DeploymentSessionPurgeResponse, await self._invoke('deployment/sessions/purge', params, headers))
+
+    async def list_deployment_environment_provider_bindings(self, universe: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentProviderBindingListResponse:
+        """List a universe's deployment provider bindings
+
+        Deployment configuration inventory of one universe's provider bindings.
+
+        Args:
+            universe: The universe's UUID or handle.
+        """
+        params: dict[str, Any] = {}
+        params['universe'] = universe
+        return cast(Api.EnvironmentProviderBindingListResponse, await self._invoke('deployment/environment-provider-bindings/list', params, headers))
+
+    async def create_universe(self, universe_id: str, *, expires_at_ms: int | None | Unset = UNSET, handle: str | None | Unset = UNSET, metadata: dict[str, str] | Unset = UNSET, protected: bool | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentUniverseCreateResponse:
+        """Create a universe
+
+        Creates a universe for an explicit UUID with optional handle, metadata, protection and
+        future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes
+        retain all settings. A claimed handle or deleting/deleted UUID returns conflict.
+
+        Args:
+            expires_at_ms: Future Unix time in milliseconds. Incompatible with protection.
+            handle: The new universe's handle: 1-63 lowercase letters, digits and hyphens, starting
+                and ending with a letter or digit, and not in the form of a UUID. Omit it to have
+                one derived from the UUID. Ignored when the universe already exists.
+            metadata: At most 32 string entries; keys up to 64 bytes, values up to 256 bytes. Caller
+                keys cannot start with lightspeed.
+        """
+        params: dict[str, Any] = {}
+        if expires_at_ms is not UNSET:
+            params['expiresAtMs'] = expires_at_ms
+        if handle is not UNSET:
+            params['handle'] = handle
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        if protected is not UNSET:
+            params['protected'] = protected
+        params['universeId'] = universe_id
+        return cast(Api.DeploymentUniverseCreateResponse, await self._invoke('deployment/universes/create', params, headers))
+
+    async def list_universes(self, *, metadata: dict[str, str] | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentUniverseListResponse:
+        """List universes
+
+        Returns deployment-wide summaries, including metadata, protection, expiry and deleting
+        universes. The metadata filter requires every supplied key/value pair. Aggregate counts and
+        last session activity are approximate.
+
+        Args:
+            metadata: Return universes containing every supplied key/value pair.
+        """
+        params: dict[str, Any] = {}
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        return cast(Api.DeploymentUniverseListResponse, await self._invoke('deployment/universes/list', params, headers))
+
+    async def read_universe(self, universe: str, *, headers: HeadersInput | None = None) -> Api.DeploymentUniverseReadResponse:
+        """Read a universe
+
+        Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate
+        session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A
+        permanently deleted UUID returns gone with its deletion record; an unknown UUID returns
+        notFound.
+
+        Args:
+            universe: The universe's UUID or handle.
+        """
+        params: dict[str, Any] = {}
+        params['universe'] = universe
+        return cast(Api.DeploymentUniverseReadResponse, await self._invoke('deployment/universes/read', params, headers))
+
+    async def put_universe_configuration(self, universe: str, *, display_name: str | None | Unset = UNSET, metadata: dict[str, Any] | None | Unset = UNSET, protected: bool | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentUniverseReadResponse:
+        """Update universe configuration
+
+        Updates supplied displayName, metadata and protected. Omitted fields retain their values;
+        metadata replaces the complete map. Protection refuses deletion and cannot coexist with an
+        expiry. Clearing protection is explicit and never implied by deletion.
+
+        Args:
+            metadata: Replaces the complete metadata map; omission leaves it unchanged.
+            protected: Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+        """
+        params: dict[str, Any] = {}
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        if metadata is not UNSET:
+            params['metadata'] = metadata
+        if protected is not UNSET:
+            params['protected'] = protected
+        params['universe'] = universe
+        return cast(Api.DeploymentUniverseReadResponse, await self._invoke('deployment/universes/configuration/put', params, headers))
+
+    async def put_universe_expiry(self, universe: str, *, expires_at_ms: int | None, headers: HeadersInput | None = None) -> Api.DeploymentUniverseReadResponse:
+        """Set or clear universe expiry
+
+        Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot
+        have an expiry. Expiry starts the normal deletion process, attributed to the runtime;
+        activity does not extend it.
+        """
+        params: dict[str, Any] = {}
+        params['expiresAtMs'] = expires_at_ms
+        params['universe'] = universe
+        return cast(Api.DeploymentUniverseReadResponse, await self._invoke('deployment/universes/expiry/put', params, headers))
+
+    async def put_universe_handle(self, universe: str, *, handle: str, headers: HeadersInput | None = None) -> Api.DeploymentUniverseReadResponse:
+        """Rename a universe
+
+        Changes the deployment-unique handle without changing the universe UUID or resources. The
+        previous handle is released: requests and URLs that use it stop reaching this universe, and
+        another universe may claim it. Claiming another universe's handle returns a conflict. Does
+        not create a universe.
+
+        Args:
+            universe: The universe's UUID or current handle.
+            handle: The new handle: 1-63 lowercase letters, digits and hyphens, starting and ending
+                with a letter or digit, and not in the form of a UUID.
+        """
+        params: dict[str, Any] = {}
+        params['handle'] = handle
+        params['universe'] = universe
+        return cast(Api.DeploymentUniverseReadResponse, await self._invoke('deployment/universes/handle/put', params, headers))
+
+    async def delete_universe(self, universe: str, *, headers: HeadersInput | None = None) -> Api.DeploymentUniverseDeleteResponse:
+        """Request universe deletion
+
+        Refuses protected universes. Immediately fences an unprotected universe and releases its
+        handle. A background worker removes schedules, workflows, environments, objects and rows.
+        Repeated requests return deleting or deleted; unknown IDs return notFound.
+
+        Args:
+            universe: The universe's UUID or handle.
+        """
+        params: dict[str, Any] = {}
+        params['universe'] = universe
+        return cast(Api.DeploymentUniverseDeleteResponse, await self._invoke('deployment/universes/delete', params, headers))
+
+    async def put_environment_provider(self, provider_id: str, *, clear_credential: bool | Unset = UNSET, controller_endpoint: str, credential: str | None | Unset = UNSET, data_route_base: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderPutResponse:
+        """Put an environment provider
+
+        Registers or replaces a deployment provider: controller endpoint, optional data route base,
+        and optional bearer credential for controller and data routes (write-only: kept when
+        omitted, removed by clearCredential, never returned). The controller is probed: a definitive
+        refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+
+        Args:
+            clear_credential: Remove the stored credential. Excludes `credential`.
+            controller_endpoint: `ws://`, `wss://` or `unix://` URL of the provider controller.
+            credential: A new bearer credential; omit to keep the stored one. A provider needs none.
+                Excludes `clearCredential`.
+            data_route_base: `ws://` or `wss://` base of the provider's data routes; omit to derive
+                it from the controller endpoint. Required for a `unix://` controller, and must not
+                be `ws://` for a `wss://` controller.
+        """
+        params: dict[str, Any] = {}
+        if clear_credential is not UNSET:
+            params['clearCredential'] = clear_credential
+        params['controllerEndpoint'] = controller_endpoint
+        if credential is not UNSET:
+            params['credential'] = credential
+        if data_route_base is not UNSET:
+            params['dataRouteBase'] = data_route_base
+        if display_name is not UNSET:
+            params['displayName'] = display_name
+        params['providerId'] = provider_id
+        return cast(Api.DeploymentEnvironmentProviderPutResponse, await self._invoke('deployment/environment-providers/put', params, headers))
+
+    async def list_environment_providers(self, *, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderListResponse:
+        """List environment providers
+
+        Returns every deployment-registered provider with its controller endpoint, data route base,
+        and whether a credential is stored.
+        """
+        params: dict[str, Any] = {}
+        return cast(Api.DeploymentEnvironmentProviderListResponse, await self._invoke('deployment/environment-providers/list', params, headers))
+
+    async def read_environment_provider(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderReadResponse:
+        """Read an environment provider
+
+        Returns one deployment-registered provider with its controller endpoint, data route base,
+        and whether a credential is stored.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        return cast(Api.DeploymentEnvironmentProviderReadResponse, await self._invoke('deployment/environment-providers/read', params, headers))
+
+    async def delete_environment_provider(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderDeleteResponse:
+        """Delete an environment provider
+
+        Deletes a deployment provider only when no universe binding and no non-closed environment
+        references it.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        return cast(Api.DeploymentEnvironmentProviderDeleteResponse, await self._invoke('deployment/environment-providers/delete', params, headers))
+
+    async def put_universe_environment_provider_binding(self, universe: str, provider_id: str, *, enabled: bool, headers: HeadersInput | None = None) -> Api.DeploymentProviderBindingPutResponse:
+        """Put an environment provider binding
+
+        Creates or replaces one universe's binding to a deployment provider. Only an enabled binding
+        admits creates, template listing, and data routes for the universe.
+
+        Args:
+            universe: The universe's UUID or handle.
+            enabled: Admits creates, template listing and data routes for the universe.
+        """
+        params: dict[str, Any] = {}
+        params['enabled'] = enabled
+        params['providerId'] = provider_id
+        params['universe'] = universe
+        return cast(Api.DeploymentProviderBindingPutResponse, await self._invoke('deployment/environment-providers/bindings/put', params, headers))
+
+    async def delete_universe_environment_provider_binding(self, universe: str, provider_id: str, *, headers: HeadersInput | None = None) -> Api.DeploymentProviderBindingDeleteResponse:
+        """Delete an environment provider binding
+
+        Deletes a universe's binding to a provider only when the universe has no non-closed
+        environment of that provider.
+
+        Args:
+            universe: The universe's UUID or handle.
+        """
+        params: dict[str, Any] = {}
+        params['providerId'] = provider_id
+        params['universe'] = universe
+        return cast(Api.DeploymentProviderBindingDeleteResponse, await self._invoke('deployment/environment-providers/bindings/delete', params, headers))
+
+    async def list_deployment_channel_accounts(self, *, include_disabled: bool | Unset = UNSET, provider: Api.ChannelProvider | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentChannelAccountListResponse:
+        """List channel accounts across universes
+
+        The connector host's discovery call: every enabled provider account of the deployment with
+        its universe id and credential grant reference. Re-poll to pick up accounts created or
+        disabled since.
+
+        Args:
+            include_disabled: Include disabled accounts; by default only enabled ones are listed.
+        """
+        params: dict[str, Any] = {}
+        if include_disabled is not UNSET:
+            params['includeDisabled'] = include_disabled
+        if provider is not UNSET:
+            params['provider'] = provider
+        return cast(Api.DeploymentChannelAccountListResponse, await self._invoke('deployment/channels/accounts/list', params, headers))

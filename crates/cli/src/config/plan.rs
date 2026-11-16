@@ -291,7 +291,7 @@ pub(crate) async fn plan_with_owner(
         if base.is_platform() {
             anyhow::ensure!(
                 base.selected_account().is_some(),
-                "Platform creation requires --account ID or account use ID"
+                "Platform creation requires --account ID or platform account use ID"
             );
         } else {
             anyhow::ensure!(
@@ -323,14 +323,22 @@ pub(crate) async fn plan_with_owner(
     if configuration
         .as_object()
         .is_some_and(|fields| !fields.is_empty())
+        && (target.exists() || (!base.is_platform() && configuration.get("displayName").is_some()))
     {
         let current = if target.exists() {
             target
-                .call("deployment/universes/read", json!({"universe": handle}))
+                .call(
+                    "deployment/universes/read",
+                    json!({"universe": target.universe_id}),
+                )
                 .await?["universe"]["configuration"]
                 .clone()
         } else {
-            json!({})
+            // Creation already applies metadata and protection. Only the
+            // direct runtime needs a separate display-name update.
+            let mut created = configuration.clone();
+            created.as_object_mut().unwrap().remove("displayName");
+            created
         };
         let fields: Vec<String> = configuration
             .as_object()
@@ -350,8 +358,14 @@ pub(crate) async fn plan_with_owner(
             },
         );
         if !fields.is_empty() {
+            let changed = fields
+                .iter()
+                .map(|field| (field.clone(), configuration[field].clone()))
+                .collect::<serde_json::Map<_, _>>();
             step.fields = fields;
-            step.work = Some(Work::ConfigureUniverse { configuration });
+            step.work = Some(Work::ConfigureUniverse {
+                configuration: Value::Object(changed),
+            });
         }
         steps.push(step);
     }
@@ -411,6 +425,23 @@ pub(crate) async fn plan_with_owner(
                     });
                     steps.push(step);
                 }
+            }
+        }
+    }
+    if base.is_platform()
+        && !base
+            .principal
+            .as_ref()
+            .is_some_and(|principal| principal.platform_admin)
+    {
+        for step in &mut steps {
+            if step.section == "environmentProviders" && step.action.changes() {
+                step.action = Action::Conflict;
+                step.work = None;
+                step.message = Some(
+                    "changing deployment provider admission requires Platform Admin; have an administrator manage this binding, or omit environmentProviders from this document"
+                        .to_owned(),
+                );
             }
         }
     }
@@ -530,22 +561,22 @@ async fn create_universe(
     } else {
         target.call("deployment/universes/create", params).await?
     };
-    target.universe_id = response["universe"][if platform {
+    let created_id = response["universe"][if platform {
         "lightspeedUniverseId"
     } else {
         "universeId"
     }]
     .as_str()
-    .map(str::to_owned);
+    .context("server did not return the created universe")?;
     anyhow::ensure!(
-        target.universe_id.is_some(),
-        "server did not return the created universe"
+        created_id == universe_id.to_string(),
+        "server returned a different universe UUID than requested"
     );
+    target.select_universe(created_id.to_owned());
     Ok(())
 }
 
-/// A client for the document's universe, addressed by its handle, and the
-/// universe's UUID when it exists.
+/// Resolve the document's handle and pin the client to the universe's UUID.
 pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> Result<Target> {
     let Some(handle) = handle else {
         return Ok(Target {
@@ -562,9 +593,12 @@ pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> 
         .request::<Value, Value>("deployment/universes/read", json!({ "universe": handle }))
         .await;
     let universe_id = match read {
-        Ok(outcome) => outcome["universe"]["universeId"]
-            .as_str()
-            .map(str::to_owned),
+        Ok(outcome) => Some(
+            outcome["universe"]["universeId"]
+                .as_str()
+                .context("server did not return the existing universe UUID")?
+                .to_owned(),
+        ),
         Err(error) if error.kind == api::AgentApiErrorKind::NotFound => None,
         Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => {
             bail!(
@@ -573,11 +607,15 @@ pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> 
         }
         Err(error) => bail!("universe {handle}: {error}"),
     };
-    Ok(Target {
+    let mut target = Target {
         api,
-        universe_id,
+        universe_id: None,
         deployment: false,
-    })
+    };
+    if let Some(universe_id) = universe_id {
+        target.select_universe(universe_id);
+    }
+    Ok(target)
 }
 
 /// The raw entries of each section. Model defaults become one entry per

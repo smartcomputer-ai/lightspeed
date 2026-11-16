@@ -4,18 +4,20 @@ import asyncio
 import base64
 import inspect
 import json
+import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import quote, urlencode
 from types import TracebackType
 from typing import Any, Self, TypedDict, cast
 from uuid import uuid4
 
 import httpx
 
-from ._platform import GeneratedPlatformClient, PLATFORM_OPERATIONS
+from ._platform import PlatformApi, PLATFORM_OPERATIONS
+from ._endpoint import normalize_endpoint
 from ._generated import OPERATION_INFO, GeneratedClient
 from ._http import HTTP_OPERATIONS
 from ._options import UNSET, HeaderProvider, HeadersInput, Unset
@@ -24,15 +26,19 @@ from .types import (
     AgentNotification,
     UniverseWatchParams,
     BlobPutParams,
+    BlobPutResult,
     EventCursor,
     InputItem,
     RunStartConfig,
+    RunStartSource,
+    RunTerminalNotificationInput,
     RunStartParams,
     RunStartResponse,
     RunSteerParams,
     RunSteerResponse,
     RunView,
     SessionEventsReadParams,
+    SessionEventDirection,
     SessionEventsReadResponse,
     SessionEventView,
 )
@@ -88,9 +94,7 @@ def _prepare_request(operation: str, params: dict[str, Any], endpoint: str | htt
         path = path.replace("{" + field["parameter"] + "}", segment(value, field["field"]))
     if "{universe}" in path:
         path = path.replace("{universe}", segment(universe, "universe"))
-    base = str(endpoint).rstrip("/")
-    if urlsplit(base).query or urlsplit(base).fragment:
-        raise ValueError("API endpoint must not contain a query or fragment")
+    base = normalize_endpoint(endpoint)
     query: list[tuple[str, str]] = []
     for parameter in binding["parameters"]:
         if parameter["in"] != "query":
@@ -135,7 +139,7 @@ async def _notify[**P](callback: Callback[P] | None, *args: P.args, **kwargs: P.
             await result
 
 
-class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
+class AsyncLightspeedClient(GeneratedClient):
     """A client for the Lightspeed API.
 
     `call` and named helpers return direct response DTOs. Helpers take
@@ -145,7 +149,7 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
     its connections. An `http_client` you pass in stays yours to close.
 
     Args:
-        endpoint: The API base URL, ending in `/api/v1` for a direct runtime.
+        endpoint: A runtime or Platform origin, deployment base path, or `/api/v1` URL.
         token: Sent as the bearer credential. Omit it only for a gateway in
             single mode.
         universe: The universe a request addresses, as its UUID or its handle.
@@ -168,13 +172,56 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         headers: HeadersInput | HeaderProvider | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._endpoint = endpoint
+        self._endpoint = normalize_endpoint(endpoint)
         self._token = token
         self._universe = universe
         self._actor = actor
         self._headers = headers
         self._http_client = http_client if http_client is not None else httpx.AsyncClient(timeout=60.0)
         self._owns_client = http_client is None
+        self._credential_provider: Callable[[], str | None] | None = None
+        self._response_hook: Callable[[httpx.Request, httpx.Response], Awaitable[None]] | None = None
+        self.account_id: str | None = None
+        self.platform = PlatformApi(self._invoke_platform)
+
+    @classmethod
+    async def from_connection(
+        cls, name: str | None = None, *, config_dir: str | os.PathLike[str] | None = None,
+        universe: str | None = None, account: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> Self:
+        """Import and verify a named or selected CLI connection.
+
+        Uses only that connection's pinned endpoint and credential file. It never
+        starts browser login or reads ambient token/endpoint overrides. Account
+        selection is available as `account_id` for explicit native API parameters.
+        """
+        from ._connection import load_connection
+        imported = load_connection(name, config_dir, universe, account)
+        client = cls(imported.endpoint, universe=imported.universe, http_client=http_client)
+        client._credential_provider = imported.credential
+        client.account_id = imported.account_id
+        initial_response: tuple[httpx.Request, httpx.Response] | None = None
+        async def collect(request: httpx.Request, response: httpx.Response) -> None:
+            nonlocal initial_response
+            initial_response = (request, response)
+        client._response_hook = collect
+        try:
+            discovery = await client._invoke("initialize", {})
+            if not isinstance(discovery, dict):
+                raise ValueError("Invalid deployment discovery response")
+            imported.verify(discovery)
+            if initial_response is not None:
+                await imported.accept_response(*initial_response)
+            client._response_hook = imported.accept_response
+            if client._universe is None and not (imported.server_kind == "platform" and imported.account_id is not None):
+                default = discovery.get("defaultUniverse")
+                if isinstance(default, str) and default:
+                    client._universe = default
+            return client
+        except BaseException:
+            await client.aclose()
+            raise
 
     async def __aenter__(self) -> Self:
         return self
@@ -194,15 +241,20 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
 
         It shares this client's connections, so closing it closes nothing.
         """
-        return AsyncLightspeedClient(
+        client = AsyncLightspeedClient(
             self._endpoint, token=self._token, universe=self._universe, actor=actor,
             headers=self._headers, http_client=self._http_client,
         )
+        client._credential_provider = self._credential_provider
+        client._response_hook = self._response_hook
+        client.account_id = self.account_id
+        return client
 
     async def _request_headers(self, headers: HeadersInput | None = None) -> httpx.Headers:
         request_headers = httpx.Headers({"accept": "application/json"})
-        if self._token is not None:
-            request_headers["authorization"] = f"Bearer {self._token}"
+        token = self._credential_provider() if self._credential_provider is not None else self._token
+        if token is not None:
+            request_headers["authorization"] = f"Bearer {token}"
         if self._actor is not None:
             request_headers["x-lightspeed-actor"] = self._actor
         defaults = self._headers() if callable(self._headers) else self._headers
@@ -235,6 +287,18 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
             return self._http_client.build_request(method, url, headers=request_headers, content=body)
         return self._http_client.build_request(method, url, headers=request_headers, json=data)
 
+    async def _send(self, request: httpx.Request, *, stream: bool = False) -> httpx.Response:
+        response = await self._http_client.send(request, stream=stream, follow_redirects=False)
+        try:
+            if response.is_redirect or response.history or response.url != request.url:
+                raise LightspeedTransportError("Deployment API redirects are not allowed", status=response.status_code)
+            if self._response_hook is not None:
+                await self._response_hook(request, response)
+            return response
+        except BaseException:
+            await response.aclose()
+            raise
+
     @staticmethod
     def _response_json(response: httpx.Response) -> Any:
         try:
@@ -254,13 +318,17 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         self, method: str, params: dict[str, Any], headers: HeadersInput | None = None,
         body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None,
     ) -> Any:
+        if method in PLATFORM_OPERATIONS:
+            if body is not None or content_length is not None:
+                raise ValueError("Native Platform operations require JSON parameters")
+            return await self._invoke_platform(method, params, headers)
         if method not in OPERATION_INFO:
             raise ValueError(f"Unknown Lightspeed operation {method!r}")
         if OPERATION_INFO[method]["streaming"]:
             raise ValueError("Use watch() for universe/watch")
         try:
             request = await self._build_request(method, params, headers, body, content_length)
-            response = await self._http_client.send(request)
+            response = await self._send(request)
         except httpx.RequestError as error:
             raise LightspeedTransportError(f"Lightspeed API request failed: {error}", transient=True) from error
         if response.is_success and HTTP_OPERATIONS[method]["transfer"] == "binaryDownload":
@@ -283,7 +351,7 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         url = str(self._endpoint).rstrip("/") + path.removeprefix("/api/v1")
         try:
             request = self._http_client.build_request(spec["method"], url, headers=await self._request_headers(headers), json=body if body else None)
-            response = await self._http_client.send(request)
+            response = await self._send(request)
         except httpx.RequestError as error:
             raise LightspeedTransportError(f"Platform API request failed: {error}", transient=True) from error
         return self._response_json(response)
@@ -296,7 +364,7 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         response = None
         try:
             request = await self._build_request(operation, params, headers)
-            response = await self._http_client.send(request, stream=True)
+            response = await self._send(request, stream=True)
             if not response.is_success:
                 await response.aread()
                 self._response_json(response)
@@ -307,7 +375,7 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
             if response is not None:
                 await response.aclose()
 
-    async def upload_blob(self, blob_ref: str, body: bytes | AsyncIterator[bytes], *, content_length: int | None = None, headers: HeadersInput | None = None) -> Any:
+    async def upload_blob(self, blob_ref: str, body: bytes | AsyncIterator[bytes], *, content_length: int | None = None, headers: HeadersInput | None = None) -> BlobPutResult:
         """Upload bytes or a stream with a declared length to the expected digest."""
         return await self.call("blobs/upload", {"blobRef": blob_ref}, body=body, content_length=content_length, headers=headers)
 
@@ -326,7 +394,7 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
             try:
                 request = await self._build_request("universe/watch", dict(params or {}), headers)
                 request.extensions["timeout"] = {"connect": 15.0, "read": 45.0, "write": 15.0, "pool": 15.0}
-                response = await self._http_client.send(request, stream=True)
+                response = await self._send(request, stream=True)
                 if not response.is_success:
                     await response.aread()
                     self._response_json(response)
@@ -382,13 +450,14 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
     async def start_run(
         self,
         session_id: str,
-        input: str | list[InputItem],
+        input: str | list[InputItem] | RunStartSource,
         *,
         submission_id: str | None | Unset = UNSET,
         config: RunStartConfig | None | Unset = UNSET,
+        notify_on_terminal: RunTerminalNotificationInput | None | Unset = UNSET,
         headers: HeadersInput | None = None,
     ) -> RunStartResponse:
-        """Start a run from plain text or input items.
+        """Start a run from plain text, input items, or a complete RunStartSource.
 
         A submission ID is generated if you give none, but only one you keep
         lets a retry find the same run after a lost response. Repeat a retry
@@ -396,11 +465,13 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         """
         params: RunStartParams = {
             "sessionId": session_id,
-            "source": {"type": "input", "items": _input_items(input)},
+            "source": input if isinstance(input, dict) else {"type": "input", "items": _input_items(input)},
             "submissionId": generate_submission_id() if isinstance(submission_id, Unset) else submission_id,
         }
         if not isinstance(config, Unset):
             params["config"] = config
+        if not isinstance(notify_on_terminal, Unset):
+            params["notifyOnTerminal"] = notify_on_terminal
         return await self.call("session/runs/start", params, headers=headers)
 
     async def steer_run(
@@ -426,14 +497,18 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         session_id: str,
         *,
         after: EventCursor | None | Unset = UNSET,
+        before: EventCursor | None | Unset = UNSET,
+        direction: SessionEventDirection | Unset = UNSET,
         limit: int | None | Unset = UNSET,
         wait_ms: int | None | Unset = UNSET,
         headers: HeadersInput | None = None,
     ) -> SessionEventsReadResponse:
-        """Read one page of the session's durable events, oldest first.
+        """Read one page of durable session events with forward or backward pagination.
 
         Args:
             after: Read events after this cursor. Without it, from the beginning.
+            before: Exclusive upper cursor for backward reads.
+            direction: Forward from after, or the latest window before before.
             limit: The most events to return.
             wait_ms: Hold the request open this long for an event to arrive.
                 Values above the server's limit are clamped.
@@ -441,6 +516,10 @@ class AsyncLightspeedClient(GeneratedClient, GeneratedPlatformClient):
         params: SessionEventsReadParams = {"sessionId": session_id}
         if not isinstance(after, Unset):
             params["after"] = after
+        if not isinstance(before, Unset):
+            params["before"] = before
+        if not isinstance(direction, Unset):
+            params["direction"] = direction
         if not isinstance(limit, Unset):
             params["limit"] = limit
         if not isinstance(wait_ms, Unset):

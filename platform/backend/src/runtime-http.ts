@@ -1,4 +1,5 @@
 import { listAccountsForPrincipal } from "./account-access.js";
+import type { PlatformConnectionDetails } from "@lightspeed-ai/platform-shared";
 import { Hono, type Context } from "hono";
 import { LightspeedApiError, type ConnectionResponse, type UniverseWatchParams } from "@lightspeed-ai/sdk";
 import { HTTP_CONTRACT_REVISION, HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
@@ -201,7 +202,8 @@ async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string
     const accounts = admitted.map(({ account, role }) => ({ id: account.id, name: account.name, role }));
     const selected = auth.credential.restrictions.universeIds;
     const defaultUniverse = selected?.length === 1 && await universeForRuntimeReference(ctx, c, selected[0]!) ? selected[0] : undefined;
-    return c.json({ ...connection, defaultUniverse, runtime: "platform", caller: { single: false }, platform: { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.application.name }, credential: { kind: auth.credential.kind, id: auth.credential.id }, accounts, restrictions: auth.credential.restrictions } });
+    const platform: PlatformConnectionDetails = { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.application.name, platformAdmin: principal.platformAdmin }, credential: { kind: auth.credential.kind, id: auth.credential.id }, accounts, restrictions: auth.credential.restrictions };
+    return c.json({ ...connection, defaultUniverse, runtime: "platform", caller: { single: false }, platform });
   }
   if (operation === "deployment/universes/create") return problem(c, 400, "invalidRequest", "Create through /api/v1/platform/accounts/{accountId}/universes to select an account and initial Owner");
   if (operation === "deployment/universes/list") {

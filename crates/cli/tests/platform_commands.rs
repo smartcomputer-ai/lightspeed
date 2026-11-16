@@ -21,6 +21,9 @@ struct Platform {
 }
 impl Platform {
     fn start() -> Self {
+        Self::with_platform_admin(false)
+    }
+    fn with_platform_admin(platform_admin: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("fixture bind");
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/api/v1", listener.local_addr().unwrap());
@@ -80,7 +83,7 @@ impl Platform {
                 let (status, response) = match (method.as_str(), path.as_str()) {
                     (_, "/api/v1/connection") => (
                         200,
-                        json!({"runtime":"platform","contractRevision":"1","caller":{"single":false},"serverInfo":{"name":"Platform","version":"test"},"platform":{"principal":{"kind":"user","id":"creator","name":"Creator"},"credential":{"kind":"personalKey","id":"key-id"},"accounts":[],"restrictions":{}}}),
+                        json!({"runtime":"platform","contractRevision":"1","caller":{"single":false},"serverInfo":{"name":"Platform","version":"test"},"platform":{"principal":{"kind":"user","id":"creator","name":"Creator","platformAdmin":platform_admin},"credential":{"kind":"personalKey","id":"key-id"},"accounts":[],"restrictions":{}}}),
                     ),
                     ("GET", "/api/v1/platform/accounts/account-a") => {
                         (200, json!({"account":{"id":"account-a"}}))
@@ -99,6 +102,28 @@ impl Platform {
                     ("GET", "/api/v1/universes/new-work") => (
                         404,
                         json!({"type":"about:blank","title":"Not found","detail":"not found","status":404,"kind":"notFound"}),
+                    ),
+                    (
+                        "GET",
+                        "/api/v1/universes/existing-work"
+                        | "/api/v1/universes/00000000-0000-0000-0000-000000000002",
+                    ) => (
+                        200,
+                        json!({"universe":{"universeId":"00000000-0000-0000-0000-000000000002","handle":"existing-work","configuration":{"protected":true}}}),
+                    ),
+                    (
+                        "GET",
+                        "/api/v1/universes/00000000-0000-0000-0000-000000000002/environment-provider-bindings",
+                    ) => (
+                        200,
+                        json!({"bindings":[{"providerId":"incus","enabled":true}]}),
+                    ),
+                    (
+                        "PUT",
+                        "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus",
+                    ) => (
+                        200,
+                        json!({"binding":{"providerId":"incus","enabled":body["enabled"]}}),
                     ),
                     ("POST", "/api/v1/platform/credentials") => (
                         200,
@@ -307,4 +332,120 @@ fn configuration_retry_keeps_an_explicit_provisioning_uuid() {
             .iter()
             .all(|(_, _, body)| body["universeId"] == id)
     );
+}
+
+#[test]
+fn configuration_binding_changes_fail_before_any_document_is_written() {
+    let platform = Platform::start();
+    for (file, document) in [
+        (
+            "first.json",
+            json!({"schemaVersion":1,"kind":"universe","handle":"new-work"}),
+        ),
+        (
+            "second.json",
+            json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","environmentProviders":[{"providerId":"incus","enabled":false}]}),
+        ),
+    ] {
+        std::fs::write(platform.directory.path().join(file), document.to_string()).unwrap();
+    }
+    let result = platform.run(&[
+        "--account",
+        "account-a",
+        "config",
+        "apply",
+        "-f",
+        "first.json",
+        "second.json",
+    ]);
+    assert!(!result.status.success());
+    let report = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        report.contains("changing deployment provider admission requires Platform Admin"),
+        "{report}"
+    );
+    assert!(
+        platform
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(method, _, _)| method == "GET")
+    );
+}
+
+#[test]
+fn configuration_creation_with_bindings_is_refused_before_provisioning() {
+    let platform = Platform::start();
+    std::fs::write(
+        platform.directory.path().join("universe.json"),
+        json!({"schemaVersion":1,"kind":"universe","handle":"new-work","environmentProviders":[{"providerId":"incus","enabled":true}]}).to_string(),
+    ).unwrap();
+    let result = platform.run(&[
+        "--account",
+        "account-a",
+        "config",
+        "apply",
+        "-f",
+        "universe.json",
+    ]);
+    assert!(!result.status.success());
+    assert!(
+        platform
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(method, _, _)| method == "GET")
+    );
+}
+
+#[test]
+fn unchanged_or_unmanaged_bindings_do_not_require_platform_admin() {
+    for bindings in [
+        None,
+        Some(json!([])),
+        Some(json!([{"providerId":"incus","enabled":true}])),
+    ] {
+        let platform = Platform::start();
+        let mut document = json!({"schemaVersion":1,"kind":"universe","handle":"existing-work"});
+        if let Some(bindings) = bindings {
+            document["environmentProviders"] = bindings;
+        }
+        std::fs::write(
+            platform.directory.path().join("universe.json"),
+            document.to_string(),
+        )
+        .unwrap();
+        platform.success(&["config", "apply", "-f", "universe.json"]);
+        assert!(
+            platform
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(method, _, _)| method == "GET")
+        );
+    }
+}
+
+#[test]
+fn platform_admin_can_reconcile_binding_on_the_resolved_universe_uuid() {
+    let platform = Platform::with_platform_admin(true);
+    std::fs::write(
+        platform.directory.path().join("universe.json"),
+        json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","environmentProviders":[{"providerId":"incus","enabled":false}]}).to_string(),
+    ).unwrap();
+    platform.success(&["config", "apply", "-f", "universe.json"]);
+    let requests = platform.requests.lock().unwrap();
+    let writes: Vec<_> = requests
+        .iter()
+        .filter(|(method, _, _)| method != "GET")
+        .collect();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(
+        writes[0].1,
+        "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus"
+    );
+    assert_eq!(writes[0].2, json!({"enabled":false}));
 }

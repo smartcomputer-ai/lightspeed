@@ -3,7 +3,8 @@ import { copyFile, rm, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileFromFile } from "json-schema-to-typescript";
-import { HELPERS } from "./helpers.mjs";
+import { HELPERS, MANUAL_HELPERS, ALL_HELPERS, validateHelpers } from "./helpers.mjs";
+import ts from "typescript";
 import { httpDescriptors } from "./http-contract.mjs";
 
 const packageDir = path.dirname(fileURLToPath(import.meta.url));
@@ -113,6 +114,17 @@ await copyFile(httpContractPath, path.join(clientDir, "schema", "http.json"));
 await copyFile(path.join(contractDir, "openapi.json"), path.join(clientDir, "schema", "openapi.json"));
 const methods = httpContract.operations.map((entry) => ({ ...entry, method: entry.operationId, streaming: entry.transfer === "sse", notifications: Object.keys(entry.events?.events ?? {}) }));
 const notifications = [...new Set(methods.flatMap((entry) => entry.notifications))];
+validateHelpers(httpContract.operations);
+const clientSource = ts.createSourceFile("client.ts", await readFile(path.join(clientDir, "src/client.ts"), "utf8"), ts.ScriptTarget.Latest, true);
+const clientClass = clientSource.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "LightspeedClient");
+if (!clientClass) throw new Error("Missing LightspeedClient implementation");
+const implemented = new Set(clientClass.members.filter(ts.isMethodDeclaration).map(method => method.name.getText(clientSource)));
+for (const [, helper] of MANUAL_HELPERS) {
+  if (!implemented.has(helper)) throw new Error(`Missing handwritten helper implementation ${helper}`);
+}
+for (const [, helper] of HELPERS) {
+  if (implemented.has(helper) && helper !== "initialize") throw new Error(`Generated helper ${helper} collides with a handwritten method`);
+}
 
 for (const entry of methods) {
   if (!entry.access || typeof entry.access.kind !== "string") {
@@ -235,7 +247,7 @@ function helperLines(method, helper, targets) {
       throw new Error(`helper ${helper} takes ${target}, which is not a required ${method} param`);
     }
   }
-  for (const reserved of ["signal", "headers"]) {
+  for (const reserved of ["signal", "headers", "body", "contentLength"]) {
     if (properties.includes(reserved)) {
       throw new Error(`helper ${helper}: ${method} has a param named ${reserved}, which means call options here`);
     }
@@ -246,7 +258,7 @@ function helperLines(method, helper, targets) {
     : `Api.${paramsType} & CallOptions`;
   const optionsRequired = required.some((name) => !targets.includes(name));
   const args = [
-    ...targets.map((target) => `${target}: string`),
+    ...targets.map((target) => `${target}: Api.${paramsType}[${q(target)}]`),
     `options: ${optionsType}${optionsRequired ? "" : " = {}"}`,
   ];
   return [
@@ -274,9 +286,9 @@ await writeFile(
     'import type { OperationId, OperationParams, OperationResult } from "./operations.js";',
     'import type * as Api from "./types.js";',
     "",
-    "/** Helper name to the API method it calls. See scripts/helpers.mjs for which methods have one. */",
+    "/** Canonical named helpers covering every runtime operation, including handwritten transports. */",
     "export const CLIENT_HELPERS = {",
-    ...HELPERS.map(([method, helper]) => `  ${helper}: ${q(method)},`),
+    ...ALL_HELPERS.map(([method, helper]) => `  ${helper}: ${q(method)},`),
     "} as const;",
     "",
     "export abstract class LightspeedHelpers {",
@@ -291,7 +303,7 @@ await writeFile(
     "    target: object,",
     "    options: CallOptions,",
     "  ): Promise<OperationResult<M>> {",
-    "    const { signal, headers, ...params } = options;",
+    "    const { signal, headers, body, contentLength, ...params } = options;",
     "    const call: CallOptions = {};",
     "    if (signal) {",
     "      call.signal = signal;",
