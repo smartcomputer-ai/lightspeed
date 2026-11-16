@@ -7,13 +7,15 @@ builds the PowerPoint deck from the narrative and the charts, and writes
 src/demo/fixtures/software-factory-presentation*.ts. All of it is synthetic.
 
     pip install -r requirements.txt
+
+The narrative's PDF is exported by Word, so building needs Windows with Word.
     python software_factory.py
 """
 import os
 from datetime import datetime
 
 from presentation_kit import (
-    H, INK, MUTED, GRID, PAD_B, PAD_L, PAD_R, PAD_T, W, Deck, axis, canvas, finish, font, legend, narrative, write_fixtures,
+    H, INK, MUTED, GRID, PAD_B, PAD_L, PAD_R, PAD_T, W, Deck, axis, canvas, docx_to_pdf, finish, font, legend, narrative, write_fixtures,
 )
 
 FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "software-factory")
@@ -31,6 +33,7 @@ SOURCES = [
     "Source Notes/05 Next Quarter.md",
 ]
 NARRATIVE = "Q3 Engineering Review - Narrative.docx"
+NARRATIVE_PDF = "Q3 Engineering Review - Narrative.pdf"
 DECK = "Q3 Engineering Review.pptx"
 LEAD_TIME = "Images/Lead Time per Feature.png"
 PRS = "Images/Pull Requests by Origin.png"
@@ -264,5 +267,5 @@ scheduler flake (#487), and v2.14.1. All of it is synthetic.
 """,
     FOLDER,
     ["README.md", *SOURCES],
-    {NARRATIVE: DOCX, DECK: deck.save(), **IMAGES},
+    {NARRATIVE: DOCX, NARRATIVE_PDF: docx_to_pdf(DOCX), DECK: deck.save(), **IMAGES},
 )

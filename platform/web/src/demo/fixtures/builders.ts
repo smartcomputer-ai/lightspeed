@@ -383,6 +383,7 @@ const MEDIA_TYPES: Record<string, string> = {
   json: "application/json",
   ts: "text/typescript",
   png: "image/png",
+  pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };

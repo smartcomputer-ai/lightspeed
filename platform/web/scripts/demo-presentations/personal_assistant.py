@@ -7,13 +7,15 @@ builds the PowerPoint deck from the narrative and the charts, and writes
 src/demo/fixtures/personal-assistant-presentation*.ts. All of it is synthetic.
 
     pip install -r requirements.txt
+
+The narrative's PDF is exported by Word, so building needs Windows with Word.
     python personal_assistant.py
 """
 import os
 from datetime import datetime
 
 from presentation_kit import (
-    H, INK, MUTED, PAD_B, PAD_L, PAD_R, PAD_T, W, Deck, axis, canvas, finish, font, narrative, write_fixtures,
+    H, INK, MUTED, PAD_B, PAD_L, PAD_R, PAD_T, W, Deck, axis, canvas, docx_to_pdf, finish, font, narrative, write_fixtures,
 )
 
 FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "personal-assistant")
@@ -34,6 +36,7 @@ SOURCES = [
     "Source Notes/05 Team and Raise.md",
 ]
 NARRATIVE = "Lumen Series A - Narrative.docx"
+NARRATIVE_PDF = "Lumen Series A - Narrative.pdf"
 DECK = "Lumen Series A - Northlight IC.pptx"
 MRR = "Images/MRR Growth.png"
 COHORTS = "Images/Cohort Retention.png"
@@ -268,5 +271,5 @@ and the Q3 board draft. All of it is synthetic.
 """,
     FOLDER,
     ["README.md", *SOURCES],
-    {NARRATIVE: DOCX, DECK: deck.save(), **IMAGES},
+    {NARRATIVE: DOCX, NARRATIVE_PDF: docx_to_pdf(DOCX), DECK: deck.save(), **IMAGES},
 )

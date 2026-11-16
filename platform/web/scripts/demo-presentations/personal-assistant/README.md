@@ -3,7 +3,7 @@
 Decks Ada presents, each with the material it is built from. A deck is made in three steps, and only the last one is the presentation:
 
 1. **Source notes** (`Source Notes/`) — one Markdown note per section of the story. This is where the content is written and corrected. Every number names where it came from: the Monday metrics digest, `/memory/research/competitor-pricing.md`, the finance memo.
-2. **Narrative** (`Lumen Series A - Narrative.docx`) — the Word document assembled from the source notes, in order. It is the written version of the story (it went to Northlight with the data room) and the script the deck follows. It is source material for the deck, not the presentation.
+2. **Narrative** (`Lumen Series A - Narrative.docx`, and `Lumen Series A - Narrative.pdf`, the same document as a PDF for reading and sending) — the Word document assembled from the source notes, in order. It is the written version of the story (it went to Northlight with the data room) and the script the deck follows. It is source material for the deck, not the presentation.
 3. **Deck** (`Lumen Series A - Northlight IC.pptx`) — the PowerPoint presentation. One slide per narrative section, built from the Word document; its charts are the images in `Images/`. Each slide's speaker notes name the narrative section and the source note it came from.
 
 A change goes the same way every time: correct the source note, rebuild the narrative, then update the slide. Never edit a number on a slide alone.
@@ -18,6 +18,7 @@ A change goes the same way every time: correct the source note, rebuild the narr
 | `Source Notes/04 Product.md` | The platform and Lumen Approvals | product analytics, August |
 | `Source Notes/05 Team and Raise.md` | Team, the raise, use of funds, milestones | finance memo Aug 20; hiring plan |
 | `Lumen Series A - Narrative.docx` | **Source material:** the narrative, §1–§5 | the five source notes |
+| `Lumen Series A - Narrative.pdf` | The narrative as a PDF, exported from the Word document | `Lumen Series A - Narrative.docx` |
 | `Lumen Series A - Northlight IC.pptx` | **The presentation:** 8 slides for the IC | the narrative and `Images/` |
 | `Images/MRR Growth.png` | Slide 3 — MRR, last 12 months | `Source Notes/02 Traction.md` |
 | `Images/Cohort Retention.png` | Slide 4 — net revenue retention by 2025 cohort | `Source Notes/02 Traction.md` |

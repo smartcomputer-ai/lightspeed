@@ -10,6 +10,8 @@ import base64
 import io
 import os
 import re
+import subprocess
+import tempfile
 
 from PIL import Image, ImageDraw, ImageFont
 import docx
@@ -171,6 +173,28 @@ def narrative(folder, sources, *, title, subtitle, note, brand, table_style, pro
     out = io.BytesIO()
     document.save(out)
     return out.getvalue()
+
+def docx_to_pdf(data):
+    """The Word document as a PDF, exported by Word itself (through COM, so
+    Windows with Word installed), so the PDF is the document as Word lays it
+    out."""
+    with tempfile.TemporaryDirectory() as folder:
+        source = os.path.join(folder, "narrative.docx")
+        target = os.path.join(folder, "narrative.pdf")
+        with open(source, "wb") as f:
+            f.write(data)
+        # 17: wdExportFormatPDF. Opened read-only, closed without saving.
+        script = (
+            "$word = New-Object -ComObject Word.Application; $word.Visible = $false; "
+            f"try {{ $document = $word.Documents.Open('{source}', $false, $true); "
+            f"$document.ExportAsFixedFormat('{target}', 17); $document.Close($false) }} "
+            "finally { $word.Quit() }"
+        )
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True)
+        if result.returncode != 0 or not os.path.exists(target):
+            raise RuntimeError(f"Word could not export the narrative as a PDF (it needs Windows with Word):\n{result.stderr}")
+        with open(target, "rb") as f:
+            return f.read()
 
 # ---------------------------------------------------------------------------
 # Deck (PowerPoint)

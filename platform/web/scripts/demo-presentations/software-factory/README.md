@@ -3,7 +3,7 @@
 Decks the team presents, each with the material it is built from. A deck is made in three steps, and only the last one is the presentation:
 
 1. **Source notes** (`Source Notes/`) — one Markdown note per section of the talk. This is where the content is written and corrected. Every number names where it came from: GitHub Actions, Linear, the `specs` workspace, the CHANGELOG in `acme-web`.
-2. **Narrative** (`Q3 Engineering Review - Narrative.docx`) — the Word document assembled from the source notes, in order. It is the written version of the talk (it goes out to the team as the pre-read) and the script the deck follows. It is source material for the deck, not the presentation.
+2. **Narrative** (`Q3 Engineering Review - Narrative.docx`, and `Q3 Engineering Review - Narrative.pdf`, the same document as a PDF for reading and sending) — the Word document assembled from the source notes, in order. It is the written version of the talk (it goes out to the team as the pre-read) and the script the deck follows. It is source material for the deck, not the presentation.
 3. **Deck** (`Q3 Engineering Review.pptx`) — the PowerPoint presentation. One or two slides per narrative section, built from the Word document; its charts are the images in `Images/`. Each slide's speaker notes name the narrative section and the source note it came from.
 
 A change goes the same way every time: correct the source note, rebuild the narrative, then update the slide. Never edit a number on a slide alone.
@@ -20,6 +20,7 @@ Presented by Priya Natarajan at the engineering all-hands.
 | `Source Notes/04 CI and Releases.md` | The slow CI week, the scheduler flake, v2.14.1 | GitHub Actions; `acme-web/CHANGELOG.md` |
 | `Source Notes/05 Next Quarter.md` | What changes next, and the asks | the team's retro |
 | `Q3 Engineering Review - Narrative.docx` | **Source material:** the narrative, §1–§5 | the five source notes |
+| `Q3 Engineering Review - Narrative.pdf` | The narrative as a PDF, exported from the Word document | `Q3 Engineering Review - Narrative.docx` |
 | `Q3 Engineering Review.pptx` | **The presentation:** 8 slides for the all-hands | the narrative and `Images/` |
 | `Images/Lead Time per Feature.png` | Slide 4 — lead time per feature, by hand and through the pipeline | `Source Notes/03 Delivery.md` |
 | `Images/Pull Requests by Origin.png` | Slide 5 — merged pull requests a week, by who opened them | `Source Notes/03 Delivery.md` |
