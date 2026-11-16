@@ -9,11 +9,11 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 const admin = { id: "admin-login", email: "admin@lightspeed.dev" };
 const env = {
   devSeed: true, adminEmail: "admin@lightspeed.dev", adminPassword: "shared-custom-password",
-  lightspeedApiUrl: "http://localhost/rpc", lightspeedApiKey: "lsk_fixture",
+  lightspeedApiUrl: "http://localhost/rpc", lightspeedRpcToken: "lsk_fixture",
 } as ServerEnv;
 
 /// A database answering each read, in order, with the next of `reads`, and a
-/// core that accepts universe creation with the deployment key alone.
+/// core that accepts universe creation with the runtime token alone.
 function setup(reads: unknown[][], runtimeHandle = "test") {
   const creations: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {

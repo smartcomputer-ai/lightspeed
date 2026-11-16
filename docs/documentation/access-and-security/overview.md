@@ -2,8 +2,8 @@
 
 Lightspeed gives a team a universe in which to run agents and keep their work.
 The Platform decides which people belong to that universe and what they may
-do. The runtime authenticates API keys, keeps each request inside its universe,
-and records who asked for the work. Those responsibilities meet at the API
+do. The runtime authenticates trusted components with configured tokens, partitions
+data by the requested universe, and records who asked for the work. Those responsibilities meet at the API
 boundary, so the runtime can also serve applications that supply their own
 sign-in and access rules.
 
@@ -22,7 +22,7 @@ Each part answers a different question:
 | Universe | Which team's resources a request addresses. The Platform maps one organization to one runtime universe. |
 | Account and membership | Who signed in, and their role in each universe. These records live in the Platform. |
 | Role | Which operations a person may request: Viewer, Contributor, Operator, or Admin. |
-| API key | Which universe or deployment a client can address and which groups of runtime methods it may call. |
+| Runtime token | Full deployment authority for a trusted component or operator. |
 | Actor | Who a trusted client says requested an operation. The Platform supplies the signed-in user's ID. |
 | Session visibility | Whether a session is private to its creator and admins, or shared with the universe through the Platform. |
 
@@ -36,26 +36,15 @@ use and whether they may act on a particular session.
 When the investigator starts a run, the browser sends the request to the
 Platform. The Platform reads their universe membership, checks that their role
 allows starting runs, and checks that they can access the session. It then
-calls the runtime with its service key, the universe UUID, and the person's
+calls the runtime with its configured token, the universe UUID, and the person's
 actor ID.
 
-The two entry paths matter when deciding who should receive a runtime key:
-
-```mermaid
-flowchart TD
-  Person[Signed-in person] --> Platform[Platform: membership, role, session access]
-  Platform -->|Service key, universe, actor| Core[Runtime API: key scope and method groups]
-  Client[CLI or integration] -->|Own API key| Core
-  Core --> Work[Universe-scoped work and requester attribution]
-```
-
-The runtime checks the key and its method groups before executing the request.
-A direct API client reaches this boundary without passing through the
-Platform's role and session checks. A key with the `session` group can therefore
-read private sessions in its universe. Use the Platform for people whose
-access must follow their membership and role; treat direct runtime keys as
-integration credentials. [API keys and service access](api-keys-and-service-access.md)
-explains their scope and lifecycle.
+Runtime tokens are infrastructure credentials. Every token can select any
+universe, call every method, and name any actor. The Platform alone applies
+caller permissions. A standalone runtime must have a trusted gateway or run
+on a trusted network. Direct access can read private sessions too.
+[Runtime tokens and service access](api-keys-and-service-access.md) describes
+configuration and rotation.
 
 ## People requesting work and agents carrying it out
 
@@ -67,22 +56,21 @@ an investigation they already started or a bot they created.
 
 Internal bot and delegation controllers have a separate, narrow set of rules
 for the sessions they manage. External tools use their configured credentials.
-For example, Configurator MCP acts with its runtime API key, even when an agent
-calls it. [Agent and tool access](agent-and-tool-access.md) follows both paths
+Configurator setup is disabled until a suitably narrowed Platform credential
+can be handed to an agent. [Agent and tool access](agent-and-tool-access.md) follows both paths
 and explains what each check protects.
 
 ## What is recorded today
 
 Session and bot records identify their creator. Session events identify who
 requested a run, steering, or cancellation, and who decided a tool approval.
-An attribution can name an asserted actor, an API key, a local caller, or the
-runtime controller responsible for internal work. An API key is named by its
-key id and by whether it is a deployment key or a key of that universe, so
-the record still names the same key after its secret is rotated.
+An attribution can name an asserted actor, the configured token name, a local
+caller, or the runtime controller responsible for internal work. Changing a
+token secret under the same name does not change its attribution.
 
 The Platform also keeps a durable access history for company admission and
 admin-status changes, emergency sign-ins, suspension, session revocation,
-local membership edits, key creation/revocation, and successful permanent session
+local membership edits and successful permanent session
 deletion through Platform routes. Platform admins can view the latest 100 records
 under **Platform admin → Audit log**. Records contain identifiers, action, time,
 outcome and safe details; permanent deletion includes the actor, universe, target
@@ -92,7 +80,7 @@ sessions. Provider tokens and passwords are never included.
 For sessions, only permanent deletion is audited: creation, sharing, closing,
 force-closing, retention changes and soft deletion are not. Automatic retention
 work appears in runtime operational logs, not this audit log. Core operations
-made directly with an API key do not pass through this trail. Comprehensive
+made directly with a runtime token do not pass through this trail. Comprehensive
 gateway-operation auditing, audit retention controls and export are deferred.
 Core session attribution remains subject to session retention and deletion.
 Company OIDC sign-in is
@@ -106,7 +94,7 @@ supported; directory synchronization, SCIM and member invitations are deferred.
   emergency access, and session renewal and revocation.
 - [Private and shared work](private-and-shared-work.md): investigate privately,
   share a session, and understand access to bots and delegated work.
-- [API keys and service access](api-keys-and-service-access.md): configure
+- [Runtime tokens and service access](api-keys-and-service-access.md): configure
   gateway authentication and connect clients and services.
 - [Agent and tool access](agent-and-tool-access.md): understand tools,
   controller authority, credentials, approvals, and stopping work.

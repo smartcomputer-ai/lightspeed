@@ -33,7 +33,7 @@ let absentKind: "gone" | "notFound";
 const first = "11111111-1111-4111-8111-111111111111";
 const second = "22222222-2222-4222-8222-222222222222";
 beforeAll(async () => {
-  fixture = await identityFixture({ ...identityEnv, lightspeedApiUrl: "https://runtime.example/rpc", lightspeedApiKey: "lsk_fixture" });
+  fixture = await identityFixture({ ...identityEnv, lightspeedApiUrl: "https://runtime.example/rpc", lightspeedRpcToken: "lsk_fixture" });
   context = { ...fixture, pool: {} as never };
 }, 30000);
 afterAll(async () => { await fixture?.postgres.close(); vi.unstubAllGlobals(); });

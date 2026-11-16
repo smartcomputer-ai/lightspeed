@@ -2011,13 +2011,7 @@ fn promise_source_to_api(source: &harness::PromiseSource) -> api::PromiseSourceK
 fn attribution(value: Option<&harness::Attribution>) -> Option<api::Attribution> {
     Some(match value?.clone() {
         harness::Attribution::Actor { id } => api::Attribution::Actor { id },
-        harness::Attribution::Key { key_id, scope_kind } => api::Attribution::Key {
-            key_id,
-            scope_kind: match scope_kind {
-                harness::AttributedKeyScope::Deployment => api::AccessScopeKind::Deployment,
-                harness::AttributedKeyScope::Universe => api::AccessScopeKind::Universe,
-            },
-        },
+        harness::Attribution::Token { name } => api::Attribution::Token { name },
         harness::Attribution::Local => api::Attribution::Local,
         harness::Attribution::Internal { component, cause } => {
             api::Attribution::Internal { component, cause }
@@ -3583,23 +3577,19 @@ mod tests {
                 },
             ),
             (
-                harness::Attribution::Key {
-                    key_id: "ci-bot".into(),
-                    scope_kind: harness::AttributedKeyScope::Universe,
+                harness::Attribution::Token {
+                    name: "ci-bot".into(),
                 },
-                api::Attribution::Key {
-                    key_id: "ci-bot".into(),
-                    scope_kind: api::AccessScopeKind::Universe,
+                api::Attribution::Token {
+                    name: "ci-bot".into(),
                 },
             ),
             (
-                harness::Attribution::Key {
-                    key_id: "platform".into(),
-                    scope_kind: harness::AttributedKeyScope::Deployment,
+                harness::Attribution::Token {
+                    name: "platform".into(),
                 },
-                api::Attribution::Key {
-                    key_id: "platform".into(),
-                    scope_kind: api::AccessScopeKind::Deployment,
+                api::Attribution::Token {
+                    name: "platform".into(),
                 },
             ),
             (harness::Attribution::Local, api::Attribution::Local),

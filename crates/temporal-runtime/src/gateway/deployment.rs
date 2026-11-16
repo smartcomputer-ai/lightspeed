@@ -6,19 +6,17 @@ use std::sync::Arc;
 use api::AccessScope;
 
 use api::{
-    AgentApiError, AgentApiOutcome, DeploymentApiKeyCreateParams, DeploymentApiKeyCreateResponse,
-    DeploymentApiKeyListParams, DeploymentApiKeyListResponse, DeploymentApiKeyRevokeParams,
-    DeploymentApiKeyRevokeResponse, DeploymentApiKeyRotateParams, DeploymentApiKeyView,
-    DeploymentApiService, DeploymentEnvironmentProviderDeleteParams,
-    DeploymentEnvironmentProviderDeleteResponse, DeploymentEnvironmentProviderListParams,
-    DeploymentEnvironmentProviderListResponse, DeploymentEnvironmentProviderPutParams,
-    DeploymentEnvironmentProviderPutResponse, DeploymentEnvironmentProviderReadParams,
-    DeploymentEnvironmentProviderReadResponse, DeploymentProviderBindingDeleteParams,
-    DeploymentProviderBindingDeleteResponse, DeploymentProviderBindingPutParams,
-    DeploymentProviderBindingPutResponse, DeploymentUniverseCreateParams,
-    DeploymentUniverseCreateResponse, DeploymentUniverseDeleteParams,
-    DeploymentUniverseDeleteResponse, DeploymentUniverseListParams, DeploymentUniverseListResponse,
-    DeploymentUniverseReadParams, DeploymentUniverseReadResponse, DeploymentUniverseView,
+    AgentApiError, AgentApiOutcome, DeploymentApiService,
+    DeploymentEnvironmentProviderDeleteParams, DeploymentEnvironmentProviderDeleteResponse,
+    DeploymentEnvironmentProviderListParams, DeploymentEnvironmentProviderListResponse,
+    DeploymentEnvironmentProviderPutParams, DeploymentEnvironmentProviderPutResponse,
+    DeploymentEnvironmentProviderReadParams, DeploymentEnvironmentProviderReadResponse,
+    DeploymentProviderBindingDeleteParams, DeploymentProviderBindingDeleteResponse,
+    DeploymentProviderBindingPutParams, DeploymentProviderBindingPutResponse,
+    DeploymentUniverseCreateParams, DeploymentUniverseCreateResponse,
+    DeploymentUniverseDeleteParams, DeploymentUniverseDeleteResponse, DeploymentUniverseListParams,
+    DeploymentUniverseListResponse, DeploymentUniverseReadParams, DeploymentUniverseReadResponse,
+    DeploymentUniverseView,
 };
 use async_trait::async_trait;
 use auth::SecretValue;
@@ -52,8 +50,7 @@ impl GatewayDeploymentApi {
         self.runtime.stores().pool()
     }
 
-    /// Deployment handlers run for a deployment request whose key holds the
-    /// method's group; a direct caller must install such a context.
+    /// Deployment handlers require an explicit deployment request target.
     async fn admitted<T>(
         &self,
         method: &str,
@@ -80,49 +77,6 @@ impl GatewayDeploymentApi {
             .await
             .map_err(map_store_error)?
             .ok_or_else(|| AgentApiError::not_found(format!("unknown universe: {reference}")))
-    }
-
-    /// What a created or declared key is called and may do, once its name is
-    /// present and its universe is known to exist. The caller always states
-    /// the groups; `all` is resolved when the key is built.
-    async fn api_key_spec(
-        &self,
-        scope: AccessScope,
-        key_id: Option<String>,
-        groups: api::ApiKeyGroups,
-        assert_actor: bool,
-        display_name: &str,
-    ) -> Result<auth::ApiKeySpec, AgentApiError> {
-        let display_name = display_name.trim();
-        if display_name.is_empty() {
-            return Err(AgentApiError::invalid_request(
-                "api key displayName must not be empty",
-            ));
-        }
-        if let AccessScope::Universe { universe_id } = scope {
-            self.require_universe(universe_id).await?;
-        }
-        Ok(auth::ApiKeySpec {
-            key_id,
-            scope,
-            groups,
-            assert_actor,
-            created_by: super::request_context::request_context()?.attribution(),
-            display_name: Some(display_name.to_owned()),
-        })
-    }
-
-    async fn require_universe(&self, universe_id: Uuid) -> Result<(), AgentApiError> {
-        if store_pg::universe_exists(self.pool(), universe_id)
-            .await
-            .map_err(map_store_error)?
-        {
-            Ok(())
-        } else {
-            Err(AgentApiError::not_found(format!(
-                "unknown universe: {universe_id}"
-            )))
-        }
     }
 }
 
@@ -617,127 +571,6 @@ impl DeploymentApiService for GatewayDeploymentApi {
         })
         .await
     }
-
-    async fn create_api_key(
-        &self,
-        params: DeploymentApiKeyCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_CREATE, async {
-            let spec = self
-                .api_key_spec(
-                    params.scope,
-                    params.key_id,
-                    params.groups,
-                    params.assert_actor,
-                    &params.display_name,
-                )
-                .await?;
-            let store = store_pg::PgApiKeyStore::new(self.pool().clone());
-            for _ in 0..3 {
-                let minted = auth::mint_api_key(spec.clone(), current_time_ms()?)
-                    .map_err(map_api_key_error)?;
-                match store.create_api_key(&minted.key_hash, &minted.record).await {
-                    Ok(()) => {
-                        return Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-                            api_key: api_key_view(minted.record),
-                            secret: minted.secret.expose().to_owned(),
-                        }));
-                    }
-                    // A display-prefix collision is rare and entirely
-                    // server-generated, so retry instead of burdening callers.
-                    Err(auth::ApiKeyError::AlreadyExists { .. }) => continue,
-                    Err(error) => return Err(map_api_key_error(error)),
-                }
-            }
-            Err(AgentApiError::internal(
-                "could not allocate a unique api key prefix",
-            ))
-        })
-        .await
-    }
-
-    async fn put_api_key(
-        &self,
-        params: api::DeploymentApiKeyPutParams,
-    ) -> Result<AgentApiOutcome<api::DeploymentApiKeyPutResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_PUT, async {
-            let spec = self
-                .api_key_spec(
-                    params.scope,
-                    Some(params.key_id),
-                    params.groups,
-                    params.assert_actor,
-                    &params.display_name,
-                )
-                .await?;
-            let key = auth::import_api_key(spec, current_time_ms()?, &params.secret)
-                .map_err(map_api_key_error)?;
-            let put = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .put_api_key(&key)
-                .await
-                .map_err(map_api_key_error)?;
-            Ok(AgentApiOutcome::new(api::DeploymentApiKeyPutResponse {
-                api_key: api_key_view(put.record),
-                created: put.created,
-                secret_replaced: put.secret_replaced,
-            }))
-        })
-        .await
-    }
-
-    async fn list_api_keys(
-        &self,
-        params: DeploymentApiKeyListParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_LIST, async {
-            let api_keys = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .list_api_keys(params.scope)
-                .await
-                .map_err(map_api_key_error)?
-                .into_iter()
-                .map(api_key_view)
-                .collect();
-            Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
-                api_keys,
-            }))
-        })
-        .await
-    }
-
-    async fn rotate_api_key(
-        &self,
-        params: DeploymentApiKeyRotateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_ROTATE, async {
-            let rotated = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .rotate_api_key(params.scope, params.key_id.trim())
-                .await
-                .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key"))?;
-            Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-                api_key: api_key_view(rotated.record),
-                secret: rotated.secret.expose().to_owned(),
-            }))
-        })
-        .await
-    }
-
-    async fn revoke_api_key(
-        &self,
-        params: DeploymentApiKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_REVOKE, async {
-            let record = store_pg::PgApiKeyStore::new(self.pool().clone())
-                .revoke_api_key(params.scope, params.key_id.trim(), current_time_ms()?)
-                .await
-                .map_err(map_api_key_error)?
-                .ok_or_else(|| AgentApiError::not_found("unknown api key"))?;
-            Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
-                api_key: api_key_view(record),
-            }))
-        })
-        .await
-    }
 }
 
 fn parse_universe_id(value: &str) -> Result<Uuid, AgentApiError> {
@@ -767,21 +600,6 @@ fn universe_view(stats: store_pg::UniverseStats) -> DeploymentUniverseView {
     }
 }
 
-fn api_key_view(record: auth::ApiKeyRecord) -> DeploymentApiKeyView {
-    DeploymentApiKeyView {
-        key_id: record.key_id,
-        key_prefix: record.key_prefix,
-        scope: record.scope,
-        groups: record.groups.into_iter().collect(),
-        assert_actor: record.assert_actor,
-        created_by: record.created_by,
-        display_name: record.display_name,
-        created_at_ms: record.created_at_ms,
-        revoked_at_ms: record.revoked_at_ms,
-        last_used_at_ms: record.last_used_at_ms,
-    }
-}
-
 fn current_time_ms() -> Result<u64, AgentApiError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -789,18 +607,6 @@ fn current_time_ms() -> Result<u64, AgentApiError> {
         .map_err(|error| {
             AgentApiError::internal(format!("system clock before unix epoch: {error}"))
         })
-}
-
-fn map_api_key_error(error: auth::ApiKeyError) -> AgentApiError {
-    match error {
-        auth::ApiKeyError::AlreadyExists { .. } => {
-            AgentApiError::internal("generated api key prefix collision")
-        }
-        error @ auth::ApiKeyError::KeyIdInUse { .. } => AgentApiError::conflict(error.to_string()),
-        auth::ApiKeyError::Conflict { message } => AgentApiError::conflict(message),
-        auth::ApiKeyError::Invalid { message } => AgentApiError::invalid_request(message),
-        auth::ApiKeyError::Store { message } => AgentApiError::internal(message),
-    }
 }
 
 fn validate_universe_handle(handle: &str) -> Result<(), AgentApiError> {
@@ -828,12 +634,10 @@ fn map_store_error(error: store_pg::PgStoreError) -> AgentApiError {
     AgentApiError::internal(error.to_string())
 }
 
-/// A deployment method runs for a deployment request whose key, if any,
-/// holds its group; the boundary checked both, and an in-process caller must
-/// install the same context.
-fn admit(method: &str) -> Result<super::request_context::RequestContext, AgentApiError> {
+/// A deployment method requires an explicit deployment request target.
+fn admit(_method: &str) -> Result<super::request_context::RequestContext, AgentApiError> {
     let context = super::request_context::request_context()?;
-    if context.scope != AccessScope::Deployment || !context.permits(method) {
+    if context.scope != AccessScope::Deployment {
         return Err(AgentApiError::forbidden());
     }
     Ok(context)

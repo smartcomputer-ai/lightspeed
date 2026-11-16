@@ -25,7 +25,7 @@ Bots are a feature each universe switches on. A new universe starts with
 off, the Platform hides the feature's pages and refuses its requests from
 every member, Admins included. The switch governs what people do through the
 Platform. It does not stop a bot that is already running, and a caller holding
-a runtime API key is governed by that key's method groups instead. Pause or
+a runtime token retains full authority. Pause or
 close bots before switching the feature off if they should stop.
 
 ## Create the bot and send its first event

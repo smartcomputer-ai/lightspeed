@@ -5,7 +5,7 @@ import { deploymentClient, GateRefusal, memberClient } from "./runtime-client.js
 import { METHOD_ROLES, UNMEMBERED_METHODS } from "./routes/method-roles.js";
 import type { ServerEnv } from "./env.js";
 
-const env = { lightspeedApiUrl: "https://core.example/rpc", lightspeedApiKey: "lsk_fixture" } as ServerEnv;
+const env = { lightspeedApiUrl: "https://core.example/rpc", lightspeedRpcToken: "lsk_fixture" } as ServerEnv;
 const universe = { lightspeedUniverseId: "11111111-1111-4111-8111-111111111111", gatewayUrl: null };
 const integration = { version: 1, tools: [] };
 afterEach(() => vi.unstubAllGlobals());
@@ -127,7 +127,7 @@ describe("lists and transport", () => {
     expect(calls[1]!.params).toEqual({ limit: 10 });
   });
 
-  it("send the deployment key, the universe and the member as actor", async () => {
+  it("send the runtime token, the universe and the member as actor", async () => {
     const calls = core();
     await as("viewer").call("profiles/list", {});
     await deploymentClient(env).call("deployment/universes/list", {});
@@ -143,7 +143,7 @@ describe("lists and transport", () => {
       expect(() => memberClient(env, { ...universe, gatewayUrl }, { userId: "alice", role: "admin" })).toThrow("runtime endpoint");
       expect(() => deploymentClient(env, gatewayUrl)).toThrow("runtime endpoint");
     }
-    expect(() => deploymentClient({ ...env, lightspeedApiKey: null })).toThrow("runtime endpoint");
+    expect(() => deploymentClient({ ...env, lightspeedRpcToken: null })).toThrow("runtime endpoint");
   });
 });
 
@@ -384,4 +384,27 @@ it("gates watch collections and forces the member's session visibility", async (
   expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");
   await expect(viewer.openWatch({ kinds: ["bot"] })).rejects.toBeInstanceOf(GateRefusal);
   expect(calls).toHaveLength(2);
+});
+
+describe("transcription ownership", () => {
+  it.each(["viewer", "contributor", "operator", "admin"] as const)("does not expose another actor's draft to %s", async (role) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init: RequestInit) => {
+      const rpc = JSON.parse(String(init.body)); calls.push(rpc.method);
+      return Response.json({ id: rpc.id, result: { result: { transcription: { transcriptionId: "draft", text: "private", createdBy: { kind: "actor", id: "bob" } } } } });
+    }));
+    await expect(as(role).call("transcriptions/read", { transcriptionId: "draft" })).rejects.toBeInstanceOf(GateRefusal);
+    await expect(as(role).call("transcriptions/cancel", { transcriptionId: "draft" })).rejects.toBeInstanceOf(GateRefusal);
+    expect(calls).not.toContain("transcriptions/cancel");
+  });
+  it("reads its own draft once and checks ownership before canceling", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: unknown, init: RequestInit) => {
+      const rpc = JSON.parse(String(init.body)); calls.push(rpc.method);
+      return Response.json({ id: rpc.id, result: { result: { transcription: { transcriptionId: "draft", createdBy: { kind: "actor", id: "alice" } } } } });
+    }));
+    await as("contributor").call("transcriptions/read", { transcriptionId: "draft" });
+    await as("contributor").call("transcriptions/cancel", { transcriptionId: "draft" });
+    expect(calls).toEqual(["transcriptions/read", "transcriptions/read", "transcriptions/cancel"]);
+  });
 });

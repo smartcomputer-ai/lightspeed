@@ -5386,6 +5386,7 @@ dependencies = [
  "sqlx",
  "sse-stream",
  "store-pg",
+ "subtle",
  "tempfile",
  "temporal-workflow",
  "temporalio-client",

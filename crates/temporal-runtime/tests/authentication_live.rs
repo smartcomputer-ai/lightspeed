@@ -1,27 +1,26 @@
-//! Key authentication against a disposable schema: scope, universe header,
-//! method groups, asserted actors and revocation. No .env,
+//! Configured tokens and universe resolution against a disposable schema. No .env,
 //! Temporal, model providers or external credentials are used.
 use std::{panic::AssertUnwindSafe, str::FromStr};
 
-use api::{AccessScope, Attribution, MethodGroup};
+use api::{AccessScope, Attribution};
 use api::{AgentApiError, AgentApiErrorKind};
-use auth::{ApiKeySpec, MintedApiKey};
 use axum::http::HeaderMap;
 use futures_util::FutureExt as _;
 use sqlx::{
     Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use store_pg::{PgApiKeyStore, PgStore};
+use store_pg::PgStore;
+use temporal_runtime::config::RpcTokens;
 use temporal_runtime::gateway::authentication::{
-    ACTOR_HEADER, UNIVERSE_HEADER, authorize, resolve_caller,
+    ACTOR_HEADER, UNIVERSE_HEADER, request_context, resolve_caller,
 };
 use temporal_runtime::gateway::request_context::RequestContext;
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires explicitly approved LIGHTSPEED_TEST_POSTGRES_URL; isolated schema"]
-async fn keys_scope_groups_actors_and_revocation() {
+async fn tokens_reach_every_universe_with_explicit_targets() {
     let url =
         std::env::var("LIGHTSPEED_TEST_POSTGRES_URL").expect("explicit test Postgres URL required");
     let admin = PgPoolOptions::new()
@@ -59,287 +58,165 @@ async fn keys_scope_groups_actors_and_revocation() {
     }
 }
 
-/// The two steps the gateway takes for a request: who is calling, from the
-/// headers alone, then what that caller may do with the method.
 async fn authenticate(
-    keys: &PgApiKeyStore,
-    headers: &HeaderMap,
+    tokens: &RpcTokens,
+    pool: &sqlx::PgPool,
+    secret: &str,
+    universe: Option<&str>,
+    actor: Option<&str>,
     method: &str,
 ) -> Result<RequestContext, AgentApiError> {
-    authorize(resolve_caller(keys, headers, 20).await?, method)
-}
-
-fn headers(key: &MintedApiKey, universe: Option<Uuid>, actor: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "authorization",
-        format!("Bearer {}", key.secret.expose()).parse().unwrap(),
-    );
-    if let Some(id) = universe {
-        headers.insert(UNIVERSE_HEADER, id.to_string().parse().unwrap());
+    headers.insert("authorization", format!("Bearer {secret}").parse().unwrap());
+    if let Some(universe) = universe {
+        headers.insert(UNIVERSE_HEADER, universe.parse().unwrap());
     }
     if let Some(actor) = actor {
         headers.insert(ACTOR_HEADER, actor.parse().unwrap());
     }
-    headers
+    request_context(resolve_caller(tokens, pool, &headers).await?, method)
 }
-
-async fn issue(
-    keys: &PgApiKeyStore,
-    scope: AccessScope,
-    groups: Option<&[MethodGroup]>,
-    assert_actor: bool,
-) -> MintedApiKey {
-    let key = auth::mint_api_key(
-        ApiKeySpec {
-            key_id: None,
-            scope,
-            // `None` asks for every group the scope allows.
-            groups: groups.map_or(api::ApiKeyGroups::All, |groups| {
-                groups.iter().copied().collect()
-            }),
-            assert_actor,
-            created_by: Attribution::Local,
-            display_name: None,
-        },
-        10,
-    )
-    .unwrap();
-    keys.create_api_key(&key.key_hash, &key.record)
-        .await
-        .unwrap();
-    key
-}
-
 async fn exercise(pool: &sqlx::PgPool) {
     PgStore::migrate(pool).await.unwrap();
-    let keys = PgApiKeyStore::new(pool.clone());
-    let universe = Uuid::new_v4();
-    let other = Uuid::new_v4();
-    for id in [universe, other] {
-        store_pg::create_universe(pool, id).await.unwrap();
+    let secrets = [
+        ("platform", "platform-secret-with-at-least-32-characters"),
+        ("operator", "operator-secret-with-at-least-32-characters"),
+    ];
+    let tokens = RpcTokens::from_configuration(
+        secrets.map(|(name, secret)| {
+            (
+                format!("LIGHTSPEED_RPC_TOKEN_{}", name.to_uppercase()),
+                secret.into(),
+            )
+        }),
+        |_| unreachable!(),
+    )
+    .unwrap();
+    let universes = [Uuid::new_v4(), Uuid::new_v4()];
+    for universe in universes {
+        store_pg::create_universe(pool, universe).await.unwrap();
     }
-    let scope = AccessScope::Universe {
-        universe_id: universe,
-    };
-    let universe_key = issue(&keys, scope, None, false).await;
-    let deployment_key = issue(&keys, AccessScope::Deployment, None, true).await;
-    let connector = issue(
-        &keys,
-        AccessScope::Deployment,
-        Some(&[
-            MethodGroup::ChannelsInbound,
-            MethodGroup::BlobsPut,
-            MethodGroup::DeploymentChannels,
-        ]),
-        false,
-    )
-    .await;
-
-    let allowed = |headers: HeaderMap, method: &'static str| {
-        let keys = keys.clone();
-        async move {
-            authenticate(&keys, &headers, method)
-                .await
-                .unwrap_or_else(|refusal| panic!("{method} refused: {refusal}"))
+    for (name, secret) in secrets {
+        for universe in universes {
+            for reference in [
+                universe.to_string(),
+                store_pg::default_universe_handle(universe),
+            ] {
+                for actor in [None, Some("alice"), Some("bob")] {
+                    for method in [
+                        "session/read",
+                        "session/delete",
+                        "transcriptions/read",
+                        "transcriptions/cancel",
+                        "auth/grants/lease",
+                    ] {
+                        let context =
+                            authenticate(&tokens, pool, secret, Some(&reference), actor, method)
+                                .await
+                                .unwrap();
+                        assert_eq!(
+                            context.scope,
+                            AccessScope::Universe {
+                                universe_id: universe
+                            }
+                        );
+                        assert_eq!(
+                            context.attribution(),
+                            actor.map_or(Attribution::Token { name: name.into() }, |id| {
+                                Attribution::Actor { id: id.into() }
+                            })
+                        );
+                    }
+                }
+            }
         }
-    };
-    let refused = |headers: HeaderMap, method: &'static str| {
-        let keys = keys.clone();
-        async move {
-            authenticate(&keys, &headers, method)
-                .await
-                .expect_err(&format!("{method} allowed"))
+        for method in ["initialize", "deployment/universes/list"] {
+            assert_eq!(
+                authenticate(&tokens, pool, secret, None, None, method)
+                    .await
+                    .unwrap()
+                    .scope,
+                AccessScope::Deployment
+            );
         }
-    };
-
-    // A universe key reaches its universe and takes no universe header,
-    // not even its own.
-    let context = allowed(headers(&universe_key, None, None), "session/read").await;
-    assert_eq!(context.scope, scope);
-    assert_eq!(context.actor, None);
-    assert_eq!(
-        context.attribution(),
-        Attribution::Key {
-            key_id: universe_key.record.key_id.clone(),
-            scope_kind: api::AccessScopeKind::Universe,
-        }
-    );
-    for selected in [universe, other] {
-        let refusal = refused(headers(&universe_key, Some(selected), None), "session/read").await;
-        assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
-    }
-    // It holds no deployment group and never addresses the deployment.
-    refused(
-        headers(&universe_key, None, None),
-        "deployment/universes/list",
-    )
-    .await;
-
-    // A deployment key names the universe of a universe method, and takes
-    // none on a deployment method.
-    refused(headers(&deployment_key, None, None), "session/read").await;
-    let context = allowed(headers(&deployment_key, Some(other), None), "session/read").await;
-    assert_eq!(context.scope, AccessScope::Universe { universe_id: other });
-    let context = allowed(
-        headers(&deployment_key, None, None),
-        "deployment/universes/list",
-    )
-    .await;
-    assert_eq!(context.scope, AccessScope::Deployment);
-    refused(
-        headers(&deployment_key, Some(other), None),
-        "deployment/universes/list",
-    )
-    .await;
-
-    // It may name the universe by handle instead. The handle resolves when
-    // the request arrives, so a rename takes effect at once; one that names
-    // nothing is reported as such, and a universe key may not use one.
-    let by_handle = |key: &MintedApiKey, handle: &str| {
-        let mut named = headers(key, None, None);
-        named.insert(UNIVERSE_HEADER, handle.parse().unwrap());
-        named
-    };
-    let handle = store_pg::default_universe_handle(other);
-    let context = allowed(by_handle(&deployment_key, &handle), "session/read").await;
-    assert_eq!(context.scope, AccessScope::Universe { universe_id: other });
-    assert!(
-        store_pg::put_universe_handle(pool, other, "renamed-by-test")
-            .await
-            .unwrap()
-    );
-    let context = allowed(
-        by_handle(&deployment_key, "renamed-by-test"),
-        "session/read",
-    )
-    .await;
-    assert_eq!(context.scope, AccessScope::Universe { universe_id: other });
-    for unknown in [handle.as_str(), "Not A Handle"] {
-        let refusal = refused(by_handle(&deployment_key, unknown), "session/read").await;
-        assert_eq!(refusal.kind, AgentApiErrorKind::NotFound, "{unknown}");
-    }
-    let refusal = refused(
-        by_handle(&deployment_key, "renamed-by-test"),
-        "deployment/universes/list",
-    )
-    .await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
-    let refusal = refused(
-        by_handle(&universe_key, &store_pg::default_universe_handle(universe)),
-        "session/read",
-    )
-    .await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
-
-    allowed(
-        headers(&deployment_key, None, None),
-        api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT,
-    )
-    .await;
-    for denied in [
-        headers(&universe_key, None, None),
-        headers(&connector, None, None),
-        headers(&deployment_key, Some(other), None),
-    ] {
         assert_eq!(
-            refused(denied, api::METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT)
+            authenticate(&tokens, pool, secret, None, None, "session/read")
                 .await
+                .unwrap_err()
                 .kind,
-            AgentApiErrorKind::Forbidden
+            AgentApiErrorKind::InvalidRequest
+        );
+        assert_eq!(
+            authenticate(&tokens, pool, secret, Some("missing"), None, "session/read")
+                .await
+                .unwrap_err()
+                .kind,
+            AgentApiErrorKind::NotFound
+        );
+        assert_eq!(
+            authenticate(
+                &tokens,
+                pool,
+                secret,
+                None,
+                None,
+                "deployment/api-keys/list"
+            )
+            .await
+            .unwrap_err()
+            .kind,
+            AgentApiErrorKind::InvalidRequest
         );
     }
-
-    // Only a key allowed to assert actors names one, and only a well-formed
-    // one.
-    let context = allowed(
-        headers(&deployment_key, Some(universe), Some("user-42")),
-        "session/start",
-    )
-    .await;
-    assert_eq!(context.actor.as_deref(), Some("user-42"));
-    assert_eq!(
-        context.attribution(),
-        Attribution::Actor {
-            id: "user-42".into()
-        }
-    );
-    let refusal = refused(
-        headers(&universe_key, None, Some("user-42")),
-        "session/start",
-    )
-    .await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
-    refused(
-        headers(&deployment_key, Some(universe), Some(&"x".repeat(300))),
-        "session/start",
-    )
-    .await;
-    let mut removed_header = headers(&deployment_key, Some(universe), None);
-    removed_header.insert("x-lightspeed-principal", "user:old".parse().unwrap());
-    refused(removed_header, "session/start").await;
-
-    // A connector's key calls its groups and `initialize`, nothing else.
-    allowed(
-        headers(&connector, Some(universe), None),
-        "channels/inbound/admit",
-    )
-    .await;
-    allowed(headers(&connector, Some(universe), None), "blobs/put").await;
-    allowed(headers(&connector, None, None), "initialize").await;
-    allowed(
-        headers(&connector, None, None),
-        "deployment/channels/accounts/list",
-    )
-    .await;
-    for method in ["session/read", "blobs/read", "auth/grants/lease"] {
-        let refusal = refused(headers(&connector, Some(universe), None), method).await;
-        assert_eq!(refusal.kind, AgentApiErrorKind::Forbidden);
-    }
-
-    // An unknown method is reported to a caller that holds a key. Missing or
-    // duplicated credentials and revoked keys are refused from the headers
-    // alone, before any method is known.
-    let refusal = refused(headers(&universe_key, None, None), "access/policy/put").await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::InvalidRequest);
-    let refusal = refused(HeaderMap::new(), "access/policy/put").await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::Unauthenticated);
-    let refusal = resolve_caller(&keys, &HeaderMap::new(), 20)
-        .await
-        .expect_err("no key was presented");
-    assert_eq!(refusal.kind, AgentApiErrorKind::Unauthenticated);
-    let refusal = refused(HeaderMap::new(), "session/read").await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::Unauthenticated);
-    let mut duplicated = headers(&universe_key, None, None);
-    duplicated.append(
-        "authorization",
-        format!("Bearer {}", universe_key.secret.expose())
-            .parse()
-            .unwrap(),
-    );
-    assert_eq!(
-        refused(duplicated, "session/read").await.kind,
-        AgentApiErrorKind::Unauthenticated
-    );
-    keys.revoke_api_key(universe_key.record.scope, &universe_key.record.key_id, 30)
+    let before = store_pg::default_universe_handle(universes[0]);
+    store_pg::put_universe_handle(pool, universes[0], "renamed")
         .await
         .unwrap();
-    let refusal = refused(headers(&universe_key, None, None), "session/read").await;
-    assert_eq!(refusal.kind, AgentApiErrorKind::Unauthenticated);
-
-    // Deleting a universe removes its keys.
-    let scoped = issue(
-        &keys,
-        AccessScope::Universe { universe_id: other },
-        None,
-        false,
-    )
-    .await;
-    store_pg::delete_universe(pool, other).await.unwrap();
+    assert!(
+        authenticate(
+            &tokens,
+            pool,
+            secrets[0].1,
+            Some("renamed"),
+            None,
+            "session/read"
+        )
+        .await
+        .is_ok()
+    );
     assert_eq!(
-        refused(headers(&scoped, None, None), "session/read")
+        authenticate(
+            &tokens,
+            pool,
+            secrets[0].1,
+            Some(&before),
+            None,
+            "session/read"
+        )
+        .await
+        .unwrap_err()
+        .kind,
+        AgentApiErrorKind::NotFound
+    );
+    store_pg::delete_universe(pool, universes[0]).await.unwrap();
+    assert_eq!(
+        authenticate(
+            &tokens,
+            pool,
+            secrets[0].1,
+            Some("renamed"),
+            None,
+            "session/read"
+        )
+        .await
+        .unwrap_err()
+        .kind,
+        AgentApiErrorKind::NotFound
+    );
+    // Deleting any universe does not revoke deployment component credentials.
+    assert!(
+        authenticate(&tokens, pool, secrets[0].1, None, None, "initialize")
             .await
-            .kind,
-        AgentApiErrorKind::Unauthenticated
+            .is_ok()
     );
 }

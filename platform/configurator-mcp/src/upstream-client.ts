@@ -36,15 +36,16 @@ export function createUpstreamClientFactory(
   };
 }
 
-/// Authenticates the request's credential upstream and returns what it may
-/// call, which decides the tools this request sees.
+/// Authenticates the request credential against the configured runtime.
 export async function identifyCaller(
   factory: UpstreamClientFactory,
   auth: RequestAuthContext,
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<CallerAccess> {
-  const response = await factory(auth).call(
+  const discoveryAuth: RequestAuthContext = auth.mode === "single"
+    ? auth : { mode: "authenticated", token: auth.token };
+  const response = await factory(discoveryAuth).call(
     "initialize",
     {
       clientInfo: { name: "lightspeed-configurator-mcp", version: "0.0.0" },

@@ -18,7 +18,6 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 /// empty schema that can safely receive the initial migration.
 const LIGHTSPEED_TABLES: &[&str] = &[
     "agent_profiles",
-    "api_keys",
     "auth_clients",
     "auth_flows",
     "auth_grants",
@@ -188,9 +187,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "universe_deletion",
         sql: include_str!("../migrations/025_universe_deletion.sql"),
     },
+    EmbeddedMigration {
+        version: 26,
+        name: "runtime_tokens",
+        sql: include_str!("../migrations/026_runtime_tokens.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 25;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 26;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

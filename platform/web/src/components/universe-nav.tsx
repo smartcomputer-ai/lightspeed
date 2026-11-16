@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { ApiKeyIcon, BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, TemplateIcon, WorkspaceIcon } from "@/icons";
+import { BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, TemplateIcon, WorkspaceIcon } from "@/icons";
 import { Navigate } from "react-router-dom";
 import type { FeatureKey, FeatureStates } from "@lightspeed-ai/platform-shared";
 import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
@@ -63,7 +63,6 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
     label: "Access",
     items: [
       { path: "credentials", label: "Credentials", icon: CredentialIcon, action: "configureResource" },
-      { path: "api-keys", label: "API keys", icon: ApiKeyIcon, action: "manageAccess" },
       { path: "members", label: "Members", icon: MemberIcon, action: "read" },
     ],
   },

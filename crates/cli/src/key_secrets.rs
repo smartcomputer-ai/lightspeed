@@ -46,8 +46,8 @@ impl SecretSourceArgs {
 /// The kinds of key whose secret can be supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretKind {
-    /// For `api-key put`.
-    ApiKey,
+    /// For configuring runtime RPC authentication.
+    RuntimeToken,
     /// For `environment registration-key put`.
     RegistrationKey,
 }
@@ -55,7 +55,7 @@ pub enum SecretKind {
 impl SecretKind {
     fn prefix(self) -> &'static str {
         match self {
-            Self::ApiKey => api::API_KEY_SECRET_PREFIX,
+            Self::RuntimeToken => "lsr_",
             Self::RegistrationKey => api::REGISTRATION_KEY_SECRET_PREFIX,
         }
     }
@@ -94,7 +94,7 @@ mod tests {
     fn generated_secrets_have_the_accepted_form_and_differ() {
         use base64::Engine as _;
         for (kind, prefix) in [
-            (SecretKind::ApiKey, "lsk_"),
+            (SecretKind::RuntimeToken, "lsr_"),
             (SecretKind::RegistrationKey, "lsrk_"),
         ] {
             let secret = generate_secret(kind).unwrap();

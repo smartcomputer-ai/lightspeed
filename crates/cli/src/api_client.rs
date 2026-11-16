@@ -69,7 +69,7 @@ impl HttpAgentApi {
             crate::connection::ResolvedConnection {
                 name: None,
                 endpoint,
-                secret: std::env::var("LIGHTSPEED_API_KEY")
+                secret: std::env::var("LIGHTSPEED_RPC_TOKEN")
                     .ok()
                     .filter(|s| !s.trim().is_empty()),
                 universe: std::env::var("LIGHTSPEED_UNIVERSE")
@@ -692,7 +692,7 @@ impl HttpAgentApi {
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(AgentApiError::new(
                 AgentApiErrorKind::Unauthenticated,
-                "runtime rejected the API key; verify the connection or replace a revoked key",
+                "runtime rejected the token; verify the connection and runtime token configuration",
             )
             .into());
         }

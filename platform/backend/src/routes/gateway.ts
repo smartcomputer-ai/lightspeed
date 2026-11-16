@@ -16,8 +16,6 @@ import {
   type AuthGitHubInstallationListParams,
   type AuthGrantListParams,
   type AuthProviderCreateParams,
-  type DeploymentApiKeyCreateParams,
-  type DeploymentApiKeyCreateResponse,
   type EnvironmentCreateParams,
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
@@ -459,7 +457,7 @@ export function engineClientFor(ctx: AppContext, access: UniverseAccess): Lights
   return memberClient(ctx.env, access.universe, access.member);
 }
 
-/// Deployment methods with the Platform's deployment key. Callers check that
+/// Deployment methods with the Platform's runtime token. Callers check that
 /// the user is a platform admin, or a universe admin for its own keys.
 export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): LightspeedClient {
   return deploymentClient(ctx.env, endpoint);
@@ -2623,25 +2621,6 @@ export function credentialIdConflictMessage(grantId: string, status?: string): s
 
 function isConflict(error: unknown): boolean {
   return error instanceof LightspeedRpcError && error.kind === "conflict";
-}
-
-/// `deployment/api-keys/create` for a key of `scope`. A chosen id the
-/// runtime refuses as taken becomes a 409 that says whether its holder,
-/// looked up among the scope's keys, is revoked.
-export async function createApiKey(
-  c: { json: (body: unknown, status?: 409) => Response },
-  client: LightspeedClient,
-  params: DeploymentApiKeyCreateParams,
-): Promise<DeploymentApiKeyCreateResponse | Response> {
-  try {
-    return (await client.call("deployment/api-keys/create", params)).result;
-  } catch (error) {
-    const { keyId, scope } = params;
-    if (!keyId || !isConflict(error)) throw error;
-    const keys = await client.call("deployment/api-keys/list", { scope }).catch(() => null);
-    const holder = keys?.result.apiKeys?.find((key) => key.keyId === keyId);
-    return c.json({ error: keyIdConflictMessage(keyId, holder?.revokedAtMs != null) }, 409);
-  }
 }
 
 /// The engine deliberately namespaces model credentials as

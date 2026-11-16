@@ -3,27 +3,14 @@ import { syncUniverseHandles, requireAvailableCachedHandle } from "../universe-h
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq, ne, sql } from "drizzle-orm";
-import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
-import {
-  chosenKeyIdSchema,
-  effectiveFeatures,
-  memberAddSchema,
-  memberUpdateSchema,
-  mergeFeatureOverrides,
-  universeHandleFromName,
-  universeCreateSchema,
-  universeHandleSchema,
-  universeRoleSchema,
-  universeUpdateSchema,
-  type UniverseRole,
-} from "@lightspeed-ai/platform-shared";
+import { effectiveFeatures, memberAddSchema, memberUpdateSchema, mergeFeatureOverrides, universeHandleFromName, universeCreateSchema, universeHandleSchema, universeUpdateSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { auditIdentity } from "../identity-audit.js";
 import { parseBody } from "../http.js";
 import type { Member } from "../runtime-client.js";
-import { createApiKey, deploymentClientFor, withGateway } from "./gateway.js";
+import { deploymentClientFor, withGateway } from "./gateway.js";
 
 const { universes, organization, member, user } = schema;
 
@@ -135,15 +122,6 @@ const adoptSchema = z.strictObject({
     .string()
     .regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
   name: z.string().trim().min(1).max(120),
-});
-
-const apiKeyCreateSchema = z.object({
-  displayName: z.string().trim().min(1).max(120),
-  /// Required, so a universe key never silently holds every group; core
-  /// validates the names and refuses deployment groups.
-  groups: z.array(z.string().min(1).max(100)).min(1).max(32),
-  /// Absent has the runtime allocate one. Create only: an id never changes.
-  keyId: chosenKeyIdSchema.optional(),
 });
 
 export function universeRoutes(ctx: AppContext) {
@@ -294,85 +272,6 @@ export function universeRoutes(ctx: AppContext) {
     });
   });
 
-  /// Universe API keys, for a universe admin. Keys are minted with the
-  /// Platform's deployment key, scoped to this universe, with the groups the
-  /// admin chose and no actor assertion. The plaintext secret exists only in the
-  /// create or rotation response and is never persisted by the platform.
-  app.get("/:id/api-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") {
-      return c.json({ error: "not found" }, 404);
-    }
-    return withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/api-keys/list", {
-        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
-      });
-      return c.json(response.result.apiKeys ?? []);
-    });
-  });
-
-  app.post("/:id/api-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") {
-      return c.json({ error: "not found" }, 404);
-    }
-    const body = await parseBody(c, apiKeyCreateSchema);
-    if (!body.ok) {
-      return body.response;
-    }
-    return withGateway(c, async () => {
-      const created = await createApiKey(c, deploymentClientFor(ctx, access.universe.gatewayUrl), {
-        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
-        displayName: body.data.displayName,
-        groups: body.data.groups as MethodGroup[],
-        assertActor: false,
-        ...(body.data.keyId ? { keyId: body.data.keyId } : {}),
-      });
-      if (created instanceof Response) return created;
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: created.apiKey.keyId, universeId: access.universe.id, details: { keyPrefix: created.apiKey.keyPrefix } });
-      return c.json(created, 201);
-    });
-  });
-
-  app.post("/:id/api-keys/:keyId/rotate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") {
-      return c.json({ error: "not found" }, 404);
-    }
-    return withGateway(c, async () => {
-      const client = deploymentClientFor(ctx, access.universe.gatewayUrl);
-      const scope = { kind: "universe" as const, universeId: access.universe.lightspeedUniverseId };
-      const keys = await client.call("deployment/api-keys/list", { scope });
-      const keyId = c.req.param("keyId");
-      const key = keys.result.apiKeys?.find((key) => key.keyId === keyId);
-      if (!key || key.revokedAtMs != null) return c.json({ error: "not found" }, 404);
-      // Rotation reveals a credential: universe admins cannot acquire actor
-      // assertion authority that only platform admins may grant.
-      if (key.assertActor) return c.json({ error: "Rotate this key from Platform admin" }, 403);
-      const response = await client.call("deployment/api-keys/rotate", { scope, keyId });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyId, universeId: access.universe.id, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
-      return c.json(response.result);
-    });
-  });
-
-  app.delete("/:id/api-keys/:keyId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access || access.role !== "admin") {
-      return c.json({ error: "not found" }, 404);
-    }
-    return withGateway(c, async () => {
-      // The key id is resolved within this universe's scope, so only its own
-      // keys are revocable from here.
-      const keyId = c.req.param("keyId");
-      const response = await deploymentClientFor(ctx, access.universe.gatewayUrl).call("deployment/api-keys/revoke", {
-        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId }, keyId,
-      });
-      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.revoke", targetId: keyId, universeId: access.universe.id });
-      return c.json(response.result.apiKey);
-    });
-  });
-
-  /// Deletes an engine universe that has no Platform row.
   app.delete("/engine/:lightspeedUniverseId", async (c) => {
     if (!isPlatformAdmin(c.get("session"))) {
       return c.json({ error: "platform admin required" }, 403);

@@ -23,7 +23,7 @@ import type { ServerEnv } from "./env.js";
 import { METHOD_ROLES, SESSION_TARGET_METHODS } from "./routes/method-roles.js";
 
 export class GatewayUnconfigured extends Error {
-  constructor() { super("runtime endpoint and Platform deployment key required"); }
+  constructor() { super("runtime endpoint and Platform runtime token required"); }
 }
 
 /// A refusal the Platform makes itself, before the request reaches core.
@@ -43,16 +43,10 @@ const CREATOR_METHODS: ReadonlySet<string> = new Set(["session/share"]);
 /// Methods that may name a session that does not exist yet.
 const CREATION_METHODS: ReadonlySet<string> = new Set(["session/start"]);
 
-/// Deployment methods, with the Platform's deployment key and no universe or
+/// Deployment methods, with the Platform's runtime token and no universe or
 /// actor. Callers check that the user is a platform admin.
 export function deploymentClient(env: ServerEnv, endpoint?: string | null): LightspeedClient {
   return new LightspeedClient(clientOptions(env, endpoint, {}));
-}
-
-/// Calls as a universe key someone handed the Platform, to learn which key a
-/// secret is before the Platform stores it. Never used on a member's behalf.
-export function universeKeyClient(env: ServerEnv, endpoint: string | null | undefined, secret: string): LightspeedClient {
-  return new LightspeedClient(clientOptions(env, endpoint, { authorization: `Bearer ${secret}` }));
 }
 
 /// The refusal for a feature that is off in the universe, or null while it
@@ -67,7 +61,7 @@ function featureOff(features: FeatureStates, feature: FeatureKey): GateRefusal |
   return features[feature] ? null : new GateRefusal(403, `${FEATURES[feature].label} are turned off in this universe`);
 }
 
-/// Universe methods on a member's behalf: the deployment key names the
+/// Universe methods on a member's behalf: the runtime token names the
 /// universe and asserts the user as the actor, and every call passes the
 /// member gate first. `features` is what the universe stored; a universe
 /// passed without it has every feature at its default.
@@ -87,14 +81,14 @@ export function memberClient(
 }
 
 function clientOptions(env: ServerEnv, endpoint: string | null | undefined, headers: Record<string, string>) {
-  if (!env.lightspeedApiUrl || !env.lightspeedApiKey) throw new GatewayUnconfigured();
-  // The key only ever goes to the configured runtime.
+  if (!env.lightspeedApiUrl || !env.lightspeedRpcToken) throw new GatewayUnconfigured();
+  // The token only ever goes to the configured runtime.
   const resolved = new URL(endpoint ?? env.lightspeedApiUrl);
   if (resolved.href !== new URL(env.lightspeedApiUrl).href || resolved.username || resolved.password) throw new GatewayUnconfigured();
   return {
     endpoint: resolved.href,
     fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => globalThis.fetch(input, { ...init, redirect: "error" }),
-    headers: { authorization: `Bearer ${env.lightspeedApiKey}`, ...headers },
+    headers: { authorization: `Bearer ${env.lightspeedRpcToken}`, ...headers },
   };
 }
 
@@ -135,6 +129,16 @@ class MemberClient extends LightspeedClient {
       if (method === "session/runs/start" && (params as MethodParams<"session/runs/start">).config != null) {
         throw new GateRefusal(403, "operator role required for run configuration overrides");
       }
+    }
+    // Draft transcriptions belong only to their creator, including for admins.
+    if (method === "transcriptions/read" || method === "transcriptions/cancel") {
+      const transcriptionId = (params as MethodParams<"transcriptions/read">).transcriptionId;
+      const response = await super.call("transcriptions/read", { transcriptionId }, options);
+      const creator = response.result.transcription.createdBy;
+      if (creator?.kind !== "actor" || creator.id !== this.member.userId) {
+        throw new GateRefusal(403, "transcription belongs to another actor");
+      }
+      if (method === "transcriptions/read") return response as MethodResult<M>;
     }
     const admin = this.member.role === "admin";
     if (method === "session/delete") {

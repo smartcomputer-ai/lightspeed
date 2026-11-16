@@ -1,7 +1,8 @@
 # P208 — Runtime access simplification
 
-**Status:** Proposed, 2026-11-16. Nothing is implemented. What is settled and
-what is still open is listed under [Decisions](#decisions).
+**Status:** In progress, 2026-11-16. Configuration tokens, removal of the key
+model and consumer cutover are implemented and validated. The listener split
+and credentials rename remain. Decisions are listed under [Decisions](#decisions).
 
 This is the first of two documents. It takes the permission model for
 callers out of the runtime.
@@ -101,8 +102,11 @@ LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE=/run/secrets/operator-token
   tell the Platform's calls from an operator's.
 - Rotation without a gap: add a second token, move the consumer to it,
   remove the first.
-- A secret is any string of at least 32 characters. The offline generator the
-  CLI has today stays.
+- A secret has at least 32 non-whitespace printable ASCII characters, so it
+  can travel unchanged in an HTTP bearer header. `lightspeed token
+  generate-secret` generates one offline. Mounted files may end in one LF or
+  CRLF, which is removed. Duplicate names, duplicate secrets and inline/file
+  conflicts refuse startup.
 
 `LIGHTSPEED_AUTH_MODE` keeps its two values and stays required.
 `authenticated` now means that a request presents one of the configured
@@ -364,3 +368,22 @@ Decided, 2026-11-16:
   started to rebuild principals in the runtime, from a survey of the
   runtime's key model, the Platform's gate, the environment plane and the
   other holders of runtime keys. No code changed.
+
+- 2026-11-16: implemented configured tokens with authentication before body
+  reads; removed caller scopes/groups, API-key methods/store/commands/pages
+  and declared keys. Request attribution and `initialize` now name tokens.
+  Migration 26 rewrites stored attribution and drops the key table; event
+  replay rebuilds discarded checkpoint pointers. Watch limits follow actors
+  with token-name fallback. Platform checks transcription read and cancel
+  ownership. CLI, SDKs and launcher use tokens; Configurator setup and channel
+  connector startup are disabled. Contracts and generated consumers are
+  regenerated. The public listener split and `credentials/*` rename are
+  separate remaining slices; the Platform token gateway remains subsequent work.
+
+- 2026-11-16: validation passed: exact workspace/all-target Clippy with warnings
+  denied; 1,926 tests across the affected Rust crates; three binary startup
+  regressions; isolated PostgreSQL authentication and attribution-upgrade tests;
+  CLI, TypeScript/Python SDK, Platform backend/web and Configurator suites;
+  52 launcher tests; typechecks, builds, documentation and release-metadata
+  checks. The launcher and daemon scrub runtime tokens from child command
+  environments. Broader Temporal and provider live suites were not run.

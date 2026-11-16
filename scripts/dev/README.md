@@ -100,11 +100,15 @@ Existing passwords and universe content are preserved. Set
 [development logins](../../docs/documentation/development/local-development.md#development-logins).
 
 Both `full` and `runtime` default to authenticated runtime access. The launcher
-ensures the configured universe and provisions a persistent CLI deployment
-key, plus a separate Platform key with actor assertion when needed. Run
-`lightspeed connect dev` from the checkout to import the protected handoff in
-`.lightspeed/cli/`. Pass `--no-api-key-bootstrap` to manage API keys yourself.
-Explicit `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available.
+ensures the development universe and saves persistent CLI and Platform runtime
+tokens under `.lightspeed/cli/`. These files are owner-only. Run
+`lightspeed connect dev` from the checkout to import the handoff. Set
+`LIGHTSPEED_RPC_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_RPC_TOKEN` (or their `_FILE`
+variants) to supply tokens. Matching CLI and Platform secrets share the runtime
+identity `cli` (or `default` when supplied through `LIGHTSPEED_RPC_TOKEN`); no
+duplicate named token is installed. Pass `--no-token-bootstrap` to require supplied or
+saved tokens instead of generating them. Explicit
+`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available.
 
 Platform waits for the configured runtime's HTTP health endpoint before starting,
 including in the `platform` profile. Its universe operations need that runtime,
@@ -113,23 +117,10 @@ from the configured email and password when its own user table is empty. The
 supervisor logs this dependency wait and fails startup after 60 seconds if the
 runtime never becomes ready. `--plan` also shows startup dependencies.
 
-The full profile also runs Configurator MCP; Bots and Channels core run inside
-the Rust runtime. The connector host is opt-in: naming providers starts one
-`connectors` process that discovers every enabled account of those providers
-through the core API and leases their tokens from it (WhatsApp additionally
-needs `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY` and pairs by QR code):
-
-```bash
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram,whatsapp ./dev.sh
-```
-
-Configurator setup provisions a universe key with configuration method groups
-and stores it in a credential grant. Enabled connectors require their own
-`LIGHTSPEED_CONNECTOR_API_KEY` with the groups needed for account discovery,
-inbound admission, credential leasing, and media upload. See
-[API keys and service access](../../docs/documentation/access-and-security/api-keys-and-service-access.md)
-for the exact groups and request headers.
+Configurator setup and the connector host are disabled during the runtime access
+cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty. Runtime tokens are full
+authority credentials and are never passed to agents. Bots and Channels core
+remain runtime components; removing Channels is separate work.
 
 Use `./dev.sh --plan full` to inspect a profile without starting services.
 Planning an enabled local daemon can create its working directory.
@@ -204,12 +195,9 @@ scripts/dev/infra/minio-reset.sh
 clears the Lightspeed MinIO prefix. Platform applies its independently owned
 database migrations when the Platform backend starts.
 
-The runtime's fresh PostgreSQL baseline is organized into eleven domain migrations
-in `crates/store-pg/migrations/`: identity and scoped API keys share a definition;
-resource ownership and access audit remain separate. Auth and environment
-alterations are folded into their owning definitions. Databases from earlier
-baselines require a reset of the schema and migration ledger; deleting rows alone is not
-enough. The migrator keeps rejecting changed checksums and never resets data
+The runtime's schema is defined by the embedded migrations in
+`crates/store-pg/migrations/`. Runtime RPC tokens are loaded from configuration;
+there is no API-key table. The migrator keeps rejecting changed checksums and never resets data
 automatically. Use `./dev.sh reset` for disposable local development state.
 
 Run the `store-pg` live integration tests against this stack:
@@ -350,16 +338,9 @@ network. From the host machine, use `localhost:15432` instead:
 postgres://lightspeed:lightspeed@localhost:15432/lightspeed
 ```
 
-Development uses `server api-key provision --all-groups` for CLI and Platform
-keys, each declared under a key id derived from its kind and this checkout.
-Keys are stored normally and remain revocable; ordinary restarts declare the
-same secret from their protected local files, which also applies newly
-introduced method groups. The command prints a secret only when it generated
-one, so on a restart the launcher keeps the secret it supplied. CLI keys have
-all method groups and no actor assertion;
-Platform keys additionally assert actors. The Platform receives its key as
-`LIGHTSPEED_PLATFORM_API_KEY`. See the
-[terminal guide](../../docs/documentation/using-lightspeed/cli.md) for connection
-setup and explicit repair after revocation or a database reset.
-The greenfield identity migration refuses a populated old Platform schema;
-reset disposable Platform state explicitly instead of importing old permissions.
+Development saves persistent runtime tokens in protected files, configures the
+runtime with `LIGHTSPEED_RPC_TOKEN_CLI_FILE` and
+`LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE`, and gives Platform the latter file through
+`LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`. Every token has full authority and can name
+an actor. See the [terminal guide](../../docs/documentation/using-lightspeed/cli.md)
+for token generation, replacement and local connection setup.

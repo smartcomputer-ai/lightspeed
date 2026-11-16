@@ -29,7 +29,7 @@ use super::{
 const BATCH_INTERVAL: Duration = Duration::from_millis(250);
 const STREAM_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const MAX_STREAMS: usize = 1024;
-const MAX_KEY_STREAMS: usize = 64;
+const MAX_ACTOR_STREAMS: usize = 64;
 const MAX_PENDING_IDS: usize = 2048;
 const MAX_QUEUE_ROWS: usize = 256;
 const MAX_QUEUE_BYTES: usize = 2 * 1024 * 1024;
@@ -77,14 +77,16 @@ impl WatchRegistry {
         context: &RequestContext,
         params: UniverseWatchParams,
     ) -> Result<Subscription, AgentApiError> {
-        validate(context, &params)?;
-        let key = context.key.as_ref().map_or_else(
-            || "local".to_owned(),
-            |key| format!("{:?}/{}", key.scope, key.key_id),
-        );
+        validate(&params)?;
+        // Tag each identity class so an actor cannot collide with a token name.
+        let key = match (&context.actor, &context.token_name) {
+            (Some(actor), _) => format!("actor/{actor}"),
+            (None, Some(name)) => format!("token/{name}"),
+            (None, None) => "local".to_owned(),
+        };
         let mut state = lock(&self.0);
         if state.total >= MAX_STREAMS
-            || state.keys.get(&key).copied().unwrap_or(0) >= MAX_KEY_STREAMS
+            || state.keys.get(&key).copied().unwrap_or(0) >= MAX_ACTOR_STREAMS
         {
             return Err(AgentApiError::rejected("watch connection limit reached"));
         }
@@ -127,7 +129,7 @@ impl WatchRegistry {
     }
 }
 
-fn validate(context: &RequestContext, params: &UniverseWatchParams) -> Result<(), AgentApiError> {
+fn validate(params: &UniverseWatchParams) -> Result<(), AgentApiError> {
     if params.kinds.is_empty() || params.kinds.len() > WatchKind::all().len() {
         return Err(AgentApiError::invalid_request(
             "watch kinds must contain one to four collections",
@@ -139,14 +141,6 @@ fn validate(context: &RequestContext, params: &UniverseWatchParams) -> Result<()
         .is_some_and(|actor| !super::authentication::valid_actor(actor))
     {
         return Err(AgentApiError::invalid_request("invalid visibleTo actor"));
-    }
-    if context.key.as_ref().is_some_and(|key| {
-        params
-            .kinds
-            .iter()
-            .any(|kind| !key.groups.contains(&kind.group()))
-    }) {
-        return Err(AgentApiError::forbidden());
     }
     Ok(())
 }
@@ -548,8 +542,7 @@ async fn load_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::request_context::KeyContext;
-    use api::{AccessScope, Attribution, MethodGroup, Visibility};
+    use api::{AccessScope, Attribution, Visibility};
 
     fn context() -> RequestContext {
         RequestContext::local(AccessScope::Universe {
@@ -565,29 +558,17 @@ mod tests {
     }
 
     #[test]
-    fn each_requested_collection_requires_its_group() {
-        let mut caller = context();
-        caller.key = Some(KeyContext {
-            scope: caller.scope,
-            key_id: "reader".into(),
-            prefix: "test".into(),
-            groups: BTreeSet::from([MethodGroup::Session]),
-        });
-        assert_eq!(
-            validate(&caller, &params()).unwrap_err().kind,
-            api::AgentApiErrorKind::Forbidden
-        );
+    fn collections_and_visibility_filters_are_validated_without_permissions() {
+        assert!(validate(&params()).is_ok());
         let mut selected = params();
-        selected.kinds = vec![WatchKind::Session];
-        assert!(validate(&caller, &selected).is_ok());
         selected.kinds.clear();
         assert_eq!(
-            validate(&caller, &selected).unwrap_err().kind,
+            validate(&selected).unwrap_err().kind,
             api::AgentApiErrorKind::InvalidRequest
         );
         selected = params();
         selected.visible_to = Some("\n".into());
-        assert!(validate(&context(), &selected).is_err());
+        assert!(validate(&selected).is_err());
     }
 
     #[test]
@@ -665,7 +646,7 @@ mod tests {
         let registry = Arc::new(WatchRegistry::default());
         let store = store();
         let mut subscriptions = Vec::new();
-        for _ in 0..MAX_KEY_STREAMS {
+        for _ in 0..MAX_ACTOR_STREAMS {
             subscriptions.push(
                 registry
                     .subscribe(store.clone(), &context(), params())
@@ -681,6 +662,40 @@ mod tests {
         drop(subscriptions);
         assert_eq!(lock(&registry.0).total, 0);
         assert!(registry.subscribe(store, &context(), params()).is_ok());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_limits_follow_actors_across_tokens_and_release_on_drop() {
+        let registry = Arc::new(WatchRegistry::default());
+        let store = store();
+        let mut alice = context();
+        alice.actor = Some("alice".into());
+        alice.token_name = Some("platform".into());
+        let mut permits = Vec::new();
+        for _ in 0..MAX_ACTOR_STREAMS {
+            permits.push(registry.subscribe(store.clone(), &alice, params()).unwrap());
+        }
+        let mut same_actor = alice.clone();
+        same_actor.token_name = Some("operator".into());
+        assert!(
+            registry
+                .subscribe(store.clone(), &same_actor, params())
+                .is_err()
+        );
+        let mut bob = alice.clone();
+        bob.actor = Some("bob".into());
+        assert!(registry.subscribe(store.clone(), &bob, params()).is_ok());
+        // An omitted actor uses the token identity, without colliding with actor names.
+        let mut component = alice.clone();
+        component.actor = None;
+        component.token_name = Some("alice".into());
+        assert!(
+            registry
+                .subscribe(store.clone(), &component, params())
+                .is_ok()
+        );
+        permits.pop();
+        assert!(registry.subscribe(store, &same_actor, params()).is_ok());
     }
 
     #[tokio::test(flavor = "current_thread")]

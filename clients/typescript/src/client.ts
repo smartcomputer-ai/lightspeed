@@ -35,15 +35,14 @@ export interface LightspeedClientOptions {
   /** The gateway's `/rpc` URL. */
   endpoint: string | URL;
   /** Sent as the bearer credential. Omit it only for a gateway in single mode. */
-  apiKey?: string;
+  token?: string;
   /**
-   * The universe a deployment key addresses, as its UUID or its handle. A
-   * universe key must leave this out.
+   * The universe a request addresses, as its UUID or its handle.
    */
   universe?: string;
   /**
-   * Attributes requests to this opaque ID, which the key must be allowed to
-   * assert. It does not limit what the key can do. See `withActor`.
+   * Attributes requests to this opaque ID. Direct runtime tokens may always
+   * name an actor. It does not restrict access. See `withActor`.
    */
   actor?: string;
   fetch?: typeof fetch;
@@ -466,7 +465,7 @@ export class LightspeedClient extends LightspeedHelpers {
       }
     }
     if (!response.ok) {
-      // The gateway refuses a request without a valid key before it reads the body, so its
+      // The gateway refuses a request without a valid token before it reads the body, so its
       // 401 answers no request id. It is still the server's own typed error.
       const refusal = response.status === 401 ? rpcErrorOf(body) : undefined;
       if (refusal) {
@@ -493,8 +492,8 @@ export class LightspeedClient extends LightspeedHelpers {
     const headers = new Headers();
     headers.set("content-type", "application/json");
     headers.set("accept", "application/json");
-    if (this.options.apiKey !== undefined) {
-      headers.set("authorization", `Bearer ${this.options.apiKey}`);
+    if (this.options.token !== undefined) {
+      headers.set("authorization", `Bearer ${this.options.token}`);
     }
     if (this.options.universe !== undefined) {
       headers.set("x-lightspeed-universe", this.options.universe);

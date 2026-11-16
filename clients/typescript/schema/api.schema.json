@@ -18,50 +18,6 @@
       },
       "type": "object"
     },
-    "AccessScope": {
-      "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "deployment",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "universe",
-              "type": "string"
-            },
-            "universeId": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "universeId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "AccessScopeKind": {
-      "description": "The kind of an [`AccessScope`]: the deployment, or a universe. Where a\nrecord already belongs to one universe this is enough to tell a universe\nkey of that universe from a deployment key.",
-      "enum": [
-        "deployment",
-        "universe"
-      ],
-      "type": "string"
-    },
     "ActiveToolsView": {
       "properties": {
         "revision": {
@@ -1083,74 +1039,6 @@
         },
         "result": {
           "$ref": "#/definitions/ContextReplaceResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfDeploymentApiKeyCreateResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/DeploymentApiKeyCreateResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfDeploymentApiKeyListResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/DeploymentApiKeyListResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfDeploymentApiKeyPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/DeploymentApiKeyPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
-    "AgentApiOutcomeOfDeploymentApiKeyRevokeResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/DeploymentApiKeyRevokeResponse"
         }
       },
       "required": [
@@ -3138,22 +3026,6 @@
       ],
       "type": "object"
     },
-    "ApiKeyGroups": {
-      "anyOf": [
-        {
-          "const": "all",
-          "type": "string"
-        },
-        {
-          "items": {
-            "$ref": "#/definitions/MethodGroup"
-          },
-          "type": "array",
-          "uniqueItems": true
-        }
-      ],
-      "description": "The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups."
-    },
     "ApprovalDecisionFailure": {
       "properties": {
         "kind": {
@@ -3317,10 +3189,10 @@
       "type": "object"
     },
     "Attribution": {
-      "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+      "description": "Who created a resource or authored bytes. Actors are opaque caller claims;\nthe runtime records them without resolving caller permissions.",
       "oneOf": [
         {
-          "description": "The actor a key asserted for its request.",
+          "description": "The actor the caller named for its request.",
           "properties": {
             "id": {
               "type": "string"
@@ -3337,23 +3209,19 @@
           "type": "object"
         },
         {
-          "description": "A key acting for itself, named by its key id. A key id is unique\namong the keys of one scope, so `scopeKind` says whether it names a\ndeployment key or a key of the universe the record belongs to. The\nid survives a change of secret; the secret's display prefix does not\nand is deliberately not recorded.",
+          "description": "The configured runtime token's name, never its secret.",
           "properties": {
-            "keyId": {
-              "type": "string"
-            },
             "kind": {
-              "const": "key",
+              "const": "token",
               "type": "string"
             },
-            "scopeKind": {
-              "$ref": "#/definitions/AccessScopeKind"
+            "name": {
+              "type": "string"
             }
           },
           "required": [
             "kind",
-            "keyId",
-            "scopeKind"
+            "name"
           ],
           "type": "object"
         },
@@ -7167,46 +7035,22 @@
       ]
     },
     "CallerAccess": {
-      "description": "What the calling credential may do, so a client can offer only the\nmethods it may call. Descriptive: core still checks every call.",
+      "description": "How the direct runtime connection authenticated. All runtime tokens have\nfull authority; permissions belong to the external gate.",
       "properties": {
-        "groups": {
-          "description": "The method groups the caller may call. A request without a key holds\nevery group. `initialize` belongs to no group and is always allowed.",
-          "items": {
-            "$ref": "#/definitions/MethodGroup"
-          },
-          "type": "array"
-        },
-        "keyId": {
-          "description": "The calling key's id, unique among the keys of `scope`. It is what\nrecords attribute the key's own requests to. Absent for a request\nwithout a key, such as local development.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "keyPrefix": {
-          "description": "Display prefix of the calling key's current secret; absent for a\nrequest without a key, such as local development.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "scope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            }
-          ],
-          "description": "Credential scope, independent of a selected request universe."
-        },
         "single": {
           "description": "True only for explicitly unauthenticated local development access.",
           "type": "boolean"
+        },
+        "tokenName": {
+          "description": "Configured token name, absent for unauthenticated access.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "scope",
-        "single",
-        "groups"
+        "single"
       ],
       "type": "object"
     },
@@ -9272,280 +9116,6 @@
         "deletedAtMs",
         "requestedBy",
         "summary"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyCreateParams": {
-      "additionalProperties": false,
-      "properties": {
-        "assertActor": {
-          "default": false,
-          "description": "Whether the key may name the actor a request acts for with the\n`x-lightspeed-actor` header. Give it only to a gate that authenticates\npeople, such as the Platform. It cannot be changed afterwards.",
-          "type": "boolean"
-        },
-        "displayName": {
-          "description": "Human-readable purpose shown in key-management interfaces.",
-          "type": "string"
-        },
-        "groups": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ApiKeyGroups"
-            }
-          ],
-          "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. The key stores the resulting set."
-        },
-        "keyId": {
-          "description": "The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots\nor colons, starting with a letter or digit, and not yet used by a key\nof this scope. Omit it to have one allocated.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "scope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            }
-          ],
-          "description": "A universe, or the deployment. A deployment key addresses a universe\nwith the `x-lightspeed-universe` header and may hold deployment groups."
-        }
-      },
-      "required": [
-        "scope",
-        "groups",
-        "displayName"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyCreateResponse": {
-      "description": "A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
-      "properties": {
-        "apiKey": {
-          "$ref": "#/definitions/DeploymentApiKeyView"
-        },
-        "secret": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "apiKey",
-        "secret"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyListParams": {
-      "additionalProperties": false,
-      "properties": {
-        "scope": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Only keys of this scope; absent lists every key."
-        }
-      },
-      "type": "object"
-    },
-    "DeploymentApiKeyListResponse": {
-      "properties": {
-        "apiKeys": {
-          "default": [],
-          "items": {
-            "$ref": "#/definitions/DeploymentApiKeyView"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "DeploymentApiKeyPutParams": {
-      "additionalProperties": false,
-      "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
-      "properties": {
-        "assertActor": {
-          "default": false,
-          "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
-          "type": "boolean"
-        },
-        "displayName": {
-          "description": "Human-readable purpose shown in key-management interfaces.",
-          "type": "string"
-        },
-        "groups": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ApiKeyGroups"
-            }
-          ],
-          "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. An existing key's groups are replaced\nby these, and `\"all\"` is resolved again on every call, so repeating a\ndeclaration after an upgrade gives the key the groups added since."
-        },
-        "keyId": {
-          "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
-          "type": "string"
-        },
-        "scope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            }
-          ],
-          "description": "A universe, or the deployment. It cannot be changed afterwards."
-        },
-        "secret": {
-          "description": "The secret the key answers to: `lsk_` followed by 32 random bytes\nencoded as base64url without padding. Generate it with a\ncryptographic random source.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "scope",
-        "keyId",
-        "groups",
-        "displayName",
-        "secret"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyPutResponse": {
-      "properties": {
-        "apiKey": {
-          "$ref": "#/definitions/DeploymentApiKeyView"
-        },
-        "created": {
-          "description": "False when the key already existed.",
-          "type": "boolean"
-        },
-        "secretReplaced": {
-          "description": "True when an existing key held a different secret, which no longer\nworks.",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "apiKey",
-        "created",
-        "secretReplaced"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyRevokeParams": {
-      "additionalProperties": false,
-      "properties": {
-        "keyId": {
-          "type": "string"
-        },
-        "scope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            }
-          ],
-          "description": "The scope the key belongs to."
-        }
-      },
-      "required": [
-        "scope",
-        "keyId"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyRevokeResponse": {
-      "properties": {
-        "apiKey": {
-          "$ref": "#/definitions/DeploymentApiKeyView"
-        }
-      },
-      "required": [
-        "apiKey"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyRotateParams": {
-      "additionalProperties": false,
-      "properties": {
-        "keyId": {
-          "type": "string"
-        },
-        "scope": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AccessScope"
-            }
-          ],
-          "description": "The scope the key belongs to."
-        }
-      },
-      "required": [
-        "scope",
-        "keyId"
-      ],
-      "type": "object"
-    },
-    "DeploymentApiKeyView": {
-      "description": "Non-secret key metadata: what the key is called, reaches and may call,\nand who minted it.",
-      "properties": {
-        "assertActor": {
-          "type": "boolean"
-        },
-        "createdAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "createdBy": {
-          "$ref": "#/definitions/Attribution"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "groups": {
-          "items": {
-            "$ref": "#/definitions/MethodGroup"
-          },
-          "type": "array"
-        },
-        "keyId": {
-          "description": "The key's name among the keys of its scope. Together with the scope\nit addresses the key, and it is kept when the secret is replaced.",
-          "type": "string"
-        },
-        "keyPrefix": {
-          "description": "The first characters of the key's current secret: enough to tell\nwhich secret the key holds without revealing it. It changes when the\nsecret does.",
-          "type": "string"
-        },
-        "lastUsedAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "revokedAtMs": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "scope": {
-          "$ref": "#/definitions/AccessScope"
-        }
-      },
-      "required": [
-        "keyId",
-        "keyPrefix",
-        "scope",
-        "groups",
-        "assertActor",
-        "createdBy",
-        "createdAtMs"
       ],
       "type": "object"
     },
@@ -13541,7 +13111,7 @@
           "type": "object"
         },
         {
-          "description": "A deployment method: it addresses the deployment and needs a\ndeployment key.",
+          "description": "A deployment method: it addresses the deployment.",
           "properties": {
             "kind": {
               "const": "deployment",
@@ -13556,7 +13126,7 @@
       ]
     },
     "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
+      "description": "The API family of a method, published for external authorization gates.\n`initialize` and `universe/watch` have no single family.",
       "oneOf": [
         {
           "enum": [
@@ -13567,7 +13137,6 @@
             "mcp",
             "bots",
             "deployment/universes",
-            "deployment/api-keys",
             "deployment/sessions"
           ],
           "type": "string"
@@ -19834,7 +19403,7 @@
       ]
     },
     "UniverseAction": {
-      "description": "What a public method does, independent of its RPC spelling. Requests are\ngated by their key's groups; this classifies what the runtime's own work\nmay do and which role a gate built on the contract should require.",
+      "description": "What a public method does, independent of its RPC spelling. This classifies\nthe runtime's own work and the role an external gate should require.",
       "oneOf": [
         {
           "enum": [
@@ -20342,7 +19911,7 @@
       "type": "string"
     },
     "WatchKind": {
-      "description": "Collections whose list rows can be watched. Each requires its existing API-key group.",
+      "description": "Collections whose list rows can be watched. Each publishes its API family.",
       "enum": [
         "session",
         "bot",

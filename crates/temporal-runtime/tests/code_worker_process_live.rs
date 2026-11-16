@@ -137,6 +137,10 @@ impl CodeProcess {
                 "1",
             ])
             .env("LIGHTSPEED_AUTH_MODE", "authenticated")
+            .env(
+                "LIGHTSPEED_RPC_TOKEN_CODE_TEST",
+                "code-worker-test-token-at-least-32-characters",
+            )
             // Code does not use environment tools. These child-local values
             // satisfy the shared deployment client's routing configuration.
             .env("LIGHTSPEED_ENVIRONMENT_GATEWAY_URL", "http://127.0.0.1:1")

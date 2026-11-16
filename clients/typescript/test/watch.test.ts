@@ -53,7 +53,7 @@ describe("watch transport", () => {
         headers: { "content-type": "text/event-stream" },
       });
     });
-    const client = new LightspeedClient({ endpoint: "https://core/rpc", apiKey: "secret", universe: "u", fetch });
+    const client = new LightspeedClient({ endpoint: "https://core/rpc", token: "secret", universe: "u", fetch });
     expect(await collect(client.watch({ kinds: ["workspace"] }, { reconnect: false }))).toEqual([reset, changed]);
     expect(fetch).toHaveBeenCalledOnce();
   });

@@ -19,8 +19,8 @@ roles when you need to scale or operate them independently.
 | Platform backend and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
 | Platform PostgreSQL database | Accounts, memberships, roles, and universe display/routing records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
-| Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
-| Connector host | Telegram and WhatsApp transport connections | Those chat channels |
+| Configurator MCP | Management tool package; setup and startup are disabled until narrowed Platform tokens are available | Not part of the active stack |
+| Connector host | Telegram and WhatsApp transport package; startup is disabled | Not part of the active stack |
 | Environment daemon and providers | Filesystem/process access and, with a provider, machine lifecycle | Agent tasks requiring compute |
 
 The two Lightspeed databases can live on the same PostgreSQL server, but they
@@ -51,20 +51,27 @@ proxy must preserve that distinction.
 
 The full web product uses an authenticated runtime. Platform checks the signed-in
 person's membership, role, and session visibility before making a runtime call.
-It authenticates with `LIGHTSPEED_PLATFORM_API_KEY`, selects the universe, and
-names the person as the actor for attribution. The runtime checks the key's
-scope and allowed method groups; it does not look up the person's permissions.
+It authenticates with `LIGHTSPEED_PLATFORM_RPC_TOKEN` or its `_FILE` form, selects
+the universe, and names the person as the actor for attribution. The runtime
+checks the configured token, partitions resources by universe, and records the
+actor. It holds no caller permission model.
 
-| Mode | How requests are scoped | Use |
+| Mode | How requests are addressed | Use |
 | --- | --- | --- |
-| `authenticated` | Bearer key with a universe or deployment scope and allowed method groups | Platform, connectors, and direct clients |
+| `authenticated` | Configured bearer token; universe methods require a UUID or handle in `x-lightspeed-universe` | Platform backend, trusted operators and direct integrations |
 | `single` | No credential check; ordinary requests use one configured universe | Private local development |
 
-This makes a runtime key a separate access path. A key with the `session` group
-can read and control sessions in its scope, including work that the Platform
-keeps private to its creator and admins. Keep the Platform key on the server.
-See [Access and security](../access-and-security/overview.md) for the complete
-access model and [Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md)
+Every runtime token has full authority over every method and universe, including
+private sessions. Keep it with infrastructure credentials, away from browsers
+and agents. Programs can use direct access only as trusted components; a gateway
+must authenticate and authorize untrusted callers. Platform personal and service
+account tokens are separate work.
+
+RPC, OAuth callbacks and bot webhooks currently share one runtime listener.
+Restrict `/rpc` at the network or reverse proxy while allowing the required
+public callback and webhook paths. See
+[Access and security](../access-and-security/overview.md) for the access model and
+[Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md)
 for shared infrastructure and isolation limits.
 
 ## Runtime roles and scaling
@@ -104,7 +111,7 @@ its scripts. The two measures cover different callers. The switches make the
 Platform refuse bot and channel requests from every member of a universe.
 Leaving the roles out means nothing in the deployment runs a bot controller,
 a trigger or a chat conversation, whoever asked for one, including a holder of
-a runtime API key. Add the roles, and switch the features on per universe,
+a runtime token. Add the roles, and switch the features on per universe,
 when a team starts using bots.
 
 ## Persistence determines what survives

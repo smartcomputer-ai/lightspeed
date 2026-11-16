@@ -276,7 +276,7 @@ function app(workspaceUploadLimits?: WorkspaceUploadLimits) {
     gatewayRoutes({
       env: {
         lightspeedApiUrl: "https://engine.example/rpc",
-        lightspeedApiKey: "lsk_fixture",
+        lightspeedRpcToken: "lsk_fixture",
         workspaceUploadLimits,
       },
     } as AppContext),

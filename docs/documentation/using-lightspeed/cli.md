@@ -2,7 +2,7 @@
 
 The CLI connects directly to the runtime. Platform can be added to the same
 runtime for accounts, team permissions and the web interface; neither CLI
-configuration nor API-key authentication requires it. The runtime still uses
+configuration nor runtime-token authentication requires it. The runtime still uses
 PostgreSQL, Temporal and its configured content storage.
 
 ## Connect to local development
@@ -15,9 +15,9 @@ From a source checkout, start either the runtime alone or the full product:
 
 Use `./dev.sh --no-envd` to include Platform. Both profiles default to
 `authenticated` mode. After migrations, the launcher creates the initial
-universe and provisions separate CLI and Platform keys as needed. The initial
-universe is created with the handle `development`; if it already exists, it
-keeps the handle it has. In another terminal, from the same checkout:
+universe and persistent CLI and Platform runtime tokens. The universe is created
+with handle `development`; an existing universe keeps its handle. In another
+terminal, from the same checkout:
 
 ```bash
 cargo build --locked -p cli
@@ -25,27 +25,22 @@ target/debug/lightspeed connect dev
 target/debug/lightspeed connect status
 ```
 
-The launcher writes a handoff under `.lightspeed/cli/`. Its key files are
-owner-only and ignored by Git. `connect dev` verifies and selects a saved
-connection specific to this checkout. It preserves that connection's universe
-selection on subsequent imports. Starting the launcher alone does not change
-your selected CLI connection.
+The launcher writes an owner-only handoff and token files under
+`.lightspeed/cli/`, ignored by Git. `connect dev` verifies and selects a saved
+connection for this checkout, preserving its universe selection on later imports.
+Ordinary restarts reuse the tokens. Tokens are configuration, so resetting the
+runtime database does not revoke them. A successful `./dev.sh reset` also clears
+the local token files; the next startup generates replacements. Import the new
+handoff with `connect dev` afterward.
 
-Ordinary restarts reuse the keys. Adding Platform does not rotate the CLI key.
-After a successful `./dev.sh reset`, the launcher clears its saved credentials
-and handoff. The next startup provisions development keys again; run
-`lightspeed connect dev` afterward to refresh the CLI connection.
-Revoked keys, missing saved secrets or keys absent after a manual database reset
-require explicit repair; startup does not silently issue another administrator
-key. To replace a key, provision a new one with the server command described
-below, put its secret into the corresponding protected `.lightspeed/cli/cli.key`
-or `platform.key` file, then restart and run `connect dev` again for the CLI.
-If replacing an active key, revoke the old one explicitly too.
-
-Use `--no-api-key-bootstrap` on either launcher profile to manage keys yourself.
-It preserves authenticated mode and normal startup preparation, including
-migrations and universe setup. Platform then needs an existing service key.
-Without a CLI handoff, use `connect add` with your own credential.
+Supply `LIGHTSPEED_RPC_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_RPC_TOKEN`, or their
+`_FILE` variants, to choose tokens yourself. The launcher installs these in the
+runtime configuration and writes protected local files. When the CLI and Platform
+use the same secret, the launcher keeps one runtime token identity (`default` or
+`cli`) and gives Platform a file containing that token. `--no-token-bootstrap`
+requires configured or saved tokens and prevents generation. A runtime token
+has full authority over every universe and every method; keep it with operators
+and trusted services.
 
 For explicitly unauthenticated local development:
 
@@ -57,37 +52,30 @@ target/debug/lightspeed connect dev
 Single mode uses the server's configured universe and sends no identity
 headers. Authentication failures never cause an automatic switch to this mode.
 
-## Provision an authenticated runtime without Platform
+## Configure an authenticated runtime without Platform
 
-On the server host, configure the runtime stores and secrets as described in
-[Self-hosting](../deployment/self-hosting.md), then run:
+On the server host, configure stores and secrets as described in
+[Self-hosting](../deployment/self-hosting.md). Generate an RPC token offline:
 
 ```bash
+umask 077
+lightspeed token generate-secret > runtime.token
 lightspeed-runtime migrate
-lightspeed-runtime api-key provision --name "Initial operator" --all-groups
+LIGHTSPEED_AUTH_MODE=authenticated \
+  LIGHTSPEED_RPC_TOKEN_FILE="$PWD/runtime.token" lightspeed-runtime
 ```
 
+`generate-secret` needs no runtime connection. A configured token contains at
+least 32 printable ASCII characters without whitespace. Token files may end with
+one LF or CRLF; inline values are used exactly. Optional token names use
+environment suffixes, for example `LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE` and
+`LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE`. Every token has full authority. A token's
+name is recorded when a request names no actor; an unnamed token is `default`.
+For rotation, configure a second token, move clients to it, then remove the old
+one and restart the runtime. There is no key table or key-management API.
+
 From source, replace `lightspeed-runtime` with
-`cargo run -p temporal-runtime --`. The provision command prints JSON that
-contains the generated secret; capture it securely. It creates a deployment
-key with the id `bootstrap`, every method group and no actor assertion. Choose
-another id with `--key-id`. The groups are always stated: `--all-groups`, or
-repeated `--group` for a narrower key. No universe is needed yet.
-
-To supply the key from deployment secret configuration, set
-`LIGHTSPEED_BOOTSTRAP_API_KEY` for the provision command. Its format is `lsk_`
-followed by 32 random bytes encoded as unpadded base64url; `lightspeed api-key
-generate-secret` prints one. The command stores only its hash and metadata in
-the normal key store, and declares the key: repeating it with the same secret
-changes nothing, changed groups are applied, and a different secret replaces
-the previous one at once. A revoked key and a changed actor flag fail.
-The JSON printed for a supplied secret holds the key's id and prefix and what
-changed, and no `secret` field: the value you supplied is the secret.
-`--require-existing` only verifies that the supplied key exists as described.
-The runtime never authenticates directly against this environment variable,
-and ordinary server startup does not provision keys.
-
-Start the server in `LIGHTSPEED_AUTH_MODE=authenticated`. On the client:
+`cargo run -p temporal-runtime --`. On the client:
 
 ```bash
 lightspeed connect add production --url https://runtime.example/rpc
@@ -96,11 +84,11 @@ lightspeed universe create --handle personal
 lightspeed universe use personal
 ```
 
-`connect add` prompts for the key without echoing it. For headless use,
-choose `--api-key-file /protected/key`, `--api-key-env MY_RUNTIME_KEY`, or
-`--api-key-stdin`. Environment/stdin/prompt input is stored in a protected
-local credential file; an explicitly supplied file remains externally owned.
-Use `--single` only for a server explicitly configured for single mode.
+`connect add` prompts for the token without echoing it. For headless use, choose
+`--token-file /protected/token`, `--token-env MY_RUNTIME_TOKEN`, or `--token-stdin`.
+Environment, stdin and prompt input is stored in a protected local credential
+file; an explicitly supplied file remains externally owned. Use `--single` only
+for a server explicitly configured for single mode.
 
 ## Manage connections and universes
 
@@ -118,40 +106,30 @@ lightspeed connect remove production
 
 `add` saves without selecting; `use` selects an existing connection. `remove`
 forgets local configuration and owned local credential material without
-revoking the runtime key or deleting external credential files. Removing the
+removing the token from runtime configuration or deleting external credential files. Removing the
 active connection clears the selection.
 
 The global `--connection` selects a saved endpoint and credential together,
 ignoring ambient connection environment variables. Explicit `--api-url` on
 commands that accept it can override the endpoint, but never forwards a saved
-key to a different endpoint. Without `--connection`, `LIGHTSPEED_API_URL`,
-`LIGHTSPEED_API_KEY` and `LIGHTSPEED_UNIVERSE` override saved settings.
+token to a different endpoint. Without `--connection`, `LIGHTSPEED_API_URL`,
+`LIGHTSPEED_RPC_TOKEN` and `LIGHTSPEED_UNIVERSE` override saved settings.
 `--universe` overrides universe selection for one invocation; it does not
 change the saved default. The CLI loads a root `.env` when present, so check
 for old overrides there if the effective connection is unexpected.
 
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
-`connect status` groups the effective connection and key authority, followed by
-the selected universe's current handle and UUID. The key is shown by its key
-id, which is what records attribute its requests to, and by the display prefix
-of the secret in use. `universe status` shows just the
-active universe. Both resolve the effective selection, including environment
-and command-line overrides or a universe bound by the server. Status reports
-when no universe is selected. A selection carries either the UUID or the
-handle; showing the other one requires deployment authority and the
-`deployment/universes` group (or single mode), and status says so when the
-current key cannot read it. A universe key still shows its bound UUID.
-`universe list` marks the active universe with `*`; it marks none if there is no
-selection. These commands support `--json`, as does `connect list`. JSON status
-includes the handle and UUID; JSON universe lists include each row's `active`
-flag and the effective `activeUniverseId`.
+`connect status` shows the effective connection, authentication mode, token name,
+and the selected universe's current handle and UUID. `universe status` shows just
+the active universe. A direct connection has full runtime authority.
+`universe list` marks the selected universe with `*`. These commands support
+`--json`, as does `connect list`.
 
-| Authority | Universe selection |
-| --- | --- |
-| Deployment key | Select by UUID or handle. `universe use` saves the UUID, so a later rename does not move the saved selection; saving by handle and listing universes require `deployment/universes`. `--universe` and `LIGHTSPEED_UNIVERSE` are sent as given, so a handle works with any deployment key and follows the name if the universe is renamed. |
-| Universe key | The key selects its universe. Conflicting overrides fail; no universe header is sent. |
-| Single mode | The server selects its configured universe; no identity headers are sent. |
+Authenticated connections select a universe by UUID or handle. `universe use`
+saves the UUID, so a rename does not move the saved selection. `--universe` and
+`LIGHTSPEED_UNIVERSE` are sent as given. Single mode uses the runtime's configured
+universe and sends no identity headers.
 
 Every universe has a handle: a name that is unique within the deployment and
 addresses the universe wherever its UUID does. A handle is 1 to 63 lowercase
@@ -160,19 +138,19 @@ have the form of a UUID. `universe create` without `--handle` derives one from
 the UUID, such as `u-41d07ab355e1`.
 
 `universe set-handle` renames a universe without changing its UUID, resources,
-keys or saved CLI selection. Renaming releases the old handle: Platform URLs
+or saved CLI selection. Renaming releases the old handle: Platform URLs
 and API clients that use it stop reaching the universe, and reach another one
 if that handle is later reused. Automation that addresses a universe by handle
 should treat a rename as a coordinated change.
 
 Deployment operations omit the universe header even when a universe is
-selected. Keys remain constrained by their allowed groups. A direct runtime
-key's authority is independent of Platform membership and session visibility.
-See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+selected. A direct runtime token has full authority, independent of Platform
+membership and session visibility.
+See [Runtime access](../access-and-security/api-keys-and-service-access.md).
 
 ## Configure a provider and chat
 
-Provider credentials are separate from the Lightspeed gateway key. Store a
+Provider credentials are separate from the Lightspeed runtime token. Store a
 built-in provider key from an environment variable:
 
 ```bash
@@ -227,7 +205,7 @@ for saved or explicit runtime connections; generated local-development
 connections omit this label. The footer also shows the current session ID,
 shortening UUIDs while preserving readable IDs. If the universe handle is
 unavailable, the footer uses a short universe UUID. `/status` shows the full connection name, endpoint,
-authentication scope, universe handle/UUID and current session ID. Connection
+authentication mode, universe handle/UUID and current session ID. Connection
 details are captured when chat opens, with no background polling. Each process
 keeps its resolved connection; switching saved defaults elsewhere does not
 retarget a running chat. See [Sessions and runs](sessions-and-runs.md) for
@@ -304,52 +282,15 @@ model. See [Models and credentials](models-and-credentials.md#choose-universe-de
 runtime startup. Remove them from deployment configuration and save the
 intended routes with these commands.
 
-## Administer keys and add Platform later
+## Runtime tokens and Platform
 
-A deployment key with `deployment/api-keys` can issue narrower keys:
+Runtime tokens are loaded from configuration. Generate a secret with
+`lightspeed token generate-secret`; configure and rotate it on the runtime host.
+Never give a runtime token to an agent or store one in its workspace.
 
-```bash
-lightspeed --universe UNIVERSE api-key create --display-name "Agent client" \
-  --group session --group models --group vfs --group blobs/put
-lightspeed api-key list
-lightspeed --universe UNIVERSE api-key rotate KEY_ID
-lightspeed --universe UNIVERSE api-key revoke KEY_ID
-```
-
-A key is addressed by its key id and its scope. The scope is the selected
-universe, given by UUID or handle with `--universe` or taken from the saved
-selection, or the deployment with `--deployment`. A handle is resolved to the
-UUID first, which needs the `deployment/universes` group. Pass `--id` to
-`create` to choose the id; otherwise one is allocated and shown by `list`. Rotation replaces the
-secret immediately and prints its replacement once. Update every client using
-the old secret. The key id, scope and permissions stay the same.
-
-To declare a key whose secret already exists in your secret store, use `put`
-with a secret read from a file, an environment variable or standard input:
-
-```bash
-lightspeed api-key generate-secret > agent.key
-lightspeed --universe UNIVERSE api-key put agent-client \
-  --display-name "Agent client" --group session --group models \
-  --secret-file agent.key
-```
-
-Repeating `put` changes nothing; changed groups are applied; a different
-secret replaces the previous one at once. See
-[Declare a key with a supplied secret](../access-and-security/api-keys-and-service-access.md#declare-a-key-with-a-supplied-secret).
-`generate-secret` needs no connection.
-
-Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
-to configure provider credentials, and other groups for the resources it
-manages. `create` and `put` require the groups: repeated `--group`, or
-`--all-groups` for every group the chosen scope allows. The key stores the
-resulting list, so a later release that adds a group does not widen it.
-A key with `deployment/api-keys` can make a key with any authority; see
-[Key management is full authority](../access-and-security/api-keys-and-service-access.md#key-management-is-full-authority).
-These are integration credentials, not personal Platform login tokens.
-
-To add Platform, give it its own deployment service key with the required
-method groups and actor assertion. Use Platform's administrator adoption flow
+To add Platform, configure a named runtime token for it and set
+`LIGHTSPEED_PLATFORM_RPC_TOKEN` or `LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE` on the
+Platform backend to the same value. Use Platform's administrator adoption flow
 to link an existing runtime universe. Platform uses the universe's handle for
 its URLs and caches it for lookups. Creation sends the requested handle to
 runtime; adoption keeps the handle the universe already has. Platform does not
@@ -374,7 +315,7 @@ continues to work while Platform is stopped.
 ## Command layout
 
 Resource commands use singular names and accept plural aliases: `universe(s)`,
-`api-key(s)`, `session(s)`, `profile(s)`, `model(s)`, `workspace(s)`, `credential(s)`,
+`session(s)`, `profile(s)`, `model(s)`, `workspace(s)`, `credential(s)`,
 `environment(s)`, and `mcp`/`mcps`. `env` is also an alias for `environment`.
 `connect` (`connections`) manages local connection settings; `chat` (`chats`)
 starts or continues a conversation. `workspace snapshot` (`snapshots`) uploads
@@ -435,9 +376,9 @@ or installation registry.
 `credential` manages external credentials, not authentication to Lightspeed.
 Its `oauth-client` and `github` subcommands configure reusable OAuth clients and
 GitHub Apps. Model endpoint credentials belong under `model provider`; MCP
-credential binding and OAuth login belong under `mcp`. `api-key` manages keys
-that authenticate callers to Lightspeed itself. Runtime API method-group names
-such as `auth` and `models` are unchanged.
+credential binding and OAuth login belong under `mcp`. `token generate-secret`
+generates a runtime token offline; runtime access is configured on the host.
+API family names such as `auth` and `models` remain contract metadata.
 
 Human output uses labeled details, table headers and explicit empty states.
 Resource operations accept `--json` for scripts. OAuth authorization instructions
@@ -459,7 +400,7 @@ lightspeed config apply -f research.yaml
 ```
 
 `export` writes credentials, providers, model defaults, MCP servers,
-registration keys, environments, profiles and API keys in the shape of the
+registration keys, environments and profiles in the shape of the
 API's own inputs, with each secret named by where it comes from. `apply`
 makes the universe named by the document's `handle` match it, creating the
 universe when it does not exist, and changes nothing when it already
@@ -512,7 +453,7 @@ universe. `environment provider put` takes the provider ID, its
 `--credential-file`, `--credential-env` or `--credential-stdin`; omitting the
 credential keeps the stored one, and `--clear-credential` removes it.
 `environment binding put PROVIDER_ID --enable` (or `--disable`) binds the
-selected universe. These operations require a deployment key; provider
+selected universe. These operations use the runtime token; provider
 list/read/delete and binding delete do as well. Normal environment and
 template operations operate within the selected universe.
 

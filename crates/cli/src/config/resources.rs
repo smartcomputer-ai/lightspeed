@@ -1230,155 +1230,6 @@ impl Resource for Profiles {
     }
 }
 
-// --- API keys ----------------------------------------------------------------
-
-/// API keys (`deployment/api-keys/put`), scoped to the document's universe
-/// or to the deployment. The scope is implied by the document.
-pub(crate) struct ApiKeys;
-
-impl ApiKeys {
-    fn scope(target: &Target) -> Result<Value> {
-        Ok(if target.deployment {
-            json!({ "kind": "deployment" })
-        } else {
-            json!({ "kind": "universe", "universeId": target.universe_id()? })
-        })
-    }
-
-    /// An entry with `groups: all` written out as the groups a key of the
-    /// document's scope may hold. A stored key holds a concrete set, so this
-    /// is the form the two are compared in: when a release adds a group, a
-    /// key declared with `all` shows `groups` as a pending change until
-    /// `apply` declares it again.
-    fn with_concrete_groups(entry: &Value, deployment: bool) -> Value {
-        if entry.get("groups") != Some(&json!(api::API_KEY_GROUPS_ALL)) {
-            return entry.clone();
-        }
-        // Which groups a universe key may hold does not depend on the
-        // universe.
-        let scope = if deployment {
-            api::AccessScope::Deployment
-        } else {
-            api::AccessScope::Universe {
-                universe_id: uuid::Uuid::nil(),
-            }
-        };
-        with(
-            entry.clone(),
-            "groups",
-            json!(api::ApiKeyGroups::All.resolve(scope)),
-        )
-    }
-}
-
-#[async_trait]
-impl Resource for ApiKeys {
-    fn section(&self) -> &'static str {
-        "apiKeys"
-    }
-    fn id_field(&self) -> &'static str {
-        "keyId"
-    }
-    fn secret_field(&self) -> Option<&'static str> {
-        Some("secret")
-    }
-    fn fixed_fields(&self) -> &'static [&'static str] {
-        &["assertActor"]
-    }
-    fn normalize(&self, entry: Value) -> Result<Value> {
-        if entry.get("scope").is_some() {
-            bail!("unknown field `scope`: a key's scope is the document it is declared in");
-        }
-        // A key's authority is always written down: nothing fills it in.
-        if entry.get("groups").is_none_or(Value::is_null) {
-            bail!(
-                "`groups` is missing: list the method groups the key may call, or write `groups: all` for every group its scope allows"
-            );
-        }
-        let placed = with(
-            with(entry, "secret", json!("")),
-            "scope",
-            json!({ "kind": "deployment" }),
-        );
-        let typed = strict::<api::DeploymentApiKeyPutParams>(placed)?;
-        Ok(without(typed, &["secret", "scope"]))
-    }
-    fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
-        schema_of::<api::DeploymentApiKeyPutParams>(generator)
-    }
-    fn undeclared_fields(&self) -> &'static [&'static str] {
-        &["scope"]
-    }
-    fn in_target(&self, target: &Target, entry: &Value) -> Value {
-        Self::with_concrete_groups(entry, target.deployment)
-    }
-    async fn read(&self, target: &Target, _wanted: &Wanted) -> Result<BTreeMap<String, Live>> {
-        let mut live = BTreeMap::new();
-        if !target.exists() {
-            return Ok(live);
-        }
-        let response = target
-            .call(
-                "deployment/api-keys/list",
-                json!({ "scope": Self::scope(target)? }),
-            )
-            .await?;
-        for view in list(&response, "apiKeys") {
-            let Some(id) = text(&view, "keyId").map(str::to_owned) else {
-                continue;
-            };
-            let revoked = view.get("revokedAtMs").is_some_and(|at| !at.is_null());
-            live.insert(
-                id.clone(),
-                Live {
-                    entry: json!({
-                        "keyId": id,
-                        "displayName": text(&view, "displayName").unwrap_or(&id),
-                        "groups": view["groups"],
-                        "assertActor": view["assertActor"],
-                    }),
-                    key_prefix: text(&view, "keyPrefix").map(str::to_owned),
-                    blocked: revoked.then(|| {
-                        "is revoked; a revoked key is never restored, so declare it under a new id"
-                            .to_owned()
-                    }),
-                    exportable: !revoked,
-                    has_secret: true,
-                    ..Live::default()
-                },
-            );
-        }
-        Ok(live)
-    }
-    async fn secret_differs(
-        &self,
-        _target: &Target,
-        _entry: &Value,
-        secret: Option<&str>,
-        live: &Live,
-    ) -> Result<bool> {
-        Ok(prefix_differs(secret, live))
-    }
-    async fn write(
-        &self,
-        target: &Target,
-        entry: &Value,
-        secret: Option<&str>,
-        _live: Option<&Live>,
-    ) -> Result<()> {
-        let secret = secret.context("an API key needs its secret")?;
-        let params = with(
-            with(entry.clone(), "secret", json!(secret)),
-            "scope",
-            Self::scope(target)?,
-        );
-        target
-            .call("deployment/api-keys/put", params)
-            .await
-            .map(drop)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1589,113 +1440,6 @@ mod tests {
     }
 
     #[test]
-    fn a_document_never_names_a_scope_or_a_stored_secret() {
-        assert!(
-            ApiKeys
-                .normalize(
-                    json!({ "keyId": "k", "displayName": "K", "scope": { "kind": "deployment" } })
-                )
-                .is_err()
-        );
-        let key = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": ["session"] }))
-            .unwrap();
-        assert!(key.get("secret").is_none() && key.get("scope").is_none());
-        assert_eq!(key["assertActor"], false);
-
-        // A binding names a credential or a model provider; a stored secret
-        // is not a source.
-        assert!(
-            EnvironmentCredentials
-                .normalize(json!({
-                    "environmentId": "build-box",
-                    "envName": "TOKEN",
-                    "source": { "type": "directSecret", "secretId": "s" },
-                }))
-                .is_err()
-        );
-        for source in [
-            json!({ "type": "authGrant", "grantId": "repo-token" }),
-            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
-        ] {
-            let binding = EnvironmentCredentials
-                .normalize(json!({
-                    "environmentId": "build-box",
-                    "envName": "TOKEN",
-                    "source": source.clone(),
-                }))
-                .unwrap();
-            assert_eq!(binding["source"], source);
-        }
-        assert!(
-            Profiles
-                .normalize(json!({
-                    "profileId": "p",
-                    "instructions": { "type": "textRef", "blobRef": "sha256:00" },
-                }))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn a_key_always_states_its_groups() {
-        for unstated in [
-            json!({ "keyId": "k", "displayName": "K" }),
-            json!({ "keyId": "k", "displayName": "K", "groups": null }),
-        ] {
-            let error = ApiKeys.normalize(unstated).unwrap_err().to_string();
-            assert!(error.contains("`groups` is missing"), "{error}");
-        }
-        for refused in [json!([]), json!("everything"), json!(["session", "nope"])] {
-            assert!(
-                ApiKeys
-                    .normalize(json!({ "keyId": "k", "displayName": "K", "groups": refused }))
-                    .is_err(),
-                "{refused}"
-            );
-        }
-        // Nothing fills the groups in, so nothing is accepted in their place.
-        assert!(ApiKeys.server_filled().is_empty());
-
-        let all = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": "all" }))
-            .unwrap();
-        assert_eq!(all["groups"], "all");
-        // A list is a set, held in the order a key view reports it.
-        let listed = ApiKeys
-            .normalize(
-                json!({ "keyId": "k", "displayName": "K", "groups": ["profiles", "session", "profiles"] }),
-            )
-            .unwrap();
-        assert_eq!(listed["groups"], json!(["session", "profiles"]));
-    }
-
-    #[test]
-    fn all_is_compared_as_the_groups_the_documents_scope_allows() {
-        let all = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": "all" }))
-            .unwrap();
-        let universe = ApiKeys::with_concrete_groups(&all, false);
-        let deployment = ApiKeys::with_concrete_groups(&all, true);
-        let names = |entry: &Value| -> Vec<String> {
-            serde_json::from_value(entry["groups"].clone()).unwrap()
-        };
-        assert!(names(&universe).contains(&"session".to_owned()));
-        assert!(
-            names(&universe)
-                .iter()
-                .all(|group| !group.starts_with("deployment/"))
-        );
-        assert_eq!(names(&deployment).len(), api::MethodGroup::ALL.len());
-        // Only the groups change, and only when they are `all`.
-        assert_eq!(universe["displayName"], "K");
-        let listed = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": ["session"] }))
-            .unwrap();
-        assert_eq!(ApiKeys::with_concrete_groups(&listed, true), listed);
-    }
-
-    #[test]
     fn each_environment_kind_is_created_by_its_own_method() {
         let entry = |source: Value| {
             Environments
@@ -1759,6 +1503,41 @@ mod tests {
                 "targetId": "t-1", "observed": { "phase": "running" },
             })),
             Some(json!({ "type": "provisioned", "providerId": "pods", "templateId": "default" }))
+        );
+    }
+    #[test]
+    fn a_document_never_names_a_stored_secret() {
+        // A binding names a credential or a model provider; a stored secret
+        // is not a source.
+        assert!(
+            EnvironmentCredentials
+                .normalize(json!({
+                    "environmentId": "build-box",
+                    "envName": "TOKEN",
+                    "source": { "type": "directSecret", "secretId": "s" },
+                }))
+                .is_err()
+        );
+        for source in [
+            json!({ "type": "authGrant", "grantId": "repo-token" }),
+            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
+        ] {
+            let binding = EnvironmentCredentials
+                .normalize(json!({
+                    "environmentId": "build-box",
+                    "envName": "TOKEN",
+                    "source": source.clone(),
+                }))
+                .unwrap();
+            assert_eq!(binding["source"], source);
+        }
+        assert!(
+            Profiles
+                .normalize(json!({
+                    "profileId": "p",
+                    "instructions": { "type": "textRef", "blobRef": "sha256:00" },
+                }))
+                .is_err()
         );
     }
 }

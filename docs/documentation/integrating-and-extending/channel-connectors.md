@@ -1,5 +1,10 @@
 # Implement a channel connector
 
+Connector startup is disabled during the runtime access cutover. The retained
+package and contracts below describe the existing implementation for development;
+they are not an active deployment path. Do not give the connector a full-authority
+runtime token. Channel removal is separate work.
+
 A channel connector translates between a chat provider and Lightspeed. It
 receives provider messages, normalizes their identity and
 content, and delivers runtime-requested responses. The core owns pairing,
@@ -23,16 +28,12 @@ An incoming message becomes a `ChannelInbound` request to
 routable. If a bot processes it, the conversation workflow later schedules
 connector activities to prepare media, show typing, or deliver a response.
 
-The shipped host authenticates with `LIGHTSPEED_CONNECTOR_API_KEY` against an
-`authenticated` runtime. It needs a deployment-scoped key with the
-`deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put` method
-groups. Account calls select their universe with `x-lightspeed-universe`;
-deployment-wide account discovery omits that header.
-
-Keep that endpoint and Temporal access on the deployment's private service
-network. [API keys and service access](../access-and-security/api-keys-and-service-access.md)
-explains scope and method groups; [Chat channels](../using-lightspeed/chat-channels.md)
-explains the user-facing account and pairing flows.
+The retained host used `LIGHTSPEED_CONNECTOR_API_KEY` and a restricted runtime
+key. That authentication model has been removed. The launcher no longer starts
+the host, and its old keys no longer authenticate. See
+[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
+for the current boundary and [Chat channels](../using-lightspeed/chat-channels.md)
+for the retained account and pairing model.
 
 ## Add a provider implementation
 
@@ -106,8 +107,9 @@ show how different provider payloads map into the common contract.
 ## Resolve credentials in the connector
 
 An account's `credentialGrantId` points to a stored retrievable grant. The
-service client leases it through `auth/grants/lease` using its key's `auth/lease`
-permission in the account's universe. Provider tokens are not ordinary account
+retained service client leases it through `auth/grants/lease` in the account's
+universe. This path remains inactive while the host is disabled. Provider tokens
+are not ordinary account
 settings or workflow arguments.
 
 The existing grant lease cache retains a credential for at most five minutes,
@@ -231,7 +233,7 @@ intended lifecycle.
 | Symptom | What to inspect |
 | --- | --- |
 | The new provider never starts | Host allowlist, factory, configured selection, and discovered account record. |
-| Ingress connects but admission fails | Authenticated endpoint, key scope and `channels/inbound` group, universe mapping, and normalized IDs. |
+| Host cannot authenticate | Connector startup is disabled; the retired caller-key model no longer works. |
 | Inbound works but no replies arrive | Derived activity queue, registered contract names, worker readiness, and provider delivery errors. |
 | Reconnect repeats messages | Provider acknowledgment/cursor handling and stable message IDs. |
 | Removed accounts keep receiving work | Runner shutdown, subscriptions/timers, and duplicate host ownership. |

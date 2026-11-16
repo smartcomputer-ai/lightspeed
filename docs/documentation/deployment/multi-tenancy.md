@@ -6,13 +6,13 @@ roles, and display information. Preserve that association when adopting,
 recovering, or retiring a universe.
 
 Each universe also has a handle: a readable name, unique within the
-deployment, that appears in its Platform URL and that API clients with a
-deployment key may use in place of the UUID. A handle is 1 to 63 lowercase
+deployment, that appears in its Platform URL and that authenticated API clients
+may use in place of the UUID. A handle is 1 to 63 lowercase
 letters, digits and hyphens, and can be changed; the UUID cannot. Because the
 UUID usually differs between deployments, the handle is what deployment
 automation should use to address the same universe in development, test and
 production. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
+[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
 for how a request selects a universe.
 
 For the isolation model and shared infrastructure, see
@@ -69,8 +69,8 @@ lightspeed universe delete my-universe --wait
 Use `--yes` to omit the interactive handle confirmation. `--wait` polls until
 cleanup finishes; an optional duration bounds how long the CLI waits.
 
-Deletion immediately refuses new requests, invalidates universe keys, and frees
-the handle for reuse. The universe then appears as **deleting** in the Platform
+Deletion immediately refuses new universe requests, prevents new daemon
+registrations in that universe, and frees the handle for reuse. The universe then appears as **deleting** in the Platform
 admin inventory, with its current cleanup step and any waiting detail. It is
 hidden from ordinary members. Cleanup removes bot schedules, terminates the
 universe's open workflows, closes environments, clears object storage, and

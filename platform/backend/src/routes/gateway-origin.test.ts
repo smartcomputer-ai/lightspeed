@@ -43,7 +43,7 @@ describe("composer input origin", () => {
       c.set("session", { user: { id: "operator" } } as ApiVariables["session"]);
       await next();
     });
-    app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_platform_fixture" } } as AppContext));
+    app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_platform_fixture" } } as AppContext));
     const response = await app.request(path, {
       method: "POST",
       headers: { "content-type": "application/json" },

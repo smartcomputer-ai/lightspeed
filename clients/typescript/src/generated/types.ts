@@ -8,24 +8,6 @@
  * shared with the universe once, one way; everything else is shared.
  */
 export type Visibility = "universe" | "restricted";
-/**
- * What a key reaches or a request addresses: one universe, or the
- * deployment.
- */
-export type AccessScope =
-  | {
-      kind: "deployment";
-    }
-  | {
-      kind: "universe";
-      universeId: string;
-    };
-/**
- * The kind of an [`AccessScope`]: the deployment, or a universe. Where a
- * record already belongs to one universe this is enough to tell a universe
- * key of that universe from a deployment key.
- */
-export type AccessScopeKind = "deployment" | "universe";
 export type ToolKindView =
   | {
       settings: unknown;
@@ -58,8 +40,8 @@ export type ProviderNativeToolExecutionView = "providerHosted" | "clientEffect";
 export type RemoteMcpApprovalPolicy = "never" | "always";
 export type ToolParallelismView = "exclusive" | "parallelSafe";
 /**
- * Who created a resource or authored bytes. An actor is whatever a key
- * allowed to assert one said; core compares it and never resolves it.
+ * Who created a resource or authored bytes. Actors are opaque caller claims;
+ * the runtime records them without resolving caller permissions.
  */
 export type Attribution =
   | {
@@ -67,9 +49,8 @@ export type Attribution =
       kind: "actor";
     }
   | {
-      keyId: string;
-      kind: "key";
-      scopeKind: AccessScopeKind;
+      kind: "token";
+      name: string;
     }
   | {
       kind: "local";
@@ -1261,33 +1242,6 @@ export type InputAdmissionFailureKind = "unsupportedMedia" | "blobMissing" | "ad
 export type ContextAppendStatus = "applied" | "unchanged" | "failed";
 export type ContextRemoveStatus = "removed" | "absent" | "failed";
 export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
-/**
- * The methods a key may call, by group. Every public method but
- * `initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
- * new method never changes what an existing key reaches beyond its group.
- */
-export type MethodGroup =
-  | (
-      | "vfs"
-      | "profiles"
-      | "transcriptions"
-      | "models"
-      | "mcp"
-      | "bots"
-      | "deployment/universes"
-      | "deployment/api-keys"
-      | "deployment/sessions"
-    )
-  | "session"
-  | "session/delete"
-  | "blobs/put"
-  | "environments"
-  | "channels"
-  | "channels/inbound"
-  | "auth"
-  | "auth/lease"
-  | "deployment/environment-providers"
-  | "deployment/channels";
 export type UniverseDeletionStep = "intake" | "workflows" | "environments" | "storage";
 export type UniverseMemberRole = "viewer" | "contributor" | "operator" | "admin";
 /**
@@ -1450,10 +1404,6 @@ export type TranscriptionFailureKind =
   "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
 export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
-/**
- * The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups.
- */
-export type ApiKeyGroups = "all" | MethodGroup[];
 export type AuthProviderConfigInput =
   | {
       apiBaseUrl?: string | null;
@@ -1575,9 +1525,8 @@ export type MethodAccess =
       kind: "deployment";
     };
 /**
- * What a public method does, independent of its RPC spelling. Requests are
- * gated by their key's groups; this classifies what the runtime's own work
- * may do and which role a gate built on the contract should require.
+ * What a public method does, independent of its RPC spelling. This classifies
+ * the runtime's own work and the role an external gate should require.
  */
 export type UniverseAction =
   | (
@@ -1599,6 +1548,31 @@ export type UniverseAction =
   | "shareSession"
   | "useResource"
   | "configureResource";
+/**
+ * The API family of a method, published for external authorization gates.
+ * `initialize` and `universe/watch` have no single family.
+ */
+export type MethodGroup =
+  | (
+      | "vfs"
+      | "profiles"
+      | "transcriptions"
+      | "models"
+      | "mcp"
+      | "bots"
+      | "deployment/universes"
+      | "deployment/sessions"
+    )
+  | "session"
+  | "session/delete"
+  | "blobs/put"
+  | "environments"
+  | "channels"
+  | "channels/inbound"
+  | "auth"
+  | "auth/lease"
+  | "deployment/environment-providers"
+  | "deployment/channels";
 /**
  * Where a method names the session it acts on, so a gate can decide per
  * session without a hand-written table. A creation method may name one that
@@ -1625,7 +1599,7 @@ export type RunStartSource = {
 };
 export type SessionEventDirection = "forward" | "backward";
 /**
- * Collections whose list rows can be watched. Each requires its existing API-key group.
+ * Collections whose list rows can be watched. Each publishes its API family.
  */
 export type WatchKind = "session" | "bot" | "environment" | "workspace";
 
@@ -3899,75 +3873,6 @@ export interface ContextReplaceResult {
   failure?: InputAdmissionFailureView | null;
   status: ContextReplaceStatus;
 }
-export interface AgentApiOutcomeOfDeploymentApiKeyCreateResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentApiKeyCreateResponse;
-}
-/**
- * A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
- * recovered later. Its custom `Debug` implementation redacts the DTO before
- * JSON-RPC serialization; the serialized response payload remains sensitive
- * and must not be logged.
- */
-export interface DeploymentApiKeyCreateResponse {
-  apiKey: DeploymentApiKeyView;
-  secret: string;
-}
-/**
- * Non-secret key metadata: what the key is called, reaches and may call,
- * and who minted it.
- */
-export interface DeploymentApiKeyView {
-  assertActor: boolean;
-  createdAtMs: number;
-  createdBy: Attribution;
-  displayName?: string | null;
-  groups: MethodGroup[];
-  /**
-   * The key's name among the keys of its scope. Together with the scope
-   * it addresses the key, and it is kept when the secret is replaced.
-   */
-  keyId: string;
-  /**
-   * The first characters of the key's current secret: enough to tell
-   * which secret the key holds without revealing it. It changes when the
-   * secret does.
-   */
-  keyPrefix: string;
-  lastUsedAtMs?: number | null;
-  revokedAtMs?: number | null;
-  scope: AccessScope;
-}
-export interface AgentApiOutcomeOfDeploymentApiKeyListResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentApiKeyListResponse;
-}
-export interface DeploymentApiKeyListResponse {
-  apiKeys?: DeploymentApiKeyView[];
-}
-export interface AgentApiOutcomeOfDeploymentApiKeyPutResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentApiKeyPutResponse;
-}
-export interface DeploymentApiKeyPutResponse {
-  apiKey: DeploymentApiKeyView;
-  /**
-   * False when the key already existed.
-   */
-  created: boolean;
-  /**
-   * True when an existing key held a different secret, which no longer
-   * works.
-   */
-  secretReplaced: boolean;
-}
-export interface AgentApiOutcomeOfDeploymentApiKeyRevokeResponse {
-  notifications?: AgentNotification[];
-  result: DeploymentApiKeyRevokeResponse;
-}
-export interface DeploymentApiKeyRevokeResponse {
-  apiKey: DeploymentApiKeyView;
-}
 export interface AgentApiOutcomeOfDeploymentChannelAccountListResponse {
   notifications?: AgentNotification[];
   result: DeploymentChannelAccountListResponse;
@@ -4630,34 +4535,18 @@ export interface InitializeResponse {
   serverInfo: ServerInfo;
 }
 /**
- * What the calling credential may do, so a client can offer only the
- * methods it may call. Descriptive: core still checks every call.
+ * How the direct runtime connection authenticated. All runtime tokens have
+ * full authority; permissions belong to the external gate.
  */
 export interface CallerAccess {
-  /**
-   * The method groups the caller may call. A request without a key holds
-   * every group. `initialize` belongs to no group and is always allowed.
-   */
-  groups: MethodGroup[];
-  /**
-   * The calling key's id, unique among the keys of `scope`. It is what
-   * records attribute the key's own requests to. Absent for a request
-   * without a key, such as local development.
-   */
-  keyId?: string | null;
-  /**
-   * Display prefix of the calling key's current secret; absent for a
-   * request without a key, such as local development.
-   */
-  keyPrefix?: string | null;
-  /**
-   * Credential scope, independent of a selected request universe.
-   */
-  scope: AccessScope;
   /**
    * True only for explicitly unauthenticated local development access.
    */
   single: boolean;
+  /**
+   * Configured token name, absent for unauthenticated access.
+   */
+  tokenName?: string | null;
 }
 export interface ServerCapabilities {
   eventLog?: boolean;
@@ -5832,91 +5721,6 @@ export interface ContextReplaceEntry {
 export interface ContextReplaceParams {
   entries: ContextReplaceEntry[];
   sessionId: string;
-}
-export interface DeploymentApiKeyCreateParams {
-  /**
-   * Whether the key may name the actor a request acts for with the
-   * `x-lightspeed-actor` header. Give it only to a gate that authenticates
-   * people, such as the Platform. It cannot be changed afterwards.
-   */
-  assertActor?: boolean;
-  /**
-   * Human-readable purpose shown in key-management interfaces.
-   */
-  displayName: string;
-  /**
-   * The method groups the key may call: a non-empty list, or `"all"` for
-   * every group its scope allows. The key stores the resulting set.
-   */
-  groups: ApiKeyGroups;
-  /**
-   * The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
-   * or colons, starting with a letter or digit, and not yet used by a key
-   * of this scope. Omit it to have one allocated.
-   */
-  keyId?: string | null;
-  /**
-   * A universe, or the deployment. A deployment key addresses a universe
-   * with the `x-lightspeed-universe` header and may hold deployment groups.
-   */
-  scope: AccessScope;
-}
-export interface DeploymentApiKeyListParams {
-  /**
-   * Only keys of this scope; absent lists every key.
-   */
-  scope?: AccessScope | null;
-}
-/**
- * Declare a key whose secret the caller supplies. `Debug` redacts the
- * secret; the serialized request remains sensitive and must not be logged.
- */
-export interface DeploymentApiKeyPutParams {
-  /**
-   * Whether the key may name the actor a request acts for. It cannot be
-   * changed afterwards.
-   */
-  assertActor?: boolean;
-  /**
-   * Human-readable purpose shown in key-management interfaces.
-   */
-  displayName: string;
-  /**
-   * The method groups the key may call: a non-empty list, or `"all"` for
-   * every group its scope allows. An existing key's groups are replaced
-   * by these, and `"all"` is resolved again on every call, so repeating a
-   * declaration after an upgrade gives the key the groups added since.
-   */
-  groups: ApiKeyGroups;
-  /**
-   * The key's id within its scope: 1-128 ASCII letters, digits,
-   * underscores, hyphens, dots or colons, starting with a letter or digit.
-   */
-  keyId: string;
-  /**
-   * A universe, or the deployment. It cannot be changed afterwards.
-   */
-  scope: AccessScope;
-  /**
-   * The secret the key answers to: `lsk_` followed by 32 random bytes
-   * encoded as base64url without padding. Generate it with a
-   * cryptographic random source.
-   */
-  secret: string;
-}
-export interface DeploymentApiKeyRevokeParams {
-  keyId: string;
-  /**
-   * The scope the key belongs to.
-   */
-  scope: AccessScope;
-}
-export interface DeploymentApiKeyRotateParams {
-  keyId: string;
-  /**
-   * The scope the key belongs to.
-   */
-  scope: AccessScope;
 }
 export interface DeploymentChannelAccountListParams {
   /**

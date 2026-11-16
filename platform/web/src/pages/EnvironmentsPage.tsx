@@ -58,7 +58,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { EmptyState, LoadingNote, PageHeader, SectionHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
-import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
+import { isKeyIdConflict, KeyIdField } from "@/components/key-id-field";
 import { EnvironmentPowerControls } from "@/components/environment/power-controls";
 import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";

@@ -566,12 +566,6 @@ impl GatewayAgentApi {
             delete_after_close_ms,
         );
         validate_delete_after_close_ms(effective_delete_after_close_ms)?;
-        if effective_delete_after_close_ms.is_some()
-            && self.current_controller().is_none()
-            && !self.caller()?.permits(METHOD_SESSION_RETENTION_PUT)
-        {
-            return Err(AgentApiError::forbidden());
-        }
         // Explicit features replace the profile's whole, so they are all the
         // caller's own; anything else in the document came from a profile.
         let request_names_features = config

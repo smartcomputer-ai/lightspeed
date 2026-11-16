@@ -83,7 +83,7 @@ describe("LightspeedClient", () => {
     }
 
     it("sends the key, universe and actor as their headers", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_fixture", universe: "universe_1", actor: "user_1" });
+      const { captured, client } = capturing({ token: "lsk_fixture", universe: "universe_1", actor: "user_1" });
       await client.call("models/list", {});
       expect(captured[0]?.get("authorization")).toBe("Bearer lsk_fixture");
       expect(captured[0]?.get("x-lightspeed-universe")).toBe("universe_1");
@@ -99,21 +99,21 @@ describe("LightspeedClient", () => {
     });
 
     it("omits the universe on calls that address no universe", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_fixture", universe: "universe_1" });
+      const { captured, client } = capturing({ token: "lsk_fixture", universe: "universe_1" });
       await client.call("initialize", {});
       expect(captured[0]?.has("x-lightspeed-universe")).toBe(false);
       expect(captured[0]?.get("authorization")).toBe("Bearer lsk_fixture");
     });
 
     it("lets explicit headers override the options, and a call override both", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_option", headers: { authorization: "Bearer lsk_headers" } });
+      const { captured, client } = capturing({ token: "lsk_option", headers: { authorization: "Bearer lsk_headers" } });
       await client.call("models/list", {});
       await client.call("models/list", {}, { headers: { authorization: "Bearer lsk_call" } });
       expect(captured.map((headers) => headers.get("authorization"))).toEqual(["Bearer lsk_headers", "Bearer lsk_call"]);
     });
 
     it("withActor attributes only the new client's requests", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_fixture" });
+      const { captured, client } = capturing({ token: "lsk_fixture" });
       const alice = client.withActor("alice");
       await alice.call("models/list", {});
       await client.call("models/list", {});
@@ -139,12 +139,8 @@ describe("LightspeedClient", () => {
       description:
         "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
     });
-    expect(METHOD_INFO["deployment/api-keys/create"]).toMatchObject({
-      scope: "deployment",
-      access: { kind: "deployment" },
-      summary: "Create a scoped API key",
-      description: expect.stringContaining("returned exactly once"),
-    });
+    expect(Object.keys(METHOD_INFO).some(method => method.startsWith("deployment/api-keys/"))).toBe(false);
+
   });
 
   it("calls fetch the way a browser requires, not as a method of the client", async () => {

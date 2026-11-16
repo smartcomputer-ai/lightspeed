@@ -78,7 +78,7 @@ it("marks who sees the bot, and says who created it", () => {
   expect(sharing.places).toBeUndefined();
   expect(creatorLabel({ kind: "actor", id: "me" }, "me")).toBe("you");
   expect(creatorLabel({ kind: "actor", id: "someone" }, "me")).toBe("a member");
-  expect(creatorLabel({ kind: "key", keyId: "k", scopeKind: "universe" }, "me")).toBe("an API key");
+  expect(creatorLabel({ kind: "token", name: "operator" }, "me")).toBe("operator");
   expect(creatorLabel({ kind: "internal", cause: "seed", component: "demo" }, "me")).toBe("the system");
   // Without access, no mark.
   expect(botMetaItems({ status, pending: 0, closed: false }).some((item) => item.key === "sharing")).toBe(false);

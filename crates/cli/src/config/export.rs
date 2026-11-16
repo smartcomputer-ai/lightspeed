@@ -1,5 +1,4 @@
-//! Writing the configuration of a live universe, or of the deployment, as a
-//! document.
+//! Writing the configuration of a live universe as a document.
 //!
 //! The document is in normal form: entries ordered by id, server-derived
 //! fields removed, optional fields left out when they hold their default,
@@ -17,7 +16,7 @@ use serde_json::{Value, json};
 
 use super::{
     document::{Format, Kind, SCHEMA_VERSION, placeholder_source, source_field},
-    plan::{connect, deployment_resources, universe_resources},
+    plan::{connect, universe_resources},
     resources::{EnvironmentCredentials, Live, Resource, Target, Wanted},
 };
 use crate::connection::ResolvedConnection;
@@ -73,8 +72,6 @@ pub(crate) struct Exported {
     environments: Vec<Ordered>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     profiles: Vec<Ordered>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    api_keys: Vec<Ordered>,
 }
 
 impl Exported {
@@ -87,7 +84,6 @@ impl Exported {
             "registrationKeys" => &mut self.registration_keys,
             "environments" => &mut self.environments,
             "profiles" => &mut self.profiles,
-            "apiKeys" => &mut self.api_keys,
             _ => return None,
         })
     }
@@ -126,17 +122,6 @@ pub(crate) async fn universe(base: &ResolvedConnection, universe: &str) -> Resul
         ..Exported::default()
     };
     read_sections(&target, &universe_resources(), &mut exported).await?;
-    Ok(exported)
-}
-
-pub(crate) async fn deployment(base: &ResolvedConnection) -> Result<Exported> {
-    let target = connect(base, None).await?;
-    let mut exported = Exported {
-        schema_version: SCHEMA_VERSION,
-        kind: Some(Kind::Deployment),
-        ..Exported::default()
-    };
-    read_sections(&target, &deployment_resources(), &mut exported).await?;
     Ok(exported)
 }
 
@@ -292,7 +277,6 @@ fn secret_suffix(section: &str) -> &'static str {
     match section {
         "providers" => "_credential",
         "registrationKeys" => "_registration_key",
-        "apiKeys" => "_api_key",
         _ => "",
     }
 }
@@ -358,7 +342,7 @@ fn include_path(file: &Path, document_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::resources::{ApiKeys, McpServers, RegistrationKeys};
+    use crate::config::resources::{McpServers, RegistrationKeys};
 
     #[test]
     fn an_exported_entry_states_only_what_differs_from_the_defaults() {
@@ -415,45 +399,6 @@ mod tests {
             json!({ "env": "CI_RUNNERS_REGISTRATION_KEY" })
         );
         assert!(entry.get("secret").is_none());
-    }
-
-    #[test]
-    fn an_exported_key_lists_the_groups_it_holds() {
-        // Every group a universe key may hold today. The export still names
-        // them one by one: `all` is a choice someone writes, because applying
-        // it after an upgrade gives the key the groups added since.
-        let held: Vec<api::MethodGroup> =
-            api::MethodGroup::allowed_in(api::AccessScope::Universe {
-                universe_id: uuid::Uuid::nil(),
-            })
-            .into_iter()
-            .collect();
-        let live = Live {
-            entry: json!({
-                "keyId": "release-bot",
-                "displayName": "Release bot",
-                "groups": held,
-                "assertActor": false,
-            }),
-            has_secret: true,
-            exportable: true,
-            ..Live::default()
-        };
-        let entry = export_entry(&ApiKeys, "release-bot", &live);
-        assert_eq!(
-            entry,
-            json!({
-                "keyId": "release-bot",
-                "displayName": "Release bot",
-                "groups": held,
-                "secretFrom": { "env": "RELEASE_BOT_API_KEY" },
-            })
-        );
-        // The exported entry declares the key as it is: nothing to change.
-        let mut declared = entry.clone();
-        declared.as_object_mut().unwrap().remove("secretFrom");
-        let declared = ApiKeys.normalize(declared).unwrap();
-        assert!(crate::config::plan::changed_fields(&ApiKeys, &declared, &live.entry).is_empty());
     }
 
     #[test]

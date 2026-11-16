@@ -133,3 +133,14 @@ test("readiness distinguishes a refused connection from an HTTP failure", { time
     return true;
   });
 });
+
+
+test("full profile never launches Configurator or connectors with runtime authority", () => {
+  const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
+    cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "" },
+  });
+  assert.doesNotMatch(output, /^process: (configurator|connectors) ->/m);
+  assert.throws(() => execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
+    cwd: repoRoot, encoding: "utf8", stdio: "pipe", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "telegram" },
+  }), /Channel connectors are disabled/);
+});

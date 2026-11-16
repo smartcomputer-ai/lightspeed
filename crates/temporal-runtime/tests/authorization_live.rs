@@ -1,22 +1,19 @@
 //! Authenticated HTTP over real PostgreSQL and Temporal, with a fake model:
-//! keys and actors, unshared and shared sessions, list filters and sharing. Requires an explicitly selected disposable database.
+//! tokens and actors, unshared and shared sessions, list filters and sharing. Requires an explicitly selected disposable database.
 mod support;
 
-use api::{AccessScope, Attribution, MethodGroup};
-use auth::{ApiKeySpec, MintedApiKey};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, sync::Arc};
-use store_pg::{PgApiKeyStore, PgStore};
+use store_pg::PgStore;
 use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
-    config::GatewayAuthMode,
+    config::{GatewayAuthMode, RpcTokens},
     gateway::{GatewayRoutes, GatewayState, gateway_router},
 };
 use uuid::Uuid;
 
-/// One way of calling the gateway: a key, the universe it names when it is a
-/// deployment key, and the actor it asserts.
+/// A configured component token, explicit universe, and optional actor.
 #[derive(Clone)]
 struct Caller {
     secret: String,
@@ -64,29 +61,8 @@ fn listed(value: &Value) -> BTreeSet<String> {
         .collect()
 }
 
-async fn issue(
-    keys: &PgApiKeyStore,
-    scope: AccessScope,
-    groups: Option<&[MethodGroup]>,
-    assert_actor: bool,
-) -> anyhow::Result<MintedApiKey> {
-    let key = auth::mint_api_key(
-        ApiKeySpec {
-            key_id: None,
-            scope,
-            // `None` asks for every group the scope allows.
-            groups: groups.map_or(api::ApiKeyGroups::All, |groups| {
-                groups.iter().copied().collect()
-            }),
-            assert_actor,
-            created_by: Attribution::Local,
-            display_name: Some("authorization live".into()),
-        },
-        4,
-    )?;
-    keys.create_api_key(&key.key_hash, &key.record).await?;
-    Ok(key)
-}
+const PLATFORM_TOKEN: &str = "platform-secret-with-at-least-32-characters";
+const OPERATOR_TOKEN: &str = "operator-secret-with-at-least-32-characters";
 
 /// The authenticated gateway over `runtime`, served on a free local port.
 async fn serve(
@@ -96,7 +72,21 @@ async fn serve(
     let endpoint = format!("http://{}/rpc", listener.local_addr()?);
     let router = gateway_router(
         Arc::new(GatewayState::multi(
-            GatewayAuthMode::Authenticated,
+            GatewayAuthMode::Authenticated {
+                tokens: Arc::new(RpcTokens::from_configuration(
+                    [
+                        (
+                            "LIGHTSPEED_RPC_TOKEN_PLATFORM".into(),
+                            PLATFORM_TOKEN.into(),
+                        ),
+                        (
+                            "LIGHTSPEED_RPC_TOKEN_OPERATOR".into(),
+                            OPERATOR_TOKEN.into(),
+                        ),
+                    ],
+                    |_| unreachable!(),
+                )?),
+            },
             runtime,
             endpoint.clone(),
         )),
@@ -132,39 +122,16 @@ async fn disposable_pool() -> anyhow::Result<(sqlx::PgPool, Uuid)> {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires disposable Postgres and Temporal; fake model; serialized"]
-async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
+async fn tokens_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
     let _lock = support::live::LIVE_TEST_LOCK.lock().await;
-    let (pool, universe) = disposable_pool().await?;
-    let keys = PgApiKeyStore::new(pool.clone());
-    let gate = issue(&keys, AccessScope::Deployment, None, true).await?;
-    let universe_key = issue(
-        &keys,
-        AccessScope::Universe {
-            universe_id: universe,
-        },
-        None,
-        false,
-    )
-    .await?;
-    let connector = issue(
-        &keys,
-        AccessScope::Deployment,
-        Some(&[MethodGroup::ChannelsInbound, MethodGroup::BlobsPut]),
-        false,
-    )
-    .await?;
+    let (_pool, universe) = disposable_pool().await?;
     let platform = Caller {
-        secret: gate.secret.expose().to_owned(),
+        secret: PLATFORM_TOKEN.into(),
         universe: Some(universe),
         actor: None,
     };
     let developer = Caller {
-        secret: universe_key.secret.expose().to_owned(),
-        universe: None,
-        actor: None,
-    };
-    let connector = Caller {
-        secret: connector.secret.expose().to_owned(),
+        secret: OPERATOR_TOKEN.into(),
         universe: Some(universe),
         actor: None,
     };
@@ -221,7 +188,7 @@ async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
             let read = success(rpc(&endpoint, &developer, "session/read", json!({"sessionId": own})).await);
             assert_eq!(
                 read["session"]["access"]["createdBy"],
-                json!({"kind": "key", "keyId": universe_key.record.key_id.as_str(), "scopeKind": "universe"})
+                json!({"kind": "token", "name": "operator"})
             );
 
             // Lists filter by each session's root, in one pageable query. An
@@ -243,16 +210,11 @@ async fn keys_actors_unshared_work_and_sharing() -> anyhow::Result<()> {
             let visible_to_bob = listed(&success(rpc(&endpoint, &bob, "session/list", json!({"visibleTo": "bob", "limit": 200})).await));
             assert!(visible_to_bob.contains(&draft));
 
-            // A key asserts an actor only when allowed to, and calls only its
-            // groups.
-            assert_eq!(kind(&rpc(&endpoint, &developer.as_actor("mallory"), "session/read", json!({"sessionId": team})).await), "forbidden");
-            assert_eq!(kind(&rpc(&endpoint, &connector, "session/read", json!({"sessionId": team})).await), "forbidden");
-            assert_eq!(kind(&rpc(&endpoint, &connector, "session/list", json!({})).await), "forbidden");
+            // Actors never change a trusted component's access.
+            success(rpc(&endpoint, &developer.as_actor("mallory"), "session/read", json!({"sessionId": team})).await);
 
-            // A digest is a capability within the universe: bytes a connector
-            // uploaded are readable by any key that may read blobs.
             let bytes = b"shared attachment";
-            let uploaded = success(rpc(&endpoint, &connector, "blobs/put", json!({"blobs":[{"bytesBase64": base64::engine::general_purpose::STANDARD.encode(bytes)}]})).await);
+            let uploaded = success(rpc(&endpoint, &platform, "blobs/put", json!({"blobs":[{"bytesBase64": base64::engine::general_purpose::STANDARD.encode(bytes)}]})).await);
             let blob = uploaded["blobs"][0]["blobRef"].clone();
             let read = success(rpc(&endpoint, &developer, "blobs/read", json!({"blobRef": blob})).await);
             assert_eq!(base64::engine::general_purpose::STANDARD.decode(read["bytesBase64"].as_str().unwrap())?, bytes);

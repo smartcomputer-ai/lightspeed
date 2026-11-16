@@ -2,7 +2,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
+import { AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -60,7 +60,6 @@ function shellMode(pathname: string): ShellMode {
 const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
   { to: "/admin/users", icon: UserAdminIcon, label: "Users" },
   { to: "/admin/universes", icon: UniversesIcon, label: "Universes" },
-  { to: "/admin/api-keys", icon: ApiKeyIcon, label: "API keys" },
   { to: "/admin/channels", icon: ChannelIcon, label: "Channels" },
   { to: "/admin/audit", icon: AuditLogIcon, label: "Audit log" },
   { to: "/admin/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },

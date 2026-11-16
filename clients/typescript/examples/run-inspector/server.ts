@@ -19,7 +19,7 @@ const port = Number(process.env.PORT ?? 18090);
 
 const options: LightspeedClientOptions = {
   endpoint: required("LIGHTSPEED_API_URL"),
-  apiKey: required("LIGHTSPEED_API_KEY"),
+  token: required("LIGHTSPEED_RPC_TOKEN"),
 };
 if (process.env.LIGHTSPEED_UNIVERSE) options.universe = process.env.LIGHTSPEED_UNIVERSE;
 

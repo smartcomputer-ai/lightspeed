@@ -15,22 +15,19 @@ page says about identifiers, events, and lifecycle applies to it too.
 
 ## Prepare an endpoint and a profile
 
-For this example, provide an authenticated gateway URL ending in `/rpc` and a
-universe key with the `session` method group. This key authenticates directly
-to the runtime, independently of a Platform browser login. Follow
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
-to configure the client path.
+For this example, provide an authenticated runtime URL ending in `/rpc`, a
+configured runtime token, and the target universe's UUID or handle. This is a
+direct connection with full authority over every method and universe. Follow
+[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
+to configure it.
 
-Run this integration on your application server or another trusted client.
-A runtime key can call its allowed method groups throughout its universe,
-including private sessions when it has the `session` group. Do not embed it
-in a publicly distributed frontend; [serve a browser UI](#serve-a-browser-ui) through
-a proxy instead. Applications serving people should
-authenticate those people and enforce their own access policy before
-submitting work with the application's credentials. A key created with
-`assertActor` can attribute that work to them: `client.withActor(userId)` returns a
-client that records the ID on each request. Attribution does not limit what the key
-can do.
+Run this integration on a trusted application server. A runtime token can read
+private sessions and change resources in every universe; keep it out of browser
+code, agents, and untrusted applications. An application serving people must
+authenticate them and enforce its own access policy before forwarding requests.
+The Platform already does this for its web app. `client.withActor(userId)` records
+who asked; every runtime token may set an actor, and attribution grants no
+permissions. See [Serve a browser UI](#serve-a-browser-ui) for a proxy example.
 
 Create the `release-editor` profile and `release-notes` workspace from
 [Build your first agent](../getting-started/first-agent.md), including
@@ -47,11 +44,13 @@ npm install --save-exact "@lightspeed-ai/sdk@<release-version>"
 ```
 
 Replace `<release-version>` with the actual package version, or run
-`npm install @lightspeed-ai/sdk` for the latest release. Supply `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_KEY` through the
-application's protected configuration. A deployment key also needs the `universe`
-client option, set to the universe's UUID or handle; a universe key must leave it out. The example also reads
-`ACORN_RELEASE_JOB_ID`, an application-defined operation ID such as
-`acorn-1.2-draft-001`. Keep it unchanged when retrying that operation.
+`npm install @lightspeed-ai/sdk` for the latest release. Supply
+`LIGHTSPEED_API_URL`, `LIGHTSPEED_RPC_TOKEN`, and `LIGHTSPEED_UNIVERSE` through the
+application's protected configuration. The `universe` option names the UUID or
+handle for universe methods; the SDK omits the header for connection and
+deployment methods. The example also reads `ACORN_RELEASE_JOB_ID`, an
+application-defined operation ID such as `acorn-1.2-draft-001`. Keep it unchanged
+when retrying that operation.
 
 ## Submit and observe one task
 
@@ -70,7 +69,8 @@ function required(name: string): string {
 const jobId = required("ACORN_RELEASE_JOB_ID");
 const client = new LightspeedClient({
   endpoint: required("LIGHTSPEED_API_URL"),
-  apiKey: required("LIGHTSPEED_API_KEY"),
+  token: required("LIGHTSPEED_RPC_TOKEN"),
+  universe: required("LIGHTSPEED_UNIVERSE"),
 });
 
 const { session } = await client.startSession({
@@ -118,8 +118,8 @@ terminal text in `outputText` when present, and a `failure` with `kind` and
 `message` when it failed.
 
 The example creates a session shared with the universe so teammates can inspect
-it in the Platform. Omitting `access` creates private work; because this key
-asserts no user, only admins can see that session through the Platform.
+it in the Platform. Omitting `access` creates private work; because this client
+names no user, only admins can see that session through the Platform.
 Open the session and inspect `release-notes.md` to verify the workspace change.
 The run's final message and a file it wrote are different outputs. Reuse the
 session for a follow-up conversation, or create another session ID for
@@ -160,8 +160,8 @@ audio separately, then submit ordinary `text` or `textRef` input:
    in the same universe. Admission checks that the source exists and retains
    it with the session content.
 
-Transcription creates no session or run. A direct key needs `blobs/put` for
-upload, `transcriptions` for the job, and `session` for subsequent admission.
+Transcription creates no session or run. A direct runtime token can call all
+of these methods in the selected universe.
 Use `transcriptions/cancel` to request cancellation; abandoning an HTTP wait
 does not cancel the job.
 
@@ -169,8 +169,9 @@ Matching retries with the same requester, idempotency key, audio, and options
 rejoin the original job even if the universe default has changed. Reusing the
 key with changed input conflicts. This identity lasts for the Temporal
 namespace's workflow-history retention period. The resolved model is fixed
-at admission. Asserted actors can read and cancel only their own drafts;
-direct universe keys retain their method-group authority.
+at admission. The Platform allows people to read and cancel only their own
+drafts. Direct runtime access applies no actor-based ownership check; an
+application gateway must enforce that rule itself.
 
 Unsubmitted audio and transcripts use ordinary CAS collection grace and can
 expire. Persist or admit the result when it is needed beyond that period.
@@ -272,7 +273,7 @@ message entries. The returned map supplies metadata, not transcript order.
 | `sentAtMs` | Server acceptance time for run or steering input, otherwise the earliest loaded context event carrying the message. |
 | `timeSource` | `runAccepted`, `runSteeringAccepted`, or `contextEvent`. The last is provisional for input whose acceptance event is not loaded. |
 | `author` | An actor `{ kind: "actor", id, source }`, a bot delivery `{ kind: "event" }`, or `null`. Assistant messages have no user author. |
-| `requestedBy` | Full attribution from the matching acceptance event, or `null`; preserves actor, key, local and internal cases. |
+| `requestedBy` | Full attribution from the matching acceptance event, or `null`; preserves actor, token, local and internal cases. |
 
 If input is accepted at 10:00 and enters context at 10:02 after waiting in the
 queue, its `sentAtMs` is 10:00. Steering joins by both run ID and steering ID;
@@ -309,8 +310,8 @@ up. These render identities belong to the current view, not durable session stat
 
 The Platform browser calls its cookie-authenticated `/api/v1` routes. Platform
 checks membership and session visibility, then calls the Rust runtime through the
-SDK with its service key and the member's actor ID. The browser uses SDK types and
-pure helpers without holding that service key.
+SDK with its runtime token and the member's actor ID. The browser uses SDK types
+and pure helpers without holding that token.
 
 | View | Available data and refresh path |
 | --- | --- |
@@ -410,8 +411,8 @@ fires. Events tell you something changed; the run's projection is what to show.
 
 ## Serve a browser UI
 
-A browser cannot hold an API key, and the runtime gateway does not accept cross-origin
-requests. Mount `createRpcProxy` from `@lightspeed-ai/sdk/server` on your own server,
+Keep runtime tokens on the server. The runtime gateway does not accept
+cross-origin requests. Mount `createRpcProxy` from `@lightspeed-ai/sdk/server` on your own server,
 and point the browser's `LightspeedClient` at it. The proxy forwards only the API methods
 you list by name, including those behind any helper the browser calls, calls your `authorize` function for each one, and ignores any identity the
 browser sends:
@@ -421,31 +422,48 @@ import { LightspeedClient } from "@lightspeed-ai/sdk";
 import { createRpcProxy } from "@lightspeed-ai/sdk/server";
 
 declare function getUser(request: Request): Promise<{ id: string } | null>;
+// Implement membership and session-visibility checks for the configured universe.
+declare function canReadSession(userId: string, sessionId: string): Promise<boolean>;
 
 export const handler = createRpcProxy({
   client: new LightspeedClient({
     endpoint: process.env.LIGHTSPEED_API_URL!,
-    apiKey: process.env.LIGHTSPEED_API_KEY!,
+    token: process.env.LIGHTSPEED_RPC_TOKEN!,
+    universe: process.env.LIGHTSPEED_UNIVERSE!,
   }),
   methods: ["session/list", "session/read", "session/runs/list", "session/runs/read"],
-  authorize: async ({ request }) => {
+  authorize: async ({ request, method, params }) => {
     const user = await getUser(request);
     if (!user) return { deny: "unauthenticated" };
+    if (!params || typeof params !== "object" || Array.isArray(params)) {
+      return { deny: "forbidden" };
+    }
+    if (method === "session/list") {
+      return { actor: user.id, params: { ...params, visibleTo: user.id } };
+    }
+    const sessionId = (params as { sessionId?: unknown }).sessionId;
+    if (typeof sessionId !== "string" || !(await canReadSession(user.id, sessionId))) {
+      return { deny: "forbidden" };
+    }
     return { actor: user.id };
   },
 });
 ```
 
-`authorize` can also return `params` to replace what the browser sent, for example to
-force a `metadata` filter onto `session/list`. Treat the params it receives as untrusted,
-because nothing has validated them yet. Returning an `actor` needs a key created with
-`assertActor`, and records who asked without limiting the key. A denial reaches the
-browser as a `LightspeedRpcError` with kind `unauthenticated` or `forbidden`.
+Implement `getUser` so it also checks membership in the configured universe.
+The example forces `visibleTo` on session lists and checks visibility before
+reading a named session or its runs. `authorize` receives untrusted params and
+can replace them; the runtime validates their API shape after the proxy admits
+them. Returning an `actor` records who asked and does not restrict the runtime
+token. A denial reaches the browser as a `LightspeedRpcError` with kind
+`unauthenticated` or `forbidden`.
 
-A universe is one readable namespace for a key allowed to read it. `blobs/read` takes
-only a blob reference and is not tied to a session, so anyone you allow that method can
-read any blob in the universe whose reference they hold. If an application must not see
-some work, give it a separate universe and key.
+A universe partitions data. `blobs/read` takes only a blob reference and is not
+tied to a session, so anyone the proxy allows that method can read any blob in
+the selected universe whose reference they hold. If an application must see only
+some universes, enforce that selection in its gateway and keep the runtime token
+inside that trusted gateway. A separate universe alone does not limit a runtime
+token.
 
 Serve the proxy from the same origin as your page, because it sends no CORS headers. It
 accepts only POST with a JSON body, which also stops a cross-site form from using a
@@ -466,7 +484,7 @@ durable session event stream.
 `LightspeedRpcError` preserves `code`, `message`, `kind`, and structured `data`.
 Inspect those fields for conflicts, rejected operations, missing records, or
 an environment that is not ready. Every `kind` is camelCase, such as `invalidRequest`
-or `notFound`. A missing or invalid API key is the kind `unauthenticated`. The gateway
+or `notFound`. A missing or invalid runtime token is the kind `unauthenticated`. The gateway
 answers it with HTTP 401 before reading the request body, and the client turns that
 response into the same `LightspeedRpcError`; a program that calls `/rpc` without the
 client must check the HTTP status as well as the JSON-RPC error. `LightspeedTransportError` reports failures such as HTTP errors, invalid

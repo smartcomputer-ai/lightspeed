@@ -85,11 +85,11 @@ it("adds credentials, channels and templates for an Operator", async () => {
   });
 });
 
-it("adds API keys and general settings for an Admin", async () => {
+it("adds general settings for an Admin", async () => {
   expect(await sidebarFor("admin")).toEqual({
     "": WORK,
     Setup: SETUP,
-    Access: ["Credentials", "API keys", "Members"],
+    Access: ["Credentials", "Members"],
     Settings: ["General", "Channels", "Templates"],
   });
 });
@@ -139,7 +139,7 @@ it("links each page at its flat route", async () => {
   expect([...container.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
     "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
     "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
-    "/u/test/credentials", "/u/test/api-keys", "/u/test/members",
+    "/u/test/credentials", "/u/test/members",
     "/u/test/settings/general", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);
 });

@@ -54,7 +54,6 @@ const universeReads = [
   "models",
   "models/defaults",
   "setups",
-  "api-keys",
   "members",
   "bots",
   "channel-accounts",
@@ -480,7 +479,6 @@ describe("demo router", () => {
       "/api/v1/admin/environment-providers",
       "/api/v1/admin/environment-provider-bindings",
       "/api/auth/admin/list-users",
-      "/api/v1/admin/api-keys",
     ]) {
       expect((await call("GET", path)).status, path).toBe(200);
     }
@@ -520,7 +518,7 @@ describe("demo router", () => {
     expect((await call("GET", path)).status).toBe(404);
   });
 
-  it("shows templates to Operators and keeps installing with Admins", async () => {
+  it("shows the unavailable setup without allowing installation", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = `/api/v1/universes/${state.universe.id}/setups`;
@@ -532,81 +530,9 @@ describe("demo router", () => {
     expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
     state.universe.role = "admin";
-    expect((await call("POST", `${base}/configurator/install`, {})).status).toBe(400);
+    expect((await call("POST", `${base}/configurator/install`, {})).status).toBe(503);
     expect((await call("POST", `${base}/configurator/install`, { key: { kind: "current" } })).json)
-      .toMatchObject({ status: "installing" });
-  });
-
-  it("mints scoped keys from the admin keys page and revokes them", async () => {
-    const { store, call } = await boot();
-    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const created = await call("POST", "/api/v1/admin/api-keys", {
-      displayName: "Connector", scope: { kind: "universe", universeId: universe.universe.id }, groups: ["channels/inbound"],
-    });
-    expect(created.status).toBe(201);
-    const { apiKey } = created.json as { apiKey: { keyId: string } };
-    const listed = (await call("GET", "/api/v1/admin/api-keys")).json as { keyId: string; groups: string[]; scope: { kind: string } }[];
-    expect(listed.find((key) => key.keyId === apiKey.keyId)).toMatchObject({ groups: ["channels/inbound"], scope: { kind: "universe" } });
-    expect(listed.find((key) => key.keyId === "platform")).toMatchObject({ scope: { kind: "deployment" } });
-    // A key id is resolved within its scope: the universe's key is not a
-    // deployment key of that id.
-    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyId}`)).status).toBe(404);
-    const scoped = `?universeId=${universe.universe.lightspeedUniverseId}`;
-    expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyId}${scoped}`)).status).toBe(200);
-  });
-
-  it("gives an admin key the groups that are stated, and none when they are left out", async () => {
-    const { call } = await boot();
-    const key = { displayName: "Gate", scope: { kind: "deployment" } };
-    for (const groups of [undefined, null, [], "everything"]) {
-      expect((await call("POST", "/api/v1/admin/api-keys", { ...key, groups })).status, JSON.stringify(groups)).toBe(400);
-    }
-    const all = await call("POST", "/api/v1/admin/api-keys", { ...key, groups: "all" });
-    expect(all.status).toBe(201);
-    // `all` is stored as the groups of the key's scope, as the runtime stores it.
-    expect((all.json as { apiKey: { groups: string[] } }).apiKey.groups).toContain("deployment/api-keys");
-    const listed = await call("POST", "/api/v1/admin/api-keys", { ...key, groups: ["session"] });
-    expect((listed.json as { apiKey: { groups: string[] } }).apiKey.groups).toEqual(["session"]);
-  });
-
-  it.each(["admin", "universe"])("rotates %s keys by id, keeping the id, and refuses revoked keys", async (scope) => {
-    const { store, call } = await boot();
-    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
-    const created = await call("POST", base, { displayName: "Rotation test", groups: ["session"], scope: { kind: "deployment" } });
-    const before = created.json as { apiKey: Record<string, unknown> & { keyId: string; keyPrefix: string }; secret: string };
-    const rotated = await call("POST", `${base}/${before.apiKey.keyId}/rotate`);
-    expect(rotated.status).toBe(200);
-    const after = rotated.json as typeof before;
-    expect(after.secret).not.toBe(before.secret);
-    expect(after.apiKey).toEqual({ ...before.apiKey, keyPrefix: after.secret.slice(0, 12), lastUsedAtMs: null });
-    expect((await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`)).status).toBe(404);
-    expect((await call("DELETE", `${base}/${after.apiKey.keyId}`)).status).toBe(200);
-    expect((await call("POST", `${base}/${after.apiKey.keyId}/rotate`)).status).toBe(404);
-  });
-
-  it.each(["admin", "universe"])("mints %s keys under a chosen id and refuses an id a key already holds", async (scope) => {
-    const { store, call } = await boot();
-    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
-    const body = { displayName: "CI", groups: ["session"], scope: { kind: "deployment" }, keyId: " ci " };
-    const created = await call("POST", base, body);
-    expect(created.status).toBe(201);
-    expect(created.json).toMatchObject({ apiKey: { keyId: "ci", revokedAtMs: null } });
-    expect((await call("POST", base, body)).json).toEqual({
-      error: 'key ID "ci" is already in use; leave it blank to generate a new ID or choose another',
-    });
-    // Revoking never frees the id.
-    expect((await call("DELETE", `${base}/ci`)).status).toBe(200);
-    const reused = await call("POST", base, body);
-    expect(reused.status).toBe(409);
-    expect(reused.json).toEqual({
-      error: 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another',
-    });
-    // An id is taken within its scope only.
-    if (scope === "admin") {
-      expect((await call("POST", base, { ...body, scope: { kind: "universe", universeId: universe.universe.id } })).status).toBe(201);
-    }
+      .toMatchObject({ error: "Configurator setup is temporarily unavailable" });
   });
 
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {

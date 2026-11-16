@@ -74,20 +74,22 @@ from an authorized administrator account for account management.
 When sign-in works but a page fails, distinguish a Platform permission denial
 from an upstream runtime error. Viewers can read visible work, Contributors can
 run work, Operators can configure shared resources, and Admins manage membership
-and keys. Admins can access every session; other members see their own private
+and universe settings. Admins can access every session; other members see their own private
 sessions and sessions shared with the universe. A private session outside that
 audience appears absent. See [People and roles](../access-and-security/people-and-roles.md)
 for the permission matrix.
 
-For runtime errors, verify the endpoint, key status, key scope, and allowed
-method groups. An HTTP 401 from `/rpc` means the request presented no valid key:
-the key is missing, malformed, unknown, or revoked. A key that is valid but not
-allowed to make the call is refused with a `forbidden` JSON-RPC error instead.
-The Platform needs a deployment key allowed to assert actors.
-It sends the runtime universe UUID, not the handle shown in the browser URL.
-A direct universe key must omit `x-lightspeed-universe`; a deployment key must
-send it for universe methods and omit it for deployment methods. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
+For runtime errors, verify the endpoint and configured token. HTTP 401 from
+`/rpc` means the bearer credential does not match a configured RPC token or the
+authentication headers are malformed. There is no key table or revocation API.
+Replace tokens in configuration and restart the runtime and affected consumers.
+Every valid runtime token has full authority; method-group checks are gone.
+
+The Platform uses `LIGHTSPEED_PLATFORM_RPC_TOKEN` or its `_FILE` form and names
+the actor for attribution. It sends the universe UUID, not the handle in the
+browser URL. Direct clients must send `x-lightspeed-universe` as a UUID or
+handle for universe methods and omit it for `initialize` and deployment methods.
+See [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
 for request authentication, and [People and roles](../access-and-security/people-and-roles.md)
 for membership changes and offboarding.
 
@@ -218,6 +220,11 @@ explains why a daemon restart interrupts persisted active jobs and loses
 interactive process handles.
 
 ## Chat delivery
+
+Connector startup is disabled during the runtime access cutover. Accounts in
+the supported stack cannot receive or deliver chat messages. Do not replace a
+connector's removed restricted API key with a runtime token. The checks below
+are retained for inspecting the connector implementation and historical state.
 
 Follow delivery in three stages: connector account, runtime routing, and
 outbound response.

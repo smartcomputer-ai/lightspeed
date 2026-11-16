@@ -114,38 +114,40 @@ and earlier bot rows fail the new constraints at `migrate`. Moving to it takes a
 fresh runtime database and a new Temporal namespace. Every API enum and error kind
 is now camelCase, so clients and dashboards reading the old values need updating.
 
-A request an API key makes for itself is now attributed to the key's id and
-scope kind, no longer to the display prefix of its secret. `migrate` rewrites
-the stored attributions in the runtime database, including those inside session
-events, by looking up the key that holds each recorded prefix. A record whose
-key has had its secret replaced since cannot be matched and becomes an internal
-attribution that quotes the old prefix. Temporal histories are not rewritten: a
-session, or a transcription job, in which a key acted without asserting an
-actor does not replay, so treat the release as
-[breaking](#move-a-breaking-release-to-a-new-namespace). Clients that read
-`createdBy`, `requestedBy` or `decidedBy` find `keyId` and `scopeKind` where
-`prefix` used to be.
+Runtime caller access now uses configuration tokens. Before starting an
+authenticated runtime, supply `LIGHTSPEED_RPC_TOKEN` or named tokens such as
+`LIGHTSPEED_RPC_TOKEN_PLATFORM`; each supports a `_FILE` form. Give the Platform
+the matching value through `LIGHTSPEED_PLATFORM_RPC_TOKEN` or its `_FILE` form.
+Every token has full authority. Keep `/rpc` restricted to trusted components;
+the runtime no longer enforces caller scopes or method groups.
 
-Creating or declaring an API key now requires its method groups. A
-`deployment/api-keys/create` or `deployment/api-keys/put` request, an
-`api-key create`, `put` or `provision` command, or an `apiKeys` entry of a
-configuration document that leaves them out is refused where it used to
-receive every group of the key's scope. Add `"groups": "all"`, `--all-groups`
-or `groups: all` to scripts and documents that relied on the omission, or
-list the groups. Stored keys keep the groups they hold. `api-key provision`
-also no longer prints a secret that was supplied through
-`LIGHTSPEED_BOOTSTRAP_API_KEY`, so a start-up job that read the secret back
-from the command's output must use the value it supplied. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md).
+Migration 26 drops the `api_keys` table and rewrites stored key attribution to
+`{ "kind": "token", "name": "<former-key-id>" }`. It covers credentials, OAuth
+flows, sessions, bots, universe deletion records and attributed session events.
+It clears disposable checkpoint pointers so sessions rebuild from their logs.
+Actor, local and internal attribution retain their shape. Older prefix-based
+attribution first passes through the earlier migration that resolves known key
+prefixes and preserves unresolvable prefixes as internal historical records.
 
-In `authenticated` mode a request without a valid key is now answered with
-HTTP 401 before its body is read, where it used to receive HTTP 200 with a
-JSON-RPC error. The response still carries the `unauthenticated` error, with a
-null `id`. A key that cannot be checked, for example because the database is
-unreachable, is answered with HTTP 500 the same way. The CLI and the SDKs of
-this release report the 401 as the typed `unauthenticated` error; an SDK built
-before it raises a transport error instead, and a client that calls `/rpc`
-itself must read the status. See
+Temporal histories are not rewritten. Treat this cutover as
+[breaking](#move-a-breaking-release-to-a-new-namespace), regenerate matching API
+and workflow consumers, and use a new namespace. Clients reading `createdBy`,
+`requestedBy` or `decidedBy` must handle the token name instead of `keyId` and
+`scopeKind`.
+
+Remove `deployment/api-keys/*` calls, `api-key` commands, and `apiKeys` entries
+from configuration documents. Deployment configuration documents are removed;
+universe documents remain. Direct SDK connections use `token` and explicitly
+select their universe. Configurator setup and connector startup are disabled;
+never replace their old restricted credentials with a full-authority runtime
+token. See [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
+
+In `authenticated` mode, missing or invalid tokens receive HTTP 401 with an
+`unauthenticated` JSON-RPC error and a null `id`, before the body is read. Token
+validation uses configuration and needs no database lookup. Universe resolution
+still uses PostgreSQL, so authenticated requests can fail if that store is
+unavailable. The CLI and SDKs preserve the typed error; a client calling `/rpc`
+itself must inspect both the HTTP status and JSON-RPC error. See
 [Gateway modes](../access-and-security/api-keys-and-service-access.md#gateway-modes).
 
 An extra header of a model provider's endpoint is now a tagged value, a
@@ -328,12 +330,12 @@ record how their recovery points fit together.
 
 | Material | Why recovery needs it |
 | --- | --- |
-| Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, keys, bots, channels, and environment state. |
+| Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, environment registration keys, bots, channels, and environment state. |
 | Platform PostgreSQL database and migration ledger | Login accounts and sessions, external login records, universe memberships and roles, universe display/routing metadata, and durable access history. |
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Without it, open sessions can [restart from the runtime database](#restart-a-stopped-session), with [these losses](#move-a-breaking-release-to-a-new-namespace). Nothing rebuilds the rest. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
-| Deployment configuration and other stable secrets | Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
+| Deployment configuration and other stable secrets | Runtime RPC tokens, Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
 | WhatsApp connector state, when used | The complete authentication directory and unchanged media-locator key preserve linked-device state and the ability to resolve sealed media locators. |
 | Machine/VM storage and daemon state | Real environment files, daemon identity, and persisted job records/output live outside the VFS and application databases. |
 | Release artifacts | The exact compatible images, executables, and manifests needed to run the restored state. |
@@ -344,9 +346,9 @@ recovery plan. A runtime database backup does not contain those disks.
 
 Preserve universe UUIDs and their Platform mappings. Secret encryption binds
 ciphertext to the universe UUID, secret ID, and kind, so relabeling restored
-records with a new UUID can make their credentials unreadable. Runtime API
-keys are stored as hashes; preserving the database keeps their recognition
-state, but does not recover a lost client's plaintext secret.
+records with a new UUID can make their credentials unreadable. Runtime RPC
+tokens live in configuration or mounted secret files, not in PostgreSQL; restore
+those secrets and the matching trusted-client configuration separately.
 
 A useful recovery set has a defined relationship between its snapshots.
 Independent database dumps taken while writers continue do not by themselves

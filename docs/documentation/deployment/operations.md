@@ -7,10 +7,13 @@ verification task that exercises the capabilities your installation actually
 provides, alongside process and infrastructure monitoring.
 
 After a deployment change, sign in, read a known workspace file, and complete
-a short session run. If the installation supplies compute or chat channels,
-check those paths too. [Troubleshooting](troubleshooting.md) follows failures
+a short session run. If the installation supplies compute, check that path too. [Troubleshooting](troubleshooting.md) follows failures
 across the services; [upgrades and recovery](upgrades-and-recovery.md)
 covers planned maintenance and restored state.
+
+Connector startup is currently disabled. Connector health, metrics and account
+partitioning below describe retained implementation details, not an active
+service in the supported deployment.
 
 ## Know what health checks establish
 

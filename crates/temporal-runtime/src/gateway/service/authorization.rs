@@ -1,7 +1,5 @@
 //! Shared-service admission. Every handler authorizes by its method name:
-//! a request must address this universe with a key holding the method's
-//! group, which the boundary already checked and in-process callers must
-//! satisfy too; internal work for a bot or a delegated session is held to
+//! a request must address this universe; internal work for a bot or a delegated session is held to
 //! the controller rules, from the target's own row. Deciding what
 //! a person may do belongs to whoever asserts actors.
 pub(crate) use super::controller::ControllerContext;
@@ -320,9 +318,7 @@ impl GatewayAgentApi {
     ) -> Result<(), AgentApiError> {
         let requirement = api::method_access(method).ok_or_else(denied)?;
         let Some(controller) = self.current_controller() else {
-            if !self.caller()?.permits(method) {
-                return Err(denied());
-            }
+            self.caller()?;
             return Ok(());
         };
         if self
@@ -379,7 +375,7 @@ impl GatewayAgentApi {
     }
 
     /// Who a change is attributed to: internal work names its controller; a
-    /// request, its actor, else its key, else the local caller.
+    /// request, its actor, else its token, else the local caller.
     pub(super) fn attribution(&self) -> Result<Attribution, AgentApiError> {
         Ok(match self.current_controller() {
             Some(controller) => Attribution::Internal {
@@ -449,13 +445,7 @@ impl GatewayAgentApi {
 pub(super) fn recorded_attribution(attribution: Attribution) -> harness::Attribution {
     match attribution {
         Attribution::Actor { id } => harness::Attribution::Actor { id },
-        Attribution::Key { key_id, scope_kind } => harness::Attribution::Key {
-            key_id,
-            scope_kind: match scope_kind {
-                api::AccessScopeKind::Deployment => harness::AttributedKeyScope::Deployment,
-                api::AccessScopeKind::Universe => harness::AttributedKeyScope::Universe,
-            },
-        },
+        Attribution::Token { name } => harness::Attribution::Token { name },
         Attribution::Local => harness::Attribution::Local,
         Attribution::Internal { component, cause } => {
             harness::Attribution::Internal { component, cause }
@@ -500,13 +490,9 @@ mod tests {
             Attribution::Actor {
                 id: "user-1".into(),
             },
-            Attribution::key("ci-bot", api::AccessScope::Deployment),
-            Attribution::key(
-                "ci-bot",
-                api::AccessScope::Universe {
-                    universe_id: uuid::Uuid::from_u128(1),
-                },
-            ),
+            Attribution::Token {
+                name: "operator".into(),
+            },
             Attribution::Local,
             Attribution::Internal {
                 component: "controller".into(),
@@ -519,10 +505,11 @@ mod tests {
             );
         }
         assert_eq!(
-            recorded_attribution(Attribution::key("ci-bot", api::AccessScope::Deployment)),
-            harness::Attribution::Key {
-                key_id: "ci-bot".into(),
-                scope_kind: harness::AttributedKeyScope::Deployment,
+            recorded_attribution(Attribution::Token {
+                name: "operator".into()
+            }),
+            harness::Attribution::Token {
+                name: "operator".into()
             }
         );
     }

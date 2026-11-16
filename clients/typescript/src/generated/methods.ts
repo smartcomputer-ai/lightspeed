@@ -144,11 +144,6 @@ export const METHODS = [
   "deployment/universes/configuration/put",
   "deployment/universes/handle/put",
   "deployment/universes/delete",
-  "deployment/api-keys/create",
-  "deployment/api-keys/put",
-  "deployment/api-keys/list",
-  "deployment/api-keys/rotate",
-  "deployment/api-keys/revoke",
   "deployment/environment-providers/put",
   "deployment/environment-providers/list",
   "deployment/environment-providers/read",
@@ -165,7 +160,7 @@ export const METHOD_INFO = {
     notifications: ["session/changed","session/removed","bots/changed","bots/removed","environments/changed","environments/removed","workspaces/changed","workspaces/removed","watch/reset"],
     access: {"action":"read","kind":"universe"},
     summary: "Watch universe list changes",
-    description: "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.",
+    description: "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.",
   },
   "vfs/workspaces/files/read": {
     scope: "universe",
@@ -181,7 +176,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"kind":"connection"},
     summary: "Inspect the Lightspeed protocol",
-    description: "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
+    description: "Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
   },
   "session/start": {
     scope: "universe",
@@ -621,7 +616,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "Read transcription",
-    description: "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
+    description: "Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.",
   },
   "transcriptions/cancel": {
     scope: "universe",
@@ -629,7 +624,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"action":"useResource","kind":"universe"},
     summary: "Cancel transcription",
-    description: "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
+    description: "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.",
   },
   "models/defaults/read": {
     scope: "universe",
@@ -1253,7 +1248,7 @@ export const METHOD_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Declare universe presentation and access",
-    description: "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.",
+    description: "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.",
   },
   "deployment/universes/handle/put": {
     scope: "deployment",
@@ -1270,46 +1265,6 @@ export const METHOD_INFO = {
     access: {"kind":"deployment"},
     summary: "Request universe deletion",
     description: "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.",
-  },
-  "deployment/api-keys/create": {
-    scope: "deployment",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"deployment"},
-    summary: "Create a scoped API key",
-    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
-  },
-  "deployment/api-keys/put": {
-    scope: "deployment",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"deployment"},
-    summary: "Declare a scoped API key",
-    description: "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
-  },
-  "deployment/api-keys/list": {
-    scope: "deployment",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"deployment"},
-    summary: "List scoped API keys",
-    description: "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
-  },
-  "deployment/api-keys/rotate": {
-    scope: "deployment",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"deployment"},
-    summary: "Rotate a scoped API key",
-    description: "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
-  },
-  "deployment/api-keys/revoke": {
-    scope: "deployment",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"deployment"},
-    summary: "Revoke a scoped API key",
-    description: "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
   },
   "deployment/environment-providers/put": {
     scope: "deployment",
@@ -1393,7 +1348,7 @@ export interface MethodMap {
   /**
    * Watch universe list changes
    *
-   * Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.
+   * Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.
    */
   "universe/watch": {
     params: Api.UniverseWatchParams;
@@ -1411,7 +1366,7 @@ export interface MethodMap {
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
+   * Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
    */
   "initialize": {
     params: Api.InitializeParams;
@@ -1906,7 +1861,7 @@ export interface MethodMap {
   /**
    * Read transcription
    *
-   * Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.
+   * Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.
    */
   "transcriptions/read": {
     params: Api.TranscriptionReadParams;
@@ -1915,7 +1870,7 @@ export interface MethodMap {
   /**
    * Cancel transcription
    *
-   * Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
+   * Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.
    */
   "transcriptions/cancel": {
     params: Api.TranscriptionCancelParams;
@@ -2617,7 +2572,7 @@ export interface MethodMap {
   /**
    * Declare universe presentation and access
    *
-   * Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.
+   * Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.
    */
   "deployment/universes/configuration/put": {
     params: Api.DeploymentUniverseConfigurationPutParams;
@@ -2640,51 +2595,6 @@ export interface MethodMap {
   "deployment/universes/delete": {
     params: Api.DeploymentUniverseDeleteParams;
     result: Api.AgentApiOutcomeOfDeploymentUniverseDeleteResponse;
-  };
-  /**
-   * Create a scoped API key
-   *
-   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.
-   */
-  "deployment/api-keys/create": {
-    params: Api.DeploymentApiKeyCreateParams;
-    result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
-  };
-  /**
-   * Declare a scoped API key
-   *
-   * Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.
-   */
-  "deployment/api-keys/put": {
-    params: Api.DeploymentApiKeyPutParams;
-    result: Api.AgentApiOutcomeOfDeploymentApiKeyPutResponse;
-  };
-  /**
-   * List scoped API keys
-   *
-   * Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.
-   */
-  "deployment/api-keys/list": {
-    params: Api.DeploymentApiKeyListParams;
-    result: Api.AgentApiOutcomeOfDeploymentApiKeyListResponse;
-  };
-  /**
-   * Rotate a scoped API key
-   *
-   * Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.
-   */
-  "deployment/api-keys/rotate": {
-    params: Api.DeploymentApiKeyRotateParams;
-    result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
-  };
-  /**
-   * Revoke a scoped API key
-   *
-   * Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.
-   */
-  "deployment/api-keys/revoke": {
-    params: Api.DeploymentApiKeyRevokeParams;
-    result: Api.AgentApiOutcomeOfDeploymentApiKeyRevokeResponse;
   };
   /**
    * Put an environment provider

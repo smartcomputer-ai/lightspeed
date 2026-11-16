@@ -23,7 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   LoadingNote,
@@ -267,7 +267,7 @@ function DangerZone({ universe }: { universe: Universe }) {
                 <AlertDialogTitle>Archive {universe.name}?</AlertDialogTitle>
                 <AlertDialogDescription>
                   The universe will be hidden from the switcher. This does not
-                  stop bots or chats, revoke API keys, or block existing access.
+                  stop bots or chats, or block existing access.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

@@ -6,7 +6,7 @@ export const ACTOR_HEADER = "x-lightspeed-actor";
 export type ConfiguratorAuthMode = "single" | "authenticated";
 export type RequestAuthContext =
   | { mode: "single" }
-  | { mode: "authenticated"; apiKey: string; universeId?: string; actor?: string };
+  | { mode: "authenticated"; token: string; universeId?: string; actor?: string };
 
 export class HttpAuthError extends Error {
   readonly status: number;
@@ -32,15 +32,15 @@ export function authenticateHeaders(
       return { mode };
     case "authenticated": {
       const authorization = requiredHeader(headers, "authorization");
-      const apiKey = /^Bearer (lsk_\S+)$/.exec(authorization)?.[1];
-      if (!apiKey) throw new HttpAuthError(401, "Authorization must contain a Lightspeed bearer API key");
+      const token = /^Bearer ([\x21-\x7e]+)$/.exec(authorization)?.[1];
+      if (!token) throw new HttpAuthError(401, "Authorization must contain a Lightspeed bearer token");
       const universeId = optionalHeader(headers, UNIVERSE_HEADER);
       rejectHeader(headers, "x-lightspeed-principal", mode);
       const actor = optionalHeader(headers, ACTOR_HEADER);
       if (universeId !== undefined && !UUID_PATTERN.test(universeId)) throw new HttpAuthError(400, `invalid ${UNIVERSE_HEADER}`);
       if (actor !== undefined && (actor.length > 256 || [...actor].some((char) => /\p{Cc}/u.test(char)))) throw new HttpAuthError(400, `invalid ${ACTOR_HEADER}`);
-      // Runtime validates the credential, status, scope and assertion capability.
-      return { mode, apiKey, ...(universeId ? { universeId } : {}), ...(actor ? { actor } : {}) };
+      // The runtime validates the credential; universe and actor are request context.
+      return { mode, token, ...(universeId ? { universeId } : {}), ...(actor ? { actor } : {}) };
     }
   }
 }
@@ -50,7 +50,7 @@ export function upstreamHeaders(auth: RequestAuthContext): HeadersInit | undefin
     case "single":
       return undefined;
     case "authenticated":
-      return { authorization: `Bearer ${auth.apiKey}`,
+      return { authorization: `Bearer ${auth.token}`,
         ...(auth.universeId ? { [UNIVERSE_HEADER]: auth.universeId } : {}),
         ...(auth.actor ? { [ACTOR_HEADER]: auth.actor } : {}) };
 

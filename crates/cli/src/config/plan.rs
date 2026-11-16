@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 use super::{
     document::{Document, LoadedDocument, SecretSource, source_field},
     resources::{
-        ApiKeys, Credentials, EnvironmentCredentials, EnvironmentProviders, Environments, Live,
-        McpServers, ModelDefaults, Profiles, Providers, RegistrationKeys, Resource, Target, Wanted,
+        Credentials, EnvironmentCredentials, EnvironmentProviders, Environments, Live, McpServers,
+        ModelDefaults, Profiles, Providers, RegistrationKeys, Resource, Target, Wanted,
     },
 };
 use crate::{api_client::HttpAgentApi, connection::ResolvedConnection};
@@ -38,12 +38,7 @@ pub(crate) fn universe_resources() -> Vec<Box<dyn Resource>> {
         Box::new(Environments),
         Box::new(EnvironmentCredentials),
         Box::new(Profiles),
-        Box::new(ApiKeys),
     ]
-}
-
-pub(crate) fn deployment_resources() -> Vec<Box<dyn Resource>> {
-    vec![Box::new(ApiKeys)]
 }
 
 /// One checked entry of a document.
@@ -91,7 +86,7 @@ impl Action {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Step {
-    /// `universe <handle>` or `deployment`.
+    /// `universe <handle>`.
     pub subject: String,
     pub section: &'static str,
     pub id: String,
@@ -223,13 +218,6 @@ pub(crate) async fn plan(
             universe_sections(document)?,
             Some(document.handle.clone()),
         ),
-        Document::Deployment(document) => {
-            let mut sections = BTreeMap::new();
-            if let Some(keys) = &document.api_keys {
-                sections.insert("apiKeys", keys.clone());
-            }
-            (deployment_resources(), sections, None)
-        }
     };
 
     let configuration = match &loaded.document {
@@ -238,7 +226,6 @@ pub(crate) async fn plan(
             configuration.validate().map_err(anyhow::Error::msg)?;
             serde_json::to_value(configuration)?
         }
-        _ => json!({}),
     };
     // Phase 1: every entry is checked before anything is read or written.
     let mut entries: BTreeMap<&'static str, Vec<Entry>> = BTreeMap::new();
@@ -490,9 +477,9 @@ pub(crate) async fn connect(base: &ResolvedConnection, handle: Option<&str>) -> 
             .as_str()
             .map(str::to_owned),
         Err(error) if error.kind == api::AgentApiErrorKind::NotFound => None,
-        Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => bail!(
-            "universe {handle}: {error}. Configuration commands need a deployment key that may read universes"
-        ),
+        Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => {
+            bail!("universe {handle}: {error}. Configuration commands need a runtime token")
+        }
         Err(error) => bail!("universe {handle}: {error}"),
     };
     Ok(Target {
@@ -520,7 +507,6 @@ fn universe_sections(
     put("registrationKeys", &document.registration_keys);
     put("environments", &document.environments);
     put("profiles", &document.profiles);
-    put("apiKeys", &document.api_keys);
     if let Some(defaults) = &document.model_defaults {
         sections.insert(
             "modelDefaults",
@@ -1073,88 +1059,6 @@ mod tests {
         }
     }
 
-    fn key_view(groups: Value) -> Value {
-        json!({ "keyId": "release-bot", "displayName": "Release bot", "groups": groups, "assertActor": false })
-    }
-
-    #[test]
-    fn a_key_without_groups_is_refused_before_anything_is_read() {
-        let error = format!(
-            "{:#}",
-            entries(
-                &ApiKeys,
-                json!([{ "keyId": "release-bot", "displayName": "Release bot", "secretFrom": { "env": "K" } }]),
-            )
-            .err()
-            .expect("groups are required")
-        );
-        assert!(error.contains("apiKeys/release-bot"), "{error}");
-        assert!(error.contains("`groups` is missing"), "{error}");
-    }
-
-    #[test]
-    fn a_key_declared_with_all_is_compared_with_the_groups_its_scope_allows() {
-        let declared = |groups: Value| {
-            entries(
-                &ApiKeys,
-                json!([{ "keyId": "release-bot", "displayName": "Release bot", "groups": groups, "secretFrom": { "env": "K" } }]),
-            )
-            .unwrap()
-            .remove(0)
-            .body
-        };
-        let all = declared(json!("all"));
-        for deployment in [false, true] {
-            let target = target(deployment);
-            let scope = if deployment {
-                api::AccessScope::Deployment
-            } else {
-                api::AccessScope::Universe {
-                    universe_id: uuid::Uuid::nil(),
-                }
-            };
-            let allowed: Vec<api::MethodGroup> =
-                api::MethodGroup::allowed_in(scope).into_iter().collect();
-
-            // The stored key holds everything its scope allows: as declared.
-            let current = key_view(json!(allowed));
-            assert!(
-                changed_fields(&ApiKeys, &ApiKeys.in_target(&target, &all), &current).is_empty()
-            );
-
-            // A key stored before a group existed lacks it, which shows as a
-            // change to make and is never taken as already granted.
-            let earlier = key_view(json!(allowed[..allowed.len() - 1]));
-            assert_eq!(
-                changed_fields(&ApiKeys, &ApiKeys.in_target(&target, &all), &earlier),
-                ["groups"]
-            );
-        }
-
-        // A list is compared as written, whatever order it was written in.
-        let listed = declared(json!(["profiles", "session"]));
-        let target = target(false);
-        assert!(
-            changed_fields(
-                &ApiKeys,
-                &ApiKeys.in_target(&target, &listed),
-                &key_view(json!(["session", "profiles"]))
-            )
-            .is_empty()
-        );
-        assert_eq!(
-            changed_fields(
-                &ApiKeys,
-                &ApiKeys.in_target(&target, &listed),
-                &key_view(json!(["session", "profiles", "models"]))
-            ),
-            ["groups"]
-        );
-        // What is written is the declaration itself, so the runtime decides
-        // what `all` holds.
-        assert_eq!(all["groups"], "all");
-    }
-
     #[test]
     fn model_defaults_and_environment_credentials_become_entries() {
         let document: super::super::document::UniverseDocument = serde_json::from_value(json!({
@@ -1232,22 +1136,6 @@ mod tests {
             references("environments.credentials", &bindings[0].body),
             [("credentials", "tracker-token".to_owned())]
         );
-    }
-
-    #[test]
-    fn a_step_reads_as_one_line() {
-        let mut step = Step::new("universe research", "mcpServers", "tracker", Action::Update);
-        step.fields = vec!["serverUrl".to_owned()];
-        step.secret_replaced = true;
-        assert_eq!(
-            step.line(),
-            "  update      mcpServers/tracker (serverUrl, secret)"
-        );
-        step.done = true;
-        assert!(step.line().starts_with("  updated "));
-        let conflict = Step::new("universe research", "apiKeys", "bot", Action::Conflict)
-            .with_message("is revoked");
-        assert_eq!(conflict.line(), "  conflict    apiKeys/bot: is revoked");
     }
 
     fn checked(
@@ -1466,5 +1354,20 @@ mod tests {
         let message = step.message.expect("the conflict says why");
         assert!(message.contains("stored as `retrievable`"), "{message}");
         assert!(message.contains("state that value"), "{message}");
+    }
+    #[test]
+    fn a_step_reads_as_one_line() {
+        let mut step = Step::new("universe research", "mcpServers", "tracker", Action::Update);
+        step.fields = vec!["serverUrl".to_owned()];
+        step.secret_replaced = true;
+        assert_eq!(
+            step.line(),
+            "  update      mcpServers/tracker (serverUrl, secret)"
+        );
+        step.done = true;
+        assert!(step.line().starts_with("  updated "));
+        let conflict = Step::new("universe research", "profiles", "bot", Action::Conflict)
+            .with_message("is revoked");
+        assert_eq!(conflict.line(), "  conflict    profiles/bot: is revoked");
     }
 }

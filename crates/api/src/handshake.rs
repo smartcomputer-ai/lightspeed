@@ -55,27 +55,16 @@ pub struct InitializeResponse {
     pub caller: CallerAccess,
 }
 
-/// What the calling credential may do, so a client can offer only the
-/// methods it may call. Descriptive: core still checks every call.
+/// How the direct runtime connection authenticated. All runtime tokens have
+/// full authority; permissions belong to the external gate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CallerAccess {
-    /// Credential scope, independent of a selected request universe.
-    pub scope: AccessScope,
     /// True only for explicitly unauthenticated local development access.
     pub single: bool,
-    /// The calling key's id, unique among the keys of `scope`. It is what
-    /// records attribute the key's own requests to. Absent for a request
-    /// without a key, such as local development.
+    /// Configured token name, absent for unauthenticated access.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key_id: Option<String>,
-    /// Display prefix of the calling key's current secret; absent for a
-    /// request without a key, such as local development.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key_prefix: Option<String>,
-    /// The method groups the caller may call. A request without a key holds
-    /// every group. `initialize` belongs to no group and is always allowed.
-    pub groups: Vec<MethodGroup>,
+    pub token_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

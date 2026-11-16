@@ -1,6 +1,6 @@
 use super::*;
 
-/// Collections whose list rows can be watched. Each requires its existing API-key group.
+/// Collections whose list rows can be watched. Each publishes its API family.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]

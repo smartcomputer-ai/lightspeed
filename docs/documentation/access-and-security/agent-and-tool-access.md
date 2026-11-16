@@ -98,17 +98,17 @@ attached to every network request a tool makes.
 
 An external MCP server authorizes a call using the credentials configured for
 that connection. The requesting Platform user's role does not follow the call.
-For example, an agent using Configurator MCP makes core API requests with the
-Configurator connection's key. Those requests obey the key's groups, not the
-controller rules above.
+The built-in Configurator setup is temporarily unavailable while scoped
+Platform tokens are introduced. Its installation endpoint refuses the request,
+and the development launcher does not start the Configurator process.
 
-The Platform's built-in Configurator setup asks an Admin which key the
-Configurator acts with on every install, repair or upgrade: the current key, a
-new key (starting from the configuration groups, without session access), or
-an existing universe key whose secret the Admin pastes. The setup revokes only
-keys it minted. Configurator lists only the tools its key may call. A key with
-the `session` group can read private sessions. See [API keys and service access](api-keys-and-service-access.md#connect-services)
-before attaching a management connection to a profile.
+A runtime token reaches every method and every universe and can name any actor.
+Never give one to an agent, put one in its workspace or environment, or store
+one as the credential of an MCP connection it can use. Method families and
+universe selectors do not narrow that token's authority. The replacement
+Configurator setup will use a restricted Platform token. See
+[Configurator MCP](../integrating-and-extending/configurator-mcp.md) for the
+service's current status.
 
 Resource sharing also shares practical access. Two sessions attached to the
 same live workspace see the same files. Two sessions using the same environment

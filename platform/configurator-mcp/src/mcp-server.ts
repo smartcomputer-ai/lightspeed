@@ -16,8 +16,7 @@ import { requestSignal, type UpstreamClientFactory } from "./upstream-client.js"
 
 export interface ToolRegistry {
   readonly tools: readonly Tool[];
-  /// A server for one request, offering only the tools whose method group
-  /// the caller's key holds. Core still checks every call.
+  /// A server for an authenticated request to the configured runtime.
   createServer(auth: RequestAuthContext, caller: CallerAccess): Server;
 }
 
@@ -32,10 +31,7 @@ export function createToolRegistry(
 
   return {
     tools,
-    createServer(auth, caller) {
-      const groups = new Set(caller.groups);
-      const visible = descriptors.flatMap((descriptor, index) =>
-        groups.has(descriptor.group) ? [tools[index]!] : []);
+    createServer(auth, _caller) {
       const server = new Server(
         {
           name: "lightspeed-configurator",
@@ -49,14 +45,12 @@ export function createToolRegistry(
         },
       );
 
-      server.setRequestHandler("tools/list", async () => ({ tools: [...visible] }));
+      server.setRequestHandler("tools/list", async () => ({ tools: [...tools] }));
       server.setRequestHandler(
         "tools/call",
         async (request, ctx): Promise<CallToolResult> => {
           const descriptor = byName.get(request.params.name);
-          // A tool outside the caller's groups is not offered, so it is
-          // unknown to this caller rather than forbidden.
-          if (!descriptor || !groups.has(descriptor.group)) {
+          if (!descriptor) {
             throw new ProtocolError(
               ProtocolErrorCode.InvalidParams,
               `unknown tool: ${request.params.name}`,

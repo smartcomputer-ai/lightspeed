@@ -362,7 +362,7 @@ function EditUserDialog({
           </div>}
 
           <div className="grid gap-2 border-t pt-5">
-            <p className="text-sm text-muted-foreground">Suspension blocks Platform access and signs out every device. Core API keys must be revoked separately.</p>
+            <p className="text-sm text-muted-foreground">Suspension blocks Platform access and signs out every device.</p>
             {!isCurrentUser && <Button type="button" variant="outline" disabled={accessChange.isPending} onClick={() => accessChange.mutate(user?.banned ? "reinstate" : "suspend")}>
               {user?.banned ? "Reinstate access" : "Suspend access"}
             </Button>}

@@ -1,14 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AccessScopeKind": {
-      "description": "The kind of an [`AccessScope`]: the deployment, or a universe. Where a\nrecord already belongs to one universe this is enough to tell a universe\nkey of that universe from a deployment key.",
-      "enum": [
-        "deployment",
-        "universe"
-      ],
-      "type": "string"
-    },
     "Attachment": {
       "oneOf": [
         {
@@ -66,10 +58,10 @@
       "type": "object"
     },
     "Attribution": {
-      "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+      "description": "Who created a resource or authored bytes. Actors are opaque caller claims;\nthe runtime records them without resolving caller permissions.",
       "oneOf": [
         {
-          "description": "The actor a key asserted for its request.",
+          "description": "The actor the caller named for its request.",
           "properties": {
             "id": {
               "type": "string"
@@ -86,23 +78,19 @@
           "type": "object"
         },
         {
-          "description": "A key acting for itself, named by its key id. A key id is unique\namong the keys of one scope, so `scopeKind` says whether it names a\ndeployment key or a key of the universe the record belongs to. The\nid survives a change of secret; the secret's display prefix does not\nand is deliberately not recorded.",
+          "description": "The configured runtime token's name, never its secret.",
           "properties": {
-            "keyId": {
-              "type": "string"
-            },
             "kind": {
-              "const": "key",
+              "const": "token",
               "type": "string"
             },
-            "scopeKind": {
-              "$ref": "#/definitions/AccessScopeKind"
+            "name": {
+              "type": "string"
             }
           },
           "required": [
             "kind",
-            "keyId",
-            "scopeKind"
+            "name"
           ],
           "type": "object"
         },

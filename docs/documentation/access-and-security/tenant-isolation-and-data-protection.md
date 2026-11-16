@@ -12,15 +12,19 @@ The same boundary follows requests into storage and workflows.
 
 ## How the universe follows a request
 
-A universe API key selects its one stored universe. A deployment key can
-address a universe by supplying its UUID or handle in `x-lightspeed-universe`, subject
-to the key's method groups. The Platform uses this second path after checking
-the person's membership and permissions. The runtime resolves a service bound
-to that universe before dispatching ordinary resource operations.
+The Platform selects a universe after checking the person's membership and
+permissions. It sends the UUID or handle in `x-lightspeed-universe` along with
+its runtime token. The runtime resolves a service bound to that universe
+before dispatching resource operations.
+
+The runtime token itself has no universe scope or method restriction. A
+holder can select any universe, so tenant authorization rests on the Platform
+and on keeping runtime access private to operators and trusted components.
+The universe remains a data partition inside that trusted zone.
 
 | Layer | How resources remain separate |
 | --- | --- |
-| Runtime API | Key authentication resolves the request's universe and allowed method groups. |
+| Runtime API | Configured-token authentication admits trusted components; the universe header selects the resource partition. |
 | PostgreSQL | Universe-bound queries and composite keys/foreign keys associate tenant records with `universe_id`. |
 | Content-addressed storage | The blob catalog includes the universe in its key. External objects live under `<prefix>/universes/<uuid>/cas/…`. |
 | Blob cache | Cache lookups include both the universe UUID and blob reference. |
@@ -54,7 +58,7 @@ queues provide common worker capacity. Creating a universe does not reserve
 CPU, memory, queue throughput, or provider quota for it. A bot's own limits
 can bound its work without establishing tenant-wide resource quotas.
 
-Some registries have deployment-wide meaning: universes and API keys support
+Some registries have deployment-wide meaning: the universe registry supports
 routing, and environment providers are registered once before being bound to
 universes. Daemon identities and provider-native channel account identities
 have deployment-wide uniqueness.
@@ -93,10 +97,9 @@ value, and a chat trigger's pairing code connects a conversation. Trigger read
 and list responses, which the Platform permits from Viewer upward, never
 include either. They are returned only by bot-management methods, which the
 Platform holds to Operator: `bots/triggers/secrets/read`, and the answers to
-creating a bot with triggers or creating or replacing a trigger. A universe
-API key with the `bots` group can call all of these, since key groups do not
-tell reading from managing; give that group only to keys that may manage
-bots. One value can still reach every member: a bot allowed to change its own
+creating a bot with triggers or creating or replacing a trigger. A direct
+runtime token can call all these methods in every universe and must remain
+with trusted components and operators. One value can still reach every member: a bot allowed to change its own
 triggers is told the ingest URL or pairing code of a trigger it creates, once,
 in its Main conversation, and bot conversations are readable by the whole
 universe. See [Bots and triggers](../using-lightspeed/bots-and-triggers.md) for
@@ -124,10 +127,12 @@ that part of the boundary.
 ## Check an installation
 
 Create two disposable universes with different content under the same
-workspace name. Read each through its own universe key, and verify that the
-other universe's content is unavailable. Inspect the corresponding
-universe-prefixed workflow IDs. These checks exercise the installation's
-routing; they do not establish every isolation property on their own.
+workspace name. Sign in through the Platform as a member of only one and
+verify that the other universe is unavailable. With an operator's runtime
+token, select each universe explicitly and verify that its workspace resolves
+to its own content. Inspect the corresponding universe-prefixed workflow IDs.
+These checks exercise authorization and partition routing; a runtime token
+is expected to reach both universes.
 
 For adopting existing universes, preserving their UUIDs during recovery, and
 retiring a tenant, follow [Managing universes](../deployment/multi-tenancy.md).

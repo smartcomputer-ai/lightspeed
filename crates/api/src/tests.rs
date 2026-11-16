@@ -2116,13 +2116,8 @@ impl AgentApiService for TestService {
                 local_execution: false,
             },
             caller: CallerAccess {
-                scope: AccessScope::Universe {
-                    universe_id: uuid::Uuid::nil(),
-                },
                 single: true,
-                key_id: None,
-                key_prefix: None,
-                groups: MethodGroup::ALL.to_vec(),
+                token_name: None,
             },
         }))
     }
@@ -3513,9 +3508,8 @@ fn test_auth_grant(grant_id: String, status: AuthGrantStatus) -> AuthGrantView {
         provider_id: "static".to_owned(),
         provider_kind: AuthProviderKind::StaticToken,
         exposure: AuthGrantExposure::Brokered,
-        created_by: Attribution::Key {
-            key_id: "ci-bot".into(),
-            scope_kind: AccessScopeKind::Universe,
+        created_by: Attribution::Token {
+            name: "ci-bot".into(),
         },
         display_name: None,
         subject_hint: None,
@@ -3911,23 +3905,6 @@ fn test_deployment_universe(universe_id: &str) -> DeploymentUniverseView {
     }
 }
 
-fn test_deployment_api_key(key_prefix: &str) -> DeploymentApiKeyView {
-    DeploymentApiKeyView {
-        scope: AccessScope::Universe {
-            universe_id: uuid::Uuid::nil(),
-        },
-        groups: vec![MethodGroup::Session],
-        assert_actor: false,
-        created_by: Attribution::Local,
-        key_id: "coding-agent".to_owned(),
-        key_prefix: key_prefix.to_owned(),
-        display_name: Some("coding agent".to_owned()),
-        created_at_ms: 10,
-        revoked_at_ms: None,
-        last_used_at_ms: Some(20),
-    }
-}
-
 fn test_deployment_environment_provider(provider_id: &str) -> DeploymentEnvironmentProviderView {
     DeploymentEnvironmentProviderView {
         provider_id: provider_id.to_owned(),
@@ -4000,60 +3977,6 @@ impl DeploymentApiService for TestDeploymentService {
         Ok(AgentApiOutcome::new(DeploymentUniverseDeleteResponse {
             universe_id: params.universe,
             state: UniverseDeletionState::Deleting,
-        }))
-    }
-
-    async fn create_api_key(
-        &self,
-        _params: DeploymentApiKeyCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-            api_key: test_deployment_api_key("lsk_ab12cd34"),
-            secret: "lsk_one_time_secret".to_owned(),
-        }))
-    }
-
-    async fn put_api_key(
-        &self,
-        params: DeploymentApiKeyPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyPutResponse>, AgentApiError> {
-        let mut api_key = test_deployment_api_key("lsk_supplied");
-        api_key.key_id = params.key_id;
-        Ok(AgentApiOutcome::new(DeploymentApiKeyPutResponse {
-            api_key,
-            created: false,
-            secret_replaced: true,
-        }))
-    }
-
-    async fn list_api_keys(
-        &self,
-        _params: DeploymentApiKeyListParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError> {
-        Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
-            api_keys: vec![test_deployment_api_key("lsk_ab12cd34")],
-        }))
-    }
-
-    async fn rotate_api_key(
-        &self,
-        params: DeploymentApiKeyRotateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
-        assert_eq!(params.key_id, "coding-agent");
-        Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
-            api_key: test_deployment_api_key("lsk_rotated1"),
-            secret: "lsk_rotated_secret".to_owned(),
-        }))
-    }
-
-    async fn revoke_api_key(
-        &self,
-        _params: DeploymentApiKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError> {
-        let mut api_key = test_deployment_api_key("lsk_ab12cd34");
-        api_key.revoked_at_ms = Some(30);
-        Ok(AgentApiOutcome::new(DeploymentApiKeyRevokeResponse {
-            api_key,
         }))
     }
 
@@ -4295,105 +4218,6 @@ async fn dispatch_deployment_json_rpc_routes_universe_lifecycle() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_deployment_json_rpc_routes_scoped_api_key_management() {
-    let universe_id = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";
-    let create = dispatch_deployment_json_rpc(
-        &TestDeploymentService,
-        JsonRpcRequest {
-            id: RequestId::Number(1),
-            method: METHOD_DEPLOYMENT_API_KEYS_CREATE.to_owned(),
-            params: Some(json!({
-                "scope": { "kind": "universe", "universeId": universe_id },
-                "groups": ["session", "vfs"],
-                "displayName": "coding agent"
-            })),
-        },
-    )
-    .await;
-    let result = create.result.expect("create result");
-    assert_eq!(result["result"]["apiKey"]["keyId"], "coding-agent");
-    assert_eq!(result["result"]["apiKey"]["keyPrefix"], "lsk_ab12cd34");
-    assert_eq!(result["result"]["secret"], "lsk_one_time_secret");
-
-    // A declared key is addressed by scope and key id and returns no secret.
-    let put = dispatch_deployment_json_rpc(
-        &TestDeploymentService,
-        JsonRpcRequest {
-            id: RequestId::Number(5),
-            method: METHOD_DEPLOYMENT_API_KEYS_PUT.to_owned(),
-            params: Some(json!({
-                "scope": { "kind": "universe", "universeId": universe_id },
-                "keyId": "release-bot",
-                "groups": ["session"],
-                "displayName": "release bot",
-                "secret": "lsk_supplied_secret"
-            })),
-        },
-    )
-    .await;
-    let result = put.result.expect("put result");
-    assert_eq!(result["result"]["apiKey"]["keyId"], "release-bot");
-    assert_eq!(result["result"]["created"], false);
-    assert_eq!(result["result"]["secretReplaced"], true);
-    assert!(result["result"].get("secret").is_none());
-
-    let list = dispatch_deployment_json_rpc(
-        &TestDeploymentService,
-        JsonRpcRequest {
-            id: RequestId::Number(2),
-            method: METHOD_DEPLOYMENT_API_KEYS_LIST.to_owned(),
-            params: Some(json!({ "scope": { "kind": "universe", "universeId": universe_id } })),
-        },
-    )
-    .await;
-    let result = list.result.expect("list result");
-    assert_eq!(result["result"]["apiKeys"].as_array().unwrap().len(), 1);
-    assert!(result["result"]["apiKeys"][0].get("secret").is_none());
-
-    let rotate = dispatch_deployment_json_rpc(
-        &TestDeploymentService,
-        JsonRpcRequest {
-            id: RequestId::Number(4),
-            method: METHOD_DEPLOYMENT_API_KEYS_ROTATE.to_owned(),
-            params: Some(json!({
-                "scope": { "kind": "universe", "universeId": universe_id },
-                "keyId": "coding-agent"
-            })),
-        },
-    )
-    .await;
-    let result = rotate.result.expect("rotate result");
-    assert_eq!(result["result"]["apiKey"]["keyPrefix"], "lsk_rotated1");
-    assert_eq!(result["result"]["secret"], "lsk_rotated_secret");
-
-    let revoke = dispatch_deployment_json_rpc(
-        &TestDeploymentService,
-        JsonRpcRequest {
-            id: RequestId::Number(3),
-            method: METHOD_DEPLOYMENT_API_KEYS_REVOKE.to_owned(),
-            params: Some(json!({
-                "scope": { "kind": "universe", "universeId": universe_id },
-                "keyId": "coding-agent"
-            })),
-        },
-    )
-    .await;
-    let result = revoke.result.expect("revoke result");
-    assert_eq!(result["result"]["apiKey"]["revokedAtMs"], 30);
-}
-
-#[test]
-fn deployment_api_key_create_response_redacts_secret_in_debug_output() {
-    let response = DeploymentApiKeyCreateResponse {
-        api_key: test_deployment_api_key("lsk_ab12cd34"),
-        secret: "lsk_one_time_secret".to_owned(),
-    };
-    let debug = format!("{response:?}");
-    assert!(debug.contains("<redacted>"));
-    assert!(!debug.contains("lsk_one_time_secret"));
-}
-
-#[tokio::test(flavor = "current_thread")]
 async fn deployment_dispatch_rejects_universe_scoped_methods_and_vice_versa() {
     // The deployment dispatcher only knows deployment methods…
     let response = dispatch_deployment_json_rpc(
@@ -4440,145 +4264,6 @@ fn code_mode_feature_defaults_and_public_field_names_are_stable() {
     assert_eq!(value["version"], 1);
     assert_eq!(value["maxOutstandingToolCalls"], 16);
     assert!(serde_json::from_value::<CodeModeFeature>(json!({"maxToolCallz":4})).is_err());
-}
-
-#[test]
-fn deployment_api_key_put_params_redact_the_secret_in_debug_output() {
-    let params = DeploymentApiKeyPutParams {
-        scope: AccessScope::Deployment,
-        key_id: "platform".to_owned(),
-        groups: ApiKeyGroups::All,
-        assert_actor: true,
-        display_name: "Platform".to_owned(),
-        secret: "lsk_supplied_secret".to_owned(),
-    };
-    let debug = format!("{params:?}");
-    assert!(debug.contains("platform"));
-    assert!(!debug.contains("lsk_supplied_secret"));
-}
-
-#[test]
-fn api_key_groups_are_the_literal_all_or_a_non_empty_list() {
-    let all: ApiKeyGroups = serde_json::from_value(json!("all")).unwrap();
-    assert_eq!(all, ApiKeyGroups::All);
-    assert_eq!(serde_json::to_value(&all).unwrap(), json!("all"));
-
-    // A list is a set: stated order and repeats do not matter, and it is
-    // written back in the order a key view reports.
-    let listed: ApiKeyGroups =
-        serde_json::from_value(json!(["vfs", "session", "vfs", "blobs/put"])).unwrap();
-    assert_eq!(
-        listed,
-        [
-            MethodGroup::Session,
-            MethodGroup::BlobsPut,
-            MethodGroup::Vfs
-        ]
-        .into_iter()
-        .collect::<ApiKeyGroups>()
-    );
-    assert_eq!(
-        serde_json::to_value(&listed).unwrap(),
-        json!(["session", "blobs/put", "vfs"])
-    );
-
-    for refused in [
-        json!([]),
-        json!("ALL"),
-        json!("session"),
-        json!(null),
-        json!(true),
-        json!(["session", "everything"]),
-        json!({ "all": true }),
-    ] {
-        assert!(
-            serde_json::from_value::<ApiKeyGroups>(refused.clone()).is_err(),
-            "{refused}"
-        );
-    }
-}
-
-#[test]
-fn all_resolves_to_what_the_scope_allows_and_a_list_to_itself() {
-    let universe = AccessScope::Universe {
-        universe_id: uuid::Uuid::from_u128(7),
-    };
-    assert_eq!(
-        ApiKeyGroups::All.resolve(universe),
-        MethodGroup::allowed_in(universe)
-    );
-    assert_eq!(
-        ApiKeyGroups::All.resolve(AccessScope::Deployment),
-        MethodGroup::ALL.into_iter().collect()
-    );
-    let listed: ApiKeyGroups = [MethodGroup::Session].into_iter().collect();
-    assert_eq!(
-        listed.resolve(AccessScope::Deployment),
-        [MethodGroup::Session].into_iter().collect()
-    );
-}
-
-#[test]
-fn key_writes_require_groups() {
-    let scope = json!({ "kind": "deployment" });
-    // A request that leaves groups out is refused instead of being read as
-    // every group.
-    assert!(
-        serde_json::from_value::<DeploymentApiKeyCreateParams>(json!({
-            "scope": scope,
-            "displayName": "operator",
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<DeploymentApiKeyPutParams>(json!({
-            "scope": scope,
-            "keyId": "operator",
-            "displayName": "operator",
-            "secret": "lsk_supplied_secret",
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<DeploymentApiKeyCreateParams>(json!({
-            "scope": scope,
-            "displayName": "operator",
-            "groups": null,
-        }))
-        .is_err()
-    );
-    let create: DeploymentApiKeyCreateParams = serde_json::from_value(json!({
-        "scope": scope,
-        "displayName": "operator",
-        "groups": "all",
-    }))
-    .unwrap();
-    assert_eq!(create.groups, ApiKeyGroups::All);
-    assert_eq!(serde_json::to_value(&create).unwrap()["groups"], "all");
-}
-
-#[test]
-fn the_api_key_groups_schema_admits_all_or_a_list_of_groups() {
-    let mut generator = schemars::generate::SchemaSettings::draft07().into_generator();
-    let schema = <ApiKeyGroups as JsonSchema>::json_schema(&mut generator).to_value();
-    assert_eq!(
-        schema["anyOf"][0],
-        json!({ "type": "string", "const": "all" })
-    );
-    assert_eq!(schema["anyOf"][1]["type"], "array");
-    assert!(
-        schema["anyOf"][1]["items"]["$ref"]
-            .as_str()
-            .is_some_and(|reference| reference.ends_with("/MethodGroup"))
-    );
-    let params = generator
-        .root_schema_for::<DeploymentApiKeyPutParams>()
-        .to_value();
-    assert!(
-        params["required"]
-            .as_array()
-            .is_some_and(|required| required.contains(&json!("groups")))
-    );
 }
 
 #[test]
@@ -4649,4 +4334,26 @@ fn gone_error_carries_the_permanent_universe_record() {
     assert_eq!(value["deletedUniverse"]["handle"], "old");
     let decoded: AgentApiError = serde_json::from_value(value).unwrap();
     assert_eq!(decoded.deleted_universe.as_deref(), Some(&record));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn removed_caller_key_methods_are_not_in_the_contract_or_dispatcher() {
+    for operation in ["create", "put", "list", "rotate", "revoke"] {
+        let method = format!("deployment/api-keys/{operation}");
+        assert!(method_access(&method).is_none());
+        assert!(MethodGroup::of(&method).is_none());
+        let response = dispatch_deployment_json_rpc(
+            &TestDeploymentService,
+            JsonRpcRequest {
+                id: RequestId::Number(1),
+                method,
+                params: Some(json!({})),
+            },
+        )
+        .await;
+        assert_eq!(
+            response.error.expect("removed method is refused").code,
+            -32601
+        );
+    }
 }

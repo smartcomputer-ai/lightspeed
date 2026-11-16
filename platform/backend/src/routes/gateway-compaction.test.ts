@@ -30,7 +30,7 @@ async function compact() {
     c.set("session", { user: { id: "user" } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_fixture" } } as AppContext));
   return app.request("/universe/sessions/session/context/compact", { method: "POST" });
 }
 it("forwards a contributor's manual compaction to the core API", async () => {

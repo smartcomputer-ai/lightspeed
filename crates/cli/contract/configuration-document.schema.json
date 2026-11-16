@@ -1,92 +1,7 @@
 {
+  "$ref": "#/definitions/UniverseDocument",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AccessScope": {
-      "description": "What a key reaches or a request addresses: one universe, or the\ndeployment.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "deployment",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "universe",
-              "type": "string"
-            },
-            "universeId": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "universeId"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "ApiKeyGroups": {
-      "anyOf": [
-        {
-          "const": "all",
-          "type": "string"
-        },
-        {
-          "items": {
-            "$ref": "#/definitions/MethodGroup"
-          },
-          "type": "array",
-          "uniqueItems": true
-        }
-      ],
-      "description": "The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups."
-    },
-    "ApiKeysEntry": {
-      "additionalProperties": false,
-      "description": "Declare a key whose secret the caller supplies. `Debug` redacts the\nsecret; the serialized request remains sensitive and must not be logged.",
-      "properties": {
-        "assertActor": {
-          "default": false,
-          "description": "Whether the key may name the actor a request acts for. It cannot be\nchanged afterwards.",
-          "type": "boolean"
-        },
-        "displayName": {
-          "description": "Human-readable purpose shown in key-management interfaces.",
-          "type": "string"
-        },
-        "groups": {
-          "$ref": "#/definitions/ApiKeyGroups",
-          "description": "The method groups the key may call: a non-empty list, or `\"all\"` for\nevery group its scope allows. An existing key's groups are replaced\nby these, and `\"all\"` is resolved again on every call, so repeating a\ndeclaration after an upgrade gives the key the groups added since."
-        },
-        "keyId": {
-          "description": "The key's id within its scope: 1-128 ASCII letters, digits,\nunderscores, hyphens, dots or colons, starting with a letter or digit.",
-          "type": "string"
-        },
-        "secretFrom": {
-          "$ref": "#/definitions/SecretSource",
-          "description": "Where `secret` comes from. The value itself is never written in a document."
-        }
-      },
-      "required": [
-        "keyId",
-        "groups",
-        "displayName",
-        "secretFrom"
-      ],
-      "type": "object"
-    },
     "AuthGrantExposure": {
       "description": "Where a credential's plain value may go, fixed when it is created.",
       "oneOf": [
@@ -485,37 +400,6 @@
       },
       "required": [
         "role"
-      ],
-      "type": "object"
-    },
-    "DeploymentDocument": {
-      "additionalProperties": false,
-      "description": "Resources that belong to the deployment and not to one universe.",
-      "properties": {
-        "apiKeys": {
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ApiKeysEntry"
-              },
-              {
-                "$ref": "#/definitions/Include"
-              }
-            ]
-          },
-          "type": "array"
-        },
-        "kind": {
-          "const": "deployment"
-        },
-        "schemaVersion": {
-          "const": 1,
-          "description": "The layout of this file. It is not a revision of the configuration."
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "kind"
       ],
       "type": "object"
     },
@@ -1324,75 +1208,6 @@
       ],
       "type": "object"
     },
-    "MethodGroup": {
-      "description": "The methods a key may call, by group. Every public method but\n`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a\nnew method never changes what an existing key reaches beyond its group.",
-      "oneOf": [
-        {
-          "enum": [
-            "vfs",
-            "profiles",
-            "transcriptions",
-            "models",
-            "mcp",
-            "bots",
-            "deployment/universes",
-            "deployment/api-keys",
-            "deployment/sessions"
-          ],
-          "type": "string"
-        },
-        {
-          "const": "session",
-          "description": "`session/*`, `blobs/read` and `blobs/has`.",
-          "type": "string"
-        },
-        {
-          "const": "session/delete",
-          "description": "Destructive session operations and deletion retention.",
-          "type": "string"
-        },
-        {
-          "const": "blobs/put",
-          "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
-          "type": "string"
-        },
-        {
-          "const": "environments",
-          "description": "`environments/*`, including jobs and registration keys.",
-          "type": "string"
-        },
-        {
-          "const": "channels",
-          "description": "Channel accounts, pairings and conversations.",
-          "type": "string"
-        },
-        {
-          "const": "channels/inbound",
-          "description": "`channels/inbound/admit`: what a connector delivers.",
-          "type": "string"
-        },
-        {
-          "const": "auth",
-          "description": "`auth/*` except leasing.",
-          "type": "string"
-        },
-        {
-          "const": "auth/lease",
-          "description": "`auth/grants/lease`: resolving a brokered credential for delivery.",
-          "type": "string"
-        },
-        {
-          "const": "deployment/environment-providers",
-          "description": "Environment providers and their universe bindings.",
-          "type": "string"
-        },
-        {
-          "const": "deployment/channels",
-          "description": "`deployment/channels/accounts/list`: a connector host's discovery.",
-          "type": "string"
-        }
-      ]
-    },
     "ModelConfig": {
       "additionalProperties": false,
       "properties": {
@@ -1989,19 +1804,6 @@
       "additionalProperties": false,
       "description": "The configuration of one universe. A section left out is not managed by the document.",
       "properties": {
-        "apiKeys": {
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ApiKeysEntry"
-              },
-              {
-                "$ref": "#/definitions/Include"
-              }
-            ]
-          },
-          "type": "array"
-        },
         "credentials": {
           "items": {
             "anyOf": [
@@ -2355,14 +2157,6 @@
       "type": "object"
     }
   },
-  "description": "A document that `lightspeed config apply` makes a universe, or the deployment, match. Generated from the API's input types; do not edit.",
-  "oneOf": [
-    {
-      "$ref": "#/definitions/UniverseDocument"
-    },
-    {
-      "$ref": "#/definitions/DeploymentDocument"
-    }
-  ],
+  "description": "A document that `lightspeed config apply` makes a universe match. Generated from the API's input types; do not edit.",
   "title": "Lightspeed configuration document"
 }

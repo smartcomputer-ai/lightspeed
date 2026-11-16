@@ -78,10 +78,10 @@ impl ConnectionDisplay {
             .unwrap_or("none selected")
             .to_owned();
         if let Some(caller) = &connection.caller {
-            header_universe.push_str(match (caller.single, caller.scope) {
-                (true, _) => " · single mode",
-                (false, api::AccessScope::Deployment) => " · deployment key",
-                (false, api::AccessScope::Universe { .. }) => " · universe key",
+            header_universe.push_str(if caller.single {
+                " · single mode"
+            } else {
+                " · runtime token"
             });
         }
         let header_context = vec![
@@ -95,17 +95,14 @@ impl ConnectionDisplay {
             connection.endpoint,
         );
         if let Some(caller) = &connection.caller {
-            let scope = match caller.scope {
-                api::AccessScope::Deployment => "deployment".to_owned(),
-                api::AccessScope::Universe { universe_id } => format!("universe ({universe_id})"),
-            };
             details.push_str(&format!(
-                "  Mode: {}\n  Scope: {scope}\n",
+                "  Mode: {}\n  Token: {}\n  Authority: full runtime access\n",
                 if caller.single {
-                    "single (no API key)"
+                    "single (no token)"
                 } else {
                     "authenticated"
-                }
+                },
+                caller.token_name.as_deref().unwrap_or("none"),
             ));
         }
         details.push_str(&format!(
@@ -142,11 +139,8 @@ mod tests {
             secret: Some("lsk_do_not_display".into()),
             universe: None,
             caller: Some(api::CallerAccess {
-                scope: api::AccessScope::Deployment,
                 single: false,
-                key_id: None,
-                key_prefix: None,
-                groups: vec![],
+                token_name: Some("operator".into()),
             }),
         }
     }
@@ -182,7 +176,7 @@ mod tests {
             assert!(
                 display.header_context[0]
                     .1
-                    .contains("customer-a · deployment key")
+                    .contains("customer-a · runtime token")
             );
             assert!(!display.header_context.iter().any(|(_, value)| value.contains("lsk_do_not_display") || value.contains(&name)));
         }
@@ -199,14 +193,14 @@ mod tests {
             &universe(),
         );
         assert_eq!(named.footer.as_deref(), Some("production / customer-a"));
-        assert!(named.details.contains("Scope: deployment"));
+        assert!(named.details.contains("Token: operator"));
     }
 
     #[test]
     fn a_selection_by_handle_shows_the_handle_when_the_uuid_cannot_be_read() {
         let mut universe = universe();
         universe.universe_id = None;
-        universe.unavailable_reason = Some("requires deployment/universes permission".into());
+        universe.unavailable_reason = Some("runtime unavailable".into());
         let display = ConnectionDisplay::new(
             &connection(Some("production"), "https://runtime.example:8443/rpc"),
             &universe,
@@ -214,37 +208,22 @@ mod tests {
         assert_eq!(display.footer.as_deref(), Some("production / customer-a"));
         assert!(display.details.contains("Handle: customer-a"));
         assert!(display.details.contains("UUID: unavailable"));
-        assert!(
-            display
-                .details
-                .contains("requires deployment/universes permission")
-        );
+        assert!(display.details.contains("runtime unavailable"));
     }
 
     #[test]
     fn unavailable_handles_keep_identity_and_explain_the_fallback() {
         let mut universe = universe();
         universe.handle = None;
-        universe.unavailable_reason = Some("requires deployment/universes permission".into());
-        let mut connection = connection(None, "https://runtime.example:8443/rpc");
-        connection.caller.as_mut().unwrap().scope = api::AccessScope::Universe {
-            universe_id: uuid::Uuid::nil(),
-        };
+        universe.unavailable_reason = Some("runtime unavailable".into());
+        let connection = connection(None, "https://runtime.example:8443/rpc");
         let display = ConnectionDisplay::new(&connection, &universe);
         assert_eq!(
             display.footer.as_deref(),
             Some("runtime.example:8443 / 00000000")
         );
         assert!(display.details.contains("Handle: unavailable"));
-        assert!(
-            display
-                .details
-                .contains("requires deployment/universes permission")
-        );
-        assert!(
-            display
-                .details
-                .contains("Scope: universe (00000000-0000-0000-0000-000000000000)")
-        );
+        assert!(display.details.contains("runtime unavailable"));
+        assert!(display.details.contains("Authority: full runtime access"));
     }
 }

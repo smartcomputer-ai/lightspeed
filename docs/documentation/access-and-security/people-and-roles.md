@@ -6,7 +6,7 @@ universe and a Viewer in its support universe; signing in does not grant access
 to every universe on the deployment.
 
 The Platform stores these accounts and memberships and checks them when a
-person makes a request. Core receives an API key, the selected universe, and
+person makes a request. The runtime receives a configured token, the selected universe, and
 an actor ID for attribution. It does not maintain a second directory of people
 or re-evaluate their roles. See the [access overview](overview.md) for that
 boundary.
@@ -23,7 +23,7 @@ the universe's resources.
 | **Viewer** | Read visible sessions, bots, and universe resources. A session they previously created remains visible after a downgrade to Viewer. |
 | **Contributor** | Create sessions with universe defaults or an existing profile; continue sessions, steer or stop work, decide tool approvals, invoke bots, and update workspace contents. |
 | **Operator** | Customize session setup and run options; create workspaces and create or configure profiles, bots, environments, MCP servers, credentials, and channels; manage bot triggers and replay bot events. |
-| **Admin** | Manage universe members, settings, and API keys. Read, control, and share every session, including private sessions; soft-delete closed sessions and set deletion retention. |
+| **Admin** | Manage universe members and settings. Read, control, and share every session, including private sessions; soft-delete closed sessions and set deletion retention. |
 
 Contributors can name a new session and choose its saved profile, but cannot
 author inline setup, override the chosen setup, create integrated sessions, or
@@ -66,7 +66,7 @@ profile and Platform admin status are refreshed at each company sign-in.
 
 Without company sign-in, use an email address and password. Public signup is
 disabled. A Platform admin creates the account as follows; the first account
-comes from [Bootstrap the Platform](api-keys-and-service-access.md#bootstrap-the-platform).
+comes from [the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
 
 1. As a Platform admin, open **Platform admin → Users → Create user**. Enter the person's
    **Name**, **Email**, and initial **Password**. Leave **Role** as `user` unless
@@ -112,8 +112,9 @@ requires a fresh login; it does not revive old sessions. Users shows identity
 source, application access and the last successful provider check.
 
 Suspension preserves local memberships and historical records. There is no
-automatic deactivation for inactivity. Running work and core API keys require
-separate cancellation or revocation.
+automatic deactivation for inactivity. Running work requires separate
+cancellation. Runtime tokens belong to trusted components and operators and
+are managed in deployment configuration, independently of user accounts.
 
 ## Change or remove access
 
@@ -131,6 +132,7 @@ remain.
 
 Work already admitted continues because the runtime executes for the universe,
 not with the requesting person's role. If work must stop, cancel its active
-and queued runs separately. Removing membership also does not revoke an
-integration's API key; revoke that credential separately using
-[API keys and service access](api-keys-and-service-access.md).
+and queued runs separately. Removing membership does not change configured
+runtime tokens. If an operator loses trusted infrastructure access, rotate the
+credentials they held using
+[Runtime service access](api-keys-and-service-access.md).

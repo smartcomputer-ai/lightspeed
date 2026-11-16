@@ -279,24 +279,29 @@ The examples use `lightspeed` on your executable path. Use `./lightspeed`
 for a release binary in the current directory, or `target/debug/lightspeed`
 for the source build above.
 
-For the authenticated development launcher stack from the quickstart, use its
-runtime gateway and a universe API key created by an Admin. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
-for creating and revoking keys. A universe key already selects its universe:
+For the authenticated development launcher stack from the quickstart, import
+the launcher's saved direct connection:
 
 ```bash
-export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
-export LIGHTSPEED_API_KEY="<universe API key>"
-unset LIGHTSPEED_UNIVERSE
+lightspeed connect dev
 lightspeed chat --session "<session-id>"
 ```
 
-Copy **Session ID** from the web app's session title menu.
-For a remote installation, use the gateway address and authentication supplied
-by the operator. A deployment key needs `LIGHTSPEED_UNIVERSE` set to the
-universe's UUID, or to its handle, which is the readable name in the browser
-URL. Local
-single mode accepts neither API keys nor universe headers.
+Copy **Session ID** from the web app's session title menu. For a manually
+configured or remote direct connection, use the runtime address and token
+supplied by the operator, and select the universe explicitly:
+
+```bash
+export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
+export LIGHTSPEED_RPC_TOKEN="<runtime token>"
+export LIGHTSPEED_UNIVERSE="<universe UUID or handle>"
+lightspeed chat --session "<session-id>"
+```
+
+A runtime token has full deployment authority. See
+[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
+for configuration and rotation. Local single mode accepts neither credentials
+nor universe headers.
 
 Without model flags, `lightspeed chat` uses the deployment default for a new
 session and the stored model when opening an existing session. To choose a
@@ -317,7 +322,7 @@ approval by ID. `/interrupt` cancels the newest queued run first, or the active
 run when no queued run exists. `/quit` exits the interface and leaves the
 session available to reopen.
 
-At startup, the TUI header shows the full session ID, universe and key scope,
+At startup, the TUI header shows the full session ID, universe and connection mode,
 then the runtime endpoint and useful slash commands. Model and effort remain
 in the footer; `lightspeed --version` shows the build version.
 The TUI shows live tool activity as calls run and finish, including individual

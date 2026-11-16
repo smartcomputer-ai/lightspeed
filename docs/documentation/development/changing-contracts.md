@@ -42,12 +42,12 @@ service behavior in the runtime and test the actual admission and result.
 
 Every method declaration requires an `access:` classification. From it, the
 exporter derives scope and the recommended member role. The method's name
-determines its API-key group, and session-target metadata identifies calls that
+determines its API family, and session-target metadata identifies calls that
 need a session visibility check. These appear in the generated contract and
 TypeScript `METHOD_INFO`.
 
-Core enforces the key's scope and method group. Platform uses the generated
-role and target metadata to enforce people's access, while the runtime applies
+The runtime publishes this classification without enforcing caller permissions.
+Platform uses the generated role and target metadata to enforce access, while the runtime applies
 separate rules to its own controllers. Review all three when adding a method;
 the classification alone does not implement a resource-specific policy. See
 [Access and security](../access-and-security/overview.md).
@@ -339,7 +339,7 @@ covers the controller, daemon, and gateway responsibilities in more detail.
 ## Database migrations
 
 Runtime and Platform data have separate owners and migration histories.
-Runtime PostgreSQL holds universes, API keys, sessions, creator attribution,
+Runtime PostgreSQL holds universes, sessions, creator attribution,
 visibility, and domain records such as bots and channel accounts. Platform owns
 login credentials, accounts, organization memberships and roles, universe
 mapping, and setup provenance. Add a table to the database that owns its

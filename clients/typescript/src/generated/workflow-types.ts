@@ -3,12 +3,6 @@
  * Do not edit by hand.
  */
 
-/**
- * The kind of an [`AccessScope`]: the deployment, or a universe. Where a
- * record already belongs to one universe this is enough to tell a universe
- * key of that universe from a deployment key.
- */
-export type AccessScopeKind = "deployment" | "universe";
 export type Attachment =
   | {
       data: MediaDescriptor;
@@ -23,8 +17,8 @@ export type Attachment =
  */
 export type MediaKind = "image" | "document";
 /**
- * Who created a resource or authored bytes. An actor is whatever a key
- * allowed to assert one said; core compares it and never resolves it.
+ * Who created a resource or authored bytes. Actors are opaque caller claims;
+ * the runtime records them without resolving caller permissions.
  */
 export type Attribution =
   | {
@@ -32,9 +26,8 @@ export type Attribution =
       kind: "actor";
     }
   | {
-      keyId: string;
-      kind: "key";
-      scopeKind: AccessScopeKind;
+      kind: "token";
+      name: string;
     }
   | {
       kind: "local";

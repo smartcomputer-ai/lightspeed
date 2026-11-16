@@ -18,7 +18,7 @@ function upstream(respond: (rpc: { id: number; method: string }) => Response | P
   }) as typeof fetch;
   const client = new LightspeedClient({
     endpoint: "http://internal.example/rpc",
-    apiKey: "lsk_secret",
+    token: "lsk_secret",
     fetch: fetchImpl,
   });
   return { client, forwarded };

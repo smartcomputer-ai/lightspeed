@@ -270,9 +270,9 @@ impl From<AgentApiError> for JsonRpcError {
     }
 }
 
-/// Authorization scope of a JSON-RPC method. Service methods resolve a
-/// universe like ordinary universe methods, but are admitted only for trusted
-/// service callers at the HTTP edge.
+/// Routing classification of a JSON-RPC method. Service methods resolve a
+/// universe like ordinary universe methods. External gates use this metadata
+/// to restrict machine-only methods.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MethodScope {
     Connection,
@@ -385,11 +385,11 @@ macro_rules! api_methods {
 
 api_methods! {
     METHOD_UNIVERSE_WATCH => watch_universe(UniverseWatchParams) -> UniverseWatchResponse =>
-        ["Watch universe list changes", "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list."], streaming: WATCH_NOTIFICATIONS, access: MethodAccess::Universe(UniverseAction::Read),
+        ["Watch universe list changes", "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list."], streaming: WATCH_NOTIFICATIONS, access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_VFS_WORKSPACES_FILES_READ => read_vfs_workspace_file(VfsWorkspaceFileReadParams) -> BlobReadResponse =>
         ["Read a workspace file", "Reads bytes at a path in the current workspace head."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_INITIALIZE => initialize(InitializeParams) -> InitializeResponse =>
-        ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted."], access: MethodAccess::Connection,
+        ["Inspect the Lightspeed protocol", "Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted."], access: MethodAccess::Connection,
     METHOD_SESSION_START => start_session(SessionStartParams) -> SessionStartResponse =>
         ["Start a session", "Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id."], access: MethodAccess::Universe(UniverseAction::CreateSession),
     METHOD_SESSION_READ => read_session(SessionReadParams) -> SessionReadResponse =>
@@ -499,9 +499,9 @@ api_methods! {
     METHOD_TRANSCRIPTIONS_START => start_transcription(TranscriptionStartParams) -> TranscriptionResponse =>
         ["Start transcription", "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created."], access: MethodAccess::Universe(UniverseAction::UseResource),
     METHOD_TRANSCRIPTIONS_READ => read_transcription(TranscriptionReadParams) -> TranscriptionResponse =>
-        ["Read transcription", "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire."], access: MethodAccess::Universe(UniverseAction::Read),
+        ["Read transcription", "Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_TRANSCRIPTIONS_CANCEL => cancel_transcription(TranscriptionCancelParams) -> TranscriptionResponse =>
-        ["Cancel transcription", "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority."], access: MethodAccess::Universe(UniverseAction::UseResource),
+        ["Cancel transcription", "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate."], access: MethodAccess::Universe(UniverseAction::UseResource),
     METHOD_MODELS_DEFAULTS_READ => read_model_defaults(ModelDefaultsReadParams) -> ModelDefaultsResponse =>
         ["Read universe model defaults", "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_MODELS_DEFAULTS_PUT => put_model_defaults(ModelDefaultsPutParams) -> ModelDefaultsResponse =>

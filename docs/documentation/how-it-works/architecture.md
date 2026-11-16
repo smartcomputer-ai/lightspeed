@@ -155,14 +155,16 @@ promises, and ownership that make these relationships durable.
 
 The Platform owns login, user accounts, universe membership, and the browser
 application. It checks each person's role and session visibility before
-calling the runtime with a service key and actor ID. The runtime checks the
-key's scope and method groups and records the actor for attribution.
+calling the runtime with a configured token and actor ID. The runtime checks
+the token, selects the request's universe, and records the actor for attribution.
+It applies no caller scope or method-group permissions.
 
-This separates a person's web access from a program's API access. A direct
-runtime key with the `session` group can reach private sessions in its
-universe. Once work is admitted, it runs for the universe; removing the
-requester's membership does not stop it. [Access and security](../access-and-security/overview.md)
-explains these policies and the separate checks on internal controllers.
+Every direct runtime token has full authority across the deployment, including
+private sessions. Keep those tokens with trusted components and operators;
+an external gateway must decide what untrusted callers may do. Once work is
+admitted, it runs for the universe; removing the requester's membership does
+not stop it. [Access and security](../access-and-security/overview.md) explains
+this boundary and the separate checks on internal controllers.
 
 ## Attach compute when the task needs it
 

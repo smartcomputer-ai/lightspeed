@@ -32,9 +32,9 @@ impl Runtime {
     }
 
     fn with_startup_statuses(
-        scope: Value,
+        _scope: Value,
         single: bool,
-        groups: Value,
+        _groups: Value,
         statuses: Vec<u16>,
     ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("local HTTP fixture must bind");
@@ -99,7 +99,7 @@ impl Runtime {
                 }
                 let result = match method {
                     "initialize" => {
-                        json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":scope,"single":single,"keyId":if single {Value::Null} else {json!("fixture-key")},"keyPrefix":if single {Value::Null} else {json!("lsk_fixture")},"groups":groups}})
+                        json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"single":single,"tokenName":if single {Value::Null} else {json!("fixture")}}})
                     }
                     "deployment/universes/list" => {
                         json!({"universes":universes})
@@ -143,20 +143,12 @@ impl Runtime {
                     "environments/registration-keys/list" => json!({"registrationKeys":[]}),
                     "environments/list" => json!({"environments":[]}),
                     "profiles/list" => json!({"profiles":[]}),
-                    "deployment/api-keys/list" => json!({"apiKeys":[]}),
                     "models/list" => json!({"models":[],"providers":[]}),
                     _ => panic!("unexpected method {method}"),
                 };
-                // As the runtime does, refuse a deployment method to a key
-                // that does not hold its group.
-                let permitted = !method.starts_with("deployment/universes")
-                    || single
-                    || groups
-                        .as_array()
-                        .is_some_and(|held| held.contains(&json!("deployment/universes")));
-                let response = if !permitted {
-                    json!({"id":body["id"],"error":{"code":-32003,"message":"forbidden"}})
-                } else if method == "deployment/universes/read" && result["universe"].is_null() {
+                let response = if method == "deployment/universes/read"
+                    && result["universe"].is_null()
+                {
                     json!({"id":body["id"],"error":{"code":-32004,"message":"unknown universe"}})
                 } else {
                     json!({"id":body["id"],"result":{"result":result,"notifications":[]}})
@@ -194,7 +186,7 @@ fn cli_env(
         .args(args)
         .env("LIGHTSPEED_CONFIG_DIR", dir.join("config"))
         .env_remove("LIGHTSPEED_API_URL")
-        .env_remove("LIGHTSPEED_API_KEY")
+        .env_remove("LIGHTSPEED_RPC_TOKEN")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -228,14 +220,14 @@ fn environment_precedence_and_endpoint_changes_do_not_reuse_saved_keys() {
             "saved",
             "--url",
             &runtime.endpoint,
-            "--api-key-stdin",
+            "--token-stdin",
         ],
         Some("lsk_original"),
     ));
     success(cli(dir, &["connect", "use", "saved"], None));
     let overrides = [
         ("LIGHTSPEED_API_URL", other.endpoint.as_str()),
-        ("LIGHTSPEED_API_KEY", "lsk_replacement"),
+        ("LIGHTSPEED_RPC_TOKEN", "lsk_replacement"),
     ];
     success(cli_env(
         dir,
@@ -320,7 +312,7 @@ fn named_connections_universe_selection_and_per_command_override() {
             "test",
             "--url",
             &runtime.endpoint,
-            "--api-key-stdin",
+            "--token-stdin",
         ],
         Some("lsk_fixture_secret"),
     ));
@@ -397,9 +389,7 @@ fn named_connections_universe_selection_and_per_command_override() {
         "renamed"
     );
     let status = success(cli(dir, &["connect", "status"], None));
-    // The key is shown by the id records attribute it to, then by the
-    // prefix of the secret in use.
-    assert!(status.contains("\n\nAPI key:\n  Key ID: fixture-key\n  Prefix: lsk_fixture\n"));
+    assert!(status.contains("  Token: fixture\n  Authority: full runtime access"));
     assert!(status.ends_with(
         "\n\nSelected universe:\n  Handle: renamed\n  UUID: 00000000-0000-0000-0000-000000000001\n"
     ));
@@ -439,119 +429,6 @@ fn named_connections_universe_selection_and_per_command_override() {
         0
     );
 }
-#[test]
-fn universe_key_and_explicit_single_mode_send_no_selection_header() {
-    for single in [false, true] {
-        let runtime = Runtime::start(
-            json!({"kind":"universe","universeId":"00000000-0000-0000-0000-000000000001"}),
-            single,
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let dir = directory.path();
-        let flag = if single {
-            "--single"
-        } else {
-            "--api-key-stdin"
-        };
-        success(cli(
-            dir,
-            &["connect", "add", "bound", "--url", &runtime.endpoint, flag],
-            (!single).then_some("lsk_fixture_secret"),
-        ));
-        success(cli(dir, &["connect", "use", "bound"], None));
-        success(cli(dir, &["models", "list"], None));
-        let status = success(cli(dir, &["universe", "status", "--json"], None));
-        let status: Value = serde_json::from_str(&status).unwrap();
-        assert_eq!(status["universeId"], "00000000-0000-0000-0000-000000000001");
-        if single {
-            assert_eq!(status["handle"], "one");
-            let listed = success(cli(dir, &["universe", "list"], None));
-            assert!(listed.contains("* 00000000-0000-0000-0000-000000000001  one"));
-        } else {
-            assert!(
-                status["unavailableReason"]
-                    .as_str()
-                    .unwrap()
-                    .contains("requires a deployment key")
-            );
-            assert!(
-                !runtime
-                    .requests
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .any(|(method, _)| method.starts_with("deployment/"))
-            );
-        }
-        assert!(
-            !cli(
-                dir,
-                &[
-                    "--universe",
-                    "00000000-0000-0000-0000-000000000002",
-                    "models",
-                    "list"
-                ],
-                None
-            )
-            .status
-            .success()
-        );
-        for (_, headers) in runtime.requests.lock().unwrap().iter() {
-            assert!(!headers.contains("x-lightspeed-universe:"));
-            assert_eq!(headers.contains("authorization:"), !single);
-        }
-    }
-}
-
-#[test]
-fn universe_status_distinguishes_restricted_metadata_and_missing_universes() {
-    for restricted in [true, false] {
-        let runtime = Runtime::with_groups(
-            json!({"kind":"deployment"}),
-            false,
-            if restricted {
-                json!(["session"])
-            } else {
-                json!(["deployment/universes"])
-            },
-        );
-        let directory = tempfile::tempdir().unwrap();
-        let overrides = [
-            ("LIGHTSPEED_API_URL", runtime.endpoint.as_str()),
-            ("LIGHTSPEED_API_KEY", "lsk_fixture_secret"),
-            (
-                "LIGHTSPEED_UNIVERSE",
-                "00000000-0000-0000-0000-000000000003",
-            ),
-        ];
-        let output = success(cli_env(
-            directory.path(),
-            &["universe", "status", "--json"],
-            None,
-            &overrides,
-        ));
-        let status: Value = serde_json::from_str(&output).unwrap();
-        assert_eq!(status["universeId"], overrides[2].1);
-        assert!(status["handle"].is_null());
-        let reason = status["unavailableReason"].as_str().unwrap();
-        if restricted {
-            assert!(reason.contains("requires a deployment key"));
-        } else {
-            assert!(reason.contains("unknown universe"));
-        }
-        assert_eq!(
-            runtime
-                .requests
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(method, _)| method == "deployment/universes/read")
-                .count(),
-            usize::from(!restricted)
-        );
-    }
-}
 
 #[test]
 fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
@@ -573,71 +450,6 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
             .collect()
     };
 
-    // A key that cannot read universes still addresses one by handle: the
-    // handle goes out in the header and nothing is looked up first.
-    let restricted = Runtime::with_groups(
-        json!({"kind":"deployment"}),
-        false,
-        json!(["session", "models"]),
-    );
-    let directory = tempfile::tempdir().unwrap();
-    let dir = directory.path();
-    let connection = [
-        ("LIGHTSPEED_API_URL", restricted.endpoint.as_str()),
-        ("LIGHTSPEED_API_KEY", "lsk_fixture_secret"),
-    ];
-    success(cli_env(
-        dir,
-        &["--universe", "one", "models", "list"],
-        None,
-        &connection,
-    ));
-    let from_environment = [connection[0], connection[1], ("LIGHTSPEED_UNIVERSE", "one")];
-    success(cli_env(dir, &["models", "list"], None, &from_environment));
-    assert_eq!(universe_headers(&restricted, "models/list"), ["one", "one"]);
-    let status = success(cli_env(
-        dir,
-        &["universe", "status", "--json"],
-        None,
-        &from_environment,
-    ));
-    let status: Value = serde_json::from_str(&status).unwrap();
-    assert!(status["universeId"].is_null());
-    assert_eq!(status["handle"], "one");
-    assert!(
-        status["unavailableReason"]
-            .as_str()
-            .unwrap()
-            .contains("requires a deployment key")
-    );
-    assert!(
-        !restricted
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(method, _)| method.starts_with("deployment/"))
-    );
-    // Saving a selection needs the UUID, which this key cannot look up.
-    success(cli(
-        dir,
-        &[
-            "connect",
-            "add",
-            "restricted",
-            "--url",
-            &restricted.endpoint,
-            "--api-key-stdin",
-        ],
-        Some("lsk_fixture_secret"),
-    ));
-    success(cli(dir, &["connect", "use", "restricted"], None));
-    let refused = cli(dir, &["universe", "use", "one"], None);
-    assert!(!refused.status.success());
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("--universe one"));
-    success(cli(dir, &["universe", "use", ONE], None));
-    // A key that can read universes saves the UUID a handle names, and
-    // reports both halves of a selection made by handle.
     let runtime = Runtime::start(json!({"kind":"deployment"}), false);
     let directory = tempfile::tempdir().unwrap();
     let dir = directory.path();
@@ -651,7 +463,7 @@ fn a_named_handle_is_sent_as_given_and_only_a_saved_selection_becomes_a_uuid() {
             "test",
             "--url",
             &runtime.endpoint,
-            "--api-key-stdin",
+            "--token-stdin",
         ],
         Some("lsk_fixture_secret"),
     ));
@@ -699,7 +511,7 @@ fn config_wait_retries_startup_and_applies_declarations_idempotently() {
     std::fs::write(dir.path().join("universe.yaml"), "schemaVersion: 1\nkind: universe\nhandle: one\ndisplayName: Research\nmembers: []\ndirectoryGroupMappings:\n  - issuer: https://id.example\n    group: readers\n    role: viewer\n").unwrap();
     let env = [
         ("LIGHTSPEED_API_URL", runtime.endpoint.as_str()),
-        ("LIGHTSPEED_API_KEY", "lsk_fixture"),
+        ("LIGHTSPEED_RPC_TOKEN", "lsk_fixture"),
     ];
     let output = cli_env(
         dir.path(),
@@ -817,7 +629,7 @@ fn config_wait_does_not_retry_authentication_or_wait_without_the_flag() {
             None,
             &[
                 ("LIGHTSPEED_API_URL", &runtime.endpoint),
-                ("LIGHTSPEED_API_KEY", "lsk_fixture"),
+                ("LIGHTSPEED_RPC_TOKEN", "lsk_fixture"),
             ],
         );
         assert!(!output.status.success());
@@ -841,7 +653,7 @@ fn config_wait_has_a_bounded_deadline() {
         None,
         &[
             ("LIGHTSPEED_API_URL", &runtime.endpoint),
-            ("LIGHTSPEED_API_KEY", "lsk_fixture"),
+            ("LIGHTSPEED_RPC_TOKEN", "lsk_fixture"),
         ],
     );
     assert!(!output.status.success());

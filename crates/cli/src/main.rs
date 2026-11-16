@@ -48,9 +48,8 @@ enum Command {
     /// Select and administer runtime universes.
     #[command(visible_alias = "universes")]
     Universe(administration_cli::UniverseArgs),
-    /// Administer Lightspeed gateway API keys.
-    #[command(visible_alias = "api-keys")]
-    ApiKey(administration_cli::ApiKeyArgs),
+    /// Generate a runtime token offline.
+    Token(administration_cli::TokenArgs),
     /// Keep universe configuration in files: export it, check what a file
     /// would change, and apply it.
     Config(config::ConfigArgs),
@@ -97,14 +96,14 @@ async fn main() -> Result<()> {
     // Some commands are offline: they need no connection and must work
     // before a runtime exists.
     let offline = match &cli.command {
-        Command::ApiKey(args) => args.offline(),
+        Command::Token(_) => true,
         Command::Env(args) => args.offline(),
         Command::Config(args) => args.offline(),
         _ => false,
     };
     if offline {
         return match cli.command {
-            Command::ApiKey(args) => administration_cli::api_key(args).await,
+            Command::Token(args) => administration_cli::token(args),
             Command::Env(args) => env_cli::handle(args).await,
             Command::Config(args) => config::handle(args).await,
             _ => unreachable!("only these commands have offline forms"),
@@ -128,7 +127,7 @@ async fn main() -> Result<()> {
         Command::Connect(_) => unreachable!(),
         Command::Universe(args) => administration_cli::universe(args).await,
         Command::Config(args) => config::handle(args).await,
-        Command::ApiKey(args) => administration_cli::api_key(args).await,
+        Command::Token(args) => administration_cli::token(args),
         Command::Models(args) => administration_cli::models(args).await,
         Command::Chat(args) => chat::handle(args).await,
         Command::Workspace(args) => vfs_cli::workspace(args).await,
@@ -151,7 +150,6 @@ mod tests {
         for (name, plural) in [
             ("connect", "connections"),
             ("universe", "universes"),
-            ("api-key", "api-keys"),
             ("model", "models"),
             ("chat", "chats"),
             ("workspace", "workspaces"),

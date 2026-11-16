@@ -1,7 +1,7 @@
-// Local credential handoff; all authority remains in the runtime key store.
+// Private local token files shared by the runtime, operator CLI, and Platform.
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { DevError } from "./errors.mjs";
 
 function writePrivate(file, text) {
@@ -16,78 +16,94 @@ function writePrivate(file, text) {
 function readPrivate(file) {
   const stat = lstatSync(file);
   if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new DevError("Development credentials must be owner-only regular files.");
-  return readFileSync(file, "utf8").trim();
+  return readFileSync(file, "utf8");
+}
+
+// Execution environments and frontend processes must not inherit RPC credentials.
+export function processEnvironment(env, role) {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => {
+    if (/^LIGHTSPEED_RPC_TOKEN(?:_|$)/.test(name)) return role === "runtime";
+    if (/^LIGHTSPEED_PLATFORM_RPC_TOKEN(?:_|$)/.test(name)) return role === "platform";
+    return true;
+  }));
+}
+
+function validateToken(secret, source) {
+  if (secret.length < 32 || /[^\x21-\x7e]/.test(secret)) {
+    throw new DevError(`${source} must contain at least 32 printable ASCII characters without whitespace.`);
+  }
+  return secret;
+}
+
+// A mounted secret may have one final newline, as produced by an editor or echo.
+function fileToken(contents) {
+  return contents.endsWith("\r\n") ? contents.slice(0, -2)
+    : contents.endsWith("\n") ? contents.slice(0, -1) : contents;
+}
+
+function readPrivateToken(file) {
+  return validateToken(fileToken(readPrivate(file)), "Saved runtime token");
+}
+
+function configuredSecret(env, name) {
+  const inline = env[name];
+  const file = env[`${name}_FILE`];
+  if (inline !== undefined && file !== undefined) throw new DevError(`Set ${name} or ${name}_FILE, not both.`);
+  const secret = file !== undefined ? fileToken(readFileSync(file, "utf8")) : inline;
+  return secret === undefined ? undefined : validateToken(secret, name);
 }
 
 export async function prepareCliConnection({ root, env, full, noBootstrap, run }) {
   const directory = path.join(root, ".lightspeed", "cli");
   const handoff = path.join(directory, "connection.json");
-  const statePath = path.join(directory, "provisioned.json");
-  const state = existsSync(statePath) ? JSON.parse(readPrivate(statePath)) : {};
   const universe = env.LIGHTSPEED_PG_UNIVERSE_ID;
   await run("development universe", "cargo", ["run", "-p", "temporal-runtime", "--", "universe", "create", "--universe-id", universe, "--handle", "development"], env);
   if (env.LIGHTSPEED_AUTH_MODE === "single") {
-    writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: true, ownedCredential: false }, null, 2));
-    return { handoff };
+    writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: true, ownedCredential: false, universe }, null, 2));
+    return { handoff, tokenEnvironment: {} };
   }
   if (env.LIGHTSPEED_AUTH_MODE !== "authenticated") throw new DevError("Expected single or authenticated runtime mode.");
 
-  async function provision(kind, supplied, assertActor) {
-    const file = path.join(directory, `${kind}.key`);
-    const exists = existsSync(file);
-    if (noBootstrap && state[kind] && !exists) {
-      throw new DevError(`The saved ${kind} development credential is missing.`, { hint: "Explicitly provision a replacement and restore its protected credential file; startup will not silently mint another administrator key." });
-    }
-    const previous = exists ? readPrivate(file) : null;
-    if (previous && supplied && previous !== supplied.trim()) throw new DevError(`The supplied ${kind} key differs from the saved development key.`, { hint: "Explicitly provision the replacement and update the protected credential file." });
-    const secret = previous ?? supplied?.trim();
-    if (noBootstrap && !secret) return null;
-    // One key per kind and checkout, so checkouts sharing a database do not
-    // replace each other's secret.
-    const keyId = `dev-${kind}-${createHash("sha256").update(root).digest("hex").slice(0, 8)}`;
-    // Development keys hold every group, stated here because the command has
-    // no default. Each start declares the key again, which gives it the
-    // groups a new build added.
-    const args = ["run", "-p", "temporal-runtime", "--", "api-key", "provision", "--key-id", keyId, "--name", `Development ${kind}: ${root}`, "--all-groups"];
-    if (assertActor) args.push("--assert-actor");
-    if (noBootstrap) args.push("--require-existing");
-    const provisioningEnv = { ...env, RUST_LOG: "off" };
-    delete provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
-    if (secret) provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY = secret;
-    const result = await run(`development ${kind} key`, "cargo", args, provisioningEnv, { captureStdout: true });
-    // The command prints a secret only when it generated one. A secret this
-    // launcher supplied is the one it already holds, so nothing is read back.
-    let provisioned = secret;
-    try {
-      const credential = JSON.parse(result.stdout);
-      if (typeof credential.keyId !== "string") throw new Error();
-      if (!provisioned) {
-        if (typeof credential.secret !== "string" || !credential.secret.startsWith("lsk_")) throw new Error();
-        provisioned = credential.secret;
-      }
-    } catch {
-      throw new DevError("API-key provisioning returned an invalid credential response; secret output withheld.");
-    }
-    writePrivate(file, provisioned);
-    state[kind] = true;
-    writePrivate(statePath, JSON.stringify(state));
-    return { file, secret: provisioned };
+  function token(kind, supplied) {
+    const file = path.join(directory, `${kind}.token`);
+    const saved = supplied === undefined && existsSync(file) ? readPrivateToken(file) : undefined;
+    const secret = supplied ?? saved ?? (noBootstrap ? undefined : `lsr_${randomBytes(32).toString("base64url")}`);
+    if (!secret) throw new DevError(`No ${kind} runtime token configured. Supply a token or omit --no-token-bootstrap.`);
+    validateToken(secret, `The ${kind} runtime token`);
+    writePrivate(file, secret);
+    return { file, secret };
   }
 
-  const cli = await provision("cli", env.LIGHTSPEED_BOOTSTRAP_API_KEY, false);
-  let platformSecret = env.LIGHTSPEED_PLATFORM_API_KEY;
-  if (full && !platformSecret) {
-    const platform = await provision("platform", undefined, true);
-    if (!platform) throw new DevError("Platform needs LIGHTSPEED_PLATFORM_API_KEY when --no-api-key-bootstrap is set.");
-    platformSecret = platform.secret;
+  const namedCli = configuredSecret(env, "LIGHTSPEED_RPC_TOKEN_CLI");
+  const defaultToken = configuredSecret(env, "LIGHTSPEED_RPC_TOKEN");
+  const cli = token("cli", namedCli ?? defaultToken);
+  const usesDefault = namedCli === undefined && defaultToken !== undefined;
+  const tokenEnvironment = usesDefault
+    ? { LIGHTSPEED_RPC_TOKEN_FILE: cli.file }
+    : { LIGHTSPEED_RPC_TOKEN_CLI_FILE: cli.file };
+  // Replace inline sources with private file paths so process plans never need secrets.
+  delete env.LIGHTSPEED_RPC_TOKEN_CLI;
+  if (full) {
+    const platform = token("platform", configuredSecret(env, "LIGHTSPEED_PLATFORM_RPC_TOKEN") ?? configuredSecret(env, "LIGHTSPEED_RPC_TOKEN_PLATFORM"));
+    // A shared secret has one runtime identity. Keep the CLI/default name;
+    // Platform still gets its own protected consumer file.
+    if (platform.secret !== cli.secret && platform.secret !== defaultToken) {
+      tokenEnvironment.LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE = platform.file;
+    } else {
+      delete env.LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE;
+    }
+    tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE = platform.file;
+    delete env.LIGHTSPEED_RPC_TOKEN_PLATFORM;
+    delete env.LIGHTSPEED_PLATFORM_RPC_TOKEN;
   }
-  if (cli) {
-    writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: false, credentialFile: cli.file, ownedCredential: false, universe }, null, 2));
-  } else {
-    // Replace any old single-mode handoff so it cannot be imported as current.
-    writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: false, ownedCredential: false }, null, 2));
+  // The default token, if used for the CLI, must not also appear under a second name.
+  if (usesDefault) {
+    delete env.LIGHTSPEED_RPC_TOKEN;
+    delete env.LIGHTSPEED_RPC_TOKEN_CLI_FILE;
   }
-  return { handoff: cli ? handoff : null, platformSecret };
+  Object.assign(env, tokenEnvironment);
+  writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: false, credentialFile: cli.file, ownedCredential: false, universe }, null, 2));
+  return { handoff, tokenEnvironment };
 }
 
 // This is development fixture policy, never a server-side model fallback.
@@ -97,7 +113,7 @@ export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: 
   const single = env.LIGHTSPEED_AUTH_MODE === "single";
   const connection = handoff ? JSON.parse(readPrivate(handoff)) : null;
   const secret = single ? null : connection?.credentialFile
-    ? readPrivate(connection.credentialFile) : env.LIGHTSPEED_PLATFORM_API_KEY;
+    ? readPrivateToken(connection.credentialFile) : configuredSecret(env, "LIGHTSPEED_PLATFORM_RPC_TOKEN");
   if (!single && !secret) return false;
   const universes = [env.LIGHTSPEED_PG_UNIVERSE_ID];
   if (full && env.LIGHTSPEED_PLATFORM_DEV_SEED === "true") universes.push("6c696768-7473-4065-8064-000000000010");
@@ -117,7 +133,7 @@ export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: 
       if (rpc.error) {
         // Another setup or user won the revision race. Their choice wins.
         if (method === "models/defaults/put" && rpc.error.data?.kind === "conflict") return;
-        throw new DevError(`Development model setup failed for ${method}.`, { hint: "Check that the development key has models access, then configure defaults with the CLI." });
+        throw new DevError(`Development model setup failed for ${method}.`, { hint: "Check that the runtime token is configured, then configure defaults with the CLI." });
       }
       return rpc.result.result;
     }

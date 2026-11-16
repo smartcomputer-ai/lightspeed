@@ -19,7 +19,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 
 use self::{
-    document::{Document, Format, LoadedDocument},
+    document::Format,
     plan::{Action, DocumentPlan, Step},
 };
 use crate::{api_client::HttpAgentApi, connection::ResolvedConnection};
@@ -93,9 +93,6 @@ pub(crate) struct ApplyArgs {
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ExportArgs {
-    /// Export the deployment's own resources instead of a universe's.
-    #[arg(long)]
-    deployment: bool,
     /// Write the document to this file instead of standard output.
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
@@ -113,18 +110,8 @@ fn base_connection() -> ResolvedConnection {
     HttpAgentApi::new("").connection().clone()
 }
 
-/// The deployment's document is planned and written first: universes may
-/// depend on what it declares.
-fn in_order(mut documents: Vec<LoadedDocument>) -> Vec<LoadedDocument> {
-    documents.sort_by_key(|loaded| match loaded.document {
-        Document::Deployment(_) => 0,
-        Document::Universe(_) => 1,
-    });
-    documents
-}
-
 async fn plan_all(files: &[PathBuf]) -> Result<Vec<DocumentPlan>> {
-    let documents = in_order(document::load(files)?);
+    let documents = document::load(files)?;
     let base = base_connection();
     let mut plans = Vec::new();
     for loaded in &documents {
@@ -174,14 +161,10 @@ async fn apply(args: ApplyArgs) -> Result<()> {
 /// `lightspeed config export`.
 async fn export(args: ExportArgs) -> Result<()> {
     let base = base_connection();
-    let mut exported = if args.deployment {
-        export::deployment(&base).await?
-    } else {
-        let universe = base
-            .active_universe()
-            .context("no universe selected; name one with --universe, or pass --deployment")?;
-        export::universe(&base, &universe).await?
-    };
+    let universe = base
+        .active_universe()
+        .context("no universe selected; name one with --universe")?;
+    let mut exported = export::universe(&base, &universe).await?;
     let format = args.format.unwrap_or_else(|| {
         match args
             .output

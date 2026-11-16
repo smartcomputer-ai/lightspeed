@@ -10,8 +10,6 @@ import { AppShell } from "@/components/app-shell";
 import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 import { AccountPage } from "@/pages/AccountPage";
-import { ApiKeysPage } from "@/pages/ApiKeysPage";
-import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
 import { AdminAuditPage } from "@/pages/AdminAuditPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
@@ -147,7 +145,6 @@ export function App() {
         <Route path="u/:handle/environments" element={<EnvironmentsPage admin={admin} />} />
         <Route path="u/:handle/mcp-servers" element={<McpServersPage admin={admin} />} />
         <Route path="u/:handle/members" element={<MembersPage admin={admin} />} />
-        <Route path="u/:handle/api-keys" element={<ApiKeysPage admin={admin} />} />
         <Route path="u/:handle/credentials" element={<CredentialsPage admin={admin} />} />
         <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
         <Route
@@ -168,7 +165,6 @@ export function App() {
             <Route path="admin/audit" element={<AdminAuditPage />} />
             <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
             <Route path="admin/universes" element={<AdminUniversesPage />} />
-            <Route path="admin/api-keys" element={<AdminApiKeysPage />} />
             <Route path="admin/channels" element={<AdminChannelsPage />} />
             <Route path="admin/environment-providers" element={<AdminEnvironmentProvidersPage />} />
           </>

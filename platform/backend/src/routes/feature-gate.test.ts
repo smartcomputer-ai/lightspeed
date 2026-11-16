@@ -41,7 +41,7 @@ function setup(features: Record<string, boolean>) {
     db: { select: () => chain },
     env: {
       lightspeedApiUrl: "https://core.example/rpc",
-      lightspeedApiKey: "lsk_fixture",
+      lightspeedRpcToken: "lsk_fixture",
       channelsHealthUrls: ["https://connector.example/"],
     },
   } as unknown as AppContext;

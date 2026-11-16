@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 mod object_storage;
 mod postgres;
+mod rpc_tokens;
+pub use rpc_tokens::RpcTokens;
 
 pub use postgres::postgres_pool_from_env;
 
@@ -35,12 +37,12 @@ pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
         .map_err(|error| anyhow::anyhow!("invalid LIGHTSPEED_PG_UNIVERSE_ID: {error}"))
 }
 
-/// Local development or canonical principal authentication. Headers alone
+/// Local development or configured component authentication. Headers alone
 /// never authenticate a caller.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GatewayAuthMode {
     Single { universe_id: Uuid },
-    Authenticated,
+    Authenticated { tokens: Arc<RpcTokens> },
 }
 
 pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
@@ -55,14 +57,16 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
     let Some(mode) = optional_env("LIGHTSPEED_AUTH_MODE") else {
         anyhow::bail!(
             "LIGHTSPEED_AUTH_MODE is required: `single` (one universe, no authentication; \
-             local development only) or `authenticated` (scoped bearer keys)"
+             local development only) or `authenticated` (configured RPC tokens)"
         );
     };
     match mode.as_str() {
         "single" => Ok(GatewayAuthMode::Single {
             universe_id: universe_id_from_env()?,
         }),
-        "authenticated" => Ok(GatewayAuthMode::Authenticated),
+        "authenticated" => Ok(GatewayAuthMode::Authenticated {
+            tokens: Arc::new(RpcTokens::from_env()?),
+        }),
         other => anyhow::bail!(
             "invalid LIGHTSPEED_AUTH_MODE={other:?}; expected single or authenticated; trusted-header and api-key are retired"
         ),

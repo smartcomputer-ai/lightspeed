@@ -16,9 +16,11 @@ run Node commands from there.
 - `connectors/` — the connector host: one process serving every enabled
   Telegram and WhatsApp account across universes, discovered through the core
   API, with grant-leased provider tokens and one Temporal activity worker per
-  account queue. Bot and channel workflows run in the Rust runtime.
+  account queue. The host is currently disabled; bot and channel workflows
+  remain in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
-  universe-scoped Lightspeed API.
+  universe-scoped Lightspeed API. The Platform setup and development process
+  are disabled until restricted Platform tokens are available.
 - `scripts/` — product-identity check and the generated profile configuration
   reference.
 - `web/src/demo/` — the in-browser demo backend: an in-memory stand-in for
@@ -87,7 +89,7 @@ settings.
 
 The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
 made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
-(Credentials, API keys, Members) and the universe's **Settings** (General,
+(Credentials, Members) and the universe's **Settings** (General,
 Channels, Templates) at flat `/u/:handle/...` routes; bare `/u/:handle/settings`
 opens the first settings page the caller may see. Models holds model provider keys,
 compatible endpoints and coding-agent subscriptions. Credentials lists reusable
@@ -95,7 +97,7 @@ tokens, environment secrets, GitHub App installations and custom OAuth grants;
 model and MCP server logins stay on their own pages, while credential pickers
 still offer every grant, except that the environment picker offers only
 retrievable ones. Credentials, Channels and Templates are for Operators
-and Admins; API keys and General are for Admins.
+and Admins; General is for Admins.
 
 **Features.** A universe admin switches parts of the product on or off under
 General → Features; today Bots and Channels, where Channels need Bots. Both
@@ -106,12 +108,12 @@ switched-off feature's pages, menu items and choices. The backend enforces the
 switch in the member gate: a member's `bots/*` or `channels/*` call is refused
 with a 403 while its feature is off, whatever their role. The switch covers
 what members do through the Platform. What already runs, such as a bot
-answering on its channels, keeps running, and a holder of a runtime key is
-bound by that key's groups, not by the switch.
+answering on its channels, keeps running. A runtime token has full authority
+and the Platform feature switch does not constrain it.
 
 ## People, universes and access
 
-The Platform owns people; core knows universes, keys and opaque actors, and
+The Platform owns people; the runtime knows universes and opaque actors, and
 records who asked for each run, steer, cancellation and approval.
 
 **Accounts.** With a company OIDC provider configured, the browser offers company
@@ -138,8 +140,9 @@ hours by default and activity cannot renew them. Every authenticated request
 checks current admission, suspension and permissions. **Users** supports
 suspension, reinstatement and signing out all sessions. **Audit log** shows the
 latest 100 durable access and permanent session deletion events. Membership
-changes apply on the next request; provider login preserves them. Core keys and already admitted work remain
-independent and require separate revocation or cancellation.
+changes apply on the next request; provider login preserves them. Configured
+runtime tokens and already admitted work remain independent: rotate operator
+credentials and cancel work separately when needed.
 
 **Universes and roles.** A universe is an organization. Its members hold one of
 four roles, least to most:
@@ -149,7 +152,7 @@ four roles, least to most:
 | viewer | read shared work and their own private sessions |
 | contributor | also create sessions from defaults or an existing profile, continue runs, invoke bots, share their own sessions |
 | operator | also customize sessions and run options, and configure profiles, bots, environments, MCP servers, credentials and channels |
-| admin | also manage members and keys, read and share any session, soft-delete closed sessions and set deletion retention |
+| admin | also manage members, read and share any session, soft-delete closed sessions and set deletion retention |
 
 A universe's creator is its admin, and a universe always keeps one. A platform
 admin acts as an admin in every universe. Universe admins manage members on
@@ -174,8 +177,10 @@ a route makes for a member goes through one client
 - limits closing to contributors' own unshared sessions, operators' own or
   shared sessions, or any session for admins; soft deletion requires a closed
   session and an admin, or an operator for shared sessions;
-- narrows a member's session list to shared work and their own; and
-- calls core with the Platform's deployment key, naming the universe and the
+- narrows a member's session list to shared work and their own;
+- permits transcription reads and cancellation only for their creator, including
+  when the caller is an admin; and
+- calls core with the Platform's runtime token, naming the universe and the
   member as the actor.
 
 The Platform's own refusals are 403 and 404. Core refusing the Platform is a
@@ -198,26 +203,19 @@ session and its sub-agents, once and for good. The session header marks private
 work with a lock and shared work with people; lists mark only shared sessions.
 Bots and their conversations are always shared.
 
-**Keys.** `LIGHTSPEED_PLATFORM_API_KEY` is the Platform's deployment key, with
-every method group and permission to assert actors. Follow
-[Bootstrap the Platform](../docs/documentation/access-and-security/api-keys-and-service-access.md#bootstrap-the-platform)
-to create it.
-The runtime must run in `authenticated` mode, and connector hosts use their own
-`LIGHTSPEED_CONNECTOR_API_KEY`. Universe admins mint keys for their universe
-under **API keys**, choosing the method groups each key may call from presets
-(agent client, configuration, all groups) or one by one; they never assert
-actors, and credential leasing and channel delivery are opt-in. Platform admins see and
-mint every key under **Platform admin → API keys**, choosing what a key reaches (the
-deployment or one universe), the method groups it may call, and whether it
-speaks for people. A secret is shown once. Rotate it to replace it immediately
-while preserving authority. Keys are addressed by their key id within their scope;
-the page shows the id when its creator chose one, and the secret's prefix.
-The Configurator template asks which key its MCP server acts with:
-the current one, a new key with chosen groups (starting from the configuration
-groups), or an existing universe key whose secret the Admin pastes; it revokes
-only keys it minted. The server lists only the tools that key may call, and
-anyone who can attach it acts with that key. Operators see the template, and
-only Admins install it.
+**Runtime access.** `LIGHTSPEED_PLATFORM_RPC_TOKEN`, or
+`LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`, supplies the Platform's full-authority
+runtime credential. Configure the same secret among the runtime's
+`LIGHTSPEED_RPC_TOKEN` values. The runtime must run in `authenticated` mode.
+It no longer stores or issues caller API keys, and the universe and deployment
+API-key pages have been removed. Follow
+[Runtime service access](../docs/documentation/access-and-security/api-keys-and-service-access.md)
+for configuration and rotation.
+
+The connector host and Configurator setup are disabled. Configurator must not
+receive a runtime token for use by an agent. Its replacement will use a
+restricted Platform token. Operators and Admins see the unavailable template;
+installation performs no credential or resource writes.
 
 ## Development
 
@@ -311,6 +309,7 @@ The server accepts the following primary configuration names:
 
 - `LIGHTSPEED_PLATFORM_DATABASE_URL`;
 - `LIGHTSPEED_PLATFORM_AUTH_SECRET`;
+- `LIGHTSPEED_PLATFORM_RPC_TOKEN` or `LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE`;
 - `LIGHTSPEED_PLATFORM_BASE_URL`;
 - `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`;
 - `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
@@ -339,10 +338,8 @@ LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 
 Release construction stages one platform runtime and one connector-host
 runtime (still published as the `platform-workers` image so image references
-and manifest keys stay stable). The connector host serves the providers named
-by `LIGHTSPEED_CONNECTOR_PROVIDERS` for every account the core reports; see
-`connectors/README.md`. The release manifest records one digest for each
-image.
+and manifest keys stay stable). The connector host is disabled and receives no runtime token; its removal
+is separate work. The release manifest records one digest for each image.
 
 ### Testing & Visual Tests
 

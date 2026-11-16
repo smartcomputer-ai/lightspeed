@@ -16,14 +16,14 @@ export type RpcProxyDecision =
   | { deny: "unauthenticated" | "forbidden"; message?: string }
   | {
       deny?: never;
-      /** Attributes the call to this user. The client's key must be allowed to assert it. */
+      /** Attributes the call to this user. Direct runtime tokens may always name an actor. */
       actor?: string;
       /** Replaces the browser's params, for example to force a filter. */
       params?: unknown;
     };
 
 export interface RpcProxyOptions {
-  /** Holds the API key, which never reaches the browser. */
+  /** Holds the full-authority runtime token, which never reaches the browser. */
   client: LightspeedClient;
   /** The only methods this proxy forwards. */
   methods: readonly Method[];
@@ -35,9 +35,9 @@ export interface RpcProxyOptions {
 
 /**
  * A request handler that lets a browser use `LightspeedClient` without holding
- * an API key. Point the browser's client at wherever this is mounted.
+ * a runtime token. Point the browser's client at wherever this is mounted.
  *
- * Nothing identifying the browser is forwarded: the key, universe and actor come
+ * Nothing identifying the browser is forwarded: the token, universe and actor come
  * only from `options`. Only POST with a JSON body is accepted, so a cross-site
  * form cannot use a logged-in user's cookies, and no CORS headers are sent. If
  * `authorize` throws, the returned promise rejects and nothing is forwarded.

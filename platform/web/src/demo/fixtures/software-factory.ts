@@ -8,9 +8,8 @@
 /// is seeded here, with timestamps hung off boot time.
 import type { Environment, GitHubApp, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
 import type { BotEventOutcome, ModelConfig, SessionSummaryView } from "@lightspeed-ai/sdk";
-import { groupsFor } from "@/lib/method-groups";
 import { activeRun, appendExchange, appendScriptedRun, closeSession, hurryRun, newSession, refreshDemoCompactionView, startRun } from "../engine";
-import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
+import { type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -598,30 +597,11 @@ function seedProfiles(universe: UniverseState): void {
 }
 
 // ---------------------------------------------------------------------------
-// Members and API keys
+// Members
 // ---------------------------------------------------------------------------
 
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(member(store, universe, "user-marco", "admin", ago(68 * DAY_MS)), member(store, universe, "user-priya", "contributor", ago(61 * DAY_MS)));
-  universe.apiKeys.push(
-    universeApiKey(universe, {
-      keyPrefix: "lsk_acme_cfg_9b21",
-      displayName: "Configurator MCP",
-      groups: ["profiles", "mcp", "environments", "bots", "channels", "auth", "models"],
-      createdAtMs: ago(38 * DAY_MS),
-      createdBy: "user-marco",
-      lastUsedAtMs: ago(2 * HOUR_MS + 11 * MINUTE_MS),
-    }),
-    universeApiKey(universe, {
-      keyPrefix: "lsk_acme_mr_c19e",
-      displayName: "Marco's laptop (rotated)",
-      groups: groupsFor("universe"),
-      createdAtMs: ago(60 * DAY_MS),
-      createdBy: "user-marco",
-      revokedAtMs: ago(12 * DAY_MS),
-      lastUsedAtMs: ago(13 * DAY_MS),
-    }),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1543,14 +1523,12 @@ function seedIntegrations(universe: UniverseState): void {
   const configurator: UniverseSetup = {
     id: "configurator",
     name: "Configurator",
-    description: "An MCP server that lets coding agents configure this universe: profiles, MCP servers, environments, and bots, with an API key scoped to it.",
+    description: "An MCP server that lets coding agents configure this universe: profiles, MCP servers, environments, and bots, with a scoped Platform token.",
     version: 4,
-    available: true,
-    status: "ready",
+    available: false,
+    status: "unavailable",
     installedVersion: 4,
     resources: {
-      keyPrefix: "lsk_acme_cfg_9b21",
-      keyGroups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
       serverId: "configurator",
     },
   };

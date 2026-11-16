@@ -145,7 +145,10 @@ claiming an offboarding time bound. Directory propagation may add delay.
 
 There is no automatic deactivation for inactivity. Suspension and company
 admission changes preserve local memberships, historical records and running
-work. Core API keys must be revoked separately.
+work. Runtime tokens authenticate trusted components, not people, and are
+independent of company sign-in. Do not distribute them to ordinary users. If an
+operator who held one leaves, replace it in runtime and consumer configuration;
+suspending their Platform account does not invalidate it.
 
 ## Validate the deployment
 
@@ -167,11 +170,13 @@ Before opening access, test the actual provider registration:
 5. Suspend the user in Lightspeed and check that existing sessions and new
    sign-ins are blocked. Reinstate them and confirm a fresh login is required.
 6. Check absolute expiry and emergency password access during a provider
-   outage. Verify that core API keys still require separate revocation.
+   outage. Verify the separate secret-rotation procedure for any runtime token
+   held by an offboarded operator.
 
 Platform admins can inspect **Platform admin → Audit log** for company
 admission and admin-status changes, emergency sign-ins, suspension, session
-revocation, membership edits and Platform key operations. This small durable
+revocation and membership edits. Historical key-operation entries remain in
+the log after key management is removed. This small durable
 trail survives user and session deletion; comprehensive gateway auditing,
 audit retention controls and export remain deferred. See
 [what is recorded](overview.md#what-is-recorded-today).

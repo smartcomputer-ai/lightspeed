@@ -74,7 +74,7 @@ impl Runtime {
                     assert_ne!(params.run_limit, Some(0), "runLimit must be positive");
                 }
                 let result = if method == "initialize" {
-                    json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":{"kind":"deployment"},"single":false,"keyPrefix":"lsk_fixture","groups":api::MethodGroup::ALL}})
+                    json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"single":false,"tokenName":"fixture"}})
                 } else {
                     Value::Null
                 };
@@ -110,7 +110,7 @@ impl Runtime {
                 self.directory.path().join("config"),
             )
             .env("LIGHTSPEED_API_URL", &self.endpoint)
-            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
             .env(
                 "LIGHTSPEED_UNIVERSE",
                 "00000000-0000-0000-0000-000000000001",
@@ -870,202 +870,6 @@ fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
 }
 
 #[test]
-fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
-    // Generation contacts nothing: it works with no connection configured.
-    let offline = tempfile::tempdir().unwrap();
-    let generate = |kind: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
-            .current_dir(offline.path())
-            .args(kind)
-            .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
-            .env_remove("LIGHTSPEED_API_URL")
-            .env_remove("LIGHTSPEED_API_KEY")
-            .env_remove("LIGHTSPEED_UNIVERSE")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
-    let api_secret = generate(&["api-key", "generate-secret"]);
-    let registration_secret = generate(&["environment", "registration-key", "generate-secret"]);
-    assert!(api_secret.starts_with("lsk_") && api_secret.len() == 4 + 43);
-    assert!(registration_secret.starts_with("lsrk_") && registration_secret.len() == 5 + 43);
-
-    let (expected_api, expected_registration) = (api_secret.clone(), registration_secret.clone());
-    let runtime = Runtime::start(move |method, params| match method {
-        // Every group is asked for by name, never by leaving the field out.
-        "deployment/api-keys/put" if params["keyId"] == "operator" => {
-            assert_eq!(
-                *params,
-                json!({
-                    "scope": {"kind":"deployment"},
-                    "keyId": "operator",
-                    "groups": "all",
-                    "assertActor": false,
-                    "displayName": "Operator",
-                    "secret": expected_api,
-                })
-            );
-            json!({"apiKey":{"keyId":"operator","keyPrefix":&expected_api[..12],"scope":params["scope"],"groups":["session","deployment/api-keys"],"assertActor":false,"createdBy":{"kind":"local"},"displayName":"Operator","createdAtMs":1},"created":false,"secretReplaced":false})
-        }
-        "deployment/api-keys/put" => {
-            assert_eq!(
-                *params,
-                json!({
-                    "scope": {"kind":"universe","universeId":"00000000-0000-0000-0000-000000000001"},
-                    "keyId": "release-bot",
-                    "groups": ["session", "profiles"],
-                    "assertActor": false,
-                    "displayName": "Release bot",
-                    "secret": expected_api,
-                })
-            );
-            json!({"apiKey":{"keyId":"release-bot","keyPrefix":&expected_api[..12],"scope":params["scope"],"groups":["session","profiles"],"assertActor":false,"createdBy":{"kind":"local"},"displayName":"Release bot","createdAtMs":1},"created":true,"secretReplaced":false})
-        }
-        "deployment/api-keys/rotate" | "deployment/api-keys/revoke" => {
-            assert_eq!(
-                *params,
-                json!({"scope":{"kind":"deployment"},"keyId":"platform"})
-            );
-            let api_key = json!({"keyId":"platform","keyPrefix":"lsk_rotated1","scope":{"kind":"deployment"},"groups":["session"],"assertActor":true,"createdBy":{"kind":"local"},"createdAtMs":1});
-            if method.ends_with("rotate") {
-                json!({"apiKey":api_key,"secret":"lsk_rotated_secret"})
-            } else {
-                json!({"apiKey":api_key})
-            }
-        }
-        "environments/registration-keys/put" => {
-            assert_eq!(
-                *params,
-                json!({
-                    "registrationKeyId": "build-pool",
-                    "displayName": "Build pool",
-                    "identityMode": "ephemeral",
-                    "maxActiveEnvironments": 4,
-                    "secret": expected_registration,
-                })
-            );
-            json!({"registrationKey":{"registrationKeyId":"build-pool","displayName":"Build pool","keyPrefix":&expected_registration[..12],"identityMode":"ephemeral","maxActiveEnvironments":4,"ephemeralDisconnectGraceMs":300000,"status":"active","registeredEnvironmentCount":0,"activeEnvironmentCount":0,"createdAtMs":1,"updatedAtMs":1},"created":false,"secretReplaced":true})
-        }
-        _ => panic!("unexpected request {method}"),
-    });
-
-    // The secret is read from a file or the environment, never an argument.
-    let file = runtime.directory.path().join("api-key");
-    std::fs::write(&file, format!("{api_secret}\n")).unwrap();
-    let output = runtime.json(&[
-        "api-key",
-        "put",
-        "release-bot",
-        "--display-name",
-        "Release bot",
-        "--group",
-        "session",
-        "--group",
-        "profiles",
-        "--secret-file",
-        file.to_str().unwrap(),
-        "--json",
-    ]);
-    assert_eq!(output["created"], true);
-    assert!(!output.to_string().contains(&api_secret));
-
-    // A key's groups are always stated: a list, or every group by name.
-    let operator = [
-        "api-key",
-        "put",
-        "operator",
-        "--display-name",
-        "Operator",
-        "--deployment",
-        "--secret-file",
-        file.to_str().unwrap(),
-        "--json",
-    ];
-    let unstated = runtime.run(&operator);
-    assert!(!unstated.status.success());
-    assert!(String::from_utf8_lossy(&unstated.stderr).contains("--group"));
-    let mut everything = operator.to_vec();
-    everything.push("--all-groups");
-    assert_eq!(runtime.json(&everything)["created"], false);
-    let mut both = everything.clone();
-    both.extend(["--group", "session"]);
-    assert!(!runtime.run(&both).status.success());
-    assert!(
-        !runtime
-            .run(&["api-key", "create", "--display-name", "x", "--deployment"])
-            .status
-            .success()
-    );
-
-    let declared = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
-        .current_dir(runtime.directory.path())
-        .args([
-            "environment",
-            "registration-key",
-            "put",
-            "build-pool",
-            "--display-name",
-            "Build pool",
-            "--mode",
-            "ephemeral",
-            "--max-active",
-            "4",
-            "--secret-env",
-            "POOL_SECRET",
-        ])
-        .env(
-            "LIGHTSPEED_CONFIG_DIR",
-            runtime.directory.path().join("config"),
-        )
-        .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-        .env("LIGHTSPEED_API_KEY", "lsk_fixture")
-        .env(
-            "LIGHTSPEED_UNIVERSE",
-            "00000000-0000-0000-0000-000000000001",
-        )
-        .env("POOL_SECRET", &registration_secret)
-        .output()
-        .unwrap();
-    assert!(
-        declared.status.success(),
-        "{}",
-        String::from_utf8_lossy(&declared.stderr)
-    );
-    let stdout = String::from_utf8(declared.stdout).unwrap();
-    assert!(stdout.contains("The previous secret is retired."));
-    assert!(!stdout.contains(&registration_secret));
-
-    // A declared key needs a secret source, and exactly one.
-    for sources in [
-        &[][..],
-        &["--secret-stdin", "--secret-env", "POOL_SECRET"][..],
-    ] {
-        let mut args = vec![
-            "api-key",
-            "put",
-            "x",
-            "--display-name",
-            "x",
-            "--deployment",
-            "--all-groups",
-        ];
-        args.extend_from_slice(sources);
-        assert!(!runtime.run(&args).status.success());
-    }
-
-    // Rotation and revocation address a key by its id and scope: the
-    // selected universe unless --deployment is given.
-    let rotated = runtime.json(&["api-key", "rotate", "platform", "--deployment", "--json"]);
-    assert_eq!(rotated["secret"], "lsk_rotated_secret");
-    runtime.success(&["api-key", "revoke", "platform", "--deployment"]);
-}
-
-#[test]
 fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
     let grant = |token_marker: &str| json!({"grantId":"tracker-token","providerId":"static","providerKind":"staticToken","exposure":"brokered","createdBy":{"kind":"local"},"displayName":"Tracker","subjectHint":"ci","scopes":["read"],"audience":"https://tracker.example.com/mcp","hasAccessToken":true,"hasRefreshToken":false,"expiresAtMs":99,"status":"active","metadata":{"owner":token_marker},"leaseCount":0,"createdAtMs":1,"updatedAtMs":2});
     let runtime = Runtime::start(move |method, params| match method {
@@ -1119,7 +923,7 @@ fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
                 runtime.directory.path().join("config"),
             )
             .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
             .env(
                 "LIGHTSPEED_UNIVERSE",
                 "00000000-0000-0000-0000-000000000001",
@@ -1299,7 +1103,7 @@ fn run_documents(runtime: &Runtime, args: &[&str], secrets: &[(&str, &str)]) -> 
             runtime.directory.path().join("config"),
         )
         .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-        .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+        .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .env_remove("TRACKER_TOKEN")
         .env_remove("RUNNERS_KEY");
@@ -1495,7 +1299,7 @@ fn the_document_schema_is_printed_without_a_connection() {
         .args(["config", "schema"])
         .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
         .env_remove("LIGHTSPEED_API_URL")
-        .env_remove("LIGHTSPEED_API_KEY")
+        .env_remove("LIGHTSPEED_RPC_TOKEN")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .output()
         .unwrap();
@@ -1526,7 +1330,7 @@ fn a_connection_from_the_environment_needs_no_home_directory() {
             .args(args)
             .env_clear()
             .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env("LIGHTSPEED_RPC_TOKEN", "lsk_fixture")
             .output()
             .unwrap()
     };

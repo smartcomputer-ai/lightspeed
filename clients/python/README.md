@@ -9,8 +9,8 @@ It sends the same requests as the
 [TypeScript SDK](https://github.com/smartcomputer-ai/lightspeed/tree/main/clients/typescript),
 so either one can continue a session or a run the other started.
 
-An API key with the `session` group can read and control every session in its
-universe, including private ones, so keep it on your server.
+A runtime token can call every method in every universe, including reading private
+sessions, so keep it on your server.
 
 ## Install
 
@@ -28,9 +28,8 @@ From a checkout, `python -m pip install ./clients/python` installs the same pack
 
 ## Start a session and run a task
 
-You need the gateway's `/rpc` URL, an
-[API key](https://ls.bot/docs/access-and-security/api-keys-and-service-access/) with the
-`session` group, and a universe with a default model or a profile to start from.
+You need the gateway's `/rpc` URL, a
+[runtime token](https://ls.bot/docs/access-and-security/api-keys-and-service-access/), and a universe with a default model or a profile to start from.
 
 ```python
 import asyncio
@@ -42,7 +41,7 @@ from lightspeed_ai import AsyncLightspeedClient
 async def main() -> None:
     async with AsyncLightspeedClient(
         os.environ["LIGHTSPEED_API_URL"],
-        api_key=os.environ["LIGHTSPEED_API_KEY"],
+        token=os.environ["LIGHTSPEED_RPC_TOKEN"],
     ) as client:
         started = await client.start_session(
             display_name="Repository summary",
@@ -114,9 +113,9 @@ arguments:
 
 | Argument | Use |
 | --- | --- |
-| `api_key` | Sent as the bearer credential. Omit it only for a gateway in single mode. |
-| `universe` | The universe's UUID or handle, for a deployment key only. A universe key must leave it out. |
-| `actor` | An opaque user ID to attribute requests to. The key must be created with `assertActor`. |
+| `token` | Sent as the bearer credential. Omit it only for a gateway in single mode. |
+| `universe` | The universe's UUID or handle; required for universe methods in authenticated mode. |
+| `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
 | `headers` | Extra headers, or a function returning them for each request, which may be async. These override the arguments above. |
 | `http_client` | An `httpx.AsyncClient` to send with, for custom transports, timeouts, or tests. |
 | `request_id` | A function supplying each request's JSON-RPC ID, in place of a counter. |
@@ -127,7 +126,7 @@ own with a 60 second timeout.
 
 To act for several users from one client, use `client.with_actor(user_id)`. It shares
 the original's connections. Attribution records who asked, but it does not limit what
-the key can do, so your application must check each user's access itself.
+the token can do, so your application must check each user's access itself.
 
 ## Helpers and `call`
 
@@ -152,7 +151,7 @@ outcome = await client.call("session/read", {"sessionId": session_id, "runLimit"
 print(outcome["result"]["session"], outcome.get("notifications"))
 
 # Administration has no helper.
-keys = await client.call("deployment/api-keys/list", {})
+universes = await client.call("deployment/universes/list", {})
 ```
 
 Use `call` if you need the `notifications` returned with a method; helpers leave them
@@ -262,7 +261,7 @@ The package also exports what it knows about the API itself: `METHODS` and
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid API key is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
+| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `__cause__` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | `TimeoutError`, `asyncio.CancelledError` | Your own `asyncio.timeout` passed, or you cancelled the task. |
 

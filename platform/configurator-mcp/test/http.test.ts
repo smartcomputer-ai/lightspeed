@@ -2,7 +2,6 @@ import { request as httpRequest } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConfiguratorConfig } from "../src/config.js";
-import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 import { startConfigurator, type RunningConfigurator } from "../src/transport.js";
 
@@ -56,26 +55,12 @@ describe("Streamable HTTP configurator", () => {
     await client.close();
   });
 
-  it("offers only the tools whose group the caller's key holds", async () => {
+  it("offers generated tools after authenticating the runtime token", async () => {
     const upstream: UpstreamRequest[] = [];
-    const groups: MethodGroup[] = ["profiles", "models"];
-    const server = await start("authenticated", fakeUpstream(upstream, 0, groups));
-    const { client, transport } = mcpClient(server, { authorization: "Bearer lsk_config" });
-
+    const server = await start("authenticated", fakeUpstream(upstream));
+    const { client, transport } = mcpClient(server, { authorization: "Bearer operator-token" });
     await client.connect(transport as Parameters<typeof client.connect>[0]);
-    const listed = await client.listTools();
-    const expected = GENERATED_TOOLS.filter((tool) => groups.includes(tool.group)).map((tool) => tool.name);
-    expect(listed.tools.map((tool) => tool.name)).toEqual(expected);
-    expect(expected).toContain("lightspeed_profiles_list");
-    expect(expected).not.toContain("lightspeed_session_list");
-
-    // A tool outside the key's groups is unknown and never reaches core.
-    await expect(
-      client.callTool({ name: "lightspeed_session_list", arguments: {} }),
-    ).rejects.toThrow(/unknown tool/);
-    expect(upstream.some((request) => request.method === "session/list")).toBe(false);
-    await client.callTool({ name: "lightspeed_models_list", arguments: {} });
-    expect(upstream.some((request) => request.method === "models/list")).toBe(true);
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(GENERATED_TOOLS.map(tool => tool.name));
     await client.close();
   });
 
@@ -102,6 +87,8 @@ describe("Streamable HTTP configurator", () => {
       b.client.callTool({ name: "lightspeed_session_list", arguments: {} }),
     ]);
 
+    expect(upstream.filter(request => request.method === "initialize").every(request =>
+      !request.headers.has("x-lightspeed-universe") && !request.headers.has("x-lightspeed-actor"))).toBe(true);
     const calls = upstream.filter((request) => request.method === "session/list");
     expect(calls).toHaveLength(2);
     expect(calls.map((call) => call.headers.get("x-lightspeed-universe")).sort()).toEqual(
@@ -274,10 +261,8 @@ function mcpClient(server: RunningConfigurator, headers: Record<string, string>)
   return { client, transport };
 }
 
-const ALL_GROUPS = [...new Set(GENERATED_TOOLS.map((tool) => tool.group))];
-
-/// A core that answers `initialize` with `groups` as the caller's.
-function fakeUpstream(requests: UpstreamRequest[], delayMs = 0, groups: MethodGroup[] = ALL_GROUPS): typeof fetch {
+/// A runtime that identifies the configured token.
+function fakeUpstream(requests: UpstreamRequest[], delayMs = 0): typeof fetch {
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as {
       id: number | string;
@@ -299,7 +284,7 @@ function fakeUpstream(requests: UpstreamRequest[], delayMs = 0, groups: MethodGr
               eventLog: true,
               localExecution: false,
             },
-            caller: { keyPrefix: "lsk_test", groups },
+            caller: { single: false, tokenName: "test" },
           }
         : body.method === "models/list"
           ? { models: [], providers: [] }

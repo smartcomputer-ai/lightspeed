@@ -167,11 +167,6 @@ export const SESSION_TARGET_METHODS: ReadonlySet<string> = new Set([
 export const UNMEMBERED_METHODS: ReadonlySet<string> = new Set([
   "auth/grants/lease",
   "channels/inbound/admit",
-  "deployment/api-keys/create",
-  "deployment/api-keys/list",
-  "deployment/api-keys/put",
-  "deployment/api-keys/revoke",
-  "deployment/api-keys/rotate",
   "deployment/channels/accounts/list",
   "deployment/environment-provider-bindings/list",
   "deployment/environment-providers/bindings/delete",

@@ -81,7 +81,7 @@ export abstract class LightspeedHelpers {
   /**
    * Inspect the Lightspeed protocol
    *
-   * Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
+   * Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
    */
   initialize(options: Api.InitializeParams & CallOptions = {}): Promise<Api.InitializeResponse> {
     return this.invoke("initialize", {  }, options);

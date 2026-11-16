@@ -34,9 +34,7 @@ import type {
   ChannelAccountView,
   ChannelPairingView,
   ContextEntryView,
-  DeploymentApiKeyView,
   DeploymentEnvironmentProviderView,
-  MethodGroup,
   RunFailureKindView,
   RunView,
   SessionEventView,
@@ -178,7 +176,6 @@ export interface UniverseState {
   featureOverrides: FeatureOverrides;
   members: Member[];
   /// Universe keys as core lists them.
-  apiKeys: DeploymentApiKeyView[];
   profiles: Map<string, ProfileDocument>;
   sessions: Map<string, SessionRecord>;
   /// Called once, the first time someone lists the universe's sessions.
@@ -240,7 +237,6 @@ export class DemoStore {
   readonly orphanEngineUniverses: EngineUniverse[] = [];
   readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
   /// Deployment keys; universe keys live on their universe.
-  readonly deploymentKeys: DeploymentApiKeyView[] = [];
   channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
@@ -310,7 +306,6 @@ export class DemoStore {
       },
       featureOverrides: mergeFeatureOverrides({}, init.features ?? {}),
       members: [],
-      apiKeys: [],
       profiles: new Map(),
       sessions: new Map(),
       workspaces: new Map(),
@@ -365,30 +360,6 @@ export class DemoStore {
       lastActivityAtMs,
     };
   }
-}
-
-/// The id core allocates for a key whose creator chose none.
-export function allocatedKeyId(): string {
-  return `api_key_${crypto.randomUUID().replaceAll("-", "")}`;
-}
-
-/// A key scoped to `state`'s universe, as core lists it.
-export function universeApiKey(
-  state: UniverseState,
-  key: { keyId?: string; keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
-): DeploymentApiKeyView {
-  return {
-    keyId: key.keyId ?? allocatedKeyId(),
-    keyPrefix: key.keyPrefix,
-    displayName: key.displayName,
-    scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },
-    groups: key.groups,
-    assertActor: false,
-    createdBy: { kind: "actor", id: key.createdBy },
-    createdAtMs: key.createdAtMs,
-    lastUsedAtMs: key.lastUsedAtMs ?? null,
-    revokedAtMs: key.revokedAtMs ?? null,
-  };
 }
 
 export function sessionSummary(record: SessionRecord): SessionSummary {

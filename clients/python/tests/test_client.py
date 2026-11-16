@@ -31,7 +31,7 @@ async def test_shared_wire_cases(item):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         async with AsyncLightspeedClient(
-            "http://localhost/rpc", api_key="option", actor="actor", universe="option",
+            "http://localhost/rpc", token="option", actor="actor", universe="option",
             headers={"Authorization": "Bearer configured", "x-lightspeed-universe": "default-universe"},
             http_client=http,
         ) as client:
@@ -447,7 +447,7 @@ async def test_watch_auth_multiline_utf8_final_response_and_close():
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=body)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        client = AsyncLightspeedClient("http://core/rpc", api_key="secret", universe="u", http_client=http)
+        client = AsyncLightspeedClient("http://core/rpc", token="secret", universe="u", http_client=http)
         events = [item async for item in client.watch({"kinds": ["workspace"]}, reconnect=False)]
     assert events == [{"method": "watch/reset", "params": {}}, event]
     assert body.closed

@@ -1,5 +1,9 @@
 # Chat channels
 
+Connector startup is currently disabled. Telegram and WhatsApp accounts do not
+receive or deliver messages through the supported stack. The account and routing
+model below remains as a reference while channel removal is handled separately.
+
 Chat channels let people talk to Lightspeed bots through Telegram or WhatsApp.
 A connected account supplies the provider connection. A bot's chat trigger
 decides which conversations it accepts, how people gain access, and when a
@@ -19,28 +23,18 @@ hidden and its requests are refused.
 
 ## Make the connector available
 
-The deployment needs a connector host for Telegram or WhatsApp alongside the
-Lightspeed runtime. Ask the operator to enable the provider before connecting
-an account. The connector discovers accounts configured in the product and
-handles their incoming and outgoing messages.
+Telegram and WhatsApp require the separate connector host. During the runtime
+access cutover, the development launcher rejects connector selections and the
+host receives no runtime token. Its former restricted API keys no longer
+work. Do not replace them with a full-authority runtime token or expect a
+configured account to begin serving messages.
 
-For the full local stack, enable Telegram when launching:
-
-```bash
-LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh
-```
-
-To include WhatsApp, use `telegram,whatsapp` and configure its persistent
-authentication directory and a stable, base64-encoded 32-byte
-`LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`. The development launcher
-defaults the authentication directory to `.lightspeed-dev/whatsapp-auth`.
-Keep the key and account state across restarts so the host can keep using the
-linked account and stored media references.
-
-The host also needs a service key for account discovery, credential leasing,
-message admission, and attachment upload. See
-[Channel connectors](../integrating-and-extending/channel-connectors.md) and
-[connector variables](../reference/environment-variables.md#connector-host) for deployment setup.
+Preserve existing WhatsApp account state and the media-locator key until the
+associated provider account and retained media are retired. See
+[Channel connectors](../integrating-and-extending/channel-connectors.md) for the
+retained implementation and
+[connector variables](../reference/environment-variables.md#connector-host) for
+its current status.
 
 ## Connect a Telegram account
 

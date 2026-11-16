@@ -4,11 +4,10 @@
 //! rather than acting inside one universe, so they form a second scope class
 //! with its own service trait and dispatcher. They share the JSON-RPC
 //! envelope, error model, and `/rpc` endpoint with the universe-scoped API;
-//! the `deployment/` method-name prefix is what routes a request here. Only a
-//! deployment key holding the method's group reaches them.
+//! the `deployment/` method-name prefix is what routes a request here. Every configured
+//! runtime token reaches them.
 
 use super::*;
-use std::collections::BTreeSet;
 
 /// Method-name prefix that marks the deployment scope. Dispatch keys off this
 /// mechanically, so the scope of every method is visible in its name.
@@ -25,11 +24,6 @@ pub const METHOD_DEPLOYMENT_UNIVERSES_DELETE: &str = "deployment/universes/delet
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
     "deployment/environment-provider-bindings/list";
 
-pub const METHOD_DEPLOYMENT_API_KEYS_CREATE: &str = "deployment/api-keys/create";
-pub const METHOD_DEPLOYMENT_API_KEYS_PUT: &str = "deployment/api-keys/put";
-pub const METHOD_DEPLOYMENT_API_KEYS_LIST: &str = "deployment/api-keys/list";
-pub const METHOD_DEPLOYMENT_API_KEYS_ROTATE: &str = "deployment/api-keys/rotate";
-pub const METHOD_DEPLOYMENT_API_KEYS_REVOKE: &str = "deployment/api-keys/revoke";
 pub const METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT: &str =
     "deployment/environment-providers/put";
 pub const METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST: &str =
@@ -250,265 +244,6 @@ pub struct DeploymentDeletedUniversesListParams {
 pub struct DeploymentDeletedUniversesListResponse {
     pub universes: Vec<DeletedUniverseView>,
     pub next_after: Option<String>,
-}
-
-/// Non-secret key metadata: what the key is called, reaches and may call,
-/// and who minted it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentApiKeyView {
-    /// The key's name among the keys of its scope. Together with the scope
-    /// it addresses the key, and it is kept when the secret is replaced.
-    pub key_id: String,
-    /// The first characters of the key's current secret: enough to tell
-    /// which secret the key holds without revealing it. It changes when the
-    /// secret does.
-    pub key_prefix: String,
-    pub scope: AccessScope,
-    pub groups: Vec<MethodGroup>,
-    pub assert_actor: bool,
-    pub created_by: Attribution,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    pub created_at_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revoked_at_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_used_at_ms: Option<u64>,
-}
-
-/// The literal that asks for every method group a key's scope allows.
-pub const API_KEY_GROUPS_ALL: &str = "all";
-
-/// The method groups a key is created or declared with: the literal `"all"`,
-/// or a non-empty list of groups.
-///
-/// A key's authority is always stated. `"all"` is every group the key's
-/// scope allows in the release that writes the key; the stored key holds
-/// that concrete set, so a later release that adds a group never widens it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ApiKeyGroups {
-    /// Every group the key's scope allows.
-    All,
-    /// Exactly these groups.
-    Listed(BTreeSet<MethodGroup>),
-}
-
-impl ApiKeyGroups {
-    /// The concrete groups a key of `scope` holds.
-    pub fn resolve(&self, scope: AccessScope) -> BTreeSet<MethodGroup> {
-        match self {
-            Self::All => MethodGroup::allowed_in(scope),
-            Self::Listed(groups) => groups.clone(),
-        }
-    }
-}
-
-impl FromIterator<MethodGroup> for ApiKeyGroups {
-    fn from_iter<I: IntoIterator<Item = MethodGroup>>(groups: I) -> Self {
-        Self::Listed(groups.into_iter().collect())
-    }
-}
-
-impl Serialize for ApiKeyGroups {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::All => serializer.serialize_str(API_KEY_GROUPS_ALL),
-            Self::Listed(groups) => groups.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ApiKeyGroups {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct GroupsVisitor;
-
-        impl<'de> de::Visitor<'de> for GroupsVisitor {
-            type Value = ApiKeyGroups;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("\"all\" or a non-empty list of method groups")
-            }
-
-            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-                if value == API_KEY_GROUPS_ALL {
-                    Ok(ApiKeyGroups::All)
-                } else {
-                    Err(E::invalid_value(de::Unexpected::Str(value), &self))
-                }
-            }
-
-            fn visit_seq<A: de::SeqAccess<'de>>(
-                self,
-                mut sequence: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut groups = BTreeSet::new();
-                while let Some(group) = sequence.next_element::<MethodGroup>()? {
-                    groups.insert(group);
-                }
-                if groups.is_empty() {
-                    return Err(de::Error::invalid_length(0, &self));
-                }
-                Ok(ApiKeyGroups::Listed(groups))
-            }
-        }
-
-        deserializer.deserialize_any(GroupsVisitor)
-    }
-}
-
-impl JsonSchema for ApiKeyGroups {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "ApiKeyGroups".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let group = generator.subschema_for::<MethodGroup>();
-        // The list is refused when empty. The schema leaves that to the
-        // description because a minimum length turns the generated client
-        // type into a tuple that an ordinary array does not satisfy.
-        schemars::json_schema!({
-            "description": "The method groups a key is created or declared with: the literal \
-                `all`, which is every group the key's scope allows, or a non-empty list of groups.",
-            "anyOf": [
-                { "type": "string", "const": API_KEY_GROUPS_ALL },
-                { "type": "array", "items": group, "uniqueItems": true }
-            ]
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeploymentApiKeyCreateParams {
-    /// A universe, or the deployment. A deployment key addresses a universe
-    /// with the `x-lightspeed-universe` header and may hold deployment groups.
-    pub scope: AccessScope,
-    /// The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
-    /// or colons, starting with a letter or digit, and not yet used by a key
-    /// of this scope. Omit it to have one allocated.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key_id: Option<String>,
-    /// The method groups the key may call: a non-empty list, or `"all"` for
-    /// every group its scope allows. The key stores the resulting set.
-    pub groups: ApiKeyGroups,
-    /// Whether the key may name the actor a request acts for with the
-    /// `x-lightspeed-actor` header. Give it only to a gate that authenticates
-    /// people, such as the Platform. It cannot be changed afterwards.
-    #[serde(default)]
-    pub assert_actor: bool,
-    /// Human-readable purpose shown in key-management interfaces.
-    pub display_name: String,
-}
-
-/// Declare a key whose secret the caller supplies. `Debug` redacts the
-/// secret; the serialized request remains sensitive and must not be logged.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeploymentApiKeyPutParams {
-    /// A universe, or the deployment. It cannot be changed afterwards.
-    pub scope: AccessScope,
-    /// The key's id within its scope: 1-128 ASCII letters, digits,
-    /// underscores, hyphens, dots or colons, starting with a letter or digit.
-    pub key_id: String,
-    /// The method groups the key may call: a non-empty list, or `"all"` for
-    /// every group its scope allows. An existing key's groups are replaced
-    /// by these, and `"all"` is resolved again on every call, so repeating a
-    /// declaration after an upgrade gives the key the groups added since.
-    pub groups: ApiKeyGroups,
-    /// Whether the key may name the actor a request acts for. It cannot be
-    /// changed afterwards.
-    #[serde(default)]
-    pub assert_actor: bool,
-    /// Human-readable purpose shown in key-management interfaces.
-    pub display_name: String,
-    /// The secret the key answers to: `lsk_` followed by 32 random bytes
-    /// encoded as base64url without padding. Generate it with a
-    /// cryptographic random source.
-    pub secret: String,
-}
-
-impl fmt::Debug for DeploymentApiKeyPutParams {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DeploymentApiKeyPutParams")
-            .field("scope", &self.scope)
-            .field("key_id", &self.key_id)
-            .field("groups", &self.groups)
-            .field("assert_actor", &self.assert_actor)
-            .field("display_name", &self.display_name)
-            .field("secret", &"<redacted>")
-            .finish()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentApiKeyPutResponse {
-    pub api_key: DeploymentApiKeyView,
-    /// False when the key already existed.
-    pub created: bool,
-    /// True when an existing key held a different secret, which no longer
-    /// works.
-    pub secret_replaced: bool,
-}
-
-/// A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
-/// recovered later. Its custom `Debug` implementation redacts the DTO before
-/// JSON-RPC serialization; the serialized response payload remains sensitive
-/// and must not be logged.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentApiKeyCreateResponse {
-    pub api_key: DeploymentApiKeyView,
-    pub secret: String,
-}
-
-impl fmt::Debug for DeploymentApiKeyCreateResponse {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("DeploymentApiKeyCreateResponse")
-            .field("api_key", &self.api_key)
-            .field("secret", &"<redacted>")
-            .finish()
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeploymentApiKeyListParams {
-    /// Only keys of this scope; absent lists every key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<AccessScope>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentApiKeyListResponse {
-    #[serde(default)]
-    pub api_keys: Vec<DeploymentApiKeyView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeploymentApiKeyRotateParams {
-    /// The scope the key belongs to.
-    pub scope: AccessScope,
-    pub key_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DeploymentApiKeyRevokeParams {
-    /// The scope the key belongs to.
-    pub scope: AccessScope,
-    pub key_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentApiKeyRevokeResponse {
-    pub api_key: DeploymentApiKeyView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -741,31 +476,6 @@ pub trait DeploymentApiService: Send + Sync {
         params: DeploymentUniverseDeleteParams,
     ) -> Result<AgentApiOutcome<DeploymentUniverseDeleteResponse>, AgentApiError>;
 
-    async fn create_api_key(
-        &self,
-        params: DeploymentApiKeyCreateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError>;
-
-    async fn put_api_key(
-        &self,
-        params: DeploymentApiKeyPutParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyPutResponse>, AgentApiError>;
-
-    async fn list_api_keys(
-        &self,
-        params: DeploymentApiKeyListParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError>;
-
-    async fn rotate_api_key(
-        &self,
-        params: DeploymentApiKeyRotateParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError>;
-
-    async fn revoke_api_key(
-        &self,
-        params: DeploymentApiKeyRevokeParams,
-    ) -> Result<AgentApiOutcome<DeploymentApiKeyRevokeResponse>, AgentApiError>;
-
     async fn put_environment_provider(
         &self,
         _params: DeploymentEnvironmentProviderPutParams,
@@ -900,21 +610,11 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_UNIVERSES_READ => read_universe(DeploymentUniverseReadParams) -> DeploymentUniverseReadResponse =>
         ["Read a universe", "Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_CONFIGURATION_PUT => put_universe_configuration(DeploymentUniverseConfigurationPutParams) -> DeploymentUniverseReadResponse =>
-        ["Declare universe presentation and access", "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged."], access: MethodAccess::Deployment,
+        ["Declare universe presentation and access", "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_HANDLE_PUT => put_universe_handle(DeploymentUniverseHandlePutParams) -> DeploymentUniverseReadResponse =>
         ["Rename a universe", "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
         ["Request universe deletion", "Immediately fences a universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
-        ["Create a scoped API key", "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_API_KEYS_PUT => put_api_key(DeploymentApiKeyPutParams) -> DeploymentApiKeyPutResponse =>
-        ["Declare a scoped API key", "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_API_KEYS_LIST => list_api_keys(DeploymentApiKeyListParams) -> DeploymentApiKeyListResponse =>
-        ["List scoped API keys", "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_API_KEYS_ROTATE => rotate_api_key(DeploymentApiKeyRotateParams) -> DeploymentApiKeyCreateResponse =>
-        ["Rotate a scoped API key", "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
-        ["Revoke a scoped API key", "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
         ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>

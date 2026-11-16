@@ -107,13 +107,11 @@ class AsyncLightspeedClient(GeneratedClient):
 
     Args:
         endpoint: The gateway's `/rpc` URL.
-        api_key: Sent as the bearer credential. Omit it only for a gateway in
+        token: Sent as the bearer credential. Omit it only for a gateway in
             single mode.
-        universe: The universe a deployment key addresses, as its UUID or its
-            handle. A universe key must leave this out.
-        actor: Attributes requests to this opaque ID, which the key must be
-            allowed to assert. It does not limit what the key can do. See
-            `with_actor`.
+        universe: The universe a request addresses, as its UUID or its handle.
+        actor: Attributes requests to this opaque ID. Direct runtime tokens may
+            always name an actor; attribution does not restrict access. See `with_actor`.
         headers: Extra headers, or a function returning them for each request,
             which may be async. These override the options above.
         request_id: Supplies each request's JSON-RPC ID instead of a counter.
@@ -126,7 +124,7 @@ class AsyncLightspeedClient(GeneratedClient):
         self,
         endpoint: str | httpx.URL,
         *,
-        api_key: str | None = None,
+        token: str | None = None,
         universe: str | None = None,
         actor: str | None = None,
         headers: HeadersInput | HeaderProvider | None = None,
@@ -134,7 +132,7 @@ class AsyncLightspeedClient(GeneratedClient):
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._endpoint = endpoint
-        self._api_key = api_key
+        self._token = token
         self._universe = universe
         self._actor = actor
         self._headers = headers
@@ -162,14 +160,14 @@ class AsyncLightspeedClient(GeneratedClient):
         It shares this client's connections, so closing it closes nothing.
         """
         return AsyncLightspeedClient(
-            self._endpoint, api_key=self._api_key, universe=self._universe, actor=actor,
+            self._endpoint, token=self._token, universe=self._universe, actor=actor,
             headers=self._headers, request_id=self._request_id, http_client=self._http_client,
         )
 
     async def _request_headers(self, headers: HeadersInput | None = None) -> httpx.Headers:
         request_headers = httpx.Headers({"content-type": "application/json", "accept": "application/json"})
-        if self._api_key is not None:
-            request_headers["authorization"] = f"Bearer {self._api_key}"
+        if self._token is not None:
+            request_headers["authorization"] = f"Bearer {self._token}"
         if self._universe is not None:
             request_headers["x-lightspeed-universe"] = self._universe
         if self._actor is not None:

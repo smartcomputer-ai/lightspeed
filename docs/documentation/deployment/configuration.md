@@ -54,19 +54,20 @@ state and routing:
 | Provider transport | Required deployment fallbacks and network access for the roles performing discovery or generation. |
 
 Roles and listener addresses can differ by process. Authenticated gateways
-serve both the Platform and direct clients, checking each key's scope and
-allowed method groups. The Platform separately checks its members' roles and
-session visibility. See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+accept configured runtime tokens from trusted components. Every token can
+reach every method and universe. The Platform checks its members' roles and
+session visibility before selecting the universe and actor. Configure matching
+RPC tokens on gateway replicas and their consumers. See
+[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
 
 If multiple deployments share a Temporal namespace, set all three queue
 variables independently. A deployment-specific `LIGHTSPEED_TASK_QUEUE` does
 not change `LIGHTSPEED_TASK_QUEUE_BOTS` or
-`LIGHTSPEED_TASK_QUEUE_CHANNELS`. Keep the connector host in the matching
-Temporal namespace too.
+`LIGHTSPEED_TASK_QUEUE_CHANNELS`. The connector host is currently disabled.
 
 ## Secure the Temporal connection
 
-Every runtime process and the connector host open their own connection to the
+Every runtime process opens its own connection to the
 Temporal frontend. Workflow inputs and results travel over it, including
 prompts and tool output, and whoever can reach the frontend can start, signal,
 and read workflows in the namespace. With only `TEMPORAL_ADDRESS` and
@@ -133,7 +134,7 @@ Daemon control and data routes require WebSocket upgrades and long-lived
 connections. Workers also need the private environment route even when the
 public WebSockets are reachable.
 
-The internal environment token is separate from a user's API key or a daemon
+The internal environment token is separate from an RPC token or a daemon
 registration key. Set the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on the
 environment gateway and the processes calling it. A process without the
 `environment-gateway` role requires both the URL and token, including a
@@ -339,26 +340,15 @@ or [Incus VMs](../environments/incus-vms.md) for complete procedures.
 
 ### Chat connectors
 
-The connector host uses `LIGHTSPEED_CONNECTOR_API_KEY` against an authenticated
-runtime and the deployment's Temporal namespace, reached with the same
-`TEMPORAL_*` settings as the runtime
-([Secure the Temporal connection](#secure-the-temporal-connection)). Its deployment-scoped key needs
-the `deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put`
-method groups for account discovery, credential leasing, inbound admission,
-and attachment uploads. Provider bot tokens are leased from core rather than
-configured on the connector host.
+Connector startup is disabled during the runtime access cutover. The launcher
+rejects requests to enable Telegram or WhatsApp connectors, and the existing
+connector package receives no runtime token. Its former restricted API keys no
+longer authenticate. Channel removal is separate work; do not replace a
+connector's old key with a full-authority runtime token.
 
-WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` on
-persistent storage and a stable
-`LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`. Configure
-`LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` with the internal connector health
-base URLs so Platform administrators can see host status. This aggregation
-does not start connector workers.
-
-The default host discovers all enabled accounts for its selected providers.
-If running several hosts, give them nonoverlapping account selections. See
-[Chat channels](../using-lightspeed/chat-channels.md) for setup and
-[operations](operations.md#scale-the-process-that-does-the-work) for scaling.
+Retain any existing WhatsApp authentication directory and media-locator key
+until the associated accounts and retained media are retired. They protect
+provider state, independently of the removed runtime caller keys.
 
 ### MCP and Configurator
 
@@ -370,17 +360,17 @@ endpoint by its own host: list an internal authorization server as well as
 the MCP server it protects. Without an entry, OAuth traffic is public HTTPS
 only.
 
-Configurator is a separately deployed MCP server that manages Lightspeed. Its
-mode must match its upstream gateway, and a non-loopback listener requires an
-explicit allowed-host configuration. The Platform's Configurator URL enables
-its setup flow; it does not start the service. The setup provisions a dedicated
-universe key for configuring resources and stores it as an outbound credential.
-That key has no session or VFS access. See [Agent and tool access](../access-and-security/agent-and-tool-access.md)
-for what attaching Configurator lets an agent do.
+The Configurator package remains available for trusted operator development,
+but the Platform setup flow and launcher startup are disabled. The previous
+setup stored a restricted runtime key for an agent; those keys are removed,
+and a full-authority runtime token must never be supplied as a replacement.
+Setup will return with narrowed Platform tokens. See
+[Agent and tool access](../access-and-security/agent-and-tool-access.md).
 
-See [Tools and MCP](../using-lightspeed/tools-and-mcp.md) and the
+See [Tools and MCP](../using-lightspeed/tools-and-mcp.md) for ordinary MCP
+connections and the
 [Configurator variables](../reference/environment-variables.md#configurator-mcp)
-before enabling those paths.
+for the retained package's configuration.
 
 ## Verify a configuration change
 

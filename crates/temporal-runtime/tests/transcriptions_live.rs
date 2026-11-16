@@ -494,15 +494,17 @@ async fn transcribe(
     assert_eq!(terminal.text.as_deref(), Some(TRANSCRIPT_TEXT));
     let mut other = support::live::local_request_context().await?;
     other.actor = Some("another-person".into());
-    let denied = temporal_runtime::gateway::request_context::with_request_context(
+    let same_result = temporal_runtime::gateway::request_context::with_request_context(
         other,
         api.read_transcription(api::TranscriptionReadParams {
             transcription_id: initial.transcription_id.clone(),
         }),
     )
-    .await
-    .unwrap_err();
-    assert_eq!(denied.kind, api::AgentApiErrorKind::Forbidden);
+    .await?;
+    assert_eq!(
+        same_result.result.transcription.transcript_ref,
+        terminal.transcript_ref
+    );
     let retried = api
         .start_transcription(request.clone())
         .await?

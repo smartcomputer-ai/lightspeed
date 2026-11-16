@@ -42,7 +42,7 @@ export async function declaredRole(ctx: AppContext, userId: string, configuratio
 /** Reconcile only the configured Runtime. A database lock serializes replicas,
  * including the inventory read, so an older snapshot cannot overwrite a newer one. */
 export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted: number; updated: number }> {
-  if (!ctx.env.lightspeedApiUrl || !ctx.env.lightspeedApiKey) return { adopted: 0, updated: 0 };
+  if (!ctx.env.lightspeedApiUrl || !ctx.env.lightspeedRpcToken) return { adopted: 0, updated: 0 };
   return ctx.db.transaction(async tx => {
     const locked = await tx.execute(sql`SELECT pg_try_advisory_xact_lock(731845920114) AS locked`);
     if (!locked.rows[0]?.locked) return { adopted: 0, updated: 0 };

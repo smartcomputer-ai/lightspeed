@@ -83,7 +83,7 @@ chmod 600 "$HOME/lightspeed-machine/registration-key"
 ```
 
 The registration key is permission to admit a new machine into this universe.
-It is separate from the API key a client might use to call Lightspeed. After
+It is separate from the runtime token trusted clients use to call Lightspeed. After
 registration, the daemon has its own identity for reconnecting.
 
 ## Start the daemon

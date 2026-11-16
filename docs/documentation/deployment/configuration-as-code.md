@@ -21,18 +21,12 @@ services; see [Configure a deployment](configuration.md).
 
 ## Before you start
 
-- Use a deployment API key. It needs the `deployment/universes` group and the
-  groups of the resources in your documents: `auth`, `models`, `mcp`,
-  `environments`, `profiles`, and `deployment/api-keys` or
-  `deployment/environment-providers` if you declare keys or enable providers.
-  See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
-- A key that holds `deployment/api-keys` can declare a key with any authority
-  and replace the secret of any key, so it is as powerful as the bootstrap
-  key whatever its other groups are. If your documents declare keys, keep the
-  applying key in the pipeline's secret store only; see
-  [Key management is full authority](../access-and-security/api-keys-and-service-access.md#key-management-is-full-authority).
-- Connect the CLI to the runtime with `LIGHTSPEED_API_URL` and
-  `LIGHTSPEED_API_KEY`, or a saved connection.
+- Use a configured runtime token. It has full authority over the deployment;
+  keep it in the operator or pipeline secret store, outside agent workspaces.
+- Connect with `LIGHTSPEED_API_URL` and `LIGHTSPEED_RPC_TOKEN`, or a saved CLI
+  connection. See [Runtime access](../access-and-security/api-keys-and-service-access.md).
+- Documents configure universes. Runtime tokens belong in service configuration;
+  `apiKeys` sections and `kind: deployment` documents are not supported.
 
 ## Write a universe document
 
@@ -113,7 +107,6 @@ the fields.
 | `registrationKeys` | `environments/registration-keys/put` | `registrationKeyId` |
 | `environments` | see below | `environmentId` |
 | `profiles` | `profiles/put` (the `profile` object) | `profileId` |
-| `apiKeys` | `deployment/api-keys/put`, scoped to this universe | `keyId` |
 
 An environment entry has an `environmentId`, an optional `displayName` and
 `metadata`, and a `source` that says what kind of environment it is:
@@ -131,9 +124,7 @@ An entry differs from the API input in these ways only:
   `secretFrom`; see [Supply secrets](#supply-secrets).
 - `expectedRevision`, `dryRun` and `requestId` are not accepted. `apply`
   supplies them.
-- The universe and a key's `scope` are implied by the document.
-- A key's `groups` are written as a list, or as `groups: all`; see
-  [Declare a key's groups](#declare-a-keys-groups).
+- The universe is named by the document's `handle`.
 - A profile's instructions are written as text, not as a blob reference.
 - An entry can live in a file of its own: `- file: profiles/reviewer.json`,
   relative to the document. A profile written by `lightspeed profile export`
@@ -197,53 +188,6 @@ It belongs to the CLI version that printed it; regenerate it when you
 upgrade. An included file holds a single entry without the envelope, so the
 schema does not apply to it directly.
 
-### Declare a key's groups
-
-An `apiKeys` entry always states the key's `groups`. An entry without them is
-an error in `diff` and `apply`, before anything is read or written: nothing
-fills them in.
-
-```yaml
-apiKeys:
-  - keyId: release-bot
-    displayName: Release bot
-    groups: [session, profiles]
-    secretFrom: { env: RELEASE_BOT_KEY }
-```
-
-`groups: all` asks for every group the key's scope allows: the universe
-groups in a universe document, and the deployment groups as well in a
-deployment document. The runtime stores the resulting list with the key.
-`diff` compares that stored list with what `all` means in the release of the
-CLI you run. After an upgrade that adds a method group, a key declared with
-`all` therefore shows `groups` as a pending update, and the next `apply`
-gives the key the new group. A key declared with a list keeps exactly that
-list.
-
-`export` always writes the list a key holds, never `all`, so applying an
-exported document later does not widen a key. Write `all` yourself where you
-want a key to follow new releases.
-
-### The deployment's own resources
-
-API keys with deployment scope go in a document of their own:
-
-```yaml
-schemaVersion: 1
-kind: deployment
-apiKeys:
-  - keyId: platform
-    displayName: Platform
-    groups: all
-    assertActor: true
-    secretFrom: { env: PLATFORM_API_KEY }
-```
-
-The first key cannot be declared this way, because nothing can authenticate
-before it exists. Declare it on the server host with
-`lightspeed-runtime api-key provision`; see
-[Self-hosting](self-hosting.md).
-
 ## Supply secrets
 
 A secret source is `{ env: NAME }` or `{ file: PATH }`. The process that
@@ -254,12 +198,10 @@ line break in a file is dropped.
 Every source is read before anything is sent. If one is missing, `apply`
 stops without having read or written anything in the runtime.
 
-Secrets flow one way, into Lightspeed. For keys that Lightspeed itself
-accepts (`apiKeys`, `registrationKeys`), generate the secret in your secret
-store, or with `lightspeed api-key generate-secret` and
+Secrets flow one way, into Lightspeed. For environment registration keys,
+generate the secret in your secret store or with
 `lightspeed environment registration-key generate-secret`, and give the same
-value to the
-service that uses the key.
+value to the daemon that uses the key.
 
 When the value behind a source changes, the next `apply` replaces the stored
 secret at once. The old secret stops working at that moment, so update the
@@ -333,7 +275,6 @@ nothing at all:
 | --- | --- |
 | Credential | `exposure`; declare the credential under a new id. |
 | Registration key | `identityMode` |
-| API key | `assertActor` |
 | Environment | `source` |
 | A revoked key | Stays revoked; declare the key under a new id. |
 | A closed environment | Its id stays taken; declare the environment under a new id. |
@@ -418,9 +359,9 @@ spec:
           env:
             - name: LIGHTSPEED_API_URL
               value: http://lightspeed-runtime:18080/rpc
-            - name: LIGHTSPEED_API_KEY
+            - name: LIGHTSPEED_RPC_TOKEN
               valueFrom:
-                secretKeyRef: { name: lightspeed-config, key: api-key }
+                secretKeyRef: { name: lightspeed-config, key: rpc-token }
             - name: TRACKER_TOKEN
               valueFrom:
                 secretKeyRef: { name: lightspeed-config, key: tracker-token }
@@ -432,7 +373,7 @@ spec:
 ```
 
 The job takes its connection from `LIGHTSPEED_API_URL` and
-`LIGHTSPEED_API_KEY`. It needs no home directory and no saved connection, and
+`LIGHTSPEED_RPC_TOKEN`. It needs no home directory and no saved connection, and
 it writes nothing to the container's filesystem, so a read-only root
 filesystem works.
 
@@ -441,8 +382,8 @@ form `{ file: /var/run/secrets/tracker/token }` reads a mounted Secret, as
 `{ env: … }` reads one injected as a variable. The image runs as user and
 group 65532: files mounted with the default mode are readable; if you
 restrict a Secret's mode, set the pod's `fsGroup` to 65532 and use mode
-`0440`. Give it a deployment key
-limited to the groups listed under [Before you start](#before-you-start).
+`0440`. Give it a configured runtime token as described under
+[Before you start](#before-you-start).
 The image's default command is still the server, so name the CLI as the
 job's `command`.
 

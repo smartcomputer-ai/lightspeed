@@ -89,7 +89,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 const ctx = {
-  env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_fixture" },
+  env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_fixture" },
 } as unknown as AppContext;
 
 function app(platformRole?: string) {

@@ -18,7 +18,7 @@ use crate::{
 
 /// Every dispatchable method across both scope classes: the universe-scoped
 /// manifest followed by the deployment-scoped one. The wire contract is one
-/// document; `scope` on each entry tells clients which authorization class a
+/// document; `scope` on each entry tells clients which target class a
 /// method belongs to (deployment methods never carry the universe header).
 pub fn full_method_manifest() -> Vec<MethodSpec> {
     let mut methods = method_manifest();
@@ -55,8 +55,8 @@ pub fn export_schemas() -> ExportedSchemas {
         "# Lightspeed JSON-RPC API Reference\n\n\
          Generated from the Rust API method manifest. Parameter and result field details live in \
          `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.\n\n\
-         A key calls a method when it holds the method's group. Role and target are metadata \
-         for gates that decide for people, such as the Platform; core does not evaluate them.\n",
+         Every configured runtime token can call every method. API family, role and target are metadata \
+         for external gates such as the Platform; the runtime does not enforce caller permissions.\n",
     );
     let mut reference_scope = None;
     for spec in full_method_manifest() {
@@ -168,7 +168,7 @@ pub fn export_schemas() -> ExportedSchemas {
                 "JSON-RPC 2.0 over HTTP POST /rpc. Results are wrapped in the \
                  AgentApiOutcome envelope; session events are consumed via \
                  session/events/read cursor pagination. An authenticated \
-                 gateway answers a request without a valid API key with HTTP \
+                 gateway answers a request without a valid configured token with HTTP \
                  401 and a JSON-RPC error whose id is null, before it reads \
                  the request body. An error decided for a request that was \
                  read is a JSON-RPC error for that request's id.",
@@ -221,7 +221,7 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 151);
+        assert_eq!(total, 146);
         let streaming: Vec<_> = manifest
             .iter()
             .filter(|spec| !spec.notifications.is_empty())
@@ -234,7 +234,7 @@ mod tests {
                 .iter()
                 .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
-            22
+            17
         );
     }
 

@@ -447,8 +447,9 @@ people inspect retained history and the runtime reconstructs execution state.
 
 `universe/watch` is a streaming JSON-RPC call on `POST /rpc` with
 `Accept: text/event-stream`. It sends current list rows for sessions, bots,
-environments and VFS workspaces. The requested kinds require their existing
-API-key groups. `visibleTo` narrows sessions to the same audience as
+environments and VFS workspaces. Runtime tokens can watch every collection.
+The Platform decides which collections and audience its callers may see.
+`visibleTo` narrows sessions to the same audience as
 `session/list`; list filters and pagination remain on ordinary reads.
 
 Each gateway batches changed IDs for 250 ms and reads them once per universe,

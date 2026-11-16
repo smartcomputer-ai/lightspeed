@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
@@ -88,24 +88,13 @@ for (const resetExitCode of [0, 7]) {
     const env = {
       ...process.env,
       LIGHTSPEED_AUTH_MODE: "authenticated",
-      LIGHTSPEED_BOOTSTRAP_API_KEY: "",
-      LIGHTSPEED_PLATFORM_API_KEY: "",
       LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc",
       LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001",
     };
-    const keys = new Set();
-    let sequence = 0;
-    const run = async (_name, _command, args, provisioningEnv) => {
-      if (args.includes("universe")) return { stdout: "" };
-      const supplied = provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
-      const secret = supplied ?? `lsk_reset_${++sequence}`;
-      if (args.includes("--require-existing")) assert.ok(keys.has(secret), "saved key must exist in the database");
-      keys.add(secret);
-      // A supplied secret is never printed back.
-      return { stdout: JSON.stringify(supplied ? { keyId: "dev" } : { keyId: "dev", secret }) };
-    };
+    const run = async () => ({ stdout: "" });
     const options = { root: directory, env, full: true, run };
     const before = await prepareCliConnection(options);
+    const beforeToken = readFileSync(before.tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE, "utf8");
     const unrelated = path.join(directory, ".lightspeed", "unrelated");
     writeFileSync(unrelated, "preserve");
     writeFileSync(path.join(directory, "scripts/dev/infra/reset.sh"), `#!/bin/sh\nexit ${resetExitCode}\n`, { mode: 0o755 });
@@ -118,16 +107,16 @@ for (const resetExitCode of [0, 7]) {
     if (resetExitCode === 0) {
       assert.ok(!existsSync(credentialDirectory));
       assert.match(result.stdout, /lightspeed connect dev/);
-      keys.clear();
+      delete env.LIGHTSPEED_RPC_TOKEN_CLI_FILE;
+      delete env.LIGHTSPEED_RPC_TOKEN_PLATFORM_FILE;
+      delete env.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE;
       const after = await prepareCliConnection(options);
-      assert.notEqual(after.platformSecret, before.platformSecret);
-      assert.equal(sequence, 4, "both CLI and Platform receive fresh keys");
+      assert.notEqual(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE, "utf8"), beforeToken);
       assert.ok(existsSync(after.handoff));
     } else {
       assert.ok(existsSync(before.handoff));
       const after = await prepareCliConnection(options);
-      assert.equal(after.platformSecret, before.platformSecret);
-      assert.equal(sequence, 2, "failed reset retains both saved keys");
+      assert.equal(readFileSync(after.tokenEnvironment.LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE, "utf8"), beforeToken);
     }
   });
 }

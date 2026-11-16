@@ -70,28 +70,6 @@ async fn exercise(pool: &sqlx::PgPool) {
         .execute(pool)
         .await
         .unwrap();
-    let keys = store_pg::PgApiKeyStore::new(pool.clone());
-    let key = auth::mint_api_key(
-        auth::ApiKeySpec {
-            key_id: Some("test".into()),
-            scope: api::AccessScope::Universe { universe_id: id },
-            groups: api::ApiKeyGroups::All,
-            assert_actor: false,
-            created_by: api::Attribution::Local,
-            display_name: None,
-        },
-        1,
-    )
-    .unwrap();
-    keys.create_api_key(&key.key_hash, &key.record)
-        .await
-        .unwrap();
-    assert!(
-        keys.resolve_api_key(&key.key_hash, 2)
-            .await
-            .unwrap()
-            .is_some()
-    );
     let actor = api::Attribution::Actor {
         id: "operator".into(),
     };
@@ -102,12 +80,6 @@ async fn exercise(pool: &sqlx::PgPool) {
         Some(api::UniverseDeletionState::Deleting)
     );
     assert!(!store_pg::universe_exists(pool, id).await.unwrap());
-    assert!(
-        keys.resolve_api_key(&key.key_hash, 101)
-            .await
-            .unwrap()
-            .is_none()
-    );
     let scoped = PgStore::new(pool.clone(), PgStoreConfig::new(id));
     assert!(matches!(
         scoped.ensure_universe().await,

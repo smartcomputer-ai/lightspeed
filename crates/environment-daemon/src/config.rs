@@ -395,27 +395,33 @@ pub fn gateway_urls(url: &str, allow_insecure: bool) -> Result<GatewayUrls> {
     })
 }
 
-/// Names of every daemon configuration variable present in the process
+/// Daemon configuration and runtime RPC credentials present in the process
 /// environment, captured before any child can inherit them.
 pub fn scrubbed_env_names() -> Vec<String> {
     let mut names: Vec<String> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
-        .filter(|name| is_daemon_env_name(name))
+        .filter(|name| is_scrubbed_env_name(name))
         .collect();
     names.sort();
     names
 }
 
-fn is_daemon_env_name(name: &str) -> bool {
+fn is_scrubbed_env_name(name: &str) -> bool {
+    // Windows environment names are case-insensitive. Match only the token
+    // variables themselves and their named/file forms, not similar names.
     #[cfg(windows)]
-    {
-        name.get(..ENV_PREFIX.len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(ENV_PREFIX))
-    }
-    #[cfg(not(windows))]
-    {
-        name.starts_with(ENV_PREFIX)
-    }
+    let name = name.to_ascii_uppercase();
+    #[cfg(windows)]
+    let name = name.as_str();
+    name.starts_with(ENV_PREFIX)
+        || ["LIGHTSPEED_RPC_TOKEN", "LIGHTSPEED_PLATFORM_RPC_TOKEN"]
+            .iter()
+            .any(|prefix| {
+                name == *prefix
+                    || name
+                        .strip_prefix(*prefix)
+                        .is_some_and(|suffix| suffix.starts_with('_'))
+            })
 }
 
 impl DaemonArgs {
@@ -1185,14 +1191,36 @@ mod tests {
     }
 
     #[test]
-    fn daemon_environment_namespace_follows_native_name_comparison() {
-        assert!(is_daemon_env_name("LIGHTSPEED_ENVD_REGISTRATION_KEY"));
-        assert!(!is_daemon_env_name("PATH"));
-        assert!(!is_daemon_env_name("LIGHTSPEED_ENVD"));
+    fn scrubbed_environment_names_follow_native_name_comparison() {
+        assert!(is_scrubbed_env_name("LIGHTSPEED_ENVD_REGISTRATION_KEY"));
+        assert!(!is_scrubbed_env_name("PATH"));
+        assert!(!is_scrubbed_env_name("LIGHTSPEED_ENVD"));
         assert_eq!(
-            is_daemon_env_name("Lightspeed_Envd_Registration_Key"),
+            is_scrubbed_env_name("Lightspeed_Envd_Registration_Key"),
             cfg!(windows)
         );
+        for name in [
+            "LIGHTSPEED_RPC_TOKEN",
+            "LIGHTSPEED_RPC_TOKEN_FILE",
+            "LIGHTSPEED_RPC_TOKEN_PLATFORM",
+            "LIGHTSPEED_RPC_TOKEN_OPERATOR_FILE",
+            "LIGHTSPEED_PLATFORM_RPC_TOKEN",
+            "LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE",
+        ] {
+            assert!(is_scrubbed_env_name(name), "{name}");
+            assert_eq!(
+                is_scrubbed_env_name(&name.to_ascii_lowercase()),
+                cfg!(windows)
+            );
+        }
+        for name in [
+            "LIGHTSPEED_RPC_TOKENS",
+            "LIGHTSPEED_RPC_TOKENIZER",
+            "LIGHTSPEED_PLATFORM_RPC_TOKENIZER",
+            "OTHER_LIGHTSPEED_RPC_TOKEN",
+        ] {
+            assert!(!is_scrubbed_env_name(name), "{name}");
+        }
     }
 
     #[test]

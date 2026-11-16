@@ -1,7 +1,12 @@
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { loadEnv } from "./env.js";
 
 beforeEach(() => {
+  vi.stubEnv("LIGHTSPEED_PLATFORM_RPC_TOKEN", undefined);
+  vi.stubEnv("LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE", undefined);
   for (const name of Object.keys(process.env).filter((name) => name.startsWith("LIGHTSPEED_PLATFORM_OIDC_"))) {
     vi.stubEnv(name, "");
   }
@@ -157,5 +162,34 @@ describe("company sign-in configuration", () => {
     configure();
     vi.stubEnv("LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN", "local");
     expect(() => loadEnv()).toThrow(/PASSWORD_SIGN_IN/);
+  });
+});
+
+
+describe("runtime token configuration", () => {
+  beforeEach(() => {
+    vi.stubEnv("LIGHTSPEED_PLATFORM_DATABASE_URL", "postgres://platform");
+    vi.stubEnv("LIGHTSPEED_PLATFORM_AUTH_SECRET", "platform-secret");
+  });
+  test("accepts an arbitrary runtime token without an API-key prefix", () => {
+    const token = "operator-token-with-at-least-32-characters";
+    vi.stubEnv("LIGHTSPEED_PLATFORM_RPC_TOKEN", token);
+    expect(loadEnv().lightspeedRpcToken).toBe(token);
+  });
+  test("reads a mounted token and rejects ambiguous sources", () => {
+    const directory = mkdtempSync(join(tmpdir(), "platform-token-"));
+    try {
+      const token = "a".repeat(32);
+      const file = join(directory, "token");
+      writeFileSync(file, `${token}\r\n`);
+      vi.stubEnv("LIGHTSPEED_PLATFORM_RPC_TOKEN_FILE", file);
+      expect(loadEnv().lightspeedRpcToken).toBe(token);
+      vi.stubEnv("LIGHTSPEED_PLATFORM_RPC_TOKEN", token);
+      expect(() => loadEnv()).toThrow("Set only one");
+    } finally { rmSync(directory, { recursive: true }); }
+  });
+  test.each(["", "short", "x".repeat(32) + "\n", "é".repeat(32), "x".repeat(32) + " "])("refuses an unusable token without printing it", token => {
+    vi.stubEnv("LIGHTSPEED_PLATFORM_RPC_TOKEN", token);
+    expect(() => loadEnv()).toThrow("at least 32 printable ASCII");
   });
 });

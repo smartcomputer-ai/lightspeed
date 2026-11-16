@@ -2,7 +2,7 @@
 //! and `config export` writes.
 //!
 //! A document is an envelope around the API's own inputs. The envelope says
-//! which universe (or the deployment) the entries belong to and groups them
+//! which universe the entries belong to and groups them
 //! by resource; an entry is the payload of the method that writes the
 //! resource, with a secret replaced by where it comes from.
 
@@ -23,7 +23,6 @@ pub(crate) const SCHEMA_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Kind {
     Universe,
-    Deployment,
 }
 
 /// One universe's configuration. Every section is optional; an absent
@@ -57,24 +56,11 @@ pub(crate) struct UniverseDocument {
     pub environments: Option<Vec<Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profiles: Option<Vec<Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_keys: Option<Vec<Value>>,
-}
-
-/// Resources that belong to the deployment and not to one universe.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct DeploymentDocument {
-    pub schema_version: u32,
-    pub kind: Kind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_keys: Option<Vec<Value>>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum Document {
     Universe(Box<UniverseDocument>),
-    Deployment(DeploymentDocument),
 }
 
 /// A document and the file it came from. Relative paths inside it (includes
@@ -94,7 +80,6 @@ impl LoadedDocument {
     pub(crate) fn subject(&self) -> String {
         match &self.document {
             Document::Universe(universe) => format!("universe {}", universe.handle),
-            Document::Deployment(_) => "deployment".to_owned(),
         }
     }
 }
@@ -192,7 +177,7 @@ fn parse(path: &Path, mut value: Value) -> Result<LoadedDocument> {
     }
     resolve_includes(path, &mut value)?;
     let kind: Kind = serde_json::from_value(value.get("kind").cloned().unwrap_or(Value::Null))
-        .with_context(|| format!("kind must be universe or deployment {}", located()))?;
+        .with_context(|| format!("kind must be universe {}", located()))?;
     let document = match kind {
         Kind::Universe => {
             let document: UniverseDocument = serde_json::from_value(value).with_context(located)?;
@@ -200,9 +185,6 @@ fn parse(path: &Path, mut value: Value) -> Result<LoadedDocument> {
                 bail!("handle is empty {}", located());
             }
             Document::Universe(Box::new(document))
-        }
-        Kind::Deployment => {
-            Document::Deployment(serde_json::from_value(value).with_context(located)?)
         }
     };
     Ok(LoadedDocument {
@@ -358,44 +340,6 @@ mod tests {
         path
     }
 
-    #[test]
-    fn yaml_and_json_documents_load_alike_and_includes_are_resolved() {
-        let directory = tempfile::tempdir().unwrap();
-        write(
-            directory.path(),
-            "universes/research.yaml",
-            "schemaVersion: 1\nkind: universe\nhandle: research\nprofiles:\n  - file: ../profiles/reviewer.json\n  - profileId: inline\n",
-        );
-        write(
-            directory.path(),
-            "profiles/reviewer.json",
-            r#"{"profileId":"reviewer","displayName":"Reviewer"}"#,
-        );
-        write(
-            directory.path(),
-            "deployment.json",
-            r#"{"schemaVersion":1,"kind":"deployment","apiKeys":[]}"#,
-        );
-        let documents = load(&[directory.path().to_path_buf()]).unwrap();
-        assert_eq!(documents.len(), 2, "the included profile is no document");
-        let universe = documents
-            .iter()
-            .find_map(|loaded| match &loaded.document {
-                Document::Universe(universe) => Some(universe),
-                Document::Deployment(_) => None,
-            })
-            .expect("universe document");
-        assert_eq!(universe.handle, "research");
-        let profiles = universe.profiles.as_ref().unwrap();
-        assert_eq!(profiles[0]["profileId"], "reviewer");
-        assert_eq!(profiles[0]["displayName"], "Reviewer");
-        assert_eq!(profiles[1]["profileId"], "inline");
-        assert!(
-            universe.credentials.is_none(),
-            "absent sections stay absent"
-        );
-    }
-
     /// A ConfigMap volume: the files live in a timestamped hidden directory,
     /// `..data` links to it, and each visible name links through `..data`.
     #[cfg(unix)]
@@ -423,9 +367,7 @@ mod tests {
         let documents = load(std::slice::from_ref(&mount)).unwrap();
         assert_eq!(documents.len(), 1);
         assert_eq!(documents[0].path, mount.join("research.yaml"));
-        let Document::Universe(universe) = &documents[0].document else {
-            panic!("expected a universe document");
-        };
+        let Document::Universe(universe) = &documents[0].document;
         // An include next to the document resolves through the mount too.
         assert_eq!(
             universe.profiles.as_ref().unwrap()[0]["profileId"],
@@ -490,5 +432,41 @@ mod tests {
             SecretSource::Env("TRACKER_TOKEN".to_owned())
         );
         assert_eq!(source_field("token"), "tokenFrom");
+    }
+    #[test]
+    fn yaml_and_json_documents_load_alike_and_includes_are_resolved() {
+        let directory = tempfile::tempdir().unwrap();
+        write(
+            directory.path(),
+            "universes/research.yaml",
+            "schemaVersion: 1\nkind: universe\nhandle: research\nprofiles:\n  - file: ../profiles/reviewer.json\n  - profileId: inline\n",
+        );
+        write(
+            directory.path(),
+            "profiles/reviewer.json",
+            r#"{"profileId":"reviewer","displayName":"Reviewer"}"#,
+        );
+        write(
+            directory.path(),
+            "other.json",
+            r#"{"schemaVersion":1,"kind":"universe","handle":"other"}"#,
+        );
+        let documents = load(&[directory.path().to_path_buf()]).unwrap();
+        assert_eq!(documents.len(), 2, "the included profile is no document");
+        let universe = documents
+            .iter()
+            .find_map(|loaded| match &loaded.document {
+                Document::Universe(universe) => (universe.handle == "research").then_some(universe),
+            })
+            .expect("universe document");
+        assert_eq!(universe.handle, "research");
+        let profiles = universe.profiles.as_ref().unwrap();
+        assert_eq!(profiles[0]["profileId"], "reviewer");
+        assert_eq!(profiles[0]["displayName"], "Reviewer");
+        assert_eq!(profiles[1]["profileId"], "inline");
+        assert!(
+            universe.credentials.is_none(),
+            "absent sections stay absent"
+        );
     }
 }

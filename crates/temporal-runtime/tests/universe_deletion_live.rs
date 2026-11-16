@@ -398,20 +398,6 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
             created_at_ms: 1,
         })
         .await?;
-    let key = auth::mint_api_key(
-        auth::ApiKeySpec {
-            key_id: Some("test".into()),
-            scope: api::AccessScope::Universe { universe_id: id },
-            groups: api::ApiKeyGroups::All,
-            assert_actor: false,
-            created_by: api::Attribution::Local,
-            display_name: None,
-        },
-        1,
-    )?;
-    let keys = store_pg::PgApiKeyStore::new(runtime.stores().pool().clone());
-    keys.create_api_key(&key.key_hash, &key.record).await?;
-
     // No worker is needed to open executions; Temporal records each as Running even
     // when queued. Cover every identity family and a plugin-defined workflow type.
     for (name, workflow_type) in [
@@ -445,54 +431,30 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
         UniverseDeletionState::Deleting
     );
     assert!(read(&runtime, id).await?.result.universe.deletion.is_some());
-    assert!(keys.resolve_api_key(&key.key_hash, 2).await?.is_none());
-    let mut universe_headers = axum::http::HeaderMap::new();
-    universe_headers.insert(
-        "authorization",
-        format!("Bearer {}", key.secret.expose()).parse()?,
-    );
-    assert_eq!(
-        temporal_runtime::gateway::authentication::resolve_caller(&keys, &universe_headers, 2)
-            .await
-            .unwrap_err()
-            .kind,
-        AgentApiErrorKind::Unauthenticated
-    );
-    let deployment_key = auth::mint_api_key(
-        auth::ApiKeySpec {
-            key_id: Some(format!("deletion-{}", id.simple())),
-            scope: api::AccessScope::Deployment,
-            groups: api::ApiKeyGroups::All,
-            assert_actor: false,
-            created_by: api::Attribution::Local,
-            display_name: None,
-        },
-        1,
+    let tokens = temporal_runtime::config::RpcTokens::from_configuration(
+        [(
+            "LIGHTSPEED_RPC_TOKEN".into(),
+            "deletion-test-token-at-least-32-characters".into(),
+        )],
+        |_| unreachable!(),
     )?;
-    keys.create_api_key(&deployment_key.key_hash, &deployment_key.record)
-        .await?;
-    let mut deployment_headers = axum::http::HeaderMap::new();
-    deployment_headers.insert(
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
         "authorization",
-        format!("Bearer {}", deployment_key.secret.expose()).parse()?,
+        "Bearer deletion-test-token-at-least-32-characters".parse()?,
     );
-    deployment_headers.insert(
-        temporal_runtime::gateway::authentication::UNIVERSE_HEADER,
-        id.to_string().parse()?,
-    );
-    let resolved =
-        temporal_runtime::gateway::authentication::resolve_caller(&keys, &deployment_headers, 2)
-            .await?;
+    headers.insert("x-lightspeed-universe", id.to_string().parse()?);
     assert_eq!(
-        temporal_runtime::gateway::authentication::authorize(resolved, "session/list")
-            .unwrap_err()
-            .kind,
+        temporal_runtime::gateway::authentication::resolve_caller(
+            &tokens,
+            runtime.stores().pool(),
+            &headers
+        )
+        .await
+        .unwrap_err()
+        .kind,
         AgentApiErrorKind::NotFound
     );
-    sqlx::query("DELETE FROM api_keys WHERE key_hash = $1")
-        .bind(&deployment_key.key_hash)
-        .execute(runtime.stores().pool())
-        .await?;
 
     assert!(
         store_pg::resolve_universe_reference(runtime.stores().pool(), &handle)

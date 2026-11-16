@@ -27,7 +27,7 @@ const fixture = JSON.parse(readFileSync(
 describe("Python gateway parity fixtures", () => {
   it.each(fixture.calls)("matches the wire for $method", async (item) => {
     const client = new LightspeedClient({
-      endpoint: "http://localhost/rpc", apiKey: "option", actor: "actor", universe: "option",
+      endpoint: "http://localhost/rpc", token: "option", actor: "actor", universe: "option",
       headers: { Authorization: "Bearer configured", "x-lightspeed-universe": "default-universe" },
       fetch: async (_url, init) => {
         expect(JSON.parse(init?.body as string)).toEqual({ id: 1, method: item.method, params: item.params });

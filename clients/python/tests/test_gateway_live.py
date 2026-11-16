@@ -28,7 +28,7 @@ async def test_typescript_submission_can_resume_in_python():
     assert process.returncode == 0, "Build the TypeScript SDK and check gateway credentials"
     started = json.loads(stdout)
     async with AsyncLightspeedClient(
-        endpoint, api_key=os.environ.get("LIGHTSPEED_API_KEY"), universe=os.environ.get("LIGHTSPEED_UNIVERSE"),
+        endpoint, token=os.environ.get("LIGHTSPEED_RPC_TOKEN"), universe=os.environ.get("LIGHTSPEED_UNIVERSE"),
     ) as client:
         repeated = await client.start_run(session_id, prompt, submission_id=submission_id)
         assert repeated["run"]["id"] == started["runId"]

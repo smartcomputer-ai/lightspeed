@@ -191,7 +191,7 @@ export async function ReleaseReviewWorkflow(args: WorkflowToolStartArgs) {
 ```
 
 The activity must select credentials for an authorized universe and verify
-that its request belongs there. Do not place a runtime key in workflow inputs
+that its request belongs there. Do not place a runtime token in workflow inputs
 or histories. Use `invocationId` to deduplicate the domain operation: Temporal
 can retry an activity after an ambiguous outcome, even though workflow replay
 itself is deterministic.

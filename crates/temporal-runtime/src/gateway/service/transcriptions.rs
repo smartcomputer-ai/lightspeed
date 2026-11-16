@@ -170,17 +170,6 @@ impl GatewayAgentApi {
         Ok(view)
     }
 
-    fn authorize_transcription_owner(&self, view: &TranscriptionView) -> Result<(), AgentApiError> {
-        // Person callers can only access their own drafts. Direct universe keys
-        // retain their method-group authority; core does not resolve person roles.
-        if let Some(actor) = self.caller()?.actor
-            && view.created_by != (Attribution::Actor { id: actor })
-        {
-            return Err(AgentApiError::forbidden());
-        }
-        Ok(())
-    }
-
     pub(super) async fn start_transcription_impl(
         &self,
         params: TranscriptionStartParams,
@@ -206,7 +195,6 @@ impl GatewayAgentApi {
             .await?
             .ok_or_else(|| AgentApiError::not_found("transcription not found"))?
             .view;
-        self.authorize_transcription_owner(&view)?;
         Ok(AgentApiOutcome::new(TranscriptionResponse {
             transcription: self.transcription_content(view).await?,
         }))
@@ -223,7 +211,6 @@ impl GatewayAgentApi {
             .await?
             .ok_or_else(|| AgentApiError::not_found("transcription not found"))?
             .view;
-        self.authorize_transcription_owner(&view)?;
         if !view.status.is_terminal() {
             let handle = self
                 .client

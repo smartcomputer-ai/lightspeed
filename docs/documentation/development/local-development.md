@@ -66,10 +66,8 @@ existing logins.
 
 Set `LIGHTSPEED_PLATFORM_DEV_SEED=false` to disable these fixtures. Ordinary
 Platform startup and other launcher profiles leave them disabled. Seeding creates
-the runtime universe through the Platform's deployment key, then records the
-accounts and memberships in the Platform database. A supplied key needs
-`deployment/universes` access for that step and the usual Platform permissions
-for interactive work.
+the runtime universe through the Platform's runtime token, then records the
+accounts and memberships in the Platform database. A supplied runtime token has full authority for seeding and runtime calls.
 
 ## Company sign-in with local Keycloak
 
@@ -136,8 +134,8 @@ profiles stored in a universe.
 
 | Command | Use it for |
 | --- | --- |
-| `./dev.sh full` | The complete editable product: runtime, Platform API and UI, Configurator MCP, local infrastructure, and the optional local daemon. This is the default. |
-| `./dev.sh runtime` | Rust runtime and daemon work against local infrastructure, without Platform or Configurator. |
+| `./dev.sh full` | The complete editable product: runtime, Platform API and UI, local infrastructure, and the optional local daemon. This is the default. |
+| `./dev.sh runtime` | Rust runtime and daemon work against local infrastructure, without Platform. |
 | `./dev.sh platform` | Platform API and UI work against the existing runtime named by `LIGHTSPEED_API_URL`. It starts local infrastructure but does not start that runtime. |
 | `./dev.sh demo` | UI work against the in-browser demo backend at `http://localhost:5175/demo/`. It needs neither Docker nor the Rust runtime. |
 | `./dev.sh docs` | Documentation with live reload at `http://127.0.0.1:4321/docs/`. Needs only Node and npm; `doc` and `documentation` are aliases. |
@@ -161,22 +159,19 @@ override table is in the
 [environment-variable reference](../reference/environment-variables.md#local-development).
 
 Both full and runtime-only profiles default to authenticated access. The
-launcher provisions a persistent CLI deployment key and, for full, a separate
-Platform service key when none is supplied. From a second terminal, run
-`target/debug/lightspeed connect dev` after building the CLI. No browser or
-manual key copying is required. Use `--no-api-key-bootstrap` to supply your
-own keys; migrations and universe setup still run. Explicit
-`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private
-local access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md)
-for setup, key replacement and universe selection.
+launcher saves persistent CLI and Platform runtime tokens in owner-only files
+under `.lightspeed/cli/` and configures the runtime to accept them. From a second
+terminal, run `target/debug/lightspeed connect dev` after building the CLI.
+Use `--no-token-bootstrap` to require configured or saved tokens. Set
+`LIGHTSPEED_RPC_TOKEN_CLI` and `LIGHTSPEED_PLATFORM_RPC_TOKEN`, or their `_FILE`
+variants, to supply them. Migrations and universe setup still run. Explicit
+`LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private local
+access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
 
-Telegram and WhatsApp connector processes are opt-in. For example,
-`LIGHTSPEED_CHANNELS_CONNECTORS=telegram ./dev.sh` enables Telegram account
-discovery through the core API. Configure the corresponding account and
-credentials before expecting messages to flow. Bots and Channels core already
-run inside the Rust runtime; they don't require the connector host to exist.
-See [Channel connectors](../integrating-and-extending/channel-connectors.md)
-for connector development and setup.
+Configurator setup and channel connectors are disabled during the access
+cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty; the launcher never gives
+full-authority runtime tokens to an agent. Bots and Channels core remain inside
+the runtime.
 
 ## Follow a change to its owner
 
@@ -210,8 +205,7 @@ trace tells you where the regression test belongs.
 Vite updates the web UI as you edit. The Platform backend runs through `tsx
 watch` and restarts on relevant source changes. The Rust runtime and daemon
 run through ordinary `cargo run`; the supervisor does not watch and rebuild
-them. Configurator and the optional connector host also run without watch
-mode in the full profile.
+them.
 
 For a Rust change, run the focused test first, then stop and restart the
 profile to exercise the new executable:
@@ -246,6 +240,7 @@ startup needs an explicit migration first:
 
 ```bash
 source scripts/dev/env.sh
+export LIGHTSPEED_AUTH_MODE=single  # private local development only
 cargo run -p temporal-runtime -- migrate
 cargo run -p temporal-runtime
 ```
@@ -286,10 +281,10 @@ also create a new namespace and set `TEMPORAL_NAMESPACE` to it in `.env`, as des
 With the infrastructure up, create it using
 `docker exec lightspeed-temporal temporal operator namespace create --namespace <name>`;
 `./dev.sh` fails waiting for a namespace that does not exist.
-After a successful reset, start `./dev.sh` to provision development keys again,
+After a successful reset, start `./dev.sh` to generate development tokens again,
 then run `target/debug/lightspeed connect dev` to refresh the CLI connection.
-Manual database resets leave the launcher's saved credentials in place and
-require [explicit key repair](../using-lightspeed/cli.md#connect-to-local-development).
+Manual database resets leave the launcher's saved tokens in place. Tokens are
+configuration and do not depend on database rows.
 A changed migration checksum requires understanding the schema history;
 deleting rows does not repair a ledger mismatch. See
 [Changing contracts](changing-contracts.md#database-migrations) before editing

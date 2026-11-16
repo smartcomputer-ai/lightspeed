@@ -194,8 +194,6 @@ pub const METHOD_TRANSCRIPTIONS_START: &str = "transcriptions/start";
 pub const METHOD_TRANSCRIPTIONS_READ: &str = "transcriptions/read";
 pub const METHOD_TRANSCRIPTIONS_CANCEL: &str = "transcriptions/cancel";
 
-/// Prefix of every API key secret.
-pub const API_KEY_SECRET_PREFIX: &str = "lsk_";
 /// Prefix of every environment registration key secret.
 pub const REGISTRATION_KEY_SECRET_PREFIX: &str = "lsrk_";
 /// Random bytes in a key secret. After its prefix a secret is these bytes

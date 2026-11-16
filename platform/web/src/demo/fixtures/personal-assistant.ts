@@ -9,7 +9,7 @@
 import type { SecretGrant, UniverseSetup } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/sdk";
 import { appendExchange, appendScriptedRun, closeSession, newSession, refreshDemoCompactionView } from "../engine";
-import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
+import { type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
   DAY_MS,
@@ -820,22 +820,6 @@ function seedMembers(store: DemoStore, universe: UniverseState): void {
     member(store, universe, "user-marco", "admin", ago(38 * DAY_MS)),
     member(store, universe, "user-priya", "contributor", ago(22 * DAY_MS)),
   );
-  universe.apiKeys.push(universeApiKey(universe, {
-    keyPrefix: "lsk_pa_cfg_5a19",
-    displayName: "Lightspeed Configurator service credential",
-    groups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
-    createdAtMs: ago(21 * DAY_MS),
-    createdBy: "user-marco",
-    lastUsedAtMs: ago(3 * DAY_MS),
-  }));
-  universe.apiKeys.push(universeApiKey(universe, {
-    keyPrefix: "lsk_pa_2f8d",
-    displayName: "iPhone Shortcuts (voice notes → session)",
-    groups: ["session", "blobs/put"],
-    createdAtMs: ago(19 * DAY_MS),
-    createdBy: "user-marco",
-    lastUsedAtMs: ago(HOUR_MS + 12 * MINUTE_MS),
-  }));
 }
 
 function seedProfiles(universe: UniverseState): void {
@@ -1190,14 +1174,12 @@ function seedIntegrations(universe: UniverseState): void {
   const configurator: UniverseSetup = {
     id: "configurator",
     name: "Configurator",
-    description: "An MCP server that lets a coding agent configure this universe — profiles, MCP servers, environments, bots — with an API key scoped to it. Ada set the assistant up through it from her laptop.",
+    description: "An MCP server that lets a coding agent configure this universe — profiles, MCP servers, environments, bots — with a scoped Platform token. Ada set the assistant up through it from her laptop.",
     version: 4,
-    available: true,
-    status: "ready",
+    available: false,
+    status: "unavailable",
     installedVersion: 4,
     resources: {
-      keyPrefix: "lsk_pa_cfg_5a19",
-      keyGroups: ["auth", "bots", "channels", "environments", "mcp", "models", "profiles"],
       serverId: "configurator",
     },
   };

@@ -5631,7 +5631,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "transcriptions/read",
     "group": "transcriptions",
     "summary": "Read transcription",
-    "description": "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
+    "description": "Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.",
     "paramsType": "TranscriptionReadParams",
     "resultType": "AgentApiOutcome<TranscriptionResponse>",
     "inputSchema": {
@@ -5655,7 +5655,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "transcriptions/cancel",
     "group": "transcriptions",
     "summary": "Cancel transcription",
-    "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
+    "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.",
     "paramsType": "TranscriptionCancelParams",
     "resultType": "AgentApiOutcome<TranscriptionResponse>",
     "inputSchema": {

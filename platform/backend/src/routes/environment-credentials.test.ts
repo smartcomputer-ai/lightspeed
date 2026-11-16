@@ -35,7 +35,7 @@ function post(path: string, body: unknown) {
     c.set("session", { user: { id: "user" } } as ApiVariables["session"]);
     await next();
   });
-  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedApiKey: "lsk_fixture" } } as AppContext));
+  app.route("/", gatewayRoutes({ env: { lightspeedApiUrl: "https://engine.example/rpc", lightspeedRpcToken: "lsk_fixture" } } as AppContext));
   return app.request(`/universe${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

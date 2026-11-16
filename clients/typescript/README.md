@@ -5,8 +5,8 @@ JSON-RPC client generated from the Lightspeed API contract, with helpers for
 starting runs, waiting for them to finish, inspecting what they did, and serving a
 browser UI.
 
-An API key with the `session` group can read and control every session in its
-universe, including private ones, so keep it on your server. The client itself also
+A runtime token can call every method in every universe, including reading private
+sessions, so keep it on your server. The client itself also
 runs in a browser; [give it a proxy](#serve-a-browser-ui) instead of a key.
 
 ## Install
@@ -26,16 +26,15 @@ npm install --save-exact @lightspeed-ai/sdk@<release-version>
 
 ## Start a session and run a task
 
-You need the gateway's `/rpc` URL, an
-[API key](https://ls.bot/docs/access-and-security/api-keys-and-service-access/) with the
-`session` group, and a universe with a default model or a profile to start from.
+You need the gateway's `/rpc` URL, a
+[runtime token](https://ls.bot/docs/access-and-security/api-keys-and-service-access/), and a universe with a default model or a profile to start from.
 
 ```ts
 import { LightspeedClient } from "@lightspeed-ai/sdk";
 
 const client = new LightspeedClient({
   endpoint: process.env.LIGHTSPEED_API_URL!,
-  apiKey: process.env.LIGHTSPEED_API_KEY!,
+  token: process.env.LIGHTSPEED_RPC_TOKEN!,
 });
 
 const { session } = await client.startSession({
@@ -69,14 +68,14 @@ and `submissionId` so a retry finds the same session and run. See
 | Option | Use |
 | --- | --- |
 | `endpoint` | The gateway's `/rpc` URL. |
-| `apiKey` | Sent as the bearer credential. |
-| `universe` | The universe's UUID or handle, for a deployment key only. A universe key must leave it out. |
-| `actor` | An opaque user ID to attribute requests to. The key must be created with `assertActor`. |
+| `token` | Sent as the bearer credential. |
+| `universe` | The universe's UUID or handle; required for universe methods in authenticated mode. |
+| `actor` | An opaque user ID for attribution. Any direct runtime token may name an actor. |
 | `headers` | Extra headers, or a function returning them for each request. These override the options above. |
 | `fetch` | A replacement `fetch`, for tests or custom transports. |
 
 To act for several users from one client, use `client.withActor(userId)`. Attribution
-records who asked, but it does not limit what the key can do, so your application
+records who asked, but it does not limit what the token can do, so your application
 must check each user's access itself.
 
 ## Helpers and `call`
@@ -100,7 +99,7 @@ const outcome = await client.call("session/read", { sessionId, runLimit: 5 }, { 
 console.log(outcome.result.session, outcome.notifications);
 
 // Administration has no helper.
-const keys = await client.call("deployment/api-keys/list", {});
+const universes = await client.call("deployment/universes/list", {});
 ```
 
 Use `call` if you need the `notifications` returned with a method; helpers leave them out.
@@ -224,7 +223,7 @@ import { createRpcProxy } from "@lightspeed-ai/sdk/server";
 export const handler = createRpcProxy({
   client: new LightspeedClient({
     endpoint: process.env.LIGHTSPEED_API_URL!,
-    apiKey: process.env.LIGHTSPEED_API_KEY!,
+    token: process.env.LIGHTSPEED_RPC_TOKEN!,
   }),
   methods: ["session/list", "session/read", "session/runs/list", "session/runs/read"],
   authorize: async ({ request }) => {
@@ -257,10 +256,10 @@ and similar frameworks.
 - **Refusals look like any other API error.** A denial reaches the browser's client as a
   `LightspeedRpcError` with kind `unauthenticated` or `forbidden`.
 
-A universe is one readable namespace for a key allowed to read it. `blobs/read` takes
-only a blob reference and is not tied to a session, so anyone you allow that method can
-read any blob in the universe whose reference they hold. If an application must not see
-some work, give it a separate universe and key.
+The proxy must enforce both universe access and resource visibility. Runtime
+tokens can read all universes, and an actor header records attribution without
+restricting access. `blobs/read` is not tied to a session, so authorize blob access
+according to your application's policy before forwarding the request.
 
 A long `awaitRun` from the browser holds a request open for up to 30 seconds at a time.
 Some serverless hosts and proxies cut these off; the wait retries, but check your host's
@@ -271,7 +270,7 @@ puts all of this together in a small working page.
 
 | Error | Meaning |
 | --- | --- |
-| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid API key is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
+| `LightspeedRpcError` | The server answered with an error. Check `kind`, such as `notFound`, `conflict` or `sessionExecutionStopped`, and `data`. A missing or invalid runtime token is `unauthenticated`, which the gateway answers with HTTP 401 before reading the request. |
 | `LightspeedTransportError` | The request failed or the response was unusable. `status` and `body` are set when there was a response, `cause` keeps the underlying failure, and `transient` says the same request may succeed later. |
 | The signal's reason | You aborted, or your timeout passed. Check `error.name` for `AbortError` or `TimeoutError`. |
 

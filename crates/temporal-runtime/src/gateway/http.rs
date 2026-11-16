@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use super::authentication::{self, Caller};
 use super::request_context::RequestContext;
+use crate::config::RpcTokens;
 use api::AccessScope;
 use api::{
     AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_deployment_json_rpc,
@@ -33,7 +34,6 @@ use environments::{
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
-use store_pg::PgApiKeyStore;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::watch,
@@ -82,7 +82,6 @@ enum UniverseResolution {
         mode: GatewayAuthMode,
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
-        api_keys: PgApiKeyStore,
         deployment: Arc<GatewayDeploymentApi>,
     },
 }
@@ -240,7 +239,6 @@ impl GatewayState {
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
     ) -> Self {
-        let api_keys = PgApiKeyStore::new(runtime.stores().pool().clone());
         let deployment = Arc::new(GatewayDeploymentApi::new(runtime.clone()));
         let registration_origins = registration_origin_of(&public_base_url)
             .into_iter()
@@ -252,7 +250,6 @@ impl GatewayState {
                 mode,
                 runtime,
                 public_base_url,
-                api_keys,
                 deployment,
             },
             registrations: Arc::new(RegisteredConnections::new()),
@@ -267,10 +264,13 @@ impl GatewayState {
     fn rpc_admission(&self) -> RpcAdmission<'_> {
         match &self.resolution {
             UniverseResolution::Multi {
-                mode: GatewayAuthMode::Authenticated,
-                api_keys,
+                mode: GatewayAuthMode::Authenticated { tokens },
+                runtime,
                 ..
-            } => RpcAdmission::Keyed(api_keys),
+            } => RpcAdmission::Token {
+                tokens,
+                pool: runtime.stores().pool(),
+            },
             UniverseResolution::FixedApi { api } => RpcAdmission::Local {
                 universe_id: api.universe_id(),
             },
@@ -1186,9 +1186,12 @@ async fn cimd_document(State(state): State<Arc<GatewayState>>) -> Json<serde_jso
 
 /// Whom a gateway takes `/rpc` requests from.
 enum RpcAdmission<'a> {
-    /// Callers present an API key, resolved before a request body is read.
-    Keyed(&'a PgApiKeyStore),
-    /// Development mode: no key and no actor, never a header claim. Every
+    /// Configured tokens are checked before a request body is read.
+    Token {
+        tokens: &'a RpcTokens,
+        pool: &'a sqlx::PgPool,
+    },
+    /// Development mode: no token and no actor, never a header claim. Every
     /// request is served as the one universe, or as the deployment.
     Local { universe_id: Uuid },
 }
@@ -1203,15 +1206,9 @@ impl RpcAdmission<'_> {
     /// Decide from the headers alone whether the request may send its body.
     async fn admit(&self, headers: &HeaderMap) -> Result<Admitted, AgentApiError> {
         match self {
-            Self::Keyed(api_keys) => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| AgentApiError::internal(e.to_string()))?
-                    .as_millis() as u64;
-                authentication::resolve_caller(api_keys, headers, now)
-                    .await
-                    .map(|caller| Admitted::Caller(Box::new(caller)))
-            }
+            Self::Token { tokens, pool } => authentication::resolve_caller(tokens, pool, headers)
+                .await
+                .map(|caller| Admitted::Caller(Box::new(caller))),
             Self::Local { universe_id } => Ok(Admitted::Local {
                 universe_id: *universe_id,
             }),
@@ -1221,14 +1218,14 @@ impl RpcAdmission<'_> {
 
 impl Admitted {
     /// Resolve the request once its body has named a method: what it
-    /// addresses, its key and its actor.
+    /// addresses, its token name and its actor.
     fn request_context(
         self,
         headers: &HeaderMap,
         method: &str,
     ) -> Result<RequestContext, AgentApiError> {
         match self {
-            Self::Caller(caller) => authentication::authorize(*caller, method),
+            Self::Caller(caller) => authentication::request_context(*caller, method),
             Self::Local { universe_id } => {
                 api::method_access(method).ok_or_else(authentication::unknown_method)?;
                 authentication::reject_identity_headers(headers)?;
@@ -1258,7 +1255,7 @@ enum ReceivedRpc {
 ///
 /// The caller is resolved from the headers before the body is touched. The
 /// body limit is sized for what an authenticated caller may legitimately
-/// send, so a request without a valid key is answered while its body is
+/// send, so a request without a valid token is answered while its body is
 /// still unread: nobody can make the gateway buffer and parse that much just
 /// by reaching the port. Everything decided after that point depends on the
 /// method, and is reported as a JSON-RPC error against the request's id.
@@ -1298,18 +1295,20 @@ async fn receive_rpc(admission: RpcAdmission<'_>, request: Request) -> ReceivedR
 /// Answer a request whose caller could not be resolved. Its body was not
 /// read, so there is no request id to answer: the JSON-RPC error travels
 /// with a null id, under the HTTP status that says what happened. A missing
-/// or invalid key is 401; anything else means the key could not be checked.
+/// or invalid token is 401; malformed identity headers and unknown universes
+/// retain their client-error status.
 fn refused_before_body(error: AgentApiError) -> Response {
     tracing::warn!(
         target: "temporal_runtime",
         kind = ?error.kind,
-        "request refused before authentication"
+        "request refused before body"
     );
     let unauthenticated = error.kind == api::AgentApiErrorKind::Unauthenticated;
-    let status = if unauthenticated {
-        StatusCode::UNAUTHORIZED
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
+    let status = match error.kind {
+        api::AgentApiErrorKind::Unauthenticated => StatusCode::UNAUTHORIZED,
+        api::AgentApiErrorKind::InvalidRequest => StatusCode::BAD_REQUEST,
+        api::AgentApiErrorKind::NotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let body = serde_json::json!({ "id": null, "error": api::JsonRpcError::from(error) });
     let mut response = (status, Json(body)).into_response();
@@ -1869,19 +1868,24 @@ mod tests {
     }
 
     const LOCAL_UNIVERSE: Uuid = Uuid::from_u128(7);
-    const WELL_FORMED_KEY: &str = "Bearer lsk_0123456789abcdef0123456789abcdef";
+    const CONFIGURED_TOKEN: &str = "Bearer test-token-0123456789abcdef0123456789abcdef";
     const SESSION_READ: &str = r#"{"id":7,"method":"session/read","params":{}}"#;
 
-    /// A key store whose database is never reachable. Requests that present
-    /// no well-formed key are refused without it; any other request fails
-    /// there, which tells the two apart.
-    fn unreachable_keys() -> PgApiKeyStore {
-        PgApiKeyStore::new(
-            sqlx::postgres::PgPoolOptions::new()
-                .acquire_timeout(Duration::from_millis(200))
-                .connect_lazy("postgres://127.0.0.1:1/unreachable")
-                .unwrap(),
+    fn test_tokens() -> RpcTokens {
+        RpcTokens::from_configuration(
+            [(
+                "LIGHTSPEED_RPC_TOKEN".into(),
+                CONFIGURED_TOKEN.strip_prefix("Bearer ").unwrap().into(),
+            )],
+            |_| unreachable!(),
         )
+        .unwrap()
+    }
+    fn unreachable_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://127.0.0.1:1/unreachable")
+            .unwrap()
     }
 
     /// A `/rpc` request, and whether anything has read its body.
@@ -1932,21 +1936,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_request_without_a_valid_key_is_answered_401_with_its_body_unread() {
-        let keys = unreachable_keys();
+    async fn a_request_without_a_valid_token_is_answered_401_with_its_body_unread() {
+        let tokens = test_tokens();
+        let pool = unreachable_pool();
         for headers in [
             vec![JSON],
             vec![JSON, ("authorization", "Bearer not-a-lightspeed-key")],
             vec![
                 JSON,
-                ("authorization", WELL_FORMED_KEY),
-                ("authorization", WELL_FORMED_KEY),
+                ("authorization", CONFIGURED_TOKEN),
+                ("authorization", CONFIGURED_TOKEN),
             ],
             // Not even a body that is no JSON-RPC request is looked at.
             vec![("content-type", "text/plain")],
         ] {
             let (request, read) = rpc_request(&headers, SESSION_READ);
-            let response = refused(RpcAdmission::Keyed(&keys), request).await;
+            let response = refused(
+                RpcAdmission::Token {
+                    tokens: &tokens,
+                    pool: &pool,
+                },
+                request,
+            )
+            .await;
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{headers:?}");
             assert_eq!(
                 response.headers().get(header::WWW_AUTHENTICATE),
@@ -1968,18 +1980,54 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_key_that_cannot_be_checked_is_a_server_error_with_the_body_unread() {
-        let keys = unreachable_keys();
-        let (request, read) =
-            rpc_request(&[JSON, ("authorization", WELL_FORMED_KEY)], SESSION_READ);
-        let response = refused(RpcAdmission::Keyed(&keys), request).await;
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
-        assert_eq!(
-            error_without_id(response).await.kind,
-            AgentApiErrorKind::Internal
+    async fn malformed_actors_are_client_errors_with_the_body_unread() {
+        let tokens = test_tokens();
+        let pool = unreachable_pool();
+        let (request, read) = rpc_request(
+            &[
+                JSON,
+                ("authorization", CONFIGURED_TOKEN),
+                (ACTOR_HEADER, ""),
+            ],
+            SESSION_READ,
         );
+        let response = refused(
+            RpcAdmission::Token {
+                tokens: &tokens,
+                pool: &pool,
+            },
+            request,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(!read.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            refused_before_body(AgentApiError::not_found("universe")).status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_valid_token_initializes_without_any_database_access() {
+        let tokens = test_tokens();
+        let pool = unreachable_pool();
+        let (request, read) = rpc_request(
+            &[JSON, ("authorization", CONFIGURED_TOKEN)],
+            r#"{"id":1,"method":"initialize"}"#,
+        );
+        let received = receive_rpc(
+            RpcAdmission::Token {
+                tokens: &tokens,
+                pool: &pool,
+            },
+            request,
+        )
+        .await;
+        let ReceivedRpc::Request { context, .. } = received else {
+            panic!("configured token must initialize")
+        };
+        assert!(read.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(context.token_name.as_deref(), Some("default"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2021,7 +2069,10 @@ mod tests {
             (vec![JSON], unknown.as_str()),
             // Development mode takes no identity claim from a header.
             (vec![JSON, (UNIVERSE_HEADER, "elsewhere")], SESSION_READ),
-            (vec![JSON, ("authorization", WELL_FORMED_KEY)], SESSION_READ),
+            (
+                vec![JSON, ("authorization", CONFIGURED_TOKEN)],
+                SESSION_READ,
+            ),
         ] {
             let (request, _) = rpc_request(&headers, body);
             let response = refused(local(), request).await;
@@ -2057,15 +2108,19 @@ mod tests {
 
     /// The `/rpc` route as `gateway_router` mounts it, with a body limit of
     /// 64 bytes, served on a loopback port.
-    async fn serve_rpc_with_a_small_body_limit(keys: Option<Arc<PgApiKeyStore>>) -> String {
+    async fn serve_rpc_with_a_small_body_limit(tokens: Option<Arc<RpcTokens>>) -> String {
         let router = Router::new()
             .route(
                 "/rpc",
                 post(move |request: Request| {
-                    let keys = keys.clone();
+                    let tokens = tokens.clone();
+                    let pool = unreachable_pool();
                     async move {
-                        let admission = match &keys {
-                            Some(keys) => RpcAdmission::Keyed(keys.as_ref()),
+                        let admission = match &tokens {
+                            Some(tokens) => RpcAdmission::Token {
+                                tokens,
+                                pool: &pool,
+                            },
                             None => RpcAdmission::Local {
                                 universe_id: LOCAL_UNIVERSE,
                             },
@@ -2101,8 +2156,8 @@ mod tests {
                 .status()
         };
 
-        // Without a key the request is refused for that, whatever it carries.
-        let keyed = serve_rpc_with_a_small_body_limit(Some(Arc::new(unreachable_keys()))).await;
+        // Without a token the request is refused for that, whatever it carries.
+        let keyed = serve_rpc_with_a_small_body_limit(Some(Arc::new(test_tokens()))).await;
         assert_eq!(
             status_of(keyed, oversized.clone()).await,
             reqwest::StatusCode::UNAUTHORIZED

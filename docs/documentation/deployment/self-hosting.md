@@ -10,8 +10,8 @@ The [deployment overview](overview.md) explains how the components fit together.
 This recipe initially stores small blobs in PostgreSQL. The current inline
 limit is 64 KiB per blob; larger writes require S3-compatible object storage.
 Use the small-text verification below, then configure object storage before
-using larger files, attachments, or payloads. Chat connectors, Configurator
-MCP, and execution environments can be added afterward.
+using larger files, attachments, or payloads. Execution environments can be added afterward. The channel connector host
+and Platform Configurator setup are currently disabled.
 
 ## Prepare the infrastructure
 
@@ -141,14 +141,15 @@ Generate the runtime's secrets master key:
 openssl rand -base64 32
 ```
 
-Generate two other secrets, one for Platform authentication and one for
-internal environment routing, by running this command once for each:
+Generate three other secrets: one for Platform authentication, one for
+internal environment routing, and one for the Platform’s runtime RPC access.
+Run this command once for each:
 
 ```bash
 openssl rand -hex 32
 ```
 
-Keep all three values stable across restarts. Store them in your secret manager
+Keep all four values stable across restarts. Store them in your secret manager
 and recovery material. Replacing the runtime's master key makes credentials
 encrypted with the previous key unreadable.
 
@@ -159,6 +160,7 @@ no `export` prefix and no shell quotes around values.
 ```dotenv
 LIGHTSPEED_POSTGRES_URL=<runtime-postgres-connection-url>
 LIGHTSPEED_AUTH_MODE=authenticated
+LIGHTSPEED_RPC_TOKEN_PLATFORM=<platform-runtime-token>
 LIGHTSPEED_GATEWAY_BIND=0.0.0.0:18080
 LIGHTSPEED_PUBLIC_BASE_URL=https://lightspeed.example.com
 LIGHTSPEED_ENVIRONMENT_GATEWAY_URL=http://lightspeed-runtime:18080
@@ -171,7 +173,8 @@ LIGHTSPEED_LOG_FORMAT=json
 ```
 
 This `LIGHTSPEED_ROLES` value includes the `bots` and `channels` roles, which
-suits an installation that uses bots and chat channels. If yours does not,
+runs the corresponding internal workflows. The external channel connector
+host is currently disabled. If your installation does not use these workflows,
 remove those two roles from the list and leave the **Bots** and **Channels**
 switches off in each universe; see
 [Runtime roles and scaling](overview.md#runtime-roles-and-scaling).
@@ -194,16 +197,16 @@ configuration and require backend-specific settings. Follow
 [Choose the blob backend](configuration.md#choose-the-blob-backend) to add the
 complete S3-compatible or Azure Blob configuration.
 
-The Platform needs a deployment-scoped runtime key with every method group and
-permission to assert actors. The migration procedure below creates it. Prepare
-`platform.env` now, then replace the key placeholder before starting Platform:
+The Platform uses the runtime token configured above. Give the same secret to
+both applications, keeping it out of browser configuration, agent workspaces,
+and environment credentials. Prepare `platform.env` with:
 
 ```dotenv
 LIGHTSPEED_PLATFORM_DATABASE_URL=<platform-postgres-connection-url>
 LIGHTSPEED_PLATFORM_AUTH_SECRET=<platform-auth-secret>
 LIGHTSPEED_PLATFORM_BASE_URL=https://lightspeed.example.com
 LIGHTSPEED_API_URL=http://lightspeed-runtime:18080/rpc
-LIGHTSPEED_PLATFORM_API_KEY=<platform-deployment-key>
+LIGHTSPEED_PLATFORM_RPC_TOKEN=<platform-runtime-token>
 LIGHTSPEED_PLATFORM_ADMIN_EMAIL=<administrator-email>
 LIGHTSPEED_PLATFORM_ADMIN_PASSWORD=<strong-initial-password>
 PORT=3000
@@ -245,22 +248,13 @@ their checksums. The diagnostic command reports the schema revision. Normal
 runtime startup verifies the ledger and refuses a schema that requires
 migration; it does not apply migrations implicitly.
 
-Create the Platform's key against the migrated database:
-
-```bash
-docker run --rm --network lightspeed --env-file runtime.env \
-  "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID" api-key create \
-  --deployment --assert-actor --all-groups --name Platform
-```
-
-Copy the printed `secret` into `LIGHTSPEED_PLATFORM_API_KEY` in `platform.env`
-and store it securely; the command prints it only once. A key's groups are
-always stated: `--all-groups` grants every group allowed by the deployment
-scope, and repeated `--group` grants a chosen list. This key authorizes the
-Platform's runtime calls; the first Platform administrator is a separate login
-created from the email and password above. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
-for key issuance and revocation.
+Runtime tokens come from configuration; migration creates no caller keys.
+`authenticated` mode refuses startup without a token. Every configured token
+has full authority over all universes and may name an actor. The first
+Platform administrator is a separate login created from the email and
+password above. See
+[Runtime service access](../access-and-security/api-keys-and-service-access.md)
+for mounted token files and rotation.
 
 Start all runtime roles in one container:
 
@@ -337,11 +331,15 @@ register, and the runtime refuses to serve registration on a non-loopback
 bind with neither.
 
 The Platform checks login, membership, role, and session visibility before
-calling the runtime with its deployment key, universe selector, and actor ID.
-This recipe keeps the RPC listener private so browser access goes through those
-checks. Keep port `18080` private even if your reverse proxy has its own
-authentication rules. Direct API integrations use their own
-[scoped keys](../access-and-security/api-keys-and-service-access.md).
+calling the runtime with its configured token, universe selector, and actor ID.
+Keep `/rpc` private so browser access passes through those checks. RPC, OAuth
+callbacks, and bot webhooks currently share a listener; the exact route rules
+above protect RPC while allowing the public callbacks. Keep port `18080`
+private and never proxy the whole runtime listener publicly.
+
+Direct runtime access is for operators and trusted components only. Its token
+is not a tenant credential and has no universe or method restrictions. The
+Platform endpoint for scoped program access is separate work.
 
 If the proxy runs in another container, put it on the application network and
 use the service names as upstreams. Its own loopback address does not reach
@@ -384,7 +382,7 @@ docker logs --tail 100 lightspeed-platform
 | Runtime exits before serving health | Database connectivity, migration ledger, required settings, or Temporal address, namespace, and TLS or API key settings |
 | Platform health never succeeds | Platform database permissions/migrations and required authentication settings |
 | Sign-in redirects or origin checks fail | Public base URL, HTTPS, and proxy host/scheme forwarding |
-| A universe cannot be created | Platform administrator role, runtime connectivity, and a Platform deployment key with `deployment/universes` access |
+| A universe cannot be created | Platform administrator role, runtime connectivity, and a Platform runtime token that matches runtime configuration |
 | A run is accepted but makes no progress | Temporal namespace, session workers, and matching task queues |
 | Model calls fail | The universe's provider credential and the session's selected model |
 | A daemon connects but process calls cannot route | The two public WebSocket paths, internal environment gateway URL/token, and replica peer reachability and leases |
@@ -396,7 +394,7 @@ procedure and the complete recovery inventory, including optional connector
 and machine state.
 
 [Access and security](../access-and-security/overview.md) covers accounts, roles,
-client keys, and isolation; [Managing universes](multi-tenancy.md) explains
+runtime tokens, and isolation; [Managing universes](multi-tenancy.md) explains
 universe reconciliation and retirement. [Configuration](configuration.md)
 explains deployment choices, with exact settings in the
 [environment-variable reference](../reference/environment-variables.md).

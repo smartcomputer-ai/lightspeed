@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+subtle = "2"
 temporal-workflow = { path = "../temporal-workflow" }
 jsonschema = { version = "0.58", default-features = false }
 api = { path = "../api" }

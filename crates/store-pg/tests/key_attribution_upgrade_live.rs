@@ -1,28 +1,23 @@
-//! Stored attributions that named a key by the display prefix of its secret
-//! are rewritten to name it by key id and scope kind. Runs against an
-//! isolated schema and never loads .env.
-use std::{panic::AssertUnwindSafe, str::FromStr};
-
-use api::{AccessScope, AccessScopeKind, Attribution};
+//! Runtime-token migration: resource attributions and durable session events.
+use api::Attribution;
 use futures_util::FutureExt as _;
 use harness::storage::{
     AppendSessionEvents, CreateSession, ReadSessionEvents, SessionStore as _,
     UncommittedStoredEvent,
 };
-use harness::{
-    ApprovalEvent, AttributedKeyScope, CoreAgentCodec, CoreAgentEvent, RunEvent, RunId, SessionId,
-};
+use harness::{ApprovalEvent, CoreAgentCodec, CoreAgentEvent, RunEvent, RunId, SessionId};
 use serde_json::{Value, json};
 use sqlx::{
     Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
-use store_pg::{PgAccessStore, PgApiKeyStore, PgStore, PgStoreConfig};
+use std::{panic::AssertUnwindSafe, str::FromStr};
+use store_pg::{PgStore, PgStoreConfig};
 use uuid::Uuid;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires explicitly approved LIGHTSPEED_TEST_POSTGRES_URL; creates an isolated schema"]
-async fn stored_key_attributions_are_renamed_from_secret_prefix_to_key_id() {
+async fn stored_key_attributions_become_token_names_and_key_storage_is_removed() {
     let url =
         std::env::var("LIGHTSPEED_TEST_POSTGRES_URL").expect("explicit test Postgres URL required");
     let admin = PgPoolOptions::new()
@@ -63,150 +58,63 @@ async fn stored_key_attributions_are_renamed_from_secret_prefix_to_key_id() {
     }
 }
 
-/// The display prefixes the rows below are attributed to. `DEPLOYMENT` and
-/// `HERE` belong to keys that still hold them; `ELSEWHERE` belongs to a key
-/// of another universe; `REPLACED` belongs to no key any more.
-const DEPLOYMENT: &str = "lsk_deploy00";
-const HERE: &str = "lsk_here0000";
-const ELSEWHERE: &str = "lsk_elsewher";
-const REPLACED: &str = "lsk_replaced";
-
-/// Rows of this universe other than sessions, by id, with the prefix each is
-/// attributed to.
-const OWNED: [(&str, &str); 4] = [
-    ("by-universe-key", HERE),
-    ("by-deployment-key", DEPLOYMENT),
-    ("by-another-universes-key", ELSEWHERE),
-    ("by-replaced-key", REPLACED),
-];
-
-fn stale(prefix: &str) -> Value {
-    json!({"kind": "key", "prefix": prefix})
-}
-
-fn key(key_id: &str, scope_kind: AccessScopeKind) -> Attribution {
-    Attribution::Key {
-        key_id: key_id.to_owned(),
-        scope_kind,
-    }
-}
-
-/// What a record keeps when the key that made it cannot be named any more.
-fn unresolved(prefix: &str) -> Attribution {
-    Attribution::Internal {
-        component: "migration".to_owned(),
-        cause: format!("API key with secret prefix {prefix}, replaced since"),
-    }
-}
-
 async fn exercise(pool: &sqlx::PgPool) {
-    PgStore::migrate(pool).await.expect("apply migrations");
-    let here = Uuid::new_v4();
-    let elsewhere = Uuid::new_v4();
-    let sessions = PgStore::new(pool.clone(), PgStoreConfig::new(here));
-    sessions.ensure_universe().await.expect("create universe");
-    PgStore::new(pool.clone(), PgStoreConfig::new(elsewhere))
-        .ensure_universe()
-        .await
-        .expect("create the other universe");
-
-    // Keys as they are today. Each was minted by someone the old shape named
-    // by prefix: a deployment key, a universe key (which can never mint a
-    // key, so the prefix cannot be trusted), and a key since replaced.
-    for (hash, key_id, prefix, universe, created_by) in [
-        ('a', "platform", DEPLOYMENT, None, json!({"kind": "local"})),
-        ('b', "ci", HERE, Some(here), stale(DEPLOYMENT)),
-        ('c', "ci", ELSEWHERE, Some(elsewhere), stale(HERE)),
-        ('d', "pipeline", "lsk_pipeline", None, stale(REPLACED)),
-    ] {
-        sqlx::query(
-            "INSERT INTO api_keys (key_hash, key_id, key_prefix, universe_id, groups, created_by, created_at_ms)
-             VALUES (repeat($1, 64), $2, $3, $4, ARRAY['session'], $5, 1)",
-        )
-        .bind(hash.to_string())
-        .bind(key_id)
-        .bind(prefix)
-        .bind(universe)
-        .bind(&created_by)
-        .execute(pool)
-        .await
-        .expect("insert key");
-    }
-
-    // Sessions and a bot of this universe, created by each kind of key.
-    let created = [
-        ("by-universe-key", Some(stale(HERE))),
-        ("by-deployment-key", Some(stale(DEPLOYMENT))),
-        ("by-another-universes-key", Some(stale(ELSEWHERE))),
-        ("by-replaced-key", Some(stale(REPLACED))),
-        ("by-actor", Some(json!({"kind": "actor", "id": "alice"}))),
-        ("unstamped", None),
-    ];
-    for (session, created_by) in &created {
-        sessions
-            .create_session(CreateSession {
-                session_id: SessionId::new(*session),
-                display_name: None,
-                metadata: Default::default(),
-                origin: None,
-                delete_after_close_ms: None,
-                created_at_ms: 1,
-            })
+    for migration in store_pg::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version < 26)
+    {
+        let mut transaction = pool.begin().await.unwrap();
+        transaction
+            .execute(sqlx::raw_sql(migration.sql))
             .await
-            .expect("create session");
-        sqlx::query(
-            "UPDATE sessions SET created_by = $3 WHERE universe_id = $1 AND session_id = $2",
-        )
-        .bind(here)
-        .bind(session)
-        .bind(created_by)
-        .execute(pool)
-        .await
-        .expect("stamp session as the previous release did");
+            .unwrap();
+        transaction.commit().await.unwrap();
     }
-
-    // A credential, an OAuth authorization and a bot of this universe for
-    // each key the old shape could name.
-    for (id, prefix) in OWNED {
-        sqlx::query(
-            "INSERT INTO auth_grants (universe_id, grant_id, provider_id, provider_kind, created_by, created_at_ms, updated_at_ms)
-             VALUES ($1, $2, 'static', 'static_token', $3, 1, 1)",
-        )
+    let here = Uuid::new_v4();
+    let sessions = PgStore::new(pool.clone(), PgStoreConfig::new(here));
+    sessions.ensure_universe().await.unwrap();
+    let log = SessionId::new("migration-log");
+    sessions
+        .create_session(CreateSession {
+            session_id: log.clone(),
+            display_name: None,
+            metadata: Default::default(),
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .unwrap();
+    let stale = json!({"kind":"key", "keyId":"ci", "scopeKind":"universe"});
+    sqlx::query("UPDATE sessions SET created_by = $2, metadata_json = $3 WHERE universe_id = $1")
         .bind(here)
-        .bind(id)
-        .bind(stale(prefix))
+        .bind(&stale)
+        .bind(json!({"example": stale.to_string()}))
         .execute(pool)
         .await
-        .expect("insert credential");
-        sqlx::query(
-            "INSERT INTO auth_flows (universe_id, flow_id, client_id, provider_id, provider_kind, created_by, state_hash, pkce_verifier_secret_id, redirect_uri, expires_at_ms, created_at_ms, updated_at_ms)
-             VALUES ($1, $2, 'client', 'provider', 'mcp_oauth', $3, $2, 'verifier', 'https://runtime.example/callback', 2, 1, 1)",
-        )
-        .bind(here)
-        .bind(id)
-        .bind(stale(prefix))
-        .execute(pool)
-        .await
-        .expect("insert authorization");
-        sqlx::query(
-            "INSERT INTO bots (universe_id, bot_id, revision, document_json, created_by, created_at_ms, updated_at_ms)
-             VALUES ($1, $2, 1, '{}', $3, 1, 1)",
-        )
-        .bind(here)
-        .bind(id)
-        .bind(stale(prefix))
-        .execute(pool)
-        .await
-        .expect("insert bot");
+        .unwrap();
+    for statement in [
+        "INSERT INTO auth_grants (universe_id, grant_id, provider_id, provider_kind, created_by, created_at_ms, updated_at_ms) VALUES ($1, 'grant', 'static', 'static_token', $2, 1, 1)",
+        "INSERT INTO auth_flows (universe_id, flow_id, client_id, provider_id, provider_kind, created_by, state_hash, pkce_verifier_secret_id, redirect_uri, expires_at_ms, created_at_ms, updated_at_ms) VALUES ($1, 'flow', 'client', 'provider', 'mcp_oauth', $2, 'state', 'verifier', 'https://example.com/callback', 2, 1, 1)",
+        "INSERT INTO bots (universe_id, bot_id, revision, document_json, created_by, created_at_ms, updated_at_ms) VALUES ($1, 'bot', 1, '{}', $2, 1, 1)",
+    ] {
+        sqlx::query(statement)
+            .bind(here)
+            .bind(&stale)
+            .execute(pool)
+            .await
+            .unwrap();
     }
-
-    // One event of every kind that records who asked, appended in today's
-    // shape and then put back into the shape the previous release wrote.
-    let log = SessionId::new("by-universe-key");
+    // Nested user document JSON is opaque, even when it resembles attribution.
+    sqlx::query("UPDATE bots SET document_json = $2 WHERE universe_id = $1")
+        .bind(here)
+        .bind(json!({"example": stale}))
+        .execute(pool)
+        .await
+        .unwrap();
     let run_id = RunId::new(1);
-    let asked_by = Some(harness::Attribution::Key {
-        key_id: "placeholder".to_owned(),
-        scope_kind: AttributedKeyScope::Universe,
+    let asked_by = Some(harness::Attribution::Token {
+        name: "placeholder".into(),
     });
     let attributed: Vec<(CoreAgentEvent, [&str; 5], &str)> = vec![
         (
@@ -221,7 +129,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 requested_by: asked_by.clone(),
             })),
             ["event", "payload", "run", "accepted", "requested_by"],
-            HERE,
+            "ci",
         ),
         (
             CoreAgentEvent::Run(RunEvent::SteeringAccepted {
@@ -238,7 +146,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 "steering_accepted",
                 "requested_by",
             ],
-            DEPLOYMENT,
+            "platform",
         ),
         (
             CoreAgentEvent::Run(RunEvent::CancellationRequested {
@@ -252,7 +160,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 "cancellation_requested",
                 "requested_by",
             ],
-            ELSEWHERE,
+            "other",
         ),
         (
             CoreAgentEvent::Run(RunEvent::QueuedCancelled {
@@ -266,7 +174,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 "queued_cancelled",
                 "requested_by",
             ],
-            REPLACED,
+            "retired",
         ),
         (
             CoreAgentEvent::Approval(ApprovalEvent::Decided {
@@ -277,7 +185,7 @@ async fn exercise(pool: &sqlx::PgPool) {
                 decided_by: asked_by.clone(),
             }),
             ["event", "payload", "approval", "decided", "decided_by"],
-            HERE,
+            "ci",
         ),
         // An event of the same kind attributed to an actor is left alone.
         (
@@ -325,116 +233,85 @@ async fn exercise(pool: &sqlx::PgPool) {
         .bind(log.as_str())
         .bind(entry.position.seq.as_u64() as i64)
         .bind(path.as_slice())
-        .bind(stale(prefix))
+        .bind(json!({"kind":"key", "keyId":prefix, "scopeKind":"universe"}))
         .execute(pool)
         .await
         .expect("restore the previous event shape");
     }
 
-    // The previous shape is refused, which is why it has to be rewritten.
-    assert!(
-        PgApiKeyStore::new(pool.clone())
-            .list_api_keys(None)
-            .await
-            .is_err()
-    );
-
-    apply_migration(pool, 21).await;
-    // Applying it again finds nothing left to rewrite.
-    apply_migration(pool, 21).await;
-
-    let keys = PgApiKeyStore::new(pool.clone())
-        .list_api_keys(None)
+    let deleted = Uuid::new_v4();
+    sqlx::query("INSERT INTO universes_deleted (universe_id, handle, created_at_ms, deleting_at_ms, deleted_at_ms, requested_by, summary) VALUES ($1, 'deleted', 1, 2, 3, $2, '{}')")
+        .bind(deleted).bind(&stale).execute(pool).await.unwrap();
+    sqlx::query(
+        "UPDATE universes SET deleting_at_ms = 2, deletion_json = $2 WHERE universe_id = $1",
+    )
+    .bind(here)
+    .bind(json!({"deletion":{"requestedBy":stale}}))
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut transaction = pool.begin().await.unwrap();
+    transaction
+        .execute(sqlx::raw_sql(include_str!(
+            "../migrations/026_runtime_tokens.sql"
+        )))
         .await
-        .expect("every key decodes");
-    let minted_by = |key_id: &str, scope: AccessScope| {
-        keys.iter()
-            .find(|key| key.key_id == key_id && key.scope == scope)
-            .unwrap_or_else(|| panic!("key {key_id} is listed"))
-            .created_by
-            .clone()
-    };
-    assert_eq!(
-        minted_by("platform", AccessScope::Deployment),
-        Attribution::Local
-    );
-    assert_eq!(
-        minted_by("ci", AccessScope::Universe { universe_id: here }),
-        key("platform", AccessScopeKind::Deployment)
-    );
-    // A universe key cannot have minted a key, whatever prefix was recorded.
-    assert_eq!(
-        minted_by(
-            "ci",
-            AccessScope::Universe {
-                universe_id: elsewhere
-            }
-        ),
-        unresolved(HERE)
-    );
-    assert_eq!(
-        minted_by("pipeline", AccessScope::Deployment),
-        unresolved(REPLACED)
-    );
-
-    let access = PgAccessStore::new(pool.clone());
-    for (session, expected) in [
-        (
-            "by-universe-key",
-            Some(key("ci", AccessScopeKind::Universe)),
-        ),
-        (
-            "by-deployment-key",
-            Some(key("platform", AccessScopeKind::Deployment)),
-        ),
-        // Another universe's key cannot have acted here.
-        ("by-another-universes-key", Some(unresolved(ELSEWHERE))),
-        ("by-replaced-key", Some(unresolved(REPLACED))),
-        ("by-actor", Some(Attribution::Actor { id: "alice".into() })),
-        ("unstamped", None),
+        .unwrap();
+    transaction.commit().await.unwrap();
+    let exists: bool = sqlx::query_scalar("SELECT to_regclass('api_keys') IS NOT NULL")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert!(!exists, "the caller key table must be removed");
+    for statement in [
+        "SELECT created_by FROM sessions WHERE universe_id = $1",
+        "SELECT created_by FROM auth_grants WHERE universe_id = $1",
+        "SELECT created_by FROM auth_flows WHERE universe_id = $1",
+        "SELECT created_by FROM bots WHERE universe_id = $1",
+        "SELECT deletion_json #> '{deletion,requestedBy}' FROM universes WHERE universe_id = $1",
     ] {
-        let read = access
-            .session_access(here, session)
+        let stored: Value = sqlx::query_scalar(statement)
+            .bind(here)
+            .fetch_one(pool)
             .await
-            .expect("session access decodes")
-            .expect("session exists");
-        assert_eq!(read.audience.created_by, expected, "{session}");
+            .unwrap();
+        assert_eq!(
+            serde_json::from_value::<Attribution>(stored).unwrap(),
+            Attribution::token("ci")
+        );
     }
-
-    for (table, select) in [
-        (
-            "auth_grants",
-            "SELECT created_by FROM auth_grants WHERE universe_id = $1 AND grant_id = $2",
-        ),
-        (
-            "auth_flows",
-            "SELECT created_by FROM auth_flows WHERE universe_id = $1 AND flow_id = $2",
-        ),
-        (
-            "bots",
-            "SELECT created_by FROM bots WHERE universe_id = $1 AND bot_id = $2",
-        ),
-    ] {
-        for ((id, _), expected) in OWNED.iter().zip([
-            key("ci", AccessScopeKind::Universe),
-            key("platform", AccessScopeKind::Deployment),
-            unresolved(ELSEWHERE),
-            unresolved(REPLACED),
-        ]) {
-            let stored: Value = sqlx::query_scalar(select)
-                .bind(here)
-                .bind(id)
-                .fetch_one(pool)
-                .await
-                .expect("read the stored attribution");
-            assert_eq!(
-                serde_json::from_value::<Attribution>(stored).expect("the attribution decodes"),
-                expected,
-                "{table} {id}"
-            );
-        }
-    }
-
+    let stored: Value =
+        sqlx::query_scalar("SELECT requested_by FROM universes_deleted WHERE universe_id = $1")
+            .bind(deleted)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_value::<Attribution>(stored).unwrap(),
+        Attribution::token("ci")
+    );
+    let metadata: Value =
+        sqlx::query_scalar("SELECT metadata_json FROM sessions WHERE universe_id = $1")
+            .bind(here)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        metadata,
+        json!({"example": stale.to_string()}),
+        "session metadata is not attribution"
+    );
+    let document: Value =
+        sqlx::query_scalar("SELECT document_json FROM bots WHERE universe_id = $1")
+            .bind(here)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        document,
+        json!({"example": stale}),
+        "user JSON is not attribution"
+    );
     let page = sessions
         .read_after(ReadSessionEvents {
             session_id: log,
@@ -463,41 +340,17 @@ async fn exercise(pool: &sqlx::PgPool) {
             }
         })
         .collect();
-    let recorded_key = |key_id: &str, scope_kind| {
-        Some(harness::Attribution::Key {
-            key_id: key_id.to_owned(),
-            scope_kind,
-        })
-    };
-    let recorded_unresolved = |prefix: &str| {
-        Some(harness::Attribution::Internal {
-            component: "migration".to_owned(),
-            cause: format!("API key with secret prefix {prefix}, replaced since"),
-        })
-    };
+
+    let token = |name: &str| Some(harness::Attribution::Token { name: name.into() });
     assert_eq!(
         recorded,
         [
-            recorded_key("ci", AttributedKeyScope::Universe),
-            recorded_key("platform", AttributedKeyScope::Deployment),
-            recorded_unresolved(ELSEWHERE),
-            recorded_unresolved(REPLACED),
-            recorded_key("ci", AttributedKeyScope::Universe),
-            Some(harness::Attribution::Actor {
-                id: "alice".to_owned()
-            }),
+            token("ci"),
+            token("platform"),
+            token("other"),
+            token("retired"),
+            token("ci"),
+            Some(harness::Attribution::Actor { id: "alice".into() })
         ]
     );
-}
-
-/// Run one embedded migration's statements over the schema as it stands. The
-/// ledger is left alone, so migrations added later do not affect this.
-async fn apply_migration(pool: &sqlx::PgPool, version: i64) {
-    let migration = store_pg::MIGRATIONS
-        .iter()
-        .find(|migration| migration.version == version)
-        .expect("embedded migration");
-    pool.execute(sqlx::raw_sql(migration.sql))
-        .await
-        .expect("apply migration");
 }

@@ -12,40 +12,6 @@ All JSON-RPC wire types of the Lightspeed agent API.
 """
 
 
-class AccessScopeDeployment(TypedDict):
-    """
-    What a key reaches or a request addresses: one universe, or the
-    deployment.
-    """
-
-    kind: Literal['deployment']
-
-
-class AccessScopeUniverse(TypedDict):
-    """
-    What a key reaches or a request addresses: one universe, or the
-    deployment.
-    """
-
-    kind: Literal['universe']
-    universeId: str
-
-
-AccessScope: TypeAlias = AccessScopeDeployment | AccessScopeUniverse
-"""
-What a key reaches or a request addresses: one universe, or the
-deployment.
-"""
-
-
-AccessScopeKind: TypeAlias = Literal['deployment', 'universe']
-"""
-The kind of an [`AccessScope`]: the deployment, or a universe. Where a
-record already belongs to one universe this is enough to tell a universe
-key of that universe from a deployment key.
-"""
-
-
 AgentApiErrorKind: TypeAlias = (
     Literal['invalidRequest', 'notFound', 'conflict', 'audioBlobTooLarge', 'internal']
     | Literal['gone']
@@ -157,25 +123,20 @@ class AttachmentSourceView(TypedDict):
 
 class AttributionActor(TypedDict):
     """
-    The actor a key asserted for its request.
+    The actor the caller named for its request.
     """
 
     id: str
     kind: Literal['actor']
 
 
-class AttributionKey(TypedDict):
+class AttributionToken(TypedDict):
     """
-    A key acting for itself, named by its key id. A key id is unique
-    among the keys of one scope, so `scopeKind` says whether it names a
-    deployment key or a key of the universe the record belongs to. The
-    id survives a change of secret; the secret's display prefix does not
-    and is deliberately not recorded.
+    The configured runtime token's name, never its secret.
     """
 
-    keyId: str
-    kind: Literal['key']
-    scopeKind: AccessScopeKind
+    kind: Literal['token']
+    name: str
 
 
 class AttributionLocal(TypedDict):
@@ -198,11 +159,11 @@ class AttributionInternal(TypedDict):
 
 
 Attribution: TypeAlias = (
-    AttributionActor | AttributionKey | AttributionLocal | AttributionInternal
+    AttributionActor | AttributionToken | AttributionLocal | AttributionInternal
 )
 """
-Who created a resource or authored bytes. An actor is whatever a key
-allowed to assert one said; core compares it and never resolves it.
+Who created a resource or authored bytes. Actors are opaque caller claims;
+the runtime records them without resolving caller permissions.
 """
 
 
@@ -704,6 +665,22 @@ How an invocation of a bound workflow tool reaches its receiver.
 """
 
 
+class CallerAccess(TypedDict):
+    """
+    How the direct runtime connection authenticated. All runtime tokens have
+    full authority; permissions belong to the external gate.
+    """
+
+    single: bool
+    """
+    True only for explicitly unauthenticated local development access.
+    """
+    tokenName: NotRequired[str | None]
+    """
+    Configured token name, absent for unauthenticated access.
+    """
+
+
 ChannelAccountId: TypeAlias = str
 
 
@@ -1159,29 +1136,6 @@ class DeletedUniverseView(TypedDict):
     requestedBy: Attribution
     summary: Any
     universeId: str
-
-
-class DeploymentApiKeyListParams(TypedDict):
-    scope: NotRequired[AccessScope | None]
-    """
-    Only keys of this scope; absent lists every key.
-    """
-
-
-class DeploymentApiKeyRevokeParams(TypedDict):
-    keyId: str
-    scope: AccessScope
-    """
-    The scope the key belongs to.
-    """
-
-
-class DeploymentApiKeyRotateParams(TypedDict):
-    keyId: str
-    scope: AccessScope
-    """
-    The scope the key belongs to.
-    """
 
 
 class DeploymentChannelAccountListParams(TypedDict):
@@ -2311,8 +2265,7 @@ class MethodAccessService(TypedDict):
 
 class MethodAccessDeployment(TypedDict):
     """
-    A deployment method: it addresses the deployment and needs a
-    deployment key.
+    A deployment method: it addresses the deployment.
     """
 
     kind: Literal['deployment']
@@ -2327,7 +2280,6 @@ MethodGroup: TypeAlias = (
         'mcp',
         'bots',
         'deployment/universes',
-        'deployment/api-keys',
         'deployment/sessions',
     ]
     | Literal['session']
@@ -2342,9 +2294,8 @@ MethodGroup: TypeAlias = (
     | Literal['deployment/channels']
 )
 """
-The methods a key may call, by group. Every public method but
-`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
-new method never changes what an existing key reaches beyond its group.
+The API family of a method, published for external authorization gates.
+`initialize` and `universe/watch` have no single family.
 """
 
 
@@ -3876,9 +3827,8 @@ UniverseAction: TypeAlias = (
     | Literal['configureResource']
 )
 """
-What a public method does, independent of its RPC spelling. Requests are
-gated by their key's groups; this classifies what the runtime's own work
-may do and which role a gate built on the contract should require.
+What a public method does, independent of its RPC spelling. This classifies
+the runtime's own work and the role an external gate should require.
 """
 
 
@@ -4007,7 +3957,7 @@ shared with the universe once, one way; everything else is shared.
 
 WatchKind: TypeAlias = Literal['session', 'bot', 'environment', 'workspace']
 """
-Collections whose list rows can be watched. Each requires its existing API-key group.
+Collections whose list rows can be watched. Each publishes its API family.
 """
 
 
@@ -4276,12 +4226,6 @@ class AgentProfileSummary(TypedDict):
     profileId: ProfileId
     revision: int
     updatedAtMs: int
-
-
-ApiKeyGroups: TypeAlias = Literal['all'] | list[MethodGroup]
-"""
-The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups.
-"""
 
 
 class ApprovalDecisionFailure(TypedDict):
@@ -5015,38 +4959,6 @@ class BotView(TypedDict):
     updatedAtMs: int
 
 
-class CallerAccess(TypedDict):
-    """
-    What the calling credential may do, so a client can offer only the
-    methods it may call. Descriptive: core still checks every call.
-    """
-
-    groups: list[MethodGroup]
-    """
-    The method groups the caller may call. A request without a key holds
-    every group. `initialize` belongs to no group and is always allowed.
-    """
-    keyId: NotRequired[str | None]
-    """
-    The calling key's id, unique among the keys of `scope`. It is what
-    records attribute the key's own requests to. Absent for a request
-    without a key, such as local development.
-    """
-    keyPrefix: NotRequired[str | None]
-    """
-    Display prefix of the calling key's current secret; absent for a
-    request without a key, such as local development.
-    """
-    scope: AccessScope
-    """
-    Credential scope, independent of a selected request universe.
-    """
-    single: bool
-    """
-    True only for explicitly unauthenticated local development access.
-    """
-
-
 class ChannelAccountDeleteParams(TypedDict):
     accountId: ChannelAccountId
 
@@ -5225,101 +5137,6 @@ class DeclaredUniverseMember(TypedDict):
     issuer: NotRequired[str | None]
     role: UniverseMemberRole
     subject: NotRequired[str | None]
-
-
-class DeploymentApiKeyCreateParams(TypedDict):
-    assertActor: NotRequired[bool]
-    """
-    Whether the key may name the actor a request acts for with the
-    `x-lightspeed-actor` header. Give it only to a gate that authenticates
-    people, such as the Platform. It cannot be changed afterwards.
-    """
-    displayName: str
-    """
-    Human-readable purpose shown in key-management interfaces.
-    """
-    groups: ApiKeyGroups
-    """
-    The method groups the key may call: a non-empty list, or `"all"` for
-    every group its scope allows. The key stores the resulting set.
-    """
-    keyId: NotRequired[str | None]
-    """
-    The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
-    or colons, starting with a letter or digit, and not yet used by a key
-    of this scope. Omit it to have one allocated.
-    """
-    scope: AccessScope
-    """
-    A universe, or the deployment. A deployment key addresses a universe
-    with the `x-lightspeed-universe` header and may hold deployment groups.
-    """
-
-
-class DeploymentApiKeyPutParams(TypedDict):
-    """
-    Declare a key whose secret the caller supplies. `Debug` redacts the
-    secret; the serialized request remains sensitive and must not be logged.
-    """
-
-    assertActor: NotRequired[bool]
-    """
-    Whether the key may name the actor a request acts for. It cannot be
-    changed afterwards.
-    """
-    displayName: str
-    """
-    Human-readable purpose shown in key-management interfaces.
-    """
-    groups: ApiKeyGroups
-    """
-    The method groups the key may call: a non-empty list, or `"all"` for
-    every group its scope allows. An existing key's groups are replaced
-    by these, and `"all"` is resolved again on every call, so repeating a
-    declaration after an upgrade gives the key the groups added since.
-    """
-    keyId: str
-    """
-    The key's id within its scope: 1-128 ASCII letters, digits,
-    underscores, hyphens, dots or colons, starting with a letter or digit.
-    """
-    scope: AccessScope
-    """
-    A universe, or the deployment. It cannot be changed afterwards.
-    """
-    secret: str
-    """
-    The secret the key answers to: `lsk_` followed by 32 random bytes
-    encoded as base64url without padding. Generate it with a
-    cryptographic random source.
-    """
-
-
-class DeploymentApiKeyView(TypedDict):
-    """
-    Non-secret key metadata: what the key is called, reaches and may call,
-    and who minted it.
-    """
-
-    assertActor: bool
-    createdAtMs: int
-    createdBy: Attribution
-    displayName: NotRequired[str | None]
-    groups: list[MethodGroup]
-    keyId: str
-    """
-    The key's name among the keys of its scope. Together with the scope
-    it addresses the key, and it is kept when the secret is replaced.
-    """
-    keyPrefix: str
-    """
-    The first characters of the key's current secret: enough to tell
-    which secret the key holds without revealing it. It changes when the
-    secret does.
-    """
-    lastUsedAtMs: NotRequired[int | None]
-    revokedAtMs: NotRequired[int | None]
-    scope: AccessScope
 
 
 class DeploymentChannelAccountListResponse(TypedDict):
@@ -7194,39 +7011,6 @@ class ContextView(TypedDict):
     revision: int
 
 
-class DeploymentApiKeyCreateResponse(TypedDict):
-    """
-    A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
-    recovered later. Its custom `Debug` implementation redacts the DTO before
-    JSON-RPC serialization; the serialized response payload remains sensitive
-    and must not be logged.
-    """
-
-    apiKey: DeploymentApiKeyView
-    secret: str
-
-
-class DeploymentApiKeyListResponse(TypedDict):
-    apiKeys: NotRequired[list[DeploymentApiKeyView]]
-
-
-class DeploymentApiKeyPutResponse(TypedDict):
-    apiKey: DeploymentApiKeyView
-    created: bool
-    """
-    False when the key already existed.
-    """
-    secretReplaced: bool
-    """
-    True when an existing key held a different secret, which no longer
-    works.
-    """
-
-
-class DeploymentApiKeyRevokeResponse(TypedDict):
-    apiKey: DeploymentApiKeyView
-
-
 class DeploymentUniverseConfigurationPutParams(TypedDict):
     """
     Patch desired Platform configuration. Absent fields retain their values.
@@ -8386,26 +8170,6 @@ class AgentApiOutcomeOfContextRemoveResponse(TypedDict):
 class AgentApiOutcomeOfContextReplaceResponse(TypedDict):
     notifications: NotRequired[list[AgentNotification]]
     result: ContextReplaceResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyCreateResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyListResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyPutResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyRevokeResponse
 
 
 class AgentApiOutcomeOfDeploymentChannelAccountListResponse(TypedDict):

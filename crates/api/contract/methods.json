@@ -5,7 +5,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.",
+      "description": "Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.",
       "group": null,
       "method": "universe/watch",
       "notifications": [
@@ -68,7 +68,7 @@
       "access": {
         "kind": "connection"
       },
-      "description": "Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
+      "description": "Returns protocol version, server identity, whether access is unauthenticated, and the configured token name before universe selection. Requires authentication in authenticated mode; no universe header is accepted.",
       "group": null,
       "method": "initialize",
       "notifications": [],
@@ -1553,7 +1553,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
+      "description": "Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.",
       "group": "transcriptions",
       "method": "transcriptions/read",
       "notifications": [],
@@ -1580,7 +1580,7 @@
         "action": "useResource",
         "kind": "universe"
       },
-      "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
+      "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.",
       "group": "transcriptions",
       "method": "transcriptions/cancel",
       "notifications": [],
@@ -3676,7 +3676,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.",
+      "description": "Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime tokens retain full authority.",
       "group": "deployment/universes",
       "method": "deployment/universes/configuration/put",
       "notifications": [],
@@ -3748,136 +3748,6 @@
       "scope": "deployment",
       "streaming": false,
       "summary": "Request universe deletion",
-      "target": null
-    },
-    {
-      "access": {
-        "kind": "deployment"
-      },
-      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.",
-      "group": "deployment/api-keys",
-      "method": "deployment/api-keys/create",
-      "notifications": [],
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeploymentApiKeyCreateParams"
-        },
-        "type": "DeploymentApiKeyCreateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyCreateResponse"
-        },
-        "type": "AgentApiOutcome<DeploymentApiKeyCreateResponse>"
-      },
-      "role": null,
-      "scope": "deployment",
-      "streaming": false,
-      "summary": "Create a scoped API key",
-      "target": null
-    },
-    {
-      "access": {
-        "kind": "deployment"
-      },
-      "description": "Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.",
-      "group": "deployment/api-keys",
-      "method": "deployment/api-keys/put",
-      "notifications": [],
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeploymentApiKeyPutParams"
-        },
-        "type": "DeploymentApiKeyPutParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyPutResponse"
-        },
-        "type": "AgentApiOutcome<DeploymentApiKeyPutResponse>"
-      },
-      "role": null,
-      "scope": "deployment",
-      "streaming": false,
-      "summary": "Declare a scoped API key",
-      "target": null
-    },
-    {
-      "access": {
-        "kind": "deployment"
-      },
-      "description": "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
-      "group": "deployment/api-keys",
-      "method": "deployment/api-keys/list",
-      "notifications": [],
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeploymentApiKeyListParams"
-        },
-        "type": "DeploymentApiKeyListParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyListResponse"
-        },
-        "type": "AgentApiOutcome<DeploymentApiKeyListResponse>"
-      },
-      "role": null,
-      "scope": "deployment",
-      "streaming": false,
-      "summary": "List scoped API keys",
-      "target": null
-    },
-    {
-      "access": {
-        "kind": "deployment"
-      },
-      "description": "Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.",
-      "group": "deployment/api-keys",
-      "method": "deployment/api-keys/rotate",
-      "notifications": [],
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeploymentApiKeyRotateParams"
-        },
-        "type": "DeploymentApiKeyRotateParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyCreateResponse"
-        },
-        "type": "AgentApiOutcome<DeploymentApiKeyCreateResponse>"
-      },
-      "role": null,
-      "scope": "deployment",
-      "streaming": false,
-      "summary": "Rotate a scoped API key",
-      "target": null
-    },
-    {
-      "access": {
-        "kind": "deployment"
-      },
-      "description": "Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.",
-      "group": "deployment/api-keys",
-      "method": "deployment/api-keys/revoke",
-      "notifications": [],
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeploymentApiKeyRevokeParams"
-        },
-        "type": "DeploymentApiKeyRevokeParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyRevokeResponse"
-        },
-        "type": "AgentApiOutcome<DeploymentApiKeyRevokeResponse>"
-      },
-      "role": null,
-      "scope": "deployment",
-      "streaming": false,
-      "summary": "Revoke a scoped API key",
       "target": null
     },
     {

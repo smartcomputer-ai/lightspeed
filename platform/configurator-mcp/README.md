@@ -6,16 +6,20 @@ universe-scoped Lightspeed JSON-RPC contract. Tools are generated from
 exposed.
 
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),
-covers client setup, deployment authentication, and the management workflow.
+covers the service and its current availability.
+
+The Platform Configurator setup and development-launcher process are disabled
+until scoped Platform tokens are available. A runtime token has full authority
+over every universe and must never be handed to an agent. The package remains
+for development and trusted operator use.
 
 `tool-filter.json` contains the exact universe methods and params omitted from
 generation. The default surface excludes the `integration` param of `session/start`,
 environment jobs, environment registration keys, and the redundant Lightspeed
 handshake.
 Edit that file and run `npm run generate` to tune the advertised surface.
-Each request then lists only the tools whose method group the caller's key
-holds, as reported by the runtime's `initialize` response; other tools are
-unknown to that caller.
+Each authenticated request exposes that generated tool set. Method-family
+classification is descriptive and grants no restriction on a runtime token.
 Tool descriptions come from the canonical Rust method manifest and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.
@@ -54,11 +58,16 @@ is kept here for service-local convenience.
 | `LIGHTSPEED_CONFIGURATOR_MCP_UPSTREAM_TIMEOUT_MS` | `60000` | Per-probe and per-tool upstream timeout |
 | `LIGHTSPEED_CONFIGURATOR_MCP_SHUTDOWN_TIMEOUT_MS` | `10000` | Grace period before open HTTP connections are closed |
 
-Authenticated clients send `Authorization: Bearer lsk_...`. Configurator forwards
-the credential and optional universe/actor headers to the runtime, which
-validates scope and assertion authority. Headers alone never authenticate callers.
-The Platform setup creates a dedicated universe service credential. The former
-loopback trusted-header route is retired.
+Authenticated operator requests send `Authorization: Bearer <runtime-token>`
+and `x-lightspeed-universe` for tool calls. Configurator verifies the token
+with the runtime before handling each MCP request. The optional actor header
+supplies attribution only. All configured runtime tokens have full authority;
+there are no per-token method groups or universe scopes.
+
+The Platform setup returns unavailable and does not install a credential,
+MCP connection, or profile. Do not register this service for an agent with a
+runtime token. The replacement will use a restricted token issued by the
+Platform.
 
 The server uses the current per-request, sessionless Streamable HTTP lifecycle
 and negotiates the 2026 protocol through `server/discover`. It retains the

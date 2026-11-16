@@ -5,10 +5,10 @@ and the universe's Admins can read it. The creator can investigate a problem,
 collect context, and then share the conversation with the whole universe when
 it is ready for other people to use.
 
-This is a Platform visibility rule. A direct core API key with the `session`
-method group can access private sessions in its universe. Such keys are
-integration credentials and are not limited by a person's membership or role;
-see [API keys and service access](api-keys-and-service-access.md).
+This is a Platform visibility rule. A direct runtime token can access private
+sessions in every universe. Such tokens belong only to operators and trusted
+components; the runtime does not check a person's membership or role. See
+[Runtime service access](api-keys-and-service-access.md).
 
 ## Follow a session from private to shared
 

@@ -1,7 +1,7 @@
 //! Local runtime connections. Server authority is always discovered, never inferred from a key.
 use crate::api_client::HttpAgentApi;
 use anyhow::{Context, Result, bail};
-use api::{AccessScope, CallerAccess};
+use api::CallerAccess;
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -39,7 +39,7 @@ pub struct ResolvedConnection {
     pub name: Option<String>,
     pub endpoint: String,
     pub secret: Option<String>,
-    /// The universe a deployment key addresses, as its UUID or its handle.
+    /// The universe a runtime request addresses, as its UUID or its handle.
     /// A saved selection is always the UUID; a handle here was named for
     /// this invocation and is sent as given, for the runtime to resolve.
     pub universe: Option<String>,
@@ -51,10 +51,7 @@ impl ResolvedConnection {
     /// including server-bound keys and single mode even when no local
     /// selection was saved.
     pub fn active_universe(&self) -> Option<String> {
-        match self.caller.as_ref().map(|caller| caller.scope) {
-            Some(AccessScope::Universe { universe_id }) => Some(universe_id.to_string()),
-            _ => self.universe.clone(),
-        }
+        self.universe.clone()
     }
 
     pub fn headers(&self, method: &str) -> Result<reqwest::header::HeaderMap> {
@@ -62,7 +59,7 @@ impl ResolvedConnection {
         let mut headers = HeaderMap::new();
         if let Some(secret) = &self.secret {
             let mut value = HeaderValue::from_str(&format!("Bearer {secret}"))
-                .context("invalid API key header")?;
+                .context("invalid runtime token header")?;
             value.set_sensitive(true);
             headers.insert(AUTHORIZATION, value);
         }
@@ -76,7 +73,7 @@ impl ResolvedConnection {
             return Ok(headers);
         }
         if let Some(caller) = &self.caller {
-            if caller.single || matches!(caller.scope, AccessScope::Universe { .. }) {
+            if caller.single {
                 return Ok(headers);
             }
             if self.universe.is_none() {
@@ -123,7 +120,7 @@ impl UniverseStatus {
 /// selection supplies its own half of the identity; the other half is read
 /// only when permitted, with the reason given when it could not be.
 pub async fn universe_status(connection: &ResolvedConnection) -> Result<UniverseStatus> {
-    let caller = connection
+    connection
         .caller
         .as_ref()
         .context("connection has not been verified")?;
@@ -139,16 +136,6 @@ pub async fn universe_status(connection: &ResolvedConnection) -> Result<Universe
         status.universe_id = Some(selected.clone());
     } else {
         status.handle = Some(selected.clone());
-    }
-    if !caller.single
-        && (caller.scope != AccessScope::Deployment
-            || !caller
-                .groups
-                .contains(&api::MethodGroup::DeploymentUniverses))
-    {
-        status.unavailable_reason =
-            Some("requires a deployment key with deployment/universes permission".into());
-        return Ok(status);
     }
     let response = HttpAgentApi::with_connection(connection.clone())
         .request::<_, api::DeploymentUniverseReadResponse>(
@@ -240,7 +227,7 @@ pub fn read_secret(path: &Path) -> Result<String> {
 fn nonempty_secret(secret: String) -> Result<String> {
     let secret = secret.trim();
     if secret.is_empty() {
-        bail!("API key is empty");
+        bail!("runtime token is empty");
     }
     Ok(secret.to_owned())
 }
@@ -283,7 +270,7 @@ fn endpoint(url: &str) -> Result<String> {
 
 fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<ResolvedConnection> {
     if saved.single && saved.credential_file.is_some() {
-        bail!("single-mode connection must not contain an API key");
+        bail!("single-mode connection must not contain a runtime token");
     }
     if !saved.single && saved.credential_file.is_none() {
         bail!("authenticated connection has no credential");
@@ -310,25 +297,8 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
     if response.caller.single != connection.secret.is_none() {
         bail!("runtime authentication does not match the configured connection");
     }
-    // A deployment key's selection is sent as given, UUID or handle, and the
-    // runtime resolves it; only a bound connection is checked here.
-    if let (Some(selected), AccessScope::Universe { universe_id }) =
-        (&connection.universe, response.caller.scope)
-    {
-        connection.universe = Some(bound_universe(universe_id, selected)?);
-    }
     connection.caller = Some(response.caller);
     Ok(connection)
-}
-
-/// A connection bound to one universe accepts only that universe's UUID.
-fn bound_universe(universe_id: Uuid, selected: &str) -> Result<String> {
-    if selected != universe_id.to_string() {
-        bail!(
-            "this connection is bound to universe {universe_id}; switching universes requires a deployment key"
-        );
-    }
-    Ok(universe_id.to_string())
 }
 
 /// The UUID of the universe a UUID or handle names, for a selection that is
@@ -336,13 +306,6 @@ fn bound_universe(universe_id: Uuid, selected: &str) -> Result<String> {
 /// universe. Resolving a handle needs permission to read universes, which a
 /// per-invocation selection does not.
 pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -> Result<String> {
-    let caller = connection
-        .caller
-        .as_ref()
-        .context("connection has not been verified")?;
-    if let AccessScope::Universe { universe_id } = caller.scope {
-        return bound_universe(universe_id, selected);
-    }
     if let Ok(id) = Uuid::parse_str(selected) {
         return Ok(id.to_string());
     }
@@ -358,7 +321,7 @@ pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -
     .await
     .with_context(|| {
         format!(
-            "cannot resolve universe {selected} to save it; use its UUID, or pass --universe {selected} on each command if this key cannot read universes"
+            "cannot resolve universe {selected} to save it; use its UUID, or pass --universe {selected} on each command if the runtime is unavailable"
         )
     })?
     .result;
@@ -395,7 +358,7 @@ pub async fn resolve(
     };
     let target = url.or(env_url.as_deref()).filter(|s| !s.is_empty());
     let explicit_secret = if name.is_none() || url.is_some() {
-        std::env::var("LIGHTSPEED_API_KEY")
+        std::env::var("LIGHTSPEED_RPC_TOKEN")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .map(nonempty_secret)
@@ -471,14 +434,14 @@ enum ConnectCommand {
         name: String,
         #[arg(long)]
         url: String,
-        #[arg(long, conflicts_with_all=["api_key_file", "api_key_env", "api_key_stdin"])]
+        #[arg(long, conflicts_with_all=["token_file", "token_env", "token_stdin"])]
         single: bool,
-        #[arg(long, conflicts_with_all=["api_key_env", "api_key_stdin"])]
-        api_key_file: Option<PathBuf>,
-        #[arg(long, conflicts_with = "api_key_stdin")]
-        api_key_env: Option<String>,
+        #[arg(long, conflicts_with_all=["token_env", "token_stdin"])]
+        token_file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "token_stdin")]
+        token_env: Option<String>,
         #[arg(long)]
-        api_key_stdin: bool,
+        token_stdin: bool,
     },
     /// Verify and select a saved connection.
     Use { name: String },
@@ -494,9 +457,9 @@ enum ConnectCommand {
 
 fn prompt_secret() -> Result<String> {
     if !std::io::stdin().is_terminal() {
-        bail!("use --api-key-stdin, --api-key-file or --api-key-env for noninteractive access");
+        bail!("use --token-stdin, --token-file or --token-env for noninteractive access");
     }
-    eprint!("Lightspeed API key: ");
+    eprint!("Lightspeed runtime token: ");
     std::io::stderr().flush()?;
     crossterm::terminal::enable_raw_mode()?;
     struct Restore;
@@ -541,22 +504,22 @@ pub async fn handle(
             name,
             url,
             single,
-            api_key_file,
-            api_key_env,
-            api_key_stdin,
+            token_file,
+            token_env,
+            token_stdin,
         } => {
             if name.trim().is_empty() || config.connections.contains_key(&name) {
                 bail!("connection name is empty or already exists; remove it before replacing");
             }
             let secret = if single {
                 None
-            } else if let Some(file) = &api_key_file {
+            } else if let Some(file) = &token_file {
                 Some(read_secret(file)?)
-            } else if let Some(env) = api_key_env {
+            } else if let Some(env) = token_env {
                 Some(nonempty_secret(
                     std::env::var(&env).with_context(|| format!("{env} is unset"))?,
                 )?)
-            } else if api_key_stdin {
+            } else if token_stdin {
                 let mut input = String::new();
                 std::io::stdin().read_to_string(&mut input)?;
                 Some(nonempty_secret(input)?)
@@ -575,7 +538,7 @@ pub async fn handle(
                 Some(selected) => Some(resolve_universe(&verified, selected).await?),
                 None => None,
             };
-            let mut file = api_key_file.map(std::fs::canonicalize).transpose()?;
+            let mut file = token_file.map(std::fs::canonicalize).transpose()?;
             let owned = file.is_none() && verified.secret.is_some();
             if owned {
                 let path = dir.join("credentials").join(Uuid::new_v4().to_string());
@@ -648,7 +611,7 @@ pub async fn handle(
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n\nAPI key:\n  Key ID: {}\n  Prefix: {}\n  Scope: {}\n  Groups: {}\n",
+                    "Connection: {}\n  Runtime: {}\n  Mode: {}\n  Token: {}\n  Authority: full runtime access\n",
                     c.name.as_deref().unwrap_or("environment"),
                     c.endpoint,
                     if caller.single {
@@ -656,19 +619,7 @@ pub async fn handle(
                     } else {
                         "authenticated"
                     },
-                    caller.key_id.as_deref().unwrap_or("none"),
-                    caller.key_prefix.as_deref().unwrap_or("none"),
-                    match caller.scope {
-                        AccessScope::Deployment => "deployment".to_owned(),
-                        AccessScope::Universe { universe_id } =>
-                            format!("universe ({universe_id})"),
-                    },
-                    caller
-                        .groups
-                        .iter()
-                        .map(|g| g.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    caller.token_name.as_deref().unwrap_or("none"),
                 );
                 status.print("Selected universe");
             }
@@ -785,58 +736,7 @@ pub async fn resolve_wait(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn connection(scope: AccessScope, single: bool) -> ResolvedConnection {
-        ResolvedConnection {
-            name: None,
-            endpoint: "http://localhost/rpc".into(),
-            secret: (!single).then(|| "lsk_fixture".into()),
-            universe: Some(Uuid::nil().to_string()),
-            caller: Some(CallerAccess {
-                scope,
-                single,
-                key_id: None,
-                key_prefix: None,
-                groups: vec![],
-            }),
-        }
-    }
-    #[test]
-    fn headers_follow_method_scope_and_credential_scope() {
-        let deployment = connection(AccessScope::Deployment, false);
-        for method in [
-            api::METHOD_INITIALIZE,
-            api::METHOD_DEPLOYMENT_UNIVERSES_LIST,
-        ] {
-            let headers = deployment.headers(method).unwrap();
-            assert!(headers.contains_key("authorization"));
-            assert!(!headers.contains_key("x-lightspeed-universe"));
-        }
-        assert!(
-            deployment
-                .headers(api::METHOD_SESSION_LIST)
-                .unwrap()
-                .contains_key("x-lightspeed-universe")
-        );
-        for single in [true, false] {
-            let bound = connection(
-                AccessScope::Universe {
-                    universe_id: Uuid::nil(),
-                },
-                single,
-            );
-            let headers = bound.headers(api::METHOD_SESSION_LIST).unwrap();
-            assert!(!headers.contains_key("x-lightspeed-universe"));
-            assert_eq!(headers.contains_key("authorization"), !single);
-        }
-        let mut missing = deployment;
-        missing.universe = None;
-        assert!(missing.headers(api::METHOD_SESSION_LIST).is_err());
-        assert!(
-            missing
-                .headers(api::METHOD_DEPLOYMENT_UNIVERSES_LIST)
-                .is_ok()
-        );
-    }
+
     #[test]
     fn saved_files_are_private_and_metadata_has_no_secret() {
         let dir = tempfile::tempdir().unwrap();
@@ -884,24 +784,37 @@ mod tests {
             assert!(endpoint(url).is_ok(), "{url}");
         }
     }
-    #[tokio::test(flavor = "current_thread")]
-    async fn bound_connections_cannot_switch_universes() {
-        let c = connection(
-            AccessScope::Universe {
-                universe_id: Uuid::nil(),
-            },
-            false,
-        );
-        assert_eq!(
-            resolve_universe(&c, &Uuid::nil().to_string())
-                .await
-                .unwrap(),
-            Uuid::nil().to_string()
-        );
-        assert!(
-            resolve_universe(&c, &Uuid::new_v4().to_string())
-                .await
-                .is_err()
-        );
+
+    #[test]
+    fn direct_tokens_select_universes_only_for_universe_methods() {
+        let mut connection = ResolvedConnection {
+            name: None,
+            endpoint: "http://localhost/rpc".into(),
+            secret: Some("lsr_fixture".into()),
+            universe: Some("team".into()),
+            caller: Some(CallerAccess {
+                single: false,
+                token_name: Some("operator".into()),
+            }),
+        };
+        let headers = connection.headers("session/list").unwrap();
+        assert_eq!(headers["x-lightspeed-universe"], "team");
+        assert_eq!(headers["authorization"], "Bearer lsr_fixture");
+        for method in ["initialize", "deployment/universes/list"] {
+            assert!(
+                !connection
+                    .headers(method)
+                    .unwrap()
+                    .contains_key("x-lightspeed-universe")
+            );
+        }
+        connection.universe = None;
+        assert!(connection.headers("session/list").is_err());
+        connection.secret = None;
+        connection.caller = Some(CallerAccess {
+            single: true,
+            token_name: None,
+        });
+        assert!(connection.headers("session/list").unwrap().is_empty());
     }
 }

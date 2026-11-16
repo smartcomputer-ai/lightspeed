@@ -12,14 +12,6 @@ Session emission, workflow-tool, and code tool invocation protocol types.
 """
 
 
-AccessScopeKind: TypeAlias = Literal['deployment', 'universe']
-"""
-The kind of an [`AccessScope`]: the deployment, or a universe. Where a
-record already belongs to one universe this is enough to tell a universe
-key of that universe from a deployment key.
-"""
-
-
 class AttachmentSource(TypedDict):
     """
     Descriptive origin only; never an authority for resolving attachment bytes.
@@ -32,25 +24,20 @@ class AttachmentSource(TypedDict):
 
 class AttributionActor(TypedDict):
     """
-    The actor a key asserted for its request.
+    The actor the caller named for its request.
     """
 
     id: str
     kind: Literal['actor']
 
 
-class AttributionKey(TypedDict):
+class AttributionToken(TypedDict):
     """
-    A key acting for itself, named by its key id. A key id is unique
-    among the keys of one scope, so `scopeKind` says whether it names a
-    deployment key or a key of the universe the record belongs to. The
-    id survives a change of secret; the secret's display prefix does not
-    and is deliberately not recorded.
+    The configured runtime token's name, never its secret.
     """
 
-    keyId: str
-    kind: Literal['key']
-    scopeKind: AccessScopeKind
+    kind: Literal['token']
+    name: str
 
 
 class AttributionLocal(TypedDict):
@@ -73,11 +60,11 @@ class AttributionInternal(TypedDict):
 
 
 Attribution: TypeAlias = (
-    AttributionActor | AttributionKey | AttributionLocal | AttributionInternal
+    AttributionActor | AttributionToken | AttributionLocal | AttributionInternal
 )
 """
-Who created a resource or authored bytes. An actor is whatever a key
-allowed to assert one said; core compares it and never resolves it.
+Who created a resource or authored bytes. Actors are opaque caller claims;
+the runtime records them without resolving caller permissions.
 """
 
 

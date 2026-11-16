@@ -96,7 +96,6 @@ auth_string_id!(OAuthClientId);
 auth_string_id!(AuthFlowId);
 auth_string_id!(AuthProviderId);
 
-mod api_keys;
 mod broker;
 mod flow;
 mod github;
@@ -110,12 +109,6 @@ mod providers;
 mod safe_http;
 mod secrets;
 
-pub use api_keys::{
-    API_KEY_DISPLAY_PREFIX_LEN, API_KEY_ID_MAX_LEN, API_KEY_LAST_USED_RESOLUTION_MS,
-    API_KEY_SECRET_PREFIX, ApiKeyError, ApiKeyRecord, ApiKeySpec, MintedApiKey,
-    allocate_api_key_id, api_key_display_prefix, api_key_hash, import_api_key,
-    is_allocated_api_key_id, mint_api_key, validate_api_key_id,
-};
 pub use broker::{
     AuthBrokerError, AuthTokenBroker, DEFAULT_REFRESH_EXPIRY_MARGIN_MS, GrantTokenSource,
     OAuthRefreshRuntime, RegistryTokenBroker, TokenAudience, audience_covers,

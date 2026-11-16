@@ -44,7 +44,7 @@ person's access to the web app.
 
 Use [People and roles](access-and-security/people-and-roles.md) to manage
 members, [Company sign-in (SSO)](access-and-security/single-sign-on.md) to connect
-your identity provider, [API keys and service access](access-and-security/api-keys-and-service-access.md)
+your identity provider, [Runtime tokens and service access](access-and-security/api-keys-and-service-access.md)
 to connect programs, and [Tenant isolation and data protection](access-and-security/tenant-isolation-and-data-protection.md)
 to assess a deployment.
 
@@ -64,8 +64,9 @@ For a specific setting or failure, use the
 
 [API and TypeScript](integrating-and-extending/api-and-typescript.md) walks
 through submitting a task and retrieving its result.
-[Configurator MCP](integrating-and-extending/configurator-mcp.md) connects an
-MCP client to resource management. To add capabilities, start with
+[Configurator MCP](integrating-and-extending/configurator-mcp.md) describes the
+management tool package; agent setup is disabled until narrowed Platform tokens
+are available. To add capabilities, start with
 [Custom tools and model providers](integrating-and-extending/custom-tools-and-model-providers.md)
 and follow the guide for your extension.
 
