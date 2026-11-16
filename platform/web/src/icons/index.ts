@@ -43,7 +43,7 @@ export const {
   EmitToSelfIcon, MessageToolIcon, OtherToolIcon, ToolGroupIcon, BotEventIcon, ScheduleIcon, WebhookIcon,
   ChatTriggerIcon, InboxIcon, PollIcon, CommandIcon, ActivityIcon, AddIcon, AttachIcon, EditIcon, EditFilesIcon, SaveIcon,
   DeleteIcon, ArchiveIcon, SessionCloseIcon, CopyIcon, CopyLinkIcon, DownloadIcon, UploadIcon, UploadFolderIcon, NewFileIcon,
-  NewFolderIcon, ShareIcon, CompactIcon, ConfigureIcon, FilterIcon, SelectModeIcon, SourceViewIcon, PreviewIcon, SendIcon, SubmitIcon, QueueIcon,
+  NewFolderIcon, ShareIcon, CompactIcon, ConfigureIcon, FilterIcon, SelectModeIcon, SourceViewIcon, PreviewIcon, FormViewIcon, JsonViewIcon, SendIcon, SubmitIcon, QueueIcon,
   SteerIcon, StopIcon, PauseIcon, ResumeIcon, RetryIcon, RotateSecretIcon, ResetIcon, ReplayIcon, RefreshIcon,
   GenerateIcon, DictateIcon, DictationUnavailableIcon, ApproveIcon, RejectIcon, RemoveIcon, CancelIcon, DismissIcon,
   MoreIcon, SearchIcon, BackIcon, GoToIcon, NewTabIcon, ExpandIcon, ExpandToolsIcon, CollapseToolsIcon, CollapseIcon, DropdownCaretIcon, ShowMoreIcon,

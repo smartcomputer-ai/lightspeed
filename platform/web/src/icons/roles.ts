@@ -123,6 +123,10 @@ export interface IconSet {
   SourceViewIcon: IconComponent;
   /** Show a document rendered, as it will look, next to Source. */
   PreviewIcon: IconComponent;
+  /** Edit a record as a form, next to JSON. */
+  FormViewIcon: IconComponent;
+  /** Edit a record as its JSON, next to Form. */
+  JsonViewIcon: IconComponent;
   SendIcon: IconComponent;
   SubmitIcon: IconComponent;
   QueueIcon: IconComponent;

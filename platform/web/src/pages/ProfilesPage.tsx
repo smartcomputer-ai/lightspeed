@@ -3,7 +3,7 @@ import { useDocumentTitle } from "@/lib/document-title";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify } from "@lightspeed-ai/platform-shared";
-import { AddIcon, DeleteIcon, ProfileIcon } from "@/icons";
+import { AddIcon, DeleteIcon, FormViewIcon, JsonViewIcon, ProfileIcon } from "@/icons";
 import {
   api,
   type ProfileDocument,
@@ -55,6 +55,7 @@ import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
 import { DetailHeader } from "@/components/detail-header";
+import { MetaToolbar } from "@/components/meta-toolbar";
 import { ListPane, ListPaneBody, ListPaneHeader, ListPaneState, ListRow, ListRowLine } from "@/components/list-pane";
 
 /// Structured profile editor. Pane = profile list; detail = sectioned form
@@ -331,39 +332,69 @@ function ProfileEditor({
       <DetailHeader
         back={{ to: `/u/${handle}/profiles`, label: "Back to profiles" }}
         title={(draft.displayName as string) || profileId}
-        details={<>
-          <code className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 font-mono">{profileId}</code>
-          <span>r{(draft.revision as number) ?? "?"}</span>
-        </>}
-        actions={[
+        // Its id and revision as meta tags beside the title, as the other
+        // pages show theirs.
+        tags={
+          <MetaToolbar
+            items={[
+              {
+                key: "id",
+                label: `Profile id ${profileId}`,
+                value: <span className="font-mono">{profileId}</span>,
+                text: <span className="font-mono">{profileId}</span>,
+                tooltip: "Profile id: what bots and sessions refer to it by",
+                priority: 9,
+              },
+              {
+                key: "revision",
+                label: `Revision ${(draft.revision as number) ?? "unknown"}`,
+                value: `r${(draft.revision as number) ?? "?"}`,
+                text: `r${(draft.revision as number) ?? "?"}`,
+                tooltip: "Revision: goes up with every saved change",
+                priority: 8,
+              },
+            ]}
+            place="header"
+            full
+            label="Profile details"
+            className="grow"
+          />
+        }
+        subtools={[
           {
             kind: "choice",
             key: "view",
             label: "Edit as",
+            appearance: "toggle",
             value: tab,
-            options: [{ value: "form", label: "Form" }, { value: "json", label: "JSON" }],
+            options: [
+              { value: "form", label: "Form", icon: <FormViewIcon data-icon="inline-start" /> },
+              { value: "json", label: "JSON", icon: <JsonViewIcon data-icon="inline-start" /> },
+            ],
             onChange: (value) => switchTab(value as "form" | "json"),
           },
-          ...(manage
-            ? [
-                {
-                  key: "save",
-                  label: "Save",
-                  text: save.isPending ? "Saving…" : dirty ? "Save" : "Saved",
-                  primary: true,
-                  disabled: !dirty || save.isPending,
-                  onSelect: submit,
-                },
-                {
-                  key: "delete",
-                  label: "Delete profile",
-                  icon: <DeleteIcon />,
-                  destructive: true,
-                  onSelect: () => setDeleteOpen(true),
-                },
-              ]
-            : []),
         ]}
+        tools={manage
+          ? [
+              {
+                kind: "save",
+                key: "save",
+                label: "Save",
+                dirty,
+                saving: save.isPending,
+                // A failed save, while its changes are still unsaved.
+                error: save.isError && dirty,
+                onSave: submit,
+              },
+              {
+                key: "delete",
+                label: "Delete profile",
+                icon: <DeleteIcon />,
+                destructive: true,
+                onSelect: () => setDeleteOpen(true),
+              },
+            ]
+          : []}
       />
       <AlertDialog open={deleteOpen && manage} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

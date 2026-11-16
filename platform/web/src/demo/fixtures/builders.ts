@@ -382,13 +382,17 @@ const MEDIA_TYPES: Record<string, string> = {
   md: "text/markdown",
   json: "application/json",
   ts: "text/typescript",
+  png: "image/png",
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
 export interface WorkspaceInit {
   id: string;
   displayName: string;
-  /// Path → text; nested directories come from the slashes.
-  files: Record<string, string>;
+  /// Path → text or bytes; nested directories come from the slashes.
+  files: Record<string, string | Uint8Array>;
   revision: number;
   createdAtMs: number;
   updatedAtMs: number;
@@ -400,8 +404,9 @@ export function workspace(store: DemoStore, universe: UniverseState, init: Works
   const root: Record<string, VfsTreeEntry> = {};
   let files = 0;
   let bytes = 0;
-  for (const [path, text] of Object.entries(init.files)) {
-    const size = new TextEncoder().encode(text).length;
+  for (const [path, content] of Object.entries(init.files)) {
+    const data = typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const size = data.length;
     const parts = path.split("/");
     const name = parts.pop() ?? path;
     let dir = root;
@@ -417,7 +422,7 @@ export function workspace(store: DemoStore, universe: UniverseState, init: Works
     }
     dir[name] = {
       kind: "file",
-      blob_ref: store.putText(text),
+      blob_ref: store.putBytes(data),
       size_bytes: size,
       media_type: MEDIA_TYPES[name.split(".").pop() ?? ""] ?? "text/plain",
       executable: false,
