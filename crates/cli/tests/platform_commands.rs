@@ -109,7 +109,7 @@ impl Platform {
                         | "/api/v1/universes/00000000-0000-0000-0000-000000000002",
                     ) => (
                         200,
-                        json!({"universe":{"universeId":"00000000-0000-0000-0000-000000000002","handle":"existing-work","configuration":{"protected":true}}}),
+                        json!({"universe":{"universeId":"00000000-0000-0000-0000-000000000002","handle":"existing-work","protected":false}}),
                     ),
                     (
                         "GET",
@@ -125,6 +125,10 @@ impl Platform {
                         200,
                         json!({"binding":{"providerId":"incus","enabled":body["enabled"]}}),
                     ),
+                    (
+                        "PUT",
+                        "/api/v1/universes/00000000-0000-0000-0000-000000000002/configuration",
+                    ) => (200, json!({"universe":body})),
                     ("POST", "/api/v1/platform/credentials") => (
                         200,
                         json!({"credential":{"id":"key-id"},"secret":"lsk_supersecret"}),
@@ -448,4 +452,53 @@ fn platform_admin_can_reconcile_binding_on_the_resolved_universe_uuid() {
         "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus"
     );
     assert_eq!(writes[0].2, json!({"enabled":false}));
+}
+
+#[test]
+fn creator_configuration_is_applied_by_creation_without_a_second_lifecycle_write() {
+    let platform = Platform::start();
+    std::fs::write(
+        platform.directory.path().join("universe.json"),
+        json!({"schemaVersion":1,"kind":"universe","handle":"new-work","displayName":"New work","protected":false,"metadata":{"purpose":"automation"}}).to_string(),
+    ).unwrap();
+    platform.success(&[
+        "--account",
+        "account-a",
+        "config",
+        "apply",
+        "-f",
+        "universe.json",
+    ]);
+    let requests = platform.requests.lock().unwrap();
+    let writes: Vec<_> = requests
+        .iter()
+        .filter(|(method, _, _)| method != "GET")
+        .collect();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, "POST");
+    assert_eq!(writes[0].1, "/api/v1/platform/accounts/account-a/universes");
+    assert_eq!(writes[0].2["name"], "New work");
+    assert_eq!(writes[0].2["protected"], false);
+    assert_eq!(writes[0].2["metadata"], json!({"purpose":"automation"}));
+}
+
+#[test]
+fn owner_configuration_updates_do_not_resubmit_unchanged_protection() {
+    let platform = Platform::start();
+    std::fs::write(
+        platform.directory.path().join("universe.json"),
+        json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","protected":false,"metadata":{"purpose":"automation"}}).to_string(),
+    ).unwrap();
+    platform.success(&["config", "apply", "-f", "universe.json"]);
+    let requests = platform.requests.lock().unwrap();
+    let writes: Vec<_> = requests
+        .iter()
+        .filter(|(method, _, _)| method != "GET")
+        .collect();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(
+        writes[0].1,
+        "/api/v1/universes/00000000-0000-0000-0000-000000000002/configuration"
+    );
+    assert_eq!(writes[0].2, json!({"metadata":{"purpose":"automation"}}));
 }

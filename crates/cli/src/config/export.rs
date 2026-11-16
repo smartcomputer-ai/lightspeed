@@ -111,14 +111,12 @@ pub(crate) async fn universe(base: &ResolvedConnection, universe: &str) -> Resul
         kind: Some(Kind::Universe),
         handle: Some(handle),
         configuration: api::UniverseConfiguration {
-            display_name: read["universe"]["configuration"]["displayName"]
-                .as_str()
-                .map(str::to_owned),
-            metadata: read["universe"]["configuration"]
+            display_name: read["universe"]["displayName"].as_str().map(str::to_owned),
+            metadata: read["universe"]
                 .get("metadata")
                 .map(|v| serde_json::from_value(v.clone()))
                 .transpose()?,
-            protected: read["universe"]["configuration"]
+            protected: read["universe"]
                 .get("protected")
                 .map(|v| serde_json::from_value(v.clone()))
                 .transpose()?,

@@ -217,3 +217,12 @@ Decided, 2026-11-16:
   Documented explicit initial Owners for Platform Admin provisioning and
   `--universe-id` recovery without putting account identity into runtime
   documents. Tests remain on hold.
+
+- Declarative reconciliation now reads the flattened universe configuration
+  fields from the HTTP response and exports them correctly. It pins resolved
+  universes to their UUIDs and updates only changed configuration fields.
+  Platform creation no longer repeats settings already applied atomically,
+  avoiding an unnecessary unprotection check for Creator-owned universes.
+  CLI all-target compilation, TypeScript and Python type checks, SDK build,
+  and documentation build pass. Regression coverage was updated; tests and
+  Clippy remain on hold.

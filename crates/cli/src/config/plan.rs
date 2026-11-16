@@ -331,7 +331,7 @@ pub(crate) async fn plan_with_owner(
                     "deployment/universes/read",
                     json!({"universe": target.universe_id}),
                 )
-                .await?["universe"]["configuration"]
+                .await?["universe"]
                 .clone()
         } else {
             // Creation already applies metadata and protection. Only the

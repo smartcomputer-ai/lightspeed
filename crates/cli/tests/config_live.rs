@@ -524,7 +524,7 @@ async fn document_protection_defaults_only_apply_to_new_universes() {
         let value = live
             .call("deployment/universes/read", json!({"universe":name}))
             .await;
-        assert_eq!(value["universe"]["configuration"]["protected"], index == 0);
+        assert_eq!(value["universe"]["protected"], index == 0);
         assert_eq!(
             value["universe"]["metadata"],
             json!({"purpose":"config-test"})
