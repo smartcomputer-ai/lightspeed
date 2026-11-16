@@ -29,7 +29,8 @@ import {
   type UploadDirectoryHandle,
   type UploadEntry,
 } from "@/lib/workspace-transfers";
-import { Button } from "@/components/ui/button";
+import { Button, useInButtonGroup } from "@/components/ui/button";
+import { WithTooltip } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -1113,6 +1114,13 @@ export function useWorkspaceEntryDrag() {
   };
 }
 
+/// Downloads an entry of the open workspace (a folder as a ZIP); null
+/// outside a workspace.
+export function useWorkspaceDownload() {
+  const transfers = useContext(Transfers);
+  return transfers ? { download: transfers.download, downloading: transfers.downloading } : null;
+}
+
 export function useWorkspaceDropTarget() {
   return useContext(Transfers)?.dragTarget ?? null;
 }
@@ -1153,6 +1161,8 @@ export function WorkspaceActionsMenu({
   fileCount?: number;
 }) {
   const transfers = useContext(Transfers);
+  // Ghost and muted on its own; the group's look in a header's tool group.
+  const grouped = useInButtonGroup();
   if (!transfers) return null;
   const label =
     kind === "workspace"
@@ -1160,18 +1170,18 @@ export function WorkspaceActionsMenu({
       : `${kind === "folder" ? "Folder" : "File"} actions: ${path}`;
   return (
     <DropdownMenu>
+      <WithTooltip content={label}>
       <DropdownMenuTrigger
         render={
           <Button
-            variant="ghost"
+            variant={grouped ? undefined : "ghost"}
             size="icon-sm"
             aria-label={label}
             data-workspace-actions
             tabIndex={tabIndex}
-            title={label}
             // A file's or folder's sits in its list row's actions, which place
             // and show it.
-            className="shrink-0 text-muted-foreground"
+            className={cn("shrink-0", !grouped && "text-muted-foreground")}
           />
         }
       >
@@ -1192,7 +1202,8 @@ export function WorkspaceActionsMenu({
           <MoreIcon />
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      </WithTooltip>
+      <DropdownMenuContent notch align="end" className="w-56">
         <WorkspaceActionsItems path={path} kind={kind} disabled={disabled} fileCount={fileCount} />
       </DropdownMenuContent>
     </DropdownMenu>

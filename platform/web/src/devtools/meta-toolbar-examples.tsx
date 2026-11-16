@@ -244,7 +244,7 @@ export function MetaSessionPageExample() {
             <DetailHeader
               title="Fix the flaky deploy test"
               tags={<MetaToolbar items={items} place="header" full label="Session details" className="grow" />}
-              actions={[{ key: "share", label: "Share", icon: <SharedIcon />, onSelect: () => act("Share") }]}
+              tools={[{ key: "share", label: "Share", icon: <SharedIcon />, onSelect: () => act("Share") }]}
             />
             <div className="border-b bg-muted/30 px-4 py-1.5">
               <MetaToolbar items={items} place="strip" label="Session resources" />

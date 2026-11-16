@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { BackIcon, MoreIcon } from "@/icons";
 import { PaneBar } from "@/components/list-pane";
-import { Button } from "@/components/ui/button";
+import { Button, useInButtonGroup } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { SaveButton } from "@/components/ui/save-button";
 import {
@@ -17,33 +17,31 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { WithTooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-/// An action of a detail header. Actions are data, not elements, so the
-/// header can show each one as a button where there is room and as an item
-/// of one ⋯ menu where there is not.
-export type DetailHeaderAction =
+/// A tool of a detail header's top right. Tools are data, not elements, so
+/// the header can lay them out the same way on every page: a button where
+/// there is room, an item of a ⋯ menu where there is not.
+export type HeaderTool =
   | {
+      /** An icon button. */
       kind?: "button";
       key: string;
-      /** The button's accessible name and the menu item's text. */
+      /** The button's accessible name and tooltip, and the menu item's text. */
       label: string;
-      icon?: ReactNode;
+      icon: ReactNode;
       onSelect?: () => void;
       /** Opens this app path, or, with `external`, this URL in a new tab. */
       href?: string;
       external?: boolean;
       disabled?: boolean;
       destructive?: boolean;
-      /** A filled button with text (Save); others are icon buttons. */
-      primary?: boolean;
-      /** Text of a primary button and its menu item when not the label, e.g. "Saving…". */
-      text?: string;
       hint?: string;
       keyShortcuts?: string;
     }
   | {
-      /** One of a few views (Form/JSON, Source/Preview): tabs or a toggle group, or radio items. */
+      /** One of a few views (Form/JSON, Source/Preview): tabs or a toggle group, or radio items. A subtool only. */
       kind: "choice";
       key: string;
       label: string;
@@ -69,16 +67,26 @@ export type DetailHeaderAction =
       keyShortcuts?: string;
     }
   | {
-      /** Shown as is at every width, e.g. a component's own ⋯ menu. */
+      /** Shown as is, e.g. a component's own ⋯ menu. Among the main tools it
+          is one button of their group (a menu's trigger takes the group's look). */
       kind: "custom";
       key: string;
       node: ReactNode;
     };
 
+/// A main tool: anything but a choice, which is a group of its own.
+export type MainHeaderTool = Exclude<HeaderTool, { kind: "choice" }>;
+
 /// The header of the detail beside a list. Left: what is shown (title,
-/// leading icon, tags); right: details and actions. It is a PaneBar, so it
-/// has the list header's height. Where the header is narrow, details hide
-/// and every action but custom ones moves into a ⋯ menu.
+/// leading icon, tags); right: details, then the tools. It is a PaneBar, so
+/// it has the list header's height.
+///
+/// The tools are laid out the same way on every page. The main tools (save,
+/// download, the page's ⋯ menu) sit at the far right, joined in one button
+/// group, and show at every width. Subtools (a Source/Preview toggle, a
+/// view's own buttons) sit to their left; where the header is narrow, the
+/// details hide and the subtools move into a ⋯ menu of their own, except
+/// custom ones.
 export function DetailHeader({
   back,
   leading,
@@ -87,7 +95,8 @@ export function DetailHeader({
   titleClassName,
   tags,
   details,
-  actions = [],
+  tools = [],
+  subtools = [],
 }: {
   /** Where the back arrow leads on small screens, where the list is hidden. */
   back?: { to: string; label: string };
@@ -99,9 +108,12 @@ export function DetailHeader({
   tags?: ReactNode;
   /** Secondary facts on the right (an id, a revision, a size); hidden where narrow. */
   details?: ReactNode;
-  actions?: DetailHeaderAction[];
+  /** The main tools, in order, joined at the far right. */
+  tools?: MainHeaderTool[];
+  /** Tools left of the main ones, in order; folded into a menu where narrow. */
+  subtools?: HeaderTool[];
 }) {
-  const collapsible = actions.filter((action) => action.kind !== "custom");
+  const collapsible = subtools.filter((tool): tool is CollapsibleTool => tool.kind !== "custom");
   return (
     <PaneBar as="header" className="@container/detail-header px-2 md:px-4">
       {back && (
@@ -119,68 +131,79 @@ export function DetailHeader({
           {details}
         </div>
       )}
-      {actions.length > 0 && (
-        <div className="flex shrink-0 items-center gap-1">
-          {actions.map((action) =>
-            action.kind === "custom" ? (
-              <Fragment key={action.key}>{action.node}</Fragment>
+      {subtools.length > 0 && (
+        <div data-header-subtools className="flex shrink-0 items-center gap-1">
+          {subtools.map((tool) =>
+            tool.kind === "custom" ? (
+              <Fragment key={tool.key}>{tool.node}</Fragment>
             ) : (
-              <span key={action.key} className="hidden @xl/detail-header:contents">
-                <InlineAction action={action} />
+              <span key={tool.key} className="hidden @xl/detail-header:contents">
+                <InlineTool tool={tool} />
               </span>
             ),
           )}
           {collapsible.length > 0 && (
             <span className="contents @xl/detail-header:hidden">
-              <CollapsedActions actions={collapsible} />
+              <CollapsedTools tools={collapsible} />
             </span>
           )}
         </div>
+      )}
+      {tools.length > 0 && (
+        <ButtonGroup aria-label="Tools" data-header-tools className="shrink-0">
+          {tools.map((tool) =>
+            tool.kind === "custom" ? <Fragment key={tool.key}>{tool.node}</Fragment> : <InlineTool key={tool.key} tool={tool} />,
+          )}
+        </ButtonGroup>
       )}
     </PaneBar>
   );
 }
 
-type CollapsibleAction = Exclude<DetailHeaderAction, { kind: "custom" }>;
+type CollapsibleTool = Exclude<HeaderTool, { kind: "custom" }>;
 
 /// What a save action says now, and whether it can save.
-function saveStatus(action: Extract<DetailHeaderAction, { kind: "save" }>) {
+function saveStatus(action: Extract<HeaderTool, { kind: "save" }>) {
   const text = action.saving ? "Saving…" : action.error ? "Save failed" : action.dirty ? action.label : "Saved";
   const ready = !action.saving && (action.dirty || !!action.error) && !action.disabled;
   return { text, ready };
 }
 
-function InlineAction({ action }: { action: CollapsibleAction }) {
+/// A tool as a button, or a group of buttons for a choice. Among the main
+/// tools, its buttons take their group's secondary look.
+function InlineTool({ tool: action }: { tool: CollapsibleTool }) {
+  const grouped = useInButtonGroup();
   if (action.kind === "save") {
     return (
-      <SaveButton
-        size="sm"
-        dirty={action.dirty}
-        saving={action.saving}
-        error={action.error}
-        disabled={action.disabled && action.dirty && !action.saving}
-        onClick={action.onSave}
-        title={action.hint}
-        aria-keyshortcuts={action.keyShortcuts}
-      >
-        {action.label}
-      </SaveButton>
+      <WithTooltip content={action.hint}>
+        <SaveButton
+          size="sm"
+          dirty={action.dirty}
+          saving={action.saving}
+          error={action.error}
+          disabled={action.disabled && action.dirty && !action.saving}
+          onClick={action.onSave}
+          aria-keyshortcuts={action.keyShortcuts}
+        >
+          {action.label}
+        </SaveButton>
+      </WithTooltip>
     );
   }
   if (action.kind === "choice" && action.appearance === "toggle") {
     return (
       <ButtonGroup aria-label={action.label}>
         {action.options.map((option) => (
-          <Button
-            key={option.value}
-            size="sm"
-            aria-pressed={action.value === option.value}
-            title={option.hint}
-            onClick={() => action.onChange(option.value)}
-          >
-            {option.icon}
-            {option.label}
-          </Button>
+          <WithTooltip key={option.value} content={option.hint}>
+            <Button
+              size="sm"
+              aria-pressed={action.value === option.value}
+              onClick={() => action.onChange(option.value)}
+            >
+              {option.icon}
+              {option.label}
+            </Button>
+          </WithTooltip>
         ))}
       </ButtonGroup>
     );
@@ -204,35 +227,37 @@ function InlineAction({ action }: { action: CollapsibleAction }) {
       : <NavLink to={action.href} />
     : undefined;
   return (
-    <Button
-      variant={action.primary ? "default" : "ghost"}
-      size={action.primary ? "sm" : "icon-sm"}
-      className={cn(action.destructive && !action.primary && "text-destructive")}
-      disabled={action.disabled}
-      onClick={action.onSelect}
-      nativeButton={link ? false : undefined}
-      render={link}
-      aria-label={action.primary ? undefined : action.label}
-      aria-keyshortcuts={action.keyShortcuts}
-      title={action.hint ?? (action.primary ? undefined : action.label)}
-    >
-      {action.primary ? (action.text ?? action.label) : action.icon}
-    </Button>
+    <WithTooltip content={action.hint ?? action.label}>
+      <Button
+        // Ghost on its own; in the main tools, the group's look, or destructive.
+        variant={grouped ? (action.destructive ? "destructive" : undefined) : "ghost"}
+        size="icon-sm"
+        className={cn(action.destructive && !grouped && "text-destructive")}
+        disabled={action.disabled}
+        onClick={action.onSelect}
+        nativeButton={link ? false : undefined}
+        render={link}
+        aria-label={action.label}
+        aria-keyshortcuts={action.keyShortcuts}
+      >
+        {action.icon}
+      </Button>
+    </WithTooltip>
   );
 }
 
-function CollapsedActions({ actions }: { actions: CollapsibleAction[] }) {
+function CollapsedTools({ tools: actions }: { tools: CollapsibleTool[] }) {
   const navigate = useNavigate();
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="More actions" title="More actions" />
-        }
-      >
-        <MoreIcon />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-56">
+      <WithTooltip content="More tools">
+        <DropdownMenuTrigger
+          render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="More tools" />}
+        >
+          <MoreIcon />
+        </DropdownMenuTrigger>
+      </WithTooltip>
+      <DropdownMenuContent notch align="end" className="min-w-56">
         {actions.map((action, index) =>
           action.kind === "choice" ? (
             <Fragment key={action.key}>
@@ -270,7 +295,7 @@ function CollapsedActions({ actions }: { actions: CollapsibleAction[] }) {
               }}
             >
               {action.icon}
-              {action.text ?? action.label}
+              {action.label}
             </DropdownMenuItem>
           ),
         )}

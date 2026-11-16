@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
 
 import { cn } from "@/lib/utils"
@@ -65,4 +66,38 @@ function TooltipContent({
   )
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }
+/// The app's tooltip on one element, instead of the browser's `title`:
+/// `children` (a button, or a menu's trigger) is rendered as the tooltip's
+/// trigger. Without `content`, the element alone. While the element has its
+/// popup open (a ⋯ opening its menu: aria-expanded), the tooltip is off, so
+/// it does not cover the menu.
+function WithTooltip({
+  content,
+  side,
+  children,
+}: {
+  content?: ReactNode
+  side?: TooltipPrimitive.Positioner.Props["side"]
+  children: ReactElement
+}) {
+  const trigger = useRef<HTMLButtonElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => {
+    const element = trigger.current
+    if (!element) return
+    const read = () => setExpanded(element.getAttribute("aria-expanded") === "true")
+    read()
+    const observer = new MutationObserver(read)
+    observer.observe(element, { attributes: true, attributeFilter: ["aria-expanded"] })
+    return () => observer.disconnect()
+  }, [content])
+  if (!content) return children
+  return (
+    <Tooltip disabled={expanded}>
+      <TooltipTrigger ref={trigger} render={children} />
+      <TooltipContent side={side}>{content}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, WithTooltip }

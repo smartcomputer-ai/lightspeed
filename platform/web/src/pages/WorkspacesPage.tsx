@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import { AddIcon, FileIcon, PreviewIcon, SourceViewIcon, WorkspaceIcon } from "@/icons";
+import { AddIcon, DownloadIcon, FileIcon, PreviewIcon, SourceViewIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -48,7 +48,7 @@ import { ListPane, ListPaneHeader, ListPaneToolbar } from "@/components/list-pan
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
 import { MarkdownContent } from "@/components/session/markdown-content";
-import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
+import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea, useWorkspaceDownload } from "@/components/workspace-transfers";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
 /// file tree of the head snapshot; detail = file editor (text), preview
@@ -342,6 +342,7 @@ function FileDetail({
   const watchConnected = useWatchConnected(universeId);
   const permissions = useActionPermissions(universeId);
   const canEditFiles = permissions.can("useResource");
+  const downloads = useWorkspaceDownload();
   const tree = useQuery({
     queryKey: ["workspace-tree", universeId, workspaceId],
     refetchInterval: watchConnected ? 60_000 : 10_000,
@@ -566,7 +567,7 @@ function FileDetail({
             className="grow"
           />
         )}
-        actions={[
+        subtools={[
           ...(textEditor
             ? [{
                 kind: "choice" as const,
@@ -581,6 +582,8 @@ function FileDetail({
                 onChange: (value: string) => onPreviewChange(value === "preview"),
               }]
             : []),
+        ]}
+        tools={[
           ...(canEditFiles && textEditor
             ? [{
                 kind: "save" as const,
@@ -594,6 +597,15 @@ function FileDetail({
                 keyShortcuts: "Meta+S Control+S",
                 disabled: !canSave,
                 onSave: saveCurrent,
+              }]
+            : []),
+          ...(downloads
+            ? [{
+                key: "download",
+                label: "Download",
+                icon: <DownloadIcon />,
+                disabled: downloads.downloading,
+                onSelect: () => downloads.download(filePath, false),
               }]
             : []),
           // The file's actions (rename, download, delete, …), as its row's

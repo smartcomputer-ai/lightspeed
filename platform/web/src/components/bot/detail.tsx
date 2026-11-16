@@ -1,7 +1,7 @@
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GoToIcon, ResetIcon } from "@/icons";
+import { ConfigureIcon, GoToIcon, LoadingIcon, PauseIcon, ResetIcon, ResumeIcon } from "@/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { DetailHeader } from "@/components/detail-header";
 import { MetaToolbar } from "@/components/meta-toolbar";
@@ -157,19 +157,33 @@ export function BotDetail({
             className="grow"
           />
         }
-        actions={[{
-          kind: "custom",
-          key: "bot",
-          node: (
-            <BotActionsMenu
-              botId={bot.botId}
-              onSettings={() => setSettingsOpen(true)}
-              pause={manage && bot.closedAtMs == null
-                ? { enabled, pending: togglePause.isPending, onToggle: () => togglePause.mutate() }
-                : undefined}
-            />
-          ),
-        }]}
+        tools={[
+          ...(manage && bot.closedAtMs == null
+            ? [{
+                key: "pause",
+                label: enabled ? "Pause bot" : "Resume bot",
+                hint: enabled
+                  ? "Pause bot: schedules stop and events wait; nothing is lost."
+                  : "Resume bot: schedules and delivery resume.",
+                icon: togglePause.isPending
+                  ? <LoadingIcon className="motion-safe:animate-spin" />
+                  : enabled ? <PauseIcon /> : <ResumeIcon />,
+                disabled: togglePause.isPending,
+                onSelect: () => togglePause.mutate(),
+              }]
+            : []),
+          { key: "settings", label: "Bot settings", icon: <ConfigureIcon />, onSelect: () => setSettingsOpen(true) },
+        ]}
+      />
+      {/* The same actions as the list row's right-click menu, which has no
+          button here: the header shows them as tools. */}
+      <BotActionsMenu
+        trigger={false}
+        botId={bot.botId}
+        onSettings={() => setSettingsOpen(true)}
+        pause={manage && bot.closedAtMs == null
+          ? { enabled, pending: togglePause.isPending, onToggle: () => togglePause.mutate() }
+          : undefined}
       />
       {togglePause.error && (
         <p className="border-b bg-destructive/10 px-4 py-1.5 text-xs text-destructive">{togglePause.error.message}</p>

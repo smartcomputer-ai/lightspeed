@@ -1,7 +1,7 @@
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ConfigureIcon, ExpandIcon, GoToIcon } from "@/icons";
+import { ConfigureIcon, CopiedIcon, CopyIcon, ExpandIcon, GoToIcon } from "@/icons";
 import { Link, useNavigate } from "react-router-dom";
 import {
   api,
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { WithTooltip } from "@/components/ui/tooltip";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
@@ -262,6 +263,32 @@ function SaveRow({
   );
 }
 
+/// Copies the bot's id; the icon turns to a check for a moment once it has.
+function CopyIdButton({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <WithTooltip content={copied ? "Copied" : "Copy bot id"}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="icon"
+        className="shrink-0"
+        aria-label={copied ? "Bot id copied" : "Copy bot id"}
+        onClick={() => {
+          void navigator.clipboard.writeText(id).then(() => setCopied(true)).catch(() => undefined);
+        }}
+      >
+        {copied ? <CopiedIcon /> : <CopyIcon />}
+      </Button>
+    </WithTooltip>
+  );
+}
+
 function IdentitySection({ universeId, bot, manage }: { universeId: string; bot: BotView; manage: boolean }) {
   const [displayName, setDisplayName] = useState(bot.displayName ?? "");
   const [description, setDescription] = useState(bot.description ?? "");
@@ -293,8 +320,11 @@ function IdentitySection({ universeId, bot, manage }: { universeId: string; bot:
               />
             </Field>
             <Field>
-              <FieldLabel>Id</FieldLabel>
-              <Input value={bot.botId} readOnly className="font-mono" />
+              <FieldLabel htmlFor="bot-id">Id</FieldLabel>
+              <div className="flex gap-2">
+                <Input id="bot-id" value={bot.botId} readOnly className="font-mono" />
+                <CopyIdButton id={bot.botId} />
+              </div>
               <FieldDescription>What other bots, briefs, and URLs use. It cannot change.</FieldDescription>
             </Field>
           </div>
