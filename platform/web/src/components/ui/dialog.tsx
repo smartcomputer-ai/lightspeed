@@ -7,11 +7,22 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { DialogCloseIcon } from "@/icons";
 import { Starscape } from "@/components/starscape/starscape"
+import { DIALOG_STARSCAPE } from "@/components/starscape/prewarm"
+import { prefersReducedMotion } from "@/lib/reduced-motion"
+import { SETTINGS, useSetting } from "@/lib/settings"
 
 /// How long a dialog's warp runs: it shrinks away, the starscape rushes up
 /// to warp, and from 0.5s the backdrop and starscape fade out over 1s. By
 /// then nothing shows, and its caller closes it.
 export const DIALOG_WARP_MS = 1500
+/// With reduced motion there is no warp: the dialog and its backdrop only
+/// fade out, over this long.
+export const DIALOG_WARP_REDUCED_MS = 400
+
+/// How long a warp started now runs, for its caller to wait out.
+export function dialogWarpMs(): number {
+  return prefersReducedMotion() ? DIALOG_WARP_REDUCED_MS : DIALOG_WARP_MS
+}
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -48,10 +59,14 @@ function DialogOverlay({
 /// A dialog over a backdrop. `starscape` puts the Lightspeed starscape on
 /// the backdrop, centred on the dialog and fading out toward the edges (for
 /// moments that start something, e.g. a new session); the backdrop's tint
-/// shows through it, and in the light theme it is drawn dark. `warp` sends
+/// shows through it, and in the light theme it is drawn dark. It is the
+/// dialog starscape (see starscape/prewarm.ts): drawn ahead so it opens
+/// without a stall, and the other starscapes hold still while it runs. `warp` sends
 /// it off: the dialog shrinks away, the starscape rushes up to warp, and
-/// everything fades out while it does (see DIALOG_WARP_MS, after which the
-/// caller closes it). Turned off before then, the dialog comes back.
+/// everything fades out while it does (see dialogWarpMs, after which the
+/// caller closes it); with reduced motion it all just fades. Turned off before then, the dialog comes back.
+/// With the starscape turned off in Preferences, the backdrop has none and
+/// the warp only shrinks and fades the dialog.
 function DialogContent({
   className,
   children,
@@ -64,22 +79,25 @@ function DialogContent({
   starscape?: boolean
   warp?: boolean
 }) {
+  const [starscapeShown] = useSetting(SETTINGS.starscape)
   return (
     <DialogPortal>
       <DialogOverlay
         className={cn(
           // The fade starts by itself, mid-warp, rather than waiting for the
           // close (and whatever else happens then).
+          // With reduced motion it fades at once, as the dialog does.
           warp
-            ? "opacity-0 [transition:opacity_1000ms_ease-in-out_500ms]"
+            ? "opacity-0 [transition:opacity_1000ms_ease-in-out_500ms] motion-reduce:[transition:opacity_400ms_ease-in]"
             : "[transition:opacity_300ms_ease-out]"
         )}
       >
-        {starscape && (
+        {starscape && starscapeShown && (
           <Starscape
+            dialog
             warp={warp}
-            transparentBackground
-            fade={{ start: 160, end: 760 }}
+            transparentBackground={DIALOG_STARSCAPE.transparentBackground}
+            fade={DIALOG_STARSCAPE.fade}
             className="pointer-events-none absolute inset-0"
           />
         )}
@@ -87,14 +105,15 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-(--surface-dialog-radius) bg-(--surface-dialog) surface-filter-dialog p-6 text-sm text-popover-foreground shadow-(--surface-dialog-shadow) inset-ring-(length:--surface-dialog-border-width) inset-ring-(color:--surface-dialog-border) duration-(--dialog-transition-duration) outline-none sm:max-w-md data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // With reduced motion it opens and closes with a fade alone, no zoom.
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-(--surface-dialog-radius) bg-(--surface-dialog) surface-filter-dialog p-6 text-sm text-popover-foreground shadow-(--surface-dialog-shadow) inset-ring-(length:--surface-dialog-border-width) inset-ring-(color:--surface-dialog-border) duration-(--dialog-transition-duration) outline-none sm:max-w-md data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 motion-reduce:data-open:zoom-in-100 motion-reduce:data-closed:zoom-out-100",
           className,
           // Warping, it shrinks away into the stars (and grows back if the
           // warp is called off).
           // (Plain transitions: a duration utility would also set the open and
           // close animations'.)
           warp
-            // (With reduced motion it only fades; there is no starscape then.)
+            // (With reduced motion it only fades, over a still starscape.)
             ? "pointer-events-none scale-0 opacity-0 [transition:scale_400ms_ease-in,opacity_400ms_ease-in] motion-reduce:scale-100"
             : "[transition:scale_400ms_ease-out,opacity_400ms_ease-out]"
         )}
@@ -107,7 +126,10 @@ function DialogContent({
             render={
               <Button
                 variant="ghost"
-                className="absolute top-4 right-4"
+                // Dark, the ghost hover (muted at half) all but matches the
+                // raised surface: a wash of the foreground shows on it, as
+                // menu items' highlight does.
+                className="absolute top-4 right-4 dark:hover:bg-foreground/10"
                 size="icon-sm"
               />
             }

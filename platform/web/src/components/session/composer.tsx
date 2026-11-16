@@ -9,13 +9,11 @@ import {
   composerModelChoice,
   configWithRunChoice,
   normalizeRunChoice,
-  readRunChoice,
-  writeRunChoice,
   type RunChoice,
 } from "@/lib/composer-model";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { readSessionDraft, writeSessionDraft } from "@/lib/sessions/draft";
+import { SETTINGS, settings, useSetting } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { AttachmentStrip } from "./composer-attachments";
 import { ModelPicker } from "./composer-model-picker";
@@ -99,7 +97,9 @@ export function SessionComposer({
   onSend: (message: ComposerMessage, mode: ComposerMode | null) => void;
   onStop: () => void;
 }) {
-  const [text, setText] = useState(() => readSessionDraft(draftKey));
+  // The field owns its text while it is open, so a draft another tab saves
+  // never moves the caret; it is read again when the composer mounts.
+  const [text, setText] = useState(() => settings.get(SETTINGS.composerDraft(draftKey)));
   const textRef = useRef(text);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -119,19 +119,19 @@ export function SessionComposer({
     setAnnouncement(undefined);
     setText(value);
     // Write on input rather than on unmount, so navigation cannot lose edits.
-    writeSessionDraft(draftKey, value);
+    settings.set(SETTINGS.composerDraft(draftKey), value).catch(() => {
+      // The composer remains usable when browser storage is blocked or full.
+    });
   };
 
-  const files = useComposerAttachments(attachmentOptions?.universeId, attachmentOptions?.apiKind, `${draftKey}:attachments`);
+  const files = useComposerAttachments(attachmentOptions?.universeId, attachmentOptions?.apiKind, draftKey);
   const canAttach = Boolean(attachmentOptions) && !disabled;
 
-  const runKey = `${draftKey}:run`;
-  const [storedChoice, setStoredChoice] = useState<RunChoice>(() => readRunChoice(runKey));
+  const [storedChoice, setStoredChoice] = useSetting(SETTINGS.composerRunChoice(draftKey));
   const modelChoice = model ? composerModelChoice(model.config, model.models, storedChoice) : null;
   const changeChoice = (next: RunChoice) => {
     const normalized = modelChoice ? normalizeRunChoice(next, modelChoice.session) : next;
     setStoredChoice(normalized);
-    writeRunChoice(runKey, normalized);
   };
 
   const voice = useDictation(dictation?.universeId, Boolean(dictation && !dictation.disabledReason && !disabled), (transcript) => {

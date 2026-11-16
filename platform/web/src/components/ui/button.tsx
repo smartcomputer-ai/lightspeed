@@ -1,6 +1,8 @@
+import { createContext, useContext } from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 
+import { SelectedIcon } from "@/icons"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
@@ -40,19 +42,42 @@ const buttonVariants = cva(
   }
 )
 
+type ButtonVariant = NonNullable<VariantProps<typeof buttonVariants>["variant"]>
+
+/// What the enclosing button group (see button-group.tsx) sets for its
+/// buttons: the variant a button takes when it names none (else
+/// `default`), and whether its toggle buttons show check marks.
+const ButtonGroupContext = createContext<{ variant: ButtonVariant; checkMarks: boolean } | undefined>(undefined)
+
 function Button({
   className,
-  variant = "default",
+  variant,
   size = "default",
+  children,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  const group = useContext(ButtonGroupContext)
+  variant ??= group?.variant ?? "default"
+  const pressed = props["aria-pressed"]
+  // A toggle button (one with aria-pressed) in a group with check marks
+  // ends with a check: full for the choice, faint for the others.
+  const check = group?.checkMarks && pressed !== undefined
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {children}
+      {check && (
+        <SelectedIcon
+          data-icon="inline-end"
+          aria-hidden="true"
+          className={cn(pressed !== true && pressed !== "true" && "opacity-10")}
+        />
+      )}
+    </ButtonPrimitive>
   )
 }
 
-export { Button, buttonVariants }
+export { Button, ButtonGroupContext, buttonVariants, type ButtonVariant }

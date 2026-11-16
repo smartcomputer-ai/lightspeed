@@ -1,8 +1,9 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
+import { SETTINGS, useSetting } from "@/lib/settings";
 
-const KEY_PREFIX = "lightspeed:user-preferences:";
-
-/** Account-scoped display preferences shared by the session and bot views. */
+/** The signed-in user's display preferences, shared by the session and bot
+ * views. Each is a setting of its own (lib/settings/registry.ts); the widths
+ * stay on the device, the others follow the user. */
 export interface UserPreferences {
   /** Show context and token usage on finished runs. */
   showRunStatistics: boolean;
@@ -24,19 +25,16 @@ export interface UserPreferences {
   keepMetaExpanded: boolean;
 }
 
+/// Before a user is known: the declared defaults.
 const DEFAULTS: UserPreferences = {
-  showRunStatistics: false,
-  showSessionResources: true,
-  collapseCompletedRuns: true,
-  sidebarWidth: null,
-  sidebarCollapsed: false,
-  listWidth: null,
-  keepMetaExpanded: false,
+  showRunStatistics: SETTINGS.showRunStatistics("").defaultValue,
+  showSessionResources: SETTINGS.showSessionResources("").defaultValue,
+  collapseCompletedRuns: SETTINGS.collapseCompletedRuns("").defaultValue,
+  sidebarWidth: SETTINGS.sidebarWidth("").defaultValue,
+  sidebarCollapsed: SETTINGS.sidebarCollapsed("").defaultValue,
+  listWidth: SETTINGS.listWidth("").defaultValue,
+  keepMetaExpanded: SETTINGS.keepMetaExpanded("").defaultValue,
 };
-
-function storedWidth(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : null;
-}
 
 const Context = createContext<UserPreferences & {
   setShowRunStatistics: (show: boolean) => void;
@@ -57,63 +55,31 @@ const Context = createContext<UserPreferences & {
   setKeepMetaExpanded: () => {},
 });
 
-export function readUserPreferences(userId: string): UserPreferences {
-  try {
-    const stored: unknown = JSON.parse(window.localStorage.getItem(`${KEY_PREFIX}${userId}`) ?? "null");
-    if (!stored || typeof stored !== "object") return DEFAULTS;
-    const record = stored as Record<string, unknown>;
-    return {
-      showRunStatistics: typeof record.showRunStatistics === "boolean"
-        ? record.showRunStatistics : DEFAULTS.showRunStatistics,
-      showSessionResources: typeof record.showSessionResources === "boolean"
-        ? record.showSessionResources : DEFAULTS.showSessionResources,
-      collapseCompletedRuns: typeof record.collapseCompletedRuns === "boolean"
-        ? record.collapseCompletedRuns : DEFAULTS.collapseCompletedRuns,
-      sidebarWidth: storedWidth(record.sidebarWidth),
-      sidebarCollapsed: record.sidebarCollapsed === true,
-      listWidth: storedWidth(record.listWidth),
-      keepMetaExpanded: record.keepMetaExpanded === true,
-    };
-  } catch {
-    return DEFAULTS;
-  }
-}
-
 export function UserPreferencesProvider({ userId, children }: { userId: string; children: ReactNode }) {
-  return <AccountPreferences key={userId} userId={userId}>{children}</AccountPreferences>;
-}
-
-function AccountPreferences({ userId, children }: { userId: string; children: ReactNode }) {
-  const [preferences, setPreferences] = useState(() => readUserPreferences(userId));
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key === `${KEY_PREFIX}${userId}`) setPreferences(readUserPreferences(userId));
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [userId]);
-  const update = (patch: Partial<UserPreferences>) => {
-    setPreferences((current) => {
-      const next = { ...current, ...patch };
-      try {
-        window.localStorage.setItem(`${KEY_PREFIX}${userId}`, JSON.stringify(next));
-      } catch {
-        // Keep the current view usable when browser storage is blocked or full.
-      }
-      return next;
-    });
-  };
+  const [showRunStatistics, setShowRunStatistics] = useSetting(SETTINGS.showRunStatistics(userId));
+  const [showSessionResources, setShowSessionResources] = useSetting(SETTINGS.showSessionResources(userId));
+  const [collapseCompletedRuns, setCollapseCompletedRuns] = useSetting(SETTINGS.collapseCompletedRuns(userId));
+  const [sidebarWidth, setSidebarWidth] = useSetting(SETTINGS.sidebarWidth(userId));
+  const [sidebarCollapsed, setSidebarCollapsed] = useSetting(SETTINGS.sidebarCollapsed(userId));
+  const [listWidth, setListWidth] = useSetting(SETTINGS.listWidth(userId));
+  const [keepMetaExpanded, setKeepMetaExpanded] = useSetting(SETTINGS.keepMetaExpanded(userId));
   return (
     <Context.Provider
       value={{
-        ...preferences,
-        setShowRunStatistics: (showRunStatistics) => update({ showRunStatistics }),
-        setShowSessionResources: (showSessionResources) => update({ showSessionResources }),
-        setCollapseCompletedRuns: (collapseCompletedRuns) => update({ collapseCompletedRuns }),
-        setSidebarWidth: (sidebarWidth) => update({ sidebarWidth }),
-        setSidebarCollapsed: (sidebarCollapsed) => update({ sidebarCollapsed }),
-        setListWidth: (listWidth) => update({ listWidth }),
-        setKeepMetaExpanded: (keepMetaExpanded) => update({ keepMetaExpanded }),
+        showRunStatistics,
+        showSessionResources,
+        collapseCompletedRuns,
+        sidebarWidth,
+        sidebarCollapsed,
+        listWidth,
+        keepMetaExpanded,
+        setShowRunStatistics,
+        setShowSessionResources,
+        setCollapseCompletedRuns,
+        setSidebarWidth,
+        setSidebarCollapsed,
+        setListWidth,
+        setKeepMetaExpanded,
       }}
     >
       {children}

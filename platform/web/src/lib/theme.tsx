@@ -2,17 +2,13 @@ import {
   createContext,
   useContext,
   useEffect,
-  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { DEFAULT_THEME, SETTINGS, useSetting, type Theme } from "@/lib/settings";
+import { applyReducedMotion } from "@/lib/reduced-motion";
 
-export type Theme = "light" | "dark" | "system";
-
-const STORAGE_KEY = "lightspeed:theme";
-
-/// The theme before the user picks one. index.html repeats it for first paint.
-export const DEFAULT_THEME: Theme = "dark";
+export { DEFAULT_THEME, type Theme };
 
 const ThemeContext = createContext<{
   theme: Theme;
@@ -28,12 +24,13 @@ function apply(theme: Theme) {
 
 /// Class-strategy dark mode, dark unless the user picks otherwise. index.html
 /// applies the stored choice inline before first paint (no flash); this
-/// provider owns it from then on and tracks OS changes while in "system".
+/// provider owns it from then on, follows a choice made in another tab, and
+/// tracks OS changes while in "system". It keeps the reduced motion choice
+/// applied to the page the same way.
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === "light" || stored === "dark" || stored === "system" ? stored : DEFAULT_THEME;
-  });
+  const [theme, setTheme] = useSetting(SETTINGS.theme);
+
+  useEffect(() => applyReducedMotion(), []);
 
   useEffect(() => {
     apply(theme);
@@ -45,11 +42,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [theme]);
-
-  const setTheme = (next: Theme) => {
-    localStorage.setItem(STORAGE_KEY, next);
-    setThemeState(next);
-  };
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>

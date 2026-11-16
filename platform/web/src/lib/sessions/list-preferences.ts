@@ -35,104 +35,41 @@ export function hiddenSessionsNote(
   return `${listed.charAt(0).toUpperCase()}${listed.slice(1)} sessions are hidden.`;
 }
 
-const LIST_PREFERENCES_KEY_PREFIX = "lightspeed:sessions:list-preferences:";
-const METADATA_FILTER_KEY_PREFIX = "lightspeed:sessions:metadata-filter:";
-
-interface StorageReader {
-  getItem(key: string): string | null;
+/// A stored session list choice made valid field by field: a missing or
+/// invalid field takes its default. The settings registry imports it, so
+/// this module must not import the settings.
+export function parseSessionListPreferences(stored: unknown): SessionListPreferences | undefined {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return undefined;
+  const record = stored as Record<string, unknown>;
+  return {
+    showClosed: typeof record.showClosed === "boolean"
+      ? record.showClosed
+      : DEFAULT_SESSION_LIST_PREFERENCES.showClosed,
+    showSubagents: typeof record.showSubagents === "boolean"
+      ? record.showSubagents
+      : DEFAULT_SESSION_LIST_PREFERENCES.showSubagents,
+    showControlledSessions: typeof record.showControlledSessions === "boolean"
+      ? record.showControlledSessions
+      : DEFAULT_SESSION_LIST_PREFERENCES.showControlledSessions,
+    showSessionIds: typeof record.showSessionIds === "boolean"
+      ? record.showSessionIds
+      : DEFAULT_SESSION_LIST_PREFERENCES.showSessionIds,
+    metadataKeys: Array.isArray(record.metadataKeys)
+      ? [...new Set(record.metadataKeys.filter(
+        (key): key is string => typeof key === "string" && key.trim().length > 0,
+      ).map((key) => key.trim()))]
+      : DEFAULT_SESSION_LIST_PREFERENCES.metadataKeys,
+  };
 }
 
-interface StorageWriter {
-  setItem(key: string, value: string): void;
-}
-
-export function readSessionListPreferences(
-  universeId: string,
-  storage: StorageReader | undefined = typeof window === "undefined"
-    ? undefined
-    : window.localStorage,
-): SessionListPreferences {
-  if (!storage) return DEFAULT_SESSION_LIST_PREFERENCES;
-  try {
-    const parsed: unknown = JSON.parse(
-      storage.getItem(`${LIST_PREFERENCES_KEY_PREFIX}${universeId}`) ?? "null",
-    );
-    if (!parsed || typeof parsed !== "object") return DEFAULT_SESSION_LIST_PREFERENCES;
-    const record = parsed as Record<string, unknown>;
-    return {
-      showClosed: typeof record.showClosed === "boolean"
-        ? record.showClosed
-        : DEFAULT_SESSION_LIST_PREFERENCES.showClosed,
-      showSubagents: typeof record.showSubagents === "boolean"
-        ? record.showSubagents
-        : DEFAULT_SESSION_LIST_PREFERENCES.showSubagents,
-      showControlledSessions: typeof record.showControlledSessions === "boolean"
-        ? record.showControlledSessions
-        : DEFAULT_SESSION_LIST_PREFERENCES.showControlledSessions,
-      showSessionIds: typeof record.showSessionIds === "boolean"
-        ? record.showSessionIds
-        : DEFAULT_SESSION_LIST_PREFERENCES.showSessionIds,
-      metadataKeys: Array.isArray(record.metadataKeys)
-        ? [...new Set(record.metadataKeys.filter(
-          (key): key is string => typeof key === "string" && key.trim().length > 0,
-        ).map((key) => key.trim()))]
-        : DEFAULT_SESSION_LIST_PREFERENCES.metadataKeys,
-    };
-  } catch {
-    return DEFAULT_SESSION_LIST_PREFERENCES;
-  }
-}
-
-export function writeSessionListPreferences(
-  universeId: string,
-  preferences: SessionListPreferences,
-  storage: StorageWriter | undefined = typeof window === "undefined"
-    ? undefined
-    : window.localStorage,
-) {
-  try {
-    storage?.setItem(
-      `${LIST_PREFERENCES_KEY_PREFIX}${universeId}`,
-      JSON.stringify(preferences),
-    );
-  } catch {
-    // Browsing remains usable when storage is unavailable or full.
-  }
-}
-
-export function readSessionMetadataFilter(
-  universeId: string,
-  storage: StorageReader | undefined = typeof window === "undefined"
-    ? undefined
-    : window.localStorage,
-): Record<string, string> {
-  if (!storage) return {};
-  try {
-    const raw = storage.getItem(`${METADATA_FILTER_KEY_PREFIX}${universeId}`);
-    const parsed: unknown = JSON.parse(raw ?? "null");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        ([key, value]) => key.length > 0 && typeof value === "string",
-      ),
-    ) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-export function writeSessionMetadataFilter(
-  universeId: string,
-  filter: Record<string, string>,
-  storage: StorageWriter | undefined = typeof window === "undefined"
-    ? undefined
-    : window.localStorage,
-) {
-  try {
-    storage?.setItem(`${METADATA_FILTER_KEY_PREFIX}${universeId}`, JSON.stringify(filter));
-  } catch {
-    // URL-backed filtering still works when browser storage does not.
-  }
+/// A stored metadata filter without its invalid entries.
+export function parseSessionMetadataFilter(stored: unknown): Record<string, string> | undefined {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return undefined;
+  return Object.fromEntries(
+    Object.entries(stored).filter(
+      ([key, value]) => key.length > 0 && typeof value === "string",
+    ),
+  ) as Record<string, string>;
 }
 
 export function metadataFilterFromSearchParams(params: URLSearchParams): Record<string, string> {

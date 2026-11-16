@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ComponentProps, type CSSProperties, type HTMLAttributes, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { ResizeHandle, useResizableWidth } from "@/components/resize-handle";
 import { ListNote } from "@/components/page";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MetaToolbar, type MetaItem } from "@/components/meta-toolbar";
 import { fileIcon } from "@/components/file-icon";
-import { FolderClosedIcon, FolderOpenIcon } from "@/icons";
+import { ExpandIcon, FolderClosedIcon, FolderOpenIcon } from "@/icons";
 
 /// The parts of a list-and-detail page (sessions, bots, profiles,
 /// workspaces):
@@ -95,7 +95,7 @@ export function PaneBar({
 }
 
 /// The list's title, how many it holds and its actions (new, filter, …),
-/// right-aligned.
+/// right-aligned, inside the bar's own padding (px-4) on both sides.
 export function ListPaneHeader({
   title,
   count,
@@ -107,7 +107,7 @@ export function ListPaneHeader({
   actions?: ReactNode;
 }) {
   return (
-    <PaneBar className="pl-6">
+    <PaneBar>
       <h1 className="min-w-0 truncate text-sm font-semibold">{title}</h1>
       {count !== undefined && <span className="shrink-0 text-xs text-muted-foreground">{count}</span>}
       {actions && <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>}
@@ -129,19 +129,44 @@ export function ListPaneToolbar({ className, children }: { className?: string; c
 /// hands it to its rows; both carry it as data-list-mode.
 export type ListMode = "default" | "files";
 
-/// How the rows of a list are drawn: its mode, and whether it is compressed
-/// (each row its first line alone, shorter, the title centred with its
-/// marks and meta; the second lines are left out).
+/// How a list's rows open and close their children, apart from what the
+/// list holds (its mode):
+///
+///   none       rows do not open and close (a tree, if any, shows whole)
+///   dedicated  a caret of its own before each row's content opens and
+///              closes its children, beside the row opening its detail
+///              (ListRow `expander`). The caret takes room before the
+///              content, kept by a whole group of siblings (the rows under
+///              one parent, or the roots) when any of them can open, so
+///              their titles line up (ListRow `caretRoom`); a group where
+///              none can open takes no room.
+///   title      as dedicated, but the caret sits in the title line, right
+///              after the title's text: it moves with the text, so rows
+///              keep no room for it (`caretRoom` does nothing).
+///
+/// Set on ListPaneBody (or ListLayout) with `expand`; both carry it as
+/// data-list-expand.
+export type ListExpand = "none" | "dedicated" | "title";
+
+/// How the rows of a list are drawn: its mode, how rows expand, and whether
+/// it is compressed (each row its first line alone, shorter, the title
+/// centred with its marks and meta; the second lines are left out).
 interface ListLayoutValue {
   mode: ListMode;
+  expand: ListExpand;
   compressed: boolean;
 }
 
-const ListLayoutContext = createContext<ListLayoutValue>({ mode: "default", compressed: false });
+const ListLayoutContext = createContext<ListLayoutValue>({ mode: "default", expand: "none", compressed: false });
 
 /// The mode of the list a row is in.
 export function useListMode(): ListMode {
   return useContext(ListLayoutContext).mode;
+}
+
+/// How the rows of the list a row is in open and close their children.
+export function useListExpand(): ListExpand {
+  return useContext(ListLayoutContext).expand;
 }
 
 /// Whether the list a row is in is compressed.
@@ -151,26 +176,30 @@ export function useListCompressed(): boolean {
 
 /// A list's layout for the rows inside, for a list that is not in a
 /// ListPaneBody (which sets it itself), e.g. inside its own scrolling area.
-export function ListLayout({ mode = "default", compressed = false, children }: {
+export function ListLayout({ mode = "default", expand = "none", compressed = false, children }: {
   mode?: ListMode;
+  expand?: ListExpand;
   compressed?: boolean;
   children: ReactNode;
 }) {
-  return <ListLayoutContext.Provider value={{ mode, compressed }}>{children}</ListLayoutContext.Provider>;
+  return <ListLayoutContext.Provider value={{ mode, expand, compressed }}>{children}</ListLayoutContext.Provider>;
 }
 
 /// The scrolling part of the pane, and the list's layout for its rows: its
-/// mode, and whether it is compressed (data-list-compressed).
-export function ListPaneBody({ mode = "default", compressed = false, className, children }: {
+/// mode, how rows expand (data-list-expand), and whether it is compressed
+/// (data-list-compressed).
+export function ListPaneBody({ mode = "default", expand = "none", compressed = false, className, children }: {
   mode?: ListMode;
+  expand?: ListExpand;
   compressed?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <ListLayoutContext.Provider value={{ mode, compressed }}>
+    <ListLayoutContext.Provider value={{ mode, expand, compressed }}>
       <div
         data-list-mode={mode}
+        data-list-expand={expand === "none" ? undefined : expand}
         data-list-compressed={compressed || undefined}
         className={cn("min-h-0 min-w-0 flex-1 overflow-y-auto", className)}
       >
@@ -235,7 +264,7 @@ export interface ListRowTree {
 }
 
 /// The list's left inset (pl-6): room for a row's dot before its content.
-/// The header, toolbar and group labels share it.
+/// The toolbar and group labels share it; the header keeps its bar's px-4.
 const LIST_INSET_REM = 1.5;
 
 /// Where a row's dot sits, from its content start (a root's in the middle
@@ -367,6 +396,23 @@ export interface ListRowToggle {
   onToggle: () => void;
 }
 
+/// A row whose children open and close from a caret before its content,
+/// while the row itself still opens its detail: a row of a list that expands
+/// "dedicated" (ListExpand). The caret is a button of its own beside the
+/// row's link (never inside it), aria-expanded while `open`; on the focused
+/// row, the right arrow opens and the left arrow closes. Its status dot and
+/// tree lines stay where they are: the caret takes room at the start of the
+/// row's content, moving the title (and any avatar) over; its siblings
+/// without children keep that room too (`caretRoom`), so they line up. The
+/// list draws only the rows it is given, so the caller leaves the children
+/// out while closed, and marks the row `tree.children` only while open.
+export interface ListRowExpander {
+  open: boolean;
+  onToggle: () => void;
+  /** The caret's accessible name and tooltip; defaults to "Expand" or "Collapse". */
+  label?: string;
+}
+
 /// Attributes for a row's link or button (the entry the row is drawn on):
 /// handlers, focus order and data attributes, for lists that add behavior
 /// (a keyboard tree, dragging). Its handlers run beside the row's own.
@@ -474,6 +520,8 @@ export function ListRow({
   meta,
   tree,
   toggle,
+  expander,
+  caretRoom = false,
   fileName,
   actions,
   itemProps,
@@ -501,6 +549,19 @@ export function ListRow({
   tree?: ListRowTree;
   /** Opens and closes its children instead of opening a detail. */
   toggle?: ListRowToggle;
+  /**
+   * Opens and closes its children from a caret before its content, beside
+   * opening its detail (see ListRowExpander). Only in a list that expands
+   * "dedicated".
+   */
+  expander?: ListRowExpander;
+  /**
+   * In a list that expands "dedicated": keeps the caret's room on a row
+   * without children because a sibling (a row under the same parent, or
+   * another root) has a caret, so their titles line up. Without it, a row
+   * without a caret takes no room.
+   */
+  caretRoom?: boolean;
   /** In a files list: the file's name with its extension, which picks its icon. */
   fileName?: string;
   /**
@@ -517,10 +578,18 @@ export function ListRow({
   children?: ReactNode;
 }) {
   const mode = useListMode();
+  // In a list that expands by caret, a row with children draws one: before
+  // its content ("dedicated", where its siblings keep the room too), or
+  // after its title's text ("title").
+  const expand = useListExpand();
+  const caret = expand === "none" ? undefined : expander;
+  const caretInTitle = expand === "title" && caret !== undefined;
   // In a files list a row draws its own icon unless given one: a folder
-  // (a toggle row) open or closed, a file by its type.
+  // (a row that opens and closes, by toggle or caret) open or closed, a
+  // file by its type.
+  const folder = toggle ?? caret;
   const FileTypeIcon = mode === "files" && !leading
-    ? toggle ? (toggle.open ? FolderOpenIcon : FolderClosedIcon) : fileName ? fileIcon(fileName) : undefined
+    ? folder ? (folder.open ? FolderOpenIcon : FolderClosedIcon) : fileName ? fileIcon(fileName) : undefined
     : undefined;
   const lead = FileTypeIcon ? <FileTypeIcon className="size-4 text-muted-foreground" aria-hidden /> : leading;
   // Compressed, a row is its first line alone: the further lines are left out.
@@ -546,8 +615,8 @@ export function ListRow({
     compressed ? "min-h-(--list-row-height-compressed)" : "min-h-(--list-row-height)",
     highlighted && "bg-muted",
     (selection || toggle) && "cursor-action",
-    // Over its actions (beside the link) the row stays hovered.
-    rowActions && "[li:hover>&]:bg-muted/50",
+    // Over its actions or caret (beside the link) the row stays hovered.
+    (rowActions || caret) && "[li:hover>&]:bg-muted/50",
     toggle && !selection && "w-full text-left",
     // With nothing on the right to give way (marks stay, for their
     // tooltips), the row leaves room for the actions (always shown on touch
@@ -562,6 +631,35 @@ export function ListRow({
     (!lineBelow || ruleStart !== null) && "border-b-0 pb-[calc(0.375rem+1px)]",
     entryProps?.className,
   );
+  const titleClass = cn(
+    "truncate font-(--list-title-font-weight) group-data-highlighted/row:font-(--list-title-font-weight-selected) transition-[color,font-weight] duration-(--list-transition-duration)",
+    muted
+      ? "text-(--list-second-line-rest) group-hover/row:text-muted-foreground group-focus-visible/row:text-muted-foreground group-data-highlighted/row:text-muted-foreground"
+      : "text-(--item-foreground-rest) group-hover/row:text-foreground group-focus-visible/row:text-foreground group-data-highlighted/row:text-foreground",
+  );
+  // A caret in the title sits over its room after the text, beside the
+  // link: measured, again whenever the row or its title changes size.
+  const itemRef = useRef<HTMLLIElement>(null);
+  const titleRef = useRef<HTMLSpanElement>(null);
+  const titleRoomRef = useRef<HTMLSpanElement>(null);
+  const [titleCaretAt, setTitleCaretAt] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!caretInTitle) return;
+    const measure = () => {
+      const item = itemRef.current?.getBoundingClientRect();
+      const room = titleRoomRef.current?.getBoundingClientRect();
+      if (!item || !room) return;
+      const left = room.left - item.left;
+      const top = room.top - item.top + room.height / 2;
+      setTitleCaretAt((current) => (current && current.left === left && current.top === top ? current : { left, top }));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    if (itemRef.current) observer.observe(itemRef.current);
+    if (titleRef.current) observer.observe(titleRef.current);
+    return () => observer.disconnect();
+  }, [caretInTitle, title]);
   const depth = tree?.depth ?? 0;
   // Nested rows indent their content; while selecting, after the checkbox,
   // so the checkboxes keep one column.
@@ -596,23 +694,25 @@ export function ListRow({
           style={indent > 0 ? { marginRight: `${1 + indent}rem` } : undefined}
         />
       )}
+      {/* The caret's room; the caret itself sits over it, beside the link. */}
+      {expand === "dedicated" && (caret || caretRoom) && <span className="size-4 shrink-0" aria-hidden data-slot="list-row-caret-room" />}
       {lead && <span className="flex shrink-0 items-center">{lead}</span>}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
           {/* Slightly dimmer at rest; full strength on hover, focus or selection.
-              Muted, it takes the second line's colours instead. */}
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate font-(--list-title-font-weight) group-data-highlighted/row:font-(--list-title-font-weight-selected) transition-[color,font-weight] duration-(--list-transition-duration)",
-              muted
-                ? "text-(--list-second-line-rest) group-hover/row:text-muted-foreground group-focus-visible/row:text-muted-foreground group-data-highlighted/row:text-muted-foreground"
-                : "text-(--item-foreground-rest) group-hover/row:text-foreground group-focus-visible/row:text-foreground group-data-highlighted/row:text-foreground",
-            )}
-            data-muted={muted || undefined}
-            title={titleHint}
-          >
-            {title}
-          </span>
+              Muted, it takes the second line's colours instead. With its
+              caret in the title, the caret's room follows the text, which
+              gives way (truncates) before it. */}
+          {caretInTitle ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1" ref={titleRef}>
+              <span className={cn(titleClass, "min-w-0")} data-muted={muted || undefined} title={titleHint}>{title}</span>
+              <span ref={titleRoomRef} className="size-4 shrink-0" aria-hidden data-slot="list-row-caret-room" />
+            </span>
+          ) : (
+            <span className={cn(titleClass, "min-w-0 flex-1")} data-muted={muted || undefined} title={titleHint}>
+              {title}
+            </span>
+          )}
           {marks && marks.length > 0 && (
             <MetaToolbar items={marks} place="list" className="max-w-1/2" />
           )}
@@ -633,7 +733,16 @@ export function ListRow({
       </span>
     </>
   );
-  const { className: _entryClassName, onClick: entryClick, onContextMenu: entryContextMenu, ...entry } = entryProps ?? {};
+  const { className: _entryClassName, onClick: entryClick, onContextMenu: entryContextMenu, onKeyDown: entryKeyDown, ...entry } = entryProps ?? {};
+  // On the focused row: the right arrow opens its children, the left closes them.
+  const keyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    entryKeyDown?.(event);
+    if (!caret || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if ((event.key === "ArrowRight" && !caret.open) || (event.key === "ArrowLeft" && caret.open)) {
+      event.preventDefault();
+      caret.onToggle();
+    }
+  };
   // While selecting, a right-click on a selected row opens what can be done
   // with the selection; on any other row it does what it does outside
   // selection mode (the row's own menu, if it has one).
@@ -651,14 +760,15 @@ export function ListRow({
   return (
     // With actions the item is the row's hover group too, so the row stays
     // lit (and its title bright) over them.
-    <li {...item} className={cn(rowActions && "group/row relative", itemClassName)}>
+    <li {...item} ref={itemRef} className={cn(rowActions && "group/row relative", caret && "relative", itemClassName)}>
       {selection ? (
-        <label {...entry} onContextMenu={contextMenu} className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</label>
+        <label {...entry} onKeyDown={keyDown} onContextMenu={contextMenu} className={className} style={style} data-list-mode={mode} data-highlighted={highlighted || undefined}>{content}</label>
       ) : toggle ? (
         <button
           type="button"
           aria-expanded={toggle.open}
           {...entry}
+          onKeyDown={entryKeyDown}
           onContextMenu={entryContextMenu}
           className={className}
           style={style}
@@ -674,6 +784,7 @@ export function ListRow({
       ) : (
         <NavLink
           {...entry}
+          onKeyDown={keyDown}
           onContextMenu={entryContextMenu}
           to={to ?? ""}
           className={className}
@@ -685,6 +796,7 @@ export function ListRow({
           {content}
         </NavLink>
       )}
+      {caret && <ListRowCaret expander={caret} at={caretInTitle ? titleCaretAt : { left: contentLeft }} />}
       {selectionActions && selectionMenu && (
         <ListSelectionMenu actions={selectionActions} anchor={selectionMenu} onClose={() => setSelectionMenu(null)} />
       )}
@@ -694,6 +806,46 @@ export function ListRow({
         </div>
       )}
     </li>
+  );
+}
+
+/// A row's caret, over the room its content keeps for it: before the
+/// content at the height of its status dot (`left`), or after the title's
+/// text where it was measured (`left` and `top` in pixels; null until then,
+/// and hidden). Points right while closed, down while open.
+function ListRowCaret({ expander, at }: {
+  expander: ListRowExpander;
+  at: { left: string } | { left: number; top: number } | null;
+}) {
+  const label = expander.label ?? (expander.open ? "Collapse" : "Expand");
+  const style = at === null
+    ? { visibility: "hidden" as const }
+    : "top" in at
+      ? { left: at.left - 2, top: at.top }
+      : { left: `calc(${at.left} - 2px)` };
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-expanded={expander.open}
+            aria-label={label}
+            onClick={expander.onToggle}
+            data-slot="list-row-caret"
+            // A 20px target over the 16px room, centred on it.
+            className="absolute top-1/2 z-20 flex size-5 -translate-y-1/2 cursor-action items-center justify-center rounded-sm text-muted-foreground outline-none hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            style={style}
+          />
+        }
+      >
+        <ExpandIcon
+          aria-hidden
+          className={cn("size-3.5 transition-transform duration-(--list-transition-duration)", expander.open && "rotate-90")}
+        />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

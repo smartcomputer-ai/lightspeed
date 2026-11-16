@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CompactIcon, ConfigureIcon, DropdownCaretIcon, LoadingIcon, MoreIcon, ShareIcon } from "@/icons";
+import { CompactIcon, ConfigureIcon, LoadingIcon, MoreIcon, ShareIcon } from "@/icons";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +26,8 @@ import { useRowMenu } from "@/lib/row-menu";
 export function SessionActionsMenu({
   sessionId,
   metadata,
-  variant,
+  label = "Session actions",
+  lifecyclePlacement = "last",
   open,
   onSettings,
   onShare,
@@ -36,7 +37,14 @@ export function SessionActionsMenu({
 }: {
   sessionId: string;
   metadata: Record<string, string> | undefined;
-  variant: "more" | "tab";
+  /** The ⋯ button's name, e.g. "Conversation actions" on a bot's page. */
+  label?: string;
+  /**
+   * Where the lifecycle items go in the action group: a bot conversation's
+   * reset before compaction ("first"), a session's close or delete after it
+   * ("last").
+   */
+  lifecyclePlacement?: "first" | "last";
   open?: { label: string; href: string; icon: ReactNode };
   onSettings?: () => void;
   /** Offered while the session is private and the viewer may share it. */
@@ -46,7 +54,7 @@ export function SessionActionsMenu({
   lifecycle?: ReactNode;
 }) {
   const navigate = useNavigate();
-  const rowMenu = useRowMenu(variant === "more" ? "session" : null, sessionId);
+  const rowMenu = useRowMenu("session", sessionId);
   const compactItem = onCompact && (
     <DropdownMenuItem onClick={onCompact} disabled={Boolean(compactionLabel)}>
       {compactionLabel ? <LoadingIcon className="animate-spin" /> : <CompactIcon />}
@@ -57,33 +65,20 @@ export function SessionActionsMenu({
     <DropdownMenu open={rowMenu.open} onOpenChange={rowMenu.onOpenChange}>
       <DropdownMenuTrigger
         render={
-          variant === "more" ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0 text-muted-foreground"
-              aria-label="Session actions"
-              title="Session actions"
-            />
-          ) : (
-            <button
-              type="button"
-              aria-label="Conversation menu"
-              title="Conversation menu"
-              className="flex items-center rounded-sm pr-2 pl-0.5 text-muted-foreground hover:text-foreground"
-            />
-          )
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-muted-foreground"
+            aria-label={label}
+            title={label}
+          />
         }
       >
-        {variant === "more" ? (
-          <MoreIcon />
-        ) : (
-          <DropdownCaretIcon className="size-3.5" />
-        )}
+        <MoreIcon />
       </DropdownMenuTrigger>
       <DropdownMenuContent
         anchor={rowMenu.anchor}
-        align={variant === "more" && !rowMenu.anchor ? "end" : "start"}
+        align={rowMenu.anchor ? "start" : "end"}
         className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
       >
         {(onSettings || onShare || open || lifecycle || onCompact) && (
@@ -104,9 +99,9 @@ export function SessionActionsMenu({
                   {open.icon} {open.label}
                 </DropdownMenuItem>
               )}
-              {variant === "tab" && lifecycle}
+              {lifecyclePlacement === "first" && lifecycle}
               {compactItem}
-              {variant === "more" && lifecycle}
+              {lifecyclePlacement === "last" && lifecycle}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
           </>

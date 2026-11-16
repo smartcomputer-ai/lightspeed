@@ -8,6 +8,7 @@ import { BotChat } from "@/components/bot/chat";
 import { sessionDraftKey } from "@/lib/sessions/draft";
 import { applyEvents, emptyTranscript, reconcileRuns } from "@/lib/sessions/transcript";
 import { SessionDetail } from "./SessionsPage";
+import { settings } from "@/lib/settings";
 
 const mocks = vi.hoisted(() => ({
   permissions: new Set<string>(),
@@ -443,6 +444,7 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
   it("persists exact drafts across navigation and isolates sessions and universes", async () => {
     await show(pathway);
     await type("  unfinished\nmessage 🦀  ");
+    await settings.flush();
     expect(window.localStorage.getItem(sessionDraftKey("universe", "session"))).toBe("  unfinished\nmessage 🦀  ");
 
     await show(pathway, "universe", "other");
@@ -531,6 +533,7 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     expect(container.querySelector(messageSelector)!.className).toBe(messageClass);
     expect(mocks.scrollToEnd).toHaveBeenCalledWith({ behavior: "auto" });
     expect(input().value).toBe("");
+    await settings.flush();
     expect(window.localStorage.getItem(sessionDraftKey("universe", "session"))).toBeNull();
 
     // Streaming content continues to follow after a successful submission.

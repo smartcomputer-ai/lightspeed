@@ -39,7 +39,7 @@ afterEach(async () => {
 async function groups(props: Partial<Parameters<typeof SessionActionsMenu>[0]>): Promise<string[]> {
   await act(async () => root.render(
     <MemoryRouter>
-      <SessionActionsMenu variant="more" sessionId="session-1" metadata={{ team: "core" }} {...props} />
+      <SessionActionsMenu sessionId="session-1" metadata={{ team: "core" }} {...props} />
     </MemoryRouter>,
   ));
   return container.innerHTML
@@ -72,15 +72,15 @@ it("starts with view preferences for someone who can do nothing", async () => {
   expect(metadata).toContain("team");
 });
 
-it.each(["more", "tab"] as const)("offers compaction in the %s menu and prevents duplicate requests", async (variant) => {
+it.each(["last", "first"] as const)("offers compaction with lifecycle items %s and prevents duplicate requests", async (lifecyclePlacement) => {
   const compact = vi.fn();
   const menuGroups = await groups({
-    variant,
+    lifecyclePlacement,
     onCompact: compact,
     open: { label: "Open session", href: "/session-1", icon: null },
-    lifecycle: <span>{variant === "tab" ? "Reset conversation…" : "Close session…"}</span>,
+    lifecycle: <span>{lifecyclePlacement === "first" ? "Reset conversation…" : "Close session…"}</span>,
   });
-  expect(menuGroups[0]).toMatch(variant === "tab"
+  expect(menuGroups[0]).toMatch(lifecyclePlacement === "first"
     ? /^Open session\s*Reset conversation…\s*Compact context$/
     : /^Open session\s*Compact context\s*Close session…$/);
   expect(menuGroups).toHaveLength(4);
@@ -90,12 +90,12 @@ it.each(["more", "tab"] as const)("offers compaction in the %s menu and prevents
   await act(async () => button.click());
   expect(compact).toHaveBeenCalledTimes(1);
   for (const compactionLabel of ["Requesting compaction…", "Context compaction queued…", "Compacting context…"]) {
-    await groups({ variant, onCompact: compact, compactionLabel });
+    await groups({ lifecyclePlacement, onCompact: compact, compactionLabel });
     const busy = [...container.querySelectorAll("button")].find((item) => item.textContent === compactionLabel)!;
     expect(busy.disabled).toBe(true);
     const trigger = container.querySelector('[data-testid="menu-trigger"]')!;
     expect(trigger.querySelector(".animate-spin")).toBeNull();
-    expect(trigger.querySelector(variant === "more" ? "[data-icon-role=MoreIcon]" : "[data-icon-role=DropdownCaretIcon]")).not.toBeNull();
+    expect(trigger.querySelector("[data-icon-role=MoreIcon]")).not.toBeNull();
     await act(async () => busy.click());
     expect(compact).toHaveBeenCalledTimes(1);
   }

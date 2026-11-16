@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ModelOption } from "@/api";
 import { waitForUi } from "@/test/wait-for-ui";
 import { SessionComposer } from "./composer";
+import { settings } from "@/lib/settings";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...(await original<typeof import("@/api")>()), api: mocks.api }));
@@ -67,6 +68,7 @@ it.each([[true, true, "Queue message", "queue"], [false, false, "Send message", 
     await act(async () => button(label).click());
     expect(onSend).toHaveBeenCalledWith({ text: "Change direction", attachments: [] }, mode);
     expect(textarea().value).toBe("");
+    await settings.flush();
     expect(localStorage.getItem("composer-test")).toBeNull();
   },
 );

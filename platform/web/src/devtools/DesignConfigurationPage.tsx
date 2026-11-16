@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useDocumentTitle } from "@/lib/document-title";
 import { AddIcon, DeleteIcon, ExportCodeIcon, ResetIcon, SearchIcon, SettingsIcon, ThemesDifferIcon, ThemesSameIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,7 @@ import {
   readDefaults,
   sameCss,
   saveOverrides,
+  subscribeOverrides,
   withoutDefaults,
   shadowValues,
   surfaceColorValue,
@@ -104,9 +105,9 @@ export function DesignConfigurationPage() {
   // Overrides the stylesheet has since made its defaults are dropped, so
   // they neither count as changes nor export.
   const [overrides, setOverrides] = useState<DesignOverrides>(() => withoutDefaults(loadOverrides(), defaults));
-  const channel = useRef<BroadcastChannel | null>(null);
-  const receive = useCallback((next: DesignOverrides) => setOverrides(withoutDefaults(next, defaults)), [defaults]);
-  const windows = useLiveWindows(channel, receive);
+  const windows = useLiveWindows();
+  // Another editor window's changes are taken over, so two editors stay in step.
+  useEffect(() => subscribeOverrides((next) => setOverrides(withoutDefaults(next, defaults))), [defaults]);
   const { theme } = useTheme();
   const [themeView, setThemeView] = useState<ThemeView>(() =>
     theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light");
@@ -132,7 +133,6 @@ export function DesignConfigurationPage() {
   const publish = (next: DesignOverrides) => {
     setOverrides(next);
     saveOverrides(next);
-    channel.current?.postMessage({ type: "overrides", overrides: next } satisfies DesignMessage);
   };
 
   const defaultOf = (scope: Scope, token: string) => (scope === "dark" ? defaults.dark : defaults.light)[token] ?? "";
@@ -564,21 +564,15 @@ export function DesignConfigurationPage() {
 }
 
 /// Pings app windows over the channel and lists the ones that answered in
-/// the last few seconds. Overrides published by another editor window are
-/// taken over, so two editors stay in step.
-function useLiveWindows(
-  channel: React.RefObject<BroadcastChannel | null>,
-  onOverrides: (overrides: DesignOverrides) => void,
-): string[] {
+/// the last few seconds.
+function useLiveWindows(): string[] {
   const [seen, setSeen] = useState<Record<string, { href: string; at: number }>>({});
   useEffect(() => {
     const opened = openChannel();
-    channel.current = opened;
     if (!opened) return;
     opened.onmessage = (event: MessageEvent<DesignMessage>) => {
       const message = event.data;
       if (message.type === "pong") setSeen((current) => ({ ...current, [message.id]: { href: message.href, at: Date.now() } }));
-      if (message.type === "overrides") onOverrides(message.overrides);
     };
     const ping = () => {
       opened.postMessage({ type: "ping" } satisfies DesignMessage);
@@ -589,9 +583,8 @@ function useLiveWindows(
     return () => {
       clearInterval(timer);
       opened.close();
-      channel.current = null;
     };
-  }, [channel, onOverrides]);
+  }, []);
   return Object.values(seen).map((entry) => entry.href);
 }
 

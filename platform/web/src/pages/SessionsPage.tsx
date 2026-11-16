@@ -6,7 +6,7 @@ import { ShareSessionDialog, useCanShareSession, useSessionOwner } from "@/compo
 import { SessionDot } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
 import { requestRowMenu } from "@/lib/row-menu";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -62,7 +62,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DIALOG_WARP_MS,
+  dialogWarpMs,
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -136,13 +136,10 @@ import { cn } from "@/lib/utils";
 import {
   metadataFilterFromSearchParams,
   parseMetadataPair,
-  readSessionMetadataFilter,
-  readSessionListPreferences,
   hiddenSessionsNote,
   searchParamsWithMetadataFilter,
-  writeSessionMetadataFilter,
-  writeSessionListPreferences,
 } from "@/lib/sessions/list-preferences";
+import { SETTINGS, settings, useSetting } from "@/lib/settings";
 import { DetailHeader } from "@/components/detail-header";
 import { useDocumentTitle } from "@/lib/document-title";
 import {
@@ -156,6 +153,7 @@ import {
   ListRow,
   ListRowLine,
   ListSelectionButtons,
+  type ListRowExpander,
   type ListRowTree,
   type ListSelectionAction,
 } from "@/components/list-pane";
@@ -241,7 +239,7 @@ function SessionList({
   const [filterDraft, setFilterDraft] = useState("");
   const [metadataKeyDraft, setMetadataKeyDraft] = useState("");
   const filterEntries = Object.entries(metadataFilter);
-  const [preferences, setPreferences] = useState(() => readSessionListPreferences(universeId));
+  const [preferences, setPreferences] = useSetting(SETTINGS.sessionList(universeId));
   const { showClosed, showSubagents, showControlledSessions, showSessionIds, metadataKeys } = preferences;
   const watchConnected = useWatchConnected(universeId);
   // One read for the whole list: each row's environment by name and status.
@@ -285,6 +283,7 @@ function SessionList({
 
   const sessions = pages.data?.pages.flatMap((page) => page.sessions) ?? [];
   const tree = buildSessionTree(sessions);
+  const openRows = useOpenSessionRows(tree, activeId);
   const visibleIds = sessions.map((session) => session.id);
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
   const permissions = useActionPermissions(universeId);
@@ -301,27 +300,23 @@ function SessionList({
   const restoredFilterUniverse = useRef<string | null>(null);
 
   useEffect(() => {
-    writeSessionListPreferences(universeId, preferences);
-  }, [preferences, universeId]);
-
-  useEffect(() => {
     if (restoredFilterUniverse.current !== universeId) {
       restoredFilterUniverse.current = universeId;
       if (searchParams.has("metadata")) {
-        writeSessionMetadataFilter(universeId, metadataFilter);
+        rememberMetadataFilter(universeId, metadataFilter);
         return;
       }
-      const stored = readSessionMetadataFilter(universeId);
+      const stored = settings.get(SETTINGS.sessionMetadataFilter(universeId));
       if (Object.keys(stored).length > 0) {
         setSearchParams(searchParamsWithMetadataFilter(searchParams, stored), { replace: true });
       }
       return;
     }
-    writeSessionMetadataFilter(universeId, metadataFilter);
+    rememberMetadataFilter(universeId, metadataFilter);
   }, [metadataFilter, searchParams, setSearchParams, universeId]);
 
   const updateMetadataFilter = (next: Record<string, string>) => {
-    writeSessionMetadataFilter(universeId, next);
+    rememberMetadataFilter(universeId, next);
     setSearchParams(searchParamsWithMetadataFilter(searchParams, next), { replace: true });
     setSelected(new Set());
   };
@@ -673,7 +668,7 @@ function SessionList({
           </button>
         </ListPaneToolbar>
       )}
-      <ListPaneBody>
+      <ListPaneBody expand="title">
         <ListPaneState
           loading={pages.isLoading}
           error={pages.error}
@@ -693,6 +688,7 @@ function SessionList({
               node={node}
               handle={handle}
               activeId={activeId}
+              openRows={openRows}
               depth={0}
               selecting={selecting}
               selected={selected}
@@ -747,6 +743,14 @@ export async function runBatched<T, R>(
 
 /// The confirmation of a bulk close or delete, opened by its selection
 /// action (the selection bar's button or a selected row's menu).
+/// Keeps the list's metadata filter for the universe's next visit. The URL
+/// holds the filter while the list is open.
+function rememberMetadataFilter(universeId: string, filter: Record<string, string>) {
+  settings.set(SETTINGS.sessionMetadataFilter(universeId), filter).catch(() => {
+    // URL-backed filtering still works when browser storage does not.
+  });
+}
+
 function BulkActionDialog({
   action,
   count,
@@ -792,13 +796,53 @@ function BulkActionDialog({
   );
 }
 
-type SessionNode = { session: SessionSummary; children: SessionNode[] };
+export type SessionNode = { session: SessionSummary; children: SessionNode[] };
 
 /// Group sub-agent sessions under their parent when the parent is in the
 /// loaded page set; the parent row counts them. Children whose parent is not
 /// loaded stay at the top level, their lineage in the title's tooltip; list
 /// order (most recently updated first) is preserved at every level.
-function buildSessionTree(sessions: SessionSummary[]): SessionNode[] {
+/// Which sessions show their sub-agents. Selecting a session opens it, one
+/// level down, and the rows above it, so it is in sight, once per selection
+/// (as soon as it is loaded); anything opened or closed by hand stays so
+/// while the list is shown.
+export function useOpenSessionRows(tree: SessionNode[], activeId: string | undefined) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const [openedFor, setOpenedFor] = useState<string | undefined | null>(null);
+  if (activeId !== openedFor) {
+    const path = activeId === undefined ? [] : sessionPath(tree, activeId);
+    if (path !== null) {
+      setOpenedFor(activeId);
+      const ids = activeId === undefined ? path : [...path, activeId];
+      if (ids.some((id) => !open.has(id))) setOpen(new Set([...open, ...ids]));
+    }
+  }
+  return {
+    isOpen: (id: string) => open.has(id),
+    toggle: (id: string) =>
+      setOpen((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+  };
+}
+
+type OpenSessionRows = ReturnType<typeof useOpenSessionRows>;
+
+/// The ids of the sessions above the one with `id`, outermost first; null
+/// when it is not loaded.
+function sessionPath(nodes: SessionNode[], id: string, above: string[] = []): string[] | null {
+  for (const node of nodes) {
+    if (node.session.id === id) return above;
+    const found = sessionPath(node.children, id, [...above, node.session.id]);
+    if (found) return found;
+  }
+  return null;
+}
+
+export function buildSessionTree(sessions: SessionSummary[]): SessionNode[] {
   const byId = new Map(sessions.map((session) => [session.id, { session, children: [] as SessionNode[] }]));
   const roots: SessionNode[] = [];
   for (const node of byId.values()) {
@@ -827,6 +871,7 @@ function SessionTreeItem({
   node,
   handle,
   activeId,
+  openRows,
   depth,
   last = true,
   lines = [],
@@ -835,6 +880,8 @@ function SessionTreeItem({
   node: SessionNode;
   handle: string;
   activeId: string | undefined;
+  /// Which rows show their sub-agents (a caret after the title opens and closes them).
+  openRows: OpenSessionRows;
   depth: number;
   /// The last of its siblings.
   last?: boolean;
@@ -843,23 +890,34 @@ function SessionTreeItem({
 } & SessionRowControls) {
   // What its children pass on: below the root, whether this row's own line runs on.
   const childLines = depth > 0 ? [...lines, !last] : [];
+  const id = node.session.id;
+  const count = node.children.length;
+  const open = count > 0 && openRows.isOpen(id);
   return (
     <>
       <SessionListItem
         session={node.session}
         handle={handle}
-        active={node.session.id === activeId}
-        tree={{ depth, last, lines, children: node.children.length > 0 }}
-        subAgentCount={node.children.length}
+        active={id === activeId}
+        tree={{ depth, last, lines, children: open }}
+        {...(count > 0 ? {
+          expander: {
+            open,
+            onToggle: () => openRows.toggle(id),
+            label: `${open ? "Hide" : "Show"} ${count} sub-agent${count === 1 ? "" : "s"}`,
+          },
+        } : {})}
+        subAgentCount={count}
         firstSubAgent={node.children[0] && sessionName(node.children[0].session)}
         {...controls}
       />
-      {node.children.map((child, index) => (
+      {open && node.children.map((child, index) => (
         <SessionTreeItem
           key={child.session.id}
           node={child}
           handle={handle}
           activeId={activeId}
+          openRows={openRows}
           depth={depth + 1}
           last={index === node.children.length - 1}
           lines={childLines}
@@ -875,6 +933,7 @@ function SessionListItem({
   handle,
   active,
   tree,
+  expander,
   subAgentCount = 0,
   firstSubAgent,
   selecting,
@@ -891,6 +950,8 @@ function SessionListItem({
   active: boolean;
   /// Its place in the tree of sessions and their sub-agents.
   tree: ListRowTree;
+  /// Opens and closes its sub-agents.
+  expander?: ListRowExpander;
   /// Sub-agent sessions listed directly under this row.
   subAgentCount?: number;
   /// The first sub-agent's name, for the count's tooltip.
@@ -924,6 +985,7 @@ function SessionListItem({
         ? { checked: isSelected, onToggle: () => onToggle(session.id), label: `Select ${session.displayName ?? session.id}`, actions: selectionActions }
         : undefined}
       tree={tree}
+      {...(expander ? { expander } : {})}
       indicator={<SessionDot session={session} />}
       title={displayName || session.id}
       // A closed session's title fades to its second line's colour.
@@ -1046,7 +1108,7 @@ function NewSessionDialog({
       const nextSearch = new URLSearchParams(search);
       navigate(`${path}?${nextSearch}`);
       nextSearch.delete("new");
-      const remaining = Math.max(0, DIALOG_WARP_MS - (performance.now() - warpStarted.current));
+      const remaining = Math.max(0, dialogWarpMs() - (performance.now() - warpStarted.current));
       window.setTimeout(
         () => navigate(`${path}${nextSearch.size ? `?${nextSearch}` : ""}`, { replace: true }),
         remaining,
@@ -1375,6 +1437,7 @@ export function SessionDetail({
   sessionId,
   backTo = `/u/${handle}/sessions`,
   embedded = false,
+  embeddedHeader,
   sessionHref,
 }: {
   universeId: string;
@@ -1387,6 +1450,13 @@ export function SessionDetail({
    * talks to it, so there is nothing to override.
    */
   embedded?: boolean;
+  /**
+   * Embedded, a header of its own in place of the page's: `title` names
+   * what is open (a switcher, say), beside the session's meta toolbar as
+   * its page shows it (without who drives it: the surrounding page says
+   * that), and `actions` its ⋯ menu.
+   */
+  embeddedHeader?: { title: ReactNode; actions?: ReactNode };
   /** Where lineage links go; defaults to the Sessions page. */
   sessionHref?: (sessionId: string) => string;
 }) {
@@ -1587,7 +1657,7 @@ export function SessionDetail({
     lineage,
     lineageHref: sessionHref ?? ((target: string) => `/u/${handle}/sessions/${target}`),
     resources: resourcesShown
-      ? sessionResourceItems({ resources, handle, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
+      ? sessionResourceItems({ resources, handle, universeId, onConfigure: !embedded && canConfigure ? () => setSettingsOpen(true) : undefined })
       : [],
   }) : [];
   const showStrip = SHOW_META_STRIP && meta.length > 0 && (resourcesShown || hasLineage(lineage));
@@ -2021,6 +2091,24 @@ export function SessionDetail({
           )}
         </div>
       )}
+      {embedded && embeddedHeader && (
+        // As the page's header, for a session inside another page: what is
+        // open, its state and what it can reach, then its ⋯.
+        <DetailHeader
+          title={embeddedHeader.title}
+          titleClassName="overflow-visible"
+          tags={meta.length > 0 && (
+            <MetaToolbar
+              items={meta.filter((item) => item.key !== SESSION_META.controller)}
+              place="header"
+              full
+              label="Conversation details"
+              className="grow"
+            />
+          )}
+          actions={embeddedHeader.actions ? [{ kind: "custom", key: "conversation", node: embeddedHeader.actions }] : []}
+        />
+      )}
       {!embedded && (
         <>
         {/* Left is state: what it is, who sees it, who drives it, what it is
@@ -2033,7 +2121,6 @@ export function SessionDetail({
             kind: "custom",
             key: "session",
             node: <SessionActionsMenu
-              variant="more"
               sessionId={sessionId}
               metadata={session.data?.metadata}
               open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotIcon /> } : undefined}

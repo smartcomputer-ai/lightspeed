@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
@@ -22,6 +23,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: demo ? { outDir: "dist-demo" } : undefined,
+    test: {
+      setupFiles: ["./src/test/fresh-settings.ts"],
+    },
     server: {
       port: demo ? 5175 : 5173,
       // Fail instead of hopping to 5174: only :5173 is a trusted auth origin,
@@ -48,15 +52,18 @@ function demoEntry(): Plugin {
   };
 }
 
-/// The `<Todo>` placeholder (src/components/todo.tsx) must not ship: the
-/// production build fails while it is in the output, naming each to-do with
-/// its file, line, title and description. Development, tests and the demo
-/// build are not checked. Only what is rendered into the bundle counts, so
-/// a to-do in code the build drops (development-only pages) does not.
+/// A critical `<Todo>` placeholder (src/components/todo.tsx) must not ship:
+/// the production build fails while one is in the output, naming each with
+/// its file, line, title and description. A regular one renders nothing in
+/// a production build and does not fail it. A `critical` prop that is not a
+/// plain `true` or `false` counts as critical, as does a use of the
+/// component that cannot be read. Development, tests and the demo build are
+/// not checked. Only what is rendered into the bundle counts, so a to-do in
+/// code the build drops (development-only pages) does not.
 function todoGuard(): Plugin {
   const todoModule = path.resolve(import.meta.dirname, "src/components/todo.tsx");
   const root = import.meta.dirname;
-  const usages = new Map<string, Array<{ line: number | null; title: string; description: string | null }>>();
+  const usages = new Map<string, Array<{ line: number | null; title: string; description: string | null; critical: boolean }>>();
   const same = (left: string, right: string) => path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase();
   const relative = (id: string) => path.relative(root, id).split(path.sep).join("/");
   return {
@@ -79,8 +86,9 @@ function todoGuard(): Plugin {
         }
       }
       if (names.size === 0) return null;
-      // Each <Todo> is now a jsx(Todo, { ...props }) call; read its text props.
-      const found: Array<{ title: string; description: string | null }> = [];
+      // Each <Todo> is now a jsx(Todo, { ...props }) call; read its text props
+      // and whether it is critical.
+      const found: Array<{ title: string; description: string | null; critical: boolean }> = [];
       const text = (node: AstNode | undefined): string | null => {
         if (!node) return null;
         if (node.type === "Literal" && typeof node.value === "string") return node.value;
@@ -94,7 +102,10 @@ function todoGuard(): Plugin {
         if (current.type === "CallExpression" && current.arguments[0]?.type === "Identifier" && names.has(current.arguments[0].name)) {
           const props: AstNode[] = current.arguments[1]?.type === "ObjectExpression" ? current.arguments[1].properties : [];
           const prop = (key: string) => props.find((property) => property.type === "Property" && (property.key.name ?? property.key.value) === key)?.value;
-          found.push({ title: text(prop("title")) ?? "To Do", description: text(prop("description")) });
+          const flag = prop("critical");
+          // Only a plain `false` (or no prop) is known not to be critical.
+          const critical = flag !== undefined && !(flag.type === "Literal" && flag.value === false);
+          found.push({ title: text(prop("title")) ?? (critical ? "Critical To Do" : "To Do"), description: text(prop("description")), critical });
         }
         for (const key of Object.keys(current)) if (key !== "type") visit(current[key]);
       };
@@ -108,7 +119,8 @@ function todoGuard(): Plugin {
       } catch {
         // No source to read: report without lines.
       }
-      usages.set(file, (found.length > 0 ? found : [{ title: "To Do", description: null }]).map((usage, index) => ({
+      // A use that cannot be read counts as critical.
+      usages.set(file, (found.length > 0 ? found : [{ title: "To Do", description: null, critical: true }]).map((usage, index) => ({
         line: lines[index] ?? null,
         ...usage,
       })));
@@ -127,15 +139,20 @@ function todoGuard(): Plugin {
         .filter(([file]) => rendered.has(path.normalize(file).toLowerCase()))
         .flatMap(([file, list]) => list.map((usage) => ({ file: relative(file), ...usage })))
         .sort((left, right) => left.file.localeCompare(right.file) || (left.line ?? 0) - (right.line ?? 0));
-      const list = entries.length > 0
-        ? entries.map(({ file, line, title, description }) =>
+      // Regular to-dos render nothing in this build; only critical ones fail it.
+      const critical = entries.filter((entry) => entry.critical);
+      // In the bundle, but no use of it could be read: as critical.
+      const unread = entries.length === 0;
+      if (critical.length === 0 && !unread) return;
+      const list = critical.length > 0
+        ? critical.map(({ file, line, title, description }) =>
             `  ${file}${line ? `:${line}` : ""}\n    ${title}${description ? `: ${description}` : ""}`).join("\n")
         : "  (the component is in the bundle, but no <Todo> use was found; search for imports of components/todo)";
-      const count = entries.length === 1 ? "1 to-do is" : `${entries.length || "Some"} to-dos are`;
+      const count = critical.length === 1 ? "1 critical to-do is" : `${critical.length || "Some"} critical to-dos are`;
       this.error(
         `Production build failed: ${count} still in the app.\n` +
-        `<Todo> (${relative(todoModule)}) marks unfinished work and may not ship in a production build. ` +
-        `Finish each one and remove its <Todo>:\n\n${list}\n`,
+        `A critical <Todo> (${relative(todoModule)}) marks work the app cannot ship without. ` +
+        `Finish each one and remove its <Todo>, or drop \`critical\` to leave it out of production builds:\n\n${list}\n`,
       );
     },
   };

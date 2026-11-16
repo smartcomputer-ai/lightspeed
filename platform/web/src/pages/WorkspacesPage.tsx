@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
-import { AddIcon, FileIcon, WorkspaceIcon } from "@/icons";
+import { AddIcon, FileIcon, PreviewIcon, SourceViewIcon, WorkspaceIcon } from "@/icons";
 import {
   api,
   type BlobContent,
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
+import { useDialogWarp } from "@/lib/dialog-warp";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { appHref, blobHref } from "@/lib/blob-view";
@@ -571,24 +572,28 @@ function FileDetail({
                 kind: "choice" as const,
                 key: "view",
                 label: "Markdown view",
+                appearance: "toggle" as const,
                 value: preview ? "preview" : "source",
                 options: [
-                  { value: "source", label: "Source" },
-                  { value: "preview", label: "Preview", hint: "Preview Markdown" },
+                  { value: "source", label: "Source", icon: <SourceViewIcon data-icon="inline-start" /> },
+                  { value: "preview", label: "Preview", hint: "Preview Markdown", icon: <PreviewIcon data-icon="inline-start" /> },
                 ],
                 onChange: (value: string) => onPreviewChange(value === "preview"),
               }]
             : []),
           ...(canEditFiles && textEditor
             ? [{
+                kind: "save" as const,
                 key: "save",
                 label: "Save",
-                text: save.isPending ? "Saving…" : dirty ? "Save" : "Saved",
+                dirty,
+                saving: save.isPending,
+                // A failed save, while its changes are still unsaved.
+                error: editor.error !== null && dirty,
                 hint: "Save (⌘S / Ctrl+S)",
                 keyShortcuts: "Meta+S Control+S",
-                primary: true,
                 disabled: !canSave,
-                onSelect: saveCurrent,
+                onSave: saveCurrent,
               }]
             : []),
           // The file's actions (rename, download, delete, …), as its row's
@@ -681,19 +686,27 @@ function NewWorkspaceDialog({
   const [idTouched, setIdTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dialogWarp = useDialogWarp(open);
   const create = useMutation({
     mutationFn: (input: unknown) =>
       api<WorkspaceRow>("POST", `/api/v1/universes/${universeId}/workspaces`, input),
     onSuccess: async (created) => {
       await queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] });
-      onOpenChange(false);
-      setDisplayName("");
-      setWorkspaceId("");
-      setIdTouched(false);
-      setError(null);
-      navigate(`/u/${handle}/workspaces/${created.workspaceId}`);
+      // Once the warp has played out: close, and open the new workspace.
+      dialogWarp.afterWarp(() => {
+        onOpenChange(false);
+        setDisplayName("");
+        setWorkspaceId("");
+        setIdTouched(false);
+        setError(null);
+        navigate(`/u/${handle}/workspaces/${created.workspaceId}`);
+      });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      // Called off: the dialog comes back with the error.
+      dialogWarp.cancel();
+      setError(err.message);
+    },
   });
 
   const submit = (event: FormEvent) => {
@@ -711,12 +724,14 @@ function NewWorkspaceDialog({
       setError(issue ? `${issue.path.join(".")}: ${issue.message}` : "invalid input");
       return;
     }
+    // Creating sends the dialog off to warp meanwhile.
+    dialogWarp.start();
     create.mutate(parsed.data);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent starscape warp={dialogWarp.warp}>
         <DialogHeader>
           <DialogTitle>New workspace</DialogTitle>
           <DialogDescription>

@@ -9,6 +9,8 @@ import {
   ArrowBendDownRightIcon,
   ArrowClockwiseIcon,
   ArrowCounterClockwiseIcon,
+  BracketsAngleIcon,
+  EyeIcon,
   LinkSimpleHorizontalBreakIcon,
   LinkSimpleHorizontalIcon,
   ArrowDownIcon,
@@ -31,6 +33,7 @@ import {
   CaretUpDownIcon,
   CaretUpIcon,
   ChatCircleIcon,
+  ChatIcon,
   ChatTextIcon,
   ChatsIcon,
   CheckCircleIcon,
@@ -80,6 +83,7 @@ import {
   FileArchiveIcon,
   FilePlusIcon,
   FileTextIcon,
+  FloppyDiskIcon,
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
@@ -113,6 +117,8 @@ import {
   PauseIcon,
   PencilLineIcon,
   PencilSimpleIcon,
+  PersonSimpleRunIcon,
+  PersonSimpleWalkIcon,
   PlayIcon,
   PlugIcon,
   PlugsIcon,
@@ -157,7 +163,7 @@ import { BotFaceIcon, BotFace, BotIcon } from "@/components/icons/bot";
 import { GitHubLogo, OpenAiLogo, AnthropicLogo } from "@/components/icons/logos";
 import type { IconComponent, IconLibrary } from "./roles";
 
-/// Draws a Phosphor icon in one weight at Lucide's default 24px, so icons
+/// Draws a Phosphor icon in one weight at 24px by default, so icons
 /// without a size class keep their footprint.
 function weighted(Glyph: PhosphorIcon, weight: "duotone" | "regular"): IconComponent {
   const Weighted: IconComponent = ({ size = 24, ...props }) => (
@@ -210,6 +216,9 @@ export const phosphor = {
     LightThemeIcon: duotone(SunIcon),
     DarkThemeIcon: duotone(MoonIcon),
     SystemThemeIcon: duotone(MonitorIcon),
+    ReducedMotionOnIcon: duotone(PersonSimpleWalkIcon),
+    ReducedMotionOffIcon: duotone(PersonSimpleRunIcon),
+    ReducedMotionSystemIcon: duotone(MonitorIcon),
     GitHubLogo: GitHubLogo,
     OpenAiLogo: OpenAiLogo,
     AnthropicLogo: AnthropicLogo,
@@ -219,6 +228,8 @@ export const phosphor = {
     ToolsIcon: duotone(WrenchIcon),
     SubAgentIcon: duotone(TreeStructureIcon),
     ParentAgentIcon: duotone(TreeViewIcon),
+    SessionMainThreadIcon: duotone(ChatIcon),
+    SessionSubThreadIcon: duotone(ChatTextIcon),
     CodeModeIcon: duotone(CodeIcon),
     WebIcon: duotone(GlobeSimpleIcon),
     TimerIcon: duotone(TimerIcon),
@@ -254,6 +265,7 @@ export const phosphor = {
     AttachIcon: regular(PlusIcon),
     EditIcon: duotone(PencilSimpleIcon),
     EditFilesIcon: duotone(NotePencilIcon),
+    SaveIcon: duotone(FloppyDiskIcon),
     DeleteIcon: duotone(TrashIcon),
     ArchiveIcon: duotone(ArchiveIcon),
     SessionCloseIcon: duotone(ProhibitInsetIcon),
@@ -269,6 +281,8 @@ export const phosphor = {
     ConfigureIcon: duotone(SlidersHorizontalIcon),
     FilterIcon: regular(FunnelSimpleIcon),
     SelectModeIcon: regular(ListChecksIcon),
+    SourceViewIcon: duotone(BracketsAngleIcon),
+    PreviewIcon: duotone(EyeIcon),
     SendIcon: duotone(PaperPlaneTiltIcon),
     SubmitIcon: regular(ArrowUpIcon),
     QueueIcon: regular(ListPlusIcon),

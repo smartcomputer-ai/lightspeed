@@ -1,6 +1,6 @@
 /// The icon contract: every role the app draws, named by what it stands
 /// for rather than how it looks. An icon library implements it as an
-/// `IconLibrary` (see lucide.ts); `index.ts` picks one at build time and
+/// `IconLibrary` (see phosphor.tsx); `index.ts` picks one at build time and
 /// re-exports its roles, which is what components import from `@/icons`.
 ///
 /// Adding a role means adding it here, to every library, and to the export
@@ -49,6 +49,12 @@ export interface IconSet {
   LightThemeIcon: IconComponent;
   DarkThemeIcon: IconComponent;
   SystemThemeIcon: IconComponent;
+  /** Reduced motion on: everything moves less (a walk, not a run). */
+  ReducedMotionOnIcon: IconComponent;
+  /** Reduced motion off: full motion. */
+  ReducedMotionOffIcon: IconComponent;
+  /** Reduced motion as the system asks. */
+  ReducedMotionSystemIcon: IconComponent;
   GitHubLogo: IconComponent;
   OpenAiLogo: IconComponent;
   AnthropicLogo: IconComponent;
@@ -58,6 +64,8 @@ export interface IconSet {
   ToolsIcon: IconComponent;
   SubAgentIcon: IconComponent;
   ParentAgentIcon: IconComponent;
+  SessionMainThreadIcon: IconComponent;
+  SessionSubThreadIcon: IconComponent;
   CodeModeIcon: IconComponent;
   WebIcon: IconComponent;
   TimerIcon: IconComponent;
@@ -93,6 +101,8 @@ export interface IconSet {
   AttachIcon: IconComponent;
   EditIcon: IconComponent;
   EditFilesIcon: IconComponent;
+  /** Save changes (the save button). */
+  SaveIcon: IconComponent;
   DeleteIcon: IconComponent;
   ArchiveIcon: IconComponent;
   /** Closing a session, and the mark of a closed one. */
@@ -109,6 +119,10 @@ export interface IconSet {
   ConfigureIcon: IconComponent;
   FilterIcon: IconComponent;
   SelectModeIcon: IconComponent;
+  /** Show a document as its source text (markup, code), next to Preview. */
+  SourceViewIcon: IconComponent;
+  /** Show a document rendered, as it will look, next to Source. */
+  PreviewIcon: IconComponent;
   SendIcon: IconComponent;
   SubmitIcon: IconComponent;
   QueueIcon: IconComponent;
@@ -262,7 +276,7 @@ export interface IconSet {
 
 /// One complete implementation of the contract.
 export interface IconLibrary {
-  /// Short name shown in the UI overview, such as `lucide`.
+  /// Short name shown in the UI overview, such as `phosphor`.
   name: string;
   icons: IconSet;
 }

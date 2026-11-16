@@ -29,6 +29,7 @@ import {
   RESOURCE_STATUS_TONE,
 } from "@/components/meta-details";
 import { MetaToolbar, type MetaItem } from "@/components/meta-toolbar";
+import { ConversationDetails, type BotConversation } from "@/components/bot/conversations";
 import { Popover } from "@/components/ui/popover";
 import type { ResourceTone } from "@/lib/sessions/session-resources";
 
@@ -300,6 +301,20 @@ function ChannelsDetails({ act }: { act: (what: string) => void }) {
   );
 }
 
+// A bot's conversations, as its page's conversation switcher lists them:
+// Main and its threads (components/bot/conversations).
+
+const CONVERSATIONS: BotConversation[] = [
+  { id: "main", kind: "main", title: "Main", line: "#8 handled · Planned LIN-1422 into three tasks", tone: "idle", closed: false, atMs: Date.now() - 40 * 60_000 },
+  { id: "lin-1421-c", kind: "thread", title: "lin-1421-c", line: "Working on #9", tone: "live", closed: false, atMs: Date.now() - 60_000 },
+  { id: "lin-1421-b", kind: "thread", title: "lin-1421-b", line: "#7 run failed · Provider returned 529", tone: "attention", failed: true, closed: false, atMs: Date.now() - 2 * 3_600_000 },
+  { id: "digest", kind: "thread", title: "Weekly digest", line: "#5 handled · Sent the digest to #eng", tone: "idle", closed: false, atMs: Date.now() - 26 * 3_600_000 },
+];
+
+function ConversationsDetails() {
+  return <ConversationDetails conversations={CONVERSATIONS} currentId="lin-1421-c" href={(id) => link(`conversation ${id}`)} bot="Implementer" />;
+}
+
 /// Every usage, drawn open.
 export function MetaDetailsUsagesExample() {
   const { act, note } = useActed();
@@ -318,6 +333,7 @@ export function MetaDetailsUsagesExample() {
         <Panel label="Timers · heading and footer only"><TimersDetails act={act} /></Panel>
         <Panel label="Workspace file content · code row, copy, footer action"><FileContentDetails /></Panel>
         <Panel label="Bot channels · steady and reconnecting"><ChannelsDetails act={act} /></Panel>
+        <Panel label="Bot conversations · the open one marked"><ConversationsDetails /></Panel>
       </Panels>
     </div>
   );

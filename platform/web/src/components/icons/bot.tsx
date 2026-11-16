@@ -7,8 +7,8 @@ import { forwardRef, type SVGProps } from "react";
 /// reads monochrome; on cards and avatars set `color` per bot.
 type BotMarkProps = SVGProps<SVGSVGElement> & { size?: number | string };
 
-/// Outlined rendition on the lucide 24px grid (stroke 2, round caps) so it
-/// sits flush with lucide icons in the sidebar: `<NavItem icon={BotIcon} />`.
+/// Outlined rendition on a 24px grid (stroke 2, round caps) so it sits
+/// flush with the other icons in the sidebar: `<NavItem icon={BotIcon} />`.
 /// Same anatomy as the mark — fanned streaks, eyes tilted by the same 7°.
 export const BotIcon = forwardRef<SVGSVGElement, BotMarkProps>(
   ({ size = 24, ...props }, ref) => (
@@ -39,9 +39,9 @@ export const BotIcon = forwardRef<SVGSVGElement, BotMarkProps>(
 );
 BotIcon.displayName = "BotIcon";
 
-/// Outlined face without streaks, centered on the lucide grid. The body is
+/// Outlined face without streaks, centered on the 24px grid. The body is
 /// drawn 15% larger than BotIcon's (streaks need no room), so it reads at
-/// the same optical size as neighboring lucide icons.
+/// the same optical size as neighboring icons.
 export const BotFaceIcon = forwardRef<SVGSVGElement, BotMarkProps>(
   ({ size = 24, ...props }, ref) => (
     <svg

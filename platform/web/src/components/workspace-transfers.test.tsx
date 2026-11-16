@@ -215,9 +215,11 @@ async function click(element: Element | null | undefined) {
     (element as HTMLElement).click();
   });
 }
+/// A button by its visible label (a save button lays out every state's
+/// label but shows one).
 const button = (text: string) =>
   Array.from(document.querySelectorAll("button")).find(
-    (button) => button.textContent === text,
+    (button) => (button.querySelector("[data-save-label]:not([aria-hidden])") ?? button).textContent === text,
   );
 const item = (text: string) =>
   Array.from(document.querySelectorAll('[role="menuitem"]')).find(
@@ -1529,8 +1531,9 @@ it.each([
       expect(button(keepTyping ? "Save" : "Saved")).toBeDefined();
     });
     stable();
+    // Saved, it ignores presses (aria-disabled) rather than being disabled.
     expect(
-      (button(keepTyping ? "Save" : "Saved") as HTMLButtonElement).disabled,
+      button(keepTyping ? "Save" : "Saved")!.getAttribute("aria-disabled") === "true",
     ).toBe(!keepTyping);
   },
 );

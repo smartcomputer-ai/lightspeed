@@ -15,6 +15,8 @@ export function BotEditorDialog({
   title,
   description,
   contentClassName,
+  starscape = false,
+  warp = false,
   children,
 }: {
   open: boolean;
@@ -23,11 +25,17 @@ export function BotEditorDialog({
   title: string;
   description: string;
   contentClassName?: string;
+  /** The starscape on the backdrop, for a dialog that creates (see DialogContent). */
+  starscape?: boolean;
+  /** Sends it off into the stars (see DialogContent). */
+  warp?: boolean;
   children: ReactNode;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        starscape={starscape}
+        warp={warp}
         className={cn(
           "flex h-dvh w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[min(90dvh,900px)] sm:w-[calc(100%-2rem)] sm:max-w-6xl sm:rounded-xl",
           contentClassName,

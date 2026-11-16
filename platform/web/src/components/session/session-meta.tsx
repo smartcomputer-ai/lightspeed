@@ -265,17 +265,38 @@ function ago(ms: number): string {
 /// item: each with its state, profile and last change, opening its session.
 function SubAgentList({ lineage, href }: { lineage: SessionLineage; href: (sessionId: string) => string }) {
   return (
+    <SubAgentDetails
+      sessions={lineage.children}
+      href={href}
+      description="Sessions this one delegated work to."
+      {...(lineage.more && lineage.loadMore ? { loadMore: { onSelect: lineage.loadMore, loading: lineage.loadingMore } } : {})}
+    />
+  );
+}
+
+/// A popover listing sub-agent sessions: each with its state, profile (and
+/// `parentOf`, who delegated to it) and last change, opening its session.
+/// `loadMore` offers the next page.
+export function SubAgentDetails({ sessions, href, description, parentOf, loadMore }: {
+  sessions: SessionSummary[];
+  href: (sessionId: string) => string;
+  description: string;
+  parentOf?: (session: SessionSummary) => string | undefined;
+  loadMore?: { onSelect: () => void; loading: boolean };
+}) {
+  return (
     <MetaDetails>
-      <MetaDetailsHeading title="Sub-agents" description="Sessions this one delegated work to." />
+      <MetaDetailsHeading title="Sub-agents" description={description} />
       <MetaDetailsList label="Sub-agents">
-        {lineage.children.map((child) => {
+        {sessions.map((child) => {
           const name = child.displayName?.trim();
           const { tone, closed, facts } = lineageFacts(child);
+          const parent = parentOf?.(child);
           return (
             <MetaDetailsRow
               key={child.id}
               primary={name || <span className="font-mono text-xs">{compactSessionId(child.id)}</span>}
-              secondary={facts}
+              secondary={[facts[0], parent && `of ${parent}`, ...facts.slice(1)]}
               tone={tone}
               muted={closed}
               href={href(child.id)}
@@ -283,10 +304,10 @@ function SubAgentList({ lineage, href }: { lineage: SessionLineage; href: (sessi
           );
         })}
       </MetaDetailsList>
-      {lineage.more && lineage.loadMore && (
+      {loadMore && (
         <MetaDetailsFooter>
-          <MetaDetailsAction icon={ShowMoreIcon} onSelect={lineage.loadMore} keepOpen busy={lineage.loadingMore}>
-            {lineage.loadingMore ? "Loading…" : "Load more sub-agents"}
+          <MetaDetailsAction icon={ShowMoreIcon} onSelect={loadMore.onSelect} keepOpen busy={loadMore.loading}>
+            {loadMore.loading ? "Loading…" : "Load more sub-agents"}
           </MetaDetailsAction>
         </MetaDetailsFooter>
       )}

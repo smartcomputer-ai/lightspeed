@@ -3,9 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { openEnvironmentsQuery } from "@/lib/environments";
 import type { McpServerOption, WorkspaceOption } from "@/components/session/session-config-editor";
-import { CodeModeIcon, ConfigureIcon, EnvironmentIcon, GoToIcon, SubAgentIcon, TimerIcon, ToolsIcon, WebIcon, WorkspaceIcon, type IconComponent } from "@/icons";
+import { CodeModeIcon, ConfigureIcon, EnvironmentIcon, GoToIcon, ProfileIcon, TimerIcon, ToolsIcon, WebIcon, WorkspaceIcon, type IconComponent } from "@/icons";
 import { environmentTone, sessionResources, type ResourceTone, type SessionResources } from "@/lib/sessions/session-resources";
-import type { Environment } from "@/api";
+import type { Environment, ProfileSummary } from "@/api";
 import type { MetaItem, MetaTone } from "@/components/meta-toolbar";
 import {
   MetaDetails,
@@ -75,9 +75,12 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 /// servers, sub-agent profiles, and web, code-mode, and timer tools. Each
 /// opens the details and where to change them. Their priorities sit below
 /// the session's own state, environment first.
-export function sessionResourceItems({ resources, handle, onConfigure }: {
+export function sessionResourceItems({ resources, handle, universeId, onConfigure }: {
   resources: SessionResources;
   handle: string;
+  /// Names and describes the sub-agent profiles, from the universe's
+  /// profiles once their popover opens; without it they show by id.
+  universeId?: string;
   /// Opens the session's settings; absent when the viewer cannot change them.
   onConfigure?: () => void;
 }): MetaItem[] {
@@ -164,17 +167,13 @@ export function sessionResourceItems({ resources, handle, onConfigure }: {
       </MetaDetails>,
     ),
     agents && chip(
-      { key: "agents", icon: SubAgentIcon, label: plural(agents.profiles.length, "agent"), muted: agents.profiles.length === 0, title: "Sub-agent profiles" },
+      { key: "agents", icon: ProfileIcon, label: plural(agents.profiles.length, "profile"), muted: agents.profiles.length === 0, title: "Sub-agent profiles" },
       <MetaDetails>
         <MetaDetailsHeading title="Sub-agent profiles" description="Profiles the agent may run as sub-agents." />
         {agents.profiles.length === 0
           ? <MetaDetailsEmpty>No profiles are listed.</MetaDetailsEmpty>
           : (
-            <MetaDetailsList label="Sub-agent profiles">
-              {agents.profiles.map((profile) => (
-                <MetaDetailsRow key={profile} primary={profile} mono href={`/u/${handle}/profiles/${encodeURIComponent(profile)}`} />
-              ))}
-            </MetaDetailsList>
+            <SubAgentProfileRows universeId={universeId} handle={handle} profileIds={agents.profiles} />
           )}
         {(agents.maxDepth !== undefined || agents.maxConcurrent !== undefined) && (
           <MetaDetailsNote>{[agents.maxDepth !== undefined && `Up to ${agents.maxDepth} levels deep`, agents.maxConcurrent !== undefined && `${agents.maxConcurrent} open at once`].filter(Boolean).join(" · ")}.</MetaDetailsNote>
@@ -210,6 +209,42 @@ export function sessionResourceItems({ resources, handle, onConfigure }: {
     ),
   ];
   return items.filter((item): item is MetaItem => Boolean(item));
+}
+
+/// The sub-agent profiles a session may run, as the sub-agents popover lists
+/// sub-agents: each by its name (its id without one), with its description
+/// under it, opening its profile. The universe's profiles are read when the
+/// popover opens (shared with every other list of them), not before.
+function SubAgentProfileRows({ universeId, handle, profileIds }: {
+  universeId: string | undefined;
+  handle: string;
+  profileIds: string[];
+}) {
+  const profiles = useQuery({
+    queryKey: ["profiles", universeId],
+    queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
+    enabled: Boolean(universeId),
+    staleTime: 60_000,
+  });
+  const byId = new Map((profiles.data ?? []).map((profile) => [profile.profileId, profile]));
+  return (
+    <MetaDetailsList label="Sub-agent profiles">
+      {profileIds.map((profileId) => {
+        const profile = byId.get(profileId);
+        const name = profile?.displayName?.trim();
+        const description = profile?.description?.trim();
+        return (
+          <MetaDetailsRow
+            key={profileId}
+            primary={name || profileId}
+            mono={!name}
+            {...(description ? { secondary: <span className="line-clamp-2">{description}</span> } : {})}
+            href={`/u/${handle}/profiles/${encodeURIComponent(profileId)}`}
+          />
+        );
+      })}
+    </MetaDetailsList>
+  );
 }
 
 /// A session's environment as a meta item: its name, colored by its status,

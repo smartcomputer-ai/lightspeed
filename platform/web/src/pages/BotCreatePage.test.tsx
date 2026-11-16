@@ -18,6 +18,10 @@ vi.mock("@/lib/universes", async (original) => ({
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor" /> }));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));
+// The warp is only a look: these tests open the created bot without waiting it out.
+vi.mock("@/lib/dialog-warp", () => ({
+  useDialogWarp: () => ({ warp: false, start: () => {}, afterWarp: (then: () => void) => then(), cancel: () => {} }),
+}));
 // JSDOM has no popup layout; each select becomes a native control named by its trigger id.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");

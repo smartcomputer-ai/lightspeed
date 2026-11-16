@@ -3,12 +3,10 @@ import {
   DEFAULT_SESSION_LIST_PREFERENCES,
   metadataFilterFromSearchParams,
   parseMetadataPair,
-  readSessionMetadataFilter,
-  readSessionListPreferences,
+  parseSessionListPreferences,
+  parseSessionMetadataFilter,
   hiddenSessionsNote,
   searchParamsWithMetadataFilter,
-  writeSessionMetadataFilter,
-  writeSessionListPreferences,
 } from "./list-preferences";
 
 describe("session list preferences", () => {
@@ -22,13 +20,11 @@ describe("session list preferences", () => {
   });
 
   it("reads valid values and falls back field by field", () => {
-    expect(readSessionListPreferences("universe-a", {
-      getItem: () => JSON.stringify({
-        showClosed: false,
-        showSubagents: "yes",
-        showSessionIds: true,
-        metadataKeys: [" campaign ", "owner", "campaign", 12, ""],
-      }),
+    expect(parseSessionListPreferences({
+      showClosed: false,
+      showSubagents: "yes",
+      showSessionIds: true,
+      metadataKeys: [" campaign ", "owner", "campaign", 12, ""],
     })).toEqual({
       showClosed: false,
       showSubagents: true,
@@ -37,54 +33,13 @@ describe("session list preferences", () => {
       showSessionIds: true,
       metadataKeys: ["campaign", "owner"],
     });
-    expect(readSessionListPreferences("universe-a", { getItem: () => "not-json" }))
-      .toEqual(DEFAULT_SESSION_LIST_PREFERENCES);
+    expect(parseSessionListPreferences("not an object")).toBeUndefined();
+    expect(parseSessionListPreferences([])).toBeUndefined();
   });
 
-  it("stores visibility preferences per universe", () => {
-    const values = new Map<string, string>();
-    const storage = {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => { values.set(key, value); },
-    };
-    writeSessionListPreferences(
-      "universe-a",
-      { showClosed: false, showSubagents: true, showControlledSessions: true, showSessionIds: false, metadataKeys: ["campaign"] },
-      storage,
-    );
-    writeSessionListPreferences(
-      "universe-b",
-      { showClosed: true, showSubagents: false, showControlledSessions: false, showSessionIds: true, metadataKeys: ["owner"] },
-      storage,
-    );
-    expect(readSessionListPreferences("universe-a", storage))
-      .toEqual({
-        showClosed: false,
-        showSubagents: true,
-        showControlledSessions: true,
-        showSessionIds: false,
-        metadataKeys: ["campaign"],
-      });
-    expect(readSessionListPreferences("universe-b", storage))
-      .toEqual({
-        showClosed: true,
-        showSubagents: false,
-        showControlledSessions: false,
-        showSessionIds: true,
-        metadataKeys: ["owner"],
-      });
-  });
-
-  it("stores metadata filters per universe", () => {
-    const values = new Map<string, string>();
-    const storage = {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => { values.set(key, value); },
-    };
-    writeSessionMetadataFilter("universe-a", { campaign: "nightly" }, storage);
-    writeSessionMetadataFilter("universe-b", { source: "bot" }, storage);
-    expect(readSessionMetadataFilter("universe-a", storage)).toEqual({ campaign: "nightly" });
-    expect(readSessionMetadataFilter("universe-b", storage)).toEqual({ source: "bot" });
+  it("keeps only string metadata filter values", () => {
+    expect(parseSessionMetadataFilter({ campaign: "nightly", count: 3, "": "x" })).toEqual({ campaign: "nightly" });
+    expect(parseSessionMetadataFilter(["campaign"])).toBeUndefined();
   });
 });
 

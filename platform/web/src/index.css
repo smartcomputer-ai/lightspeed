@@ -15,15 +15,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Reduced motion follows the choice in Preferences, which defaults to the
+   system setting. data-motion on <html> ("reduce" or "full") carries it: set
+   before first paint by index.html, kept current by src/lib/reduced-motion.ts. */
+@custom-variant motion-safe (&:where(:root[data-motion="full"], :root[data-motion="full"] *));
+@custom-variant motion-reduce (&:where(:root[data-motion="reduce"], :root[data-motion="reduce"] *));
+
 @keyframes transcript-enter {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .transcript-enter {
-        animation: transcript-enter var(--content-transition-duration) ease-out;
-    }
+:root[data-motion="full"] .transcript-enter {
+    animation: transcript-enter var(--content-transition-duration) ease-out;
 }
 
 /* Status dots (StatusDot): all in CSS. The dot is its tone's text color
@@ -64,21 +68,19 @@
         pointer-events: none;
     }
 
-    @media (prefers-reduced-motion: no-preference) {
-        .status-dot[data-tone="live"] {
-            animation: status-dot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-
-        .status-dot:is([data-tone="waiting"], [data-tone="attention"]) > .status-dot-ring:first-child,
-        .status-dot[data-tone="live"] > .status-dot-ring {
-            display: block;
-            animation: status-dot-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
-        }
-
-        /* Live's rings a third of the interval apart. */
-        .status-dot[data-tone="live"] > .status-dot-ring:nth-child(2) { animation-delay: calc(-2s / 3); }
-        .status-dot[data-tone="live"] > .status-dot-ring:nth-child(3) { animation-delay: calc(-4s / 3); }
+    :root[data-motion="full"] .status-dot[data-tone="live"] {
+        animation: status-dot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     }
+
+    :root[data-motion="full"] .status-dot:is([data-tone="waiting"], [data-tone="attention"]) > .status-dot-ring:first-child,
+    :root[data-motion="full"] .status-dot[data-tone="live"] > .status-dot-ring {
+        display: block;
+        animation: status-dot-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+
+    /* Live's rings a third of the interval apart. */
+    :root[data-motion="full"] .status-dot[data-tone="live"] > .status-dot-ring:nth-child(2) { animation-delay: calc(-2s / 3); }
+    :root[data-motion="full"] .status-dot[data-tone="live"] > .status-dot-ring:nth-child(3) { animation-delay: calc(-4s / 3); }
 }
 
 /* Fonts and shadows resolve through the variables in :root, like the colors,
@@ -167,11 +169,11 @@
     --popover-foreground: oklch(0.141 0.005 285.823);
     --primary: oklch(0.21 0.006 285.885);
     --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.967 0.001 286.375);
+    --secondary: oklch(0.94 0.001 286.375);
     --secondary-foreground: oklch(0.21 0.006 285.885);
     --muted: #ebebeb;
     --muted-foreground: oklch(0.552 0.016 285.938);
-    --accent: oklch(0.967 0.001 286.375);
+    --accent: oklch(0.94 0.001 286.375);
     --accent-foreground: oklch(0.21 0.006 285.885);
     --destructive: #cb2a2a;
     /* Status colors, the same in both themes. */
@@ -355,7 +357,7 @@
     --dialog-transition-duration: 150ms;
     --layout-transition-duration: 200ms;
     --content-transition-duration: 200ms;
-    /* Scales every icon (lucide, tabler and the app's own marks) from the
+    /* Scales every icon (phosphor and the app's own marks) from the
        size its classes give it. */
     --icon-scale: 0.9;
 }

@@ -2,8 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMatch } from "react-router-dom";
 import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed-ai/platform-shared";
 import { api, type Universe } from "@/api";
-
-const LAST_UNIVERSE_KEY = "lightspeed:last-universe";
+import { SETTINGS, settings } from "@/lib/settings";
 
 /// One list drives everything: memberships for the switcher, all universes
 /// for platform admins (role marks the ones they are actually members of).
@@ -50,9 +49,11 @@ export function useFeature(feature: FeatureKey): boolean {
 }
 
 export function rememberUniverse(handle: string) {
-  localStorage.setItem(LAST_UNIVERSE_KEY, handle);
+  settings.set(SETTINGS.lastUniverse, handle).catch(() => {
+    // The landing page falls back to the first universe.
+  });
 }
 
 export function lastUniverse(): string | null {
-  return localStorage.getItem(LAST_UNIVERSE_KEY);
+  return settings.get(SETTINGS.lastUniverse);
 }

@@ -7,10 +7,17 @@
     <title>Lightspeed</title>
     <script>
       // Apply the stored theme before first paint to avoid a light flash.
-      // No stored choice means dark (DEFAULT_THEME in src/lib/theme.tsx).
+      // No stored choice means dark (DEFAULT_THEME in src/lib/settings).
+      // A device that keeps its own theme stores it apart from the account's
+      // (device overrides in src/lib/settings/store.ts).
       (function () {
         try {
           var theme = localStorage.getItem("lightspeed:theme");
+          var own = JSON.parse(localStorage.getItem("lightspeed:device-overrides") || "null");
+          if (own && own.theme === true) {
+            var values = JSON.parse(localStorage.getItem("lightspeed:device-settings:theme") || "null");
+            if (values && typeof values["lightspeed:theme"] === "string") theme = values["lightspeed:theme"];
+          }
           var dark =
             theme === "system"
               ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -19,6 +26,26 @@
         } catch (error) {
           document.documentElement.classList.add("dark");
         }
+      })();
+      // Apply the reduced motion choice the same way: data-motion on <html>
+      // drives the motion-safe and motion-reduce styles. No stored choice
+      // follows the system (src/lib/reduced-motion.ts).
+      (function () {
+        var reduce = false;
+        try {
+          reduce = !!window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        } catch (error) {}
+        try {
+          var motion = localStorage.getItem("lightspeed:reduced-motion");
+          var own = JSON.parse(localStorage.getItem("lightspeed:device-overrides") || "null");
+          if (own && own.display === true) {
+            var values = JSON.parse(localStorage.getItem("lightspeed:device-settings:display") || "null");
+            if (values && typeof values["lightspeed:reduced-motion"] === "string") motion = values["lightspeed:reduced-motion"];
+          }
+          if (motion === "on") reduce = true;
+          else if (motion === "off") reduce = false;
+        } catch (error) {}
+        document.documentElement.setAttribute("data-motion", reduce ? "reduce" : "full");
       })();
     </script>
   </head>

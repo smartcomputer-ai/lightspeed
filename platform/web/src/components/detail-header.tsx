@@ -3,6 +3,8 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { BackIcon, MoreIcon } from "@/icons";
 import { PaneBar } from "@/components/list-pane";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import { SaveButton } from "@/components/ui/save-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,13 +43,30 @@ export type DetailHeaderAction =
       keyShortcuts?: string;
     }
   | {
-      /** One of a few views (Form/JSON, Source/Preview): tabs, or radio items. */
+      /** One of a few views (Form/JSON, Source/Preview): tabs or a toggle group, or radio items. */
       kind: "choice";
       key: string;
       label: string;
       value: string;
-      options: Array<{ value: string; label: string; hint?: string }>;
+      options: Array<{ value: string; label: string; hint?: string; icon?: ReactNode }>;
       onChange: (value: string) => void;
+      /** Shown inline as tabs (the default) or as a toggle group. */
+      appearance?: "tabs" | "toggle";
+    }
+  | {
+      /** The save button (see ui/save-button): Save, Saving…, Saved or Save failed. */
+      kind: "save";
+      key: string;
+      label: string;
+      dirty: boolean;
+      saving: boolean;
+      /** The last save failed. */
+      error?: boolean;
+      /** Cannot save even with changes, e.g. the file changed elsewhere. */
+      disabled?: boolean;
+      onSave: () => void;
+      hint?: string;
+      keyShortcuts?: string;
     }
   | {
       /** Shown as is at every width, e.g. a component's own ⋯ menu. */
@@ -124,7 +143,48 @@ export function DetailHeader({
 
 type CollapsibleAction = Exclude<DetailHeaderAction, { kind: "custom" }>;
 
+/// What a save action says now, and whether it can save.
+function saveStatus(action: Extract<DetailHeaderAction, { kind: "save" }>) {
+  const text = action.saving ? "Saving…" : action.error ? "Save failed" : action.dirty ? action.label : "Saved";
+  const ready = !action.saving && (action.dirty || !!action.error) && !action.disabled;
+  return { text, ready };
+}
+
 function InlineAction({ action }: { action: CollapsibleAction }) {
+  if (action.kind === "save") {
+    return (
+      <SaveButton
+        size="sm"
+        dirty={action.dirty}
+        saving={action.saving}
+        error={action.error}
+        disabled={action.disabled && action.dirty && !action.saving}
+        onClick={action.onSave}
+        title={action.hint}
+        aria-keyshortcuts={action.keyShortcuts}
+      >
+        {action.label}
+      </SaveButton>
+    );
+  }
+  if (action.kind === "choice" && action.appearance === "toggle") {
+    return (
+      <ButtonGroup aria-label={action.label}>
+        {action.options.map((option) => (
+          <Button
+            key={option.value}
+            size="sm"
+            aria-pressed={action.value === option.value}
+            title={option.hint}
+            onClick={() => action.onChange(option.value)}
+          >
+            {option.icon}
+            {option.label}
+          </Button>
+        ))}
+      </ButtonGroup>
+    );
+  }
   if (action.kind === "choice") {
     return (
       <Tabs value={action.value} onValueChange={(value) => action.onChange(value as string)}>
@@ -189,6 +249,15 @@ function CollapsedActions({ actions }: { actions: CollapsibleAction[] }) {
               </DropdownMenuGroup>
               {index < actions.length - 1 && actions[index + 1]?.kind !== "choice" && <DropdownMenuSeparator />}
             </Fragment>
+          ) : action.kind === "save" ? (
+            <DropdownMenuItem
+              key={action.key}
+              variant={action.error && !action.saving ? "destructive" : "default"}
+              disabled={!saveStatus(action).ready}
+              onClick={action.onSave}
+            >
+              {saveStatus(action).text}
+            </DropdownMenuItem>
           ) : (
             <DropdownMenuItem
               key={action.key}

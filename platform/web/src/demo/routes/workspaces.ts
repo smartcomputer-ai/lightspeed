@@ -17,6 +17,10 @@ export const VFS_SCHEMA_VERSION = "lightspeed.vfs.snapshot.v1";
 
 const WORKSPACE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 
+/// How long the demo takes to save a file, so a save shows that it runs
+/// (the save button's Saving… state) as it would against a real server.
+const FILE_SAVE_DELAY_MS = 600;
+
 export function workspaceRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
@@ -222,6 +226,8 @@ export function workspaceRoutes(store: DemoStore): Hono {
   /// Write a file: store the blob, graft it into a copy of the head
   /// manifest, commit. A stale `expectedRevision` is a 409, not a clobber.
   app.put("/:id/workspaces/:workspaceId/files/:path{.+}", async (c) => {
+    // Before anything is checked, so a conflict is judged as the save lands.
+    await new Promise((resolve) => setTimeout(resolve, FILE_SAVE_DELAY_MS));
     const universe = universeFor(store, c);
     const record = universe?.workspaces.get(c.req.param("workspaceId"));
     if (!record) return notFound(c, "not found in engine");

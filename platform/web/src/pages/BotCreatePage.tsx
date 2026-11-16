@@ -1,6 +1,7 @@
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDialogWarp } from "@/lib/dialog-warp";
 import { DeleteIcon } from "@/icons";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
@@ -308,6 +309,7 @@ function Wizard({
     ...(runsPerDay.trim() && !(Number(runsPerDay) >= 1) ? ["The daily run limit is at least 1."] : []),
   ];
 
+  const dialogWarp = useDialogWarp(open);
   const create = useMutation({
     mutationFn: async () => {
       if (!permissions.can("createBot") || (setupMode === "own" && !permissions.can("createProfile"))) {
@@ -358,8 +360,11 @@ function Wizard({
         queryClient.invalidateQueries({ queryKey: ["bots", universeId] }),
         queryClient.invalidateQueries({ queryKey: ["profiles", universeId] }),
       ]);
-      navigate(`/u/${handle}/bots/${bot.botId}`, { state: { introduce: true } });
+      // Opening the bot closes the dialog: once the warp has played out.
+      dialogWarp.afterWarp(() => navigate(`/u/${handle}/bots/${bot.botId}`, { state: { introduce: true } }));
     },
+    // Called off: the dialog comes back with the error.
+    onError: () => dialogWarp.cancel(),
   });
 
   const stepIndex = STEPS.findIndex((entry) => entry.id === step);
@@ -395,6 +400,8 @@ function Wizard({
     <BotEditorDialog
       open={open}
       onOpenChange={onOpenChange}
+      starscape
+      warp={dialogWarp.warp}
       icon={
         <BotAvatar
           botId={botId.trim() || "new-bot"}
@@ -751,7 +758,11 @@ function Wizard({
           ) : (
             <Button
               className="shrink-0"
-              onClick={() => create.mutate()}
+              onClick={() => {
+                // Creating sends the dialog off to warp meanwhile.
+                dialogWarp.start();
+                create.mutate();
+              }}
               disabled={!permissions.can("createBot") || (setupMode === "own" && !permissions.can("createProfile")) || create.isPending || problems.length > 0}
             >
               {create.isPending ? "Creating…" : "Create bot"}

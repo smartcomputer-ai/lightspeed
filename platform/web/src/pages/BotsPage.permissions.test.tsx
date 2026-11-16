@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -14,7 +14,12 @@ vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "universe", isLoading: false }),
   useFeature: () => true,
 }));
-vi.mock("@/pages/SessionsPage", () => ({ SessionDetail: () => <div>Readable transcript</div> }));
+// The conversation, with the header the bot page gives it (its switcher and ⋯ menu).
+vi.mock("@/pages/SessionsPage", () => ({
+  SessionDetail: ({ embeddedHeader }: { embeddedHeader?: { title: ReactNode; actions?: ReactNode } }) => (
+    <div>{embeddedHeader?.title}{embeddedHeader?.actions}Readable transcript</div>
+  ),
+}));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
 vi.mock("@/components/provider-readiness-banner", () => ({ ProviderReadinessBanner: () => null }));
@@ -71,28 +76,31 @@ async function settle() {
   await act(async () => { await vi.advanceTimersByTimeAsync(10); });
   await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 }
+/// The bot's page, with its activity dialog open unless showing the chat.
 async function show(view: "chat" | "activity" = "activity", introduce = false) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", state: { introduce } }]}><Routes><Route path="/u/:handle/bots/:botId" element={<BotsPage admin={true} view={view} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[{ pathname: "/u/universe/bots/bot", search: view === "activity" ? "?activity=open" : "", state: { introduce } }]}><Routes><Route path="/u/:handle/bots/:botId" element={<BotsPage admin={true} />} /></Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
 }
-const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text);
+// The activity dialog renders outside the page container.
+const button = (text: string) => [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text);
+const eventRow = () => [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!;
 it("lets a contributor invoke without creating, managing or replaying bots", async () => {
   await show();
   expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
   expect(button("Send a test event")).toBeDefined();
   expect(button("Pause bot")).toBeUndefined();
-  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!.click());
+  await act(async () => eventRow().click());
   expect(button("Replay this event")).toBeUndefined();
-  expect(container.textContent).toContain("Visible history");
+  expect(document.body.textContent).toContain("Visible history");
 });
 it("offers bot creation and management to an operator", async () => {
   mocks.role = "operator";
   await show();
   expect(container.querySelector('[aria-label="New bot"]')).not.toBeNull();
   expect(button("Pause bot")).toBeDefined();
-  await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("#1"))!.click());
+  await act(async () => eventRow().click());
   expect(button("Replay this event")).toBeDefined();
 });
 it("keeps activity readable without creation, invocation or management for viewers", async () => {
@@ -101,7 +109,7 @@ it("keeps activity readable without creation, invocation or management for viewe
   expect(container.querySelector('[aria-label="New bot"]')).toBeNull();
   expect(button("Send a test event")).toBeUndefined();
   expect(button("Pause bot")).toBeUndefined();
-  expect(container.textContent).toContain("Visible history");
+  expect(document.body.textContent).toContain("Visible history");
 });
 it("sends the introduction from router state only with session control", async () => {
   mocks.role = "viewer";
@@ -139,4 +147,17 @@ it.each(["viewer", "contributor", "operator"])("offers conversation compaction a
   mocks.role = role;
   await show("chat");
   expect(Boolean(button("Compact context"))).toBe(role !== "viewer");
+});
+
+it("opens the activity dialog over the chat from the former activity address", async () => {
+  mocks.role = "viewer";
+  await act(async () => root.render(
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/bots/bot/activity"]}><Routes>
+      <Route path="/u/:handle/bots/:botId" element={<BotsPage admin={true} />} />
+      <Route path="/u/:handle/bots/:botId/activity" element={<BotsPage admin={true} view="activity" />} />
+    </Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
+  ));
+  await settle();
+  expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain("Visible history");
+  expect(container.textContent).toContain("Readable transcript");
 });
