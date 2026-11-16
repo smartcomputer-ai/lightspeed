@@ -15,9 +15,13 @@ builds the replacement, in one place.
 The companion [resource HTTP API design](p208b-resource-http-api.md) specifies
 the agreed replacement of the client JSON-RPC transport before the general
 Platform API is built. Its runtime, client and Platform HTTP cutover is implemented, with final
-integration validation in progress. It also implements the `/ingress`
+integration validation on hold at the user’s request. It also implements the `/ingress`
 grouping and `/environments` machine-route prefix. The paths described below
-record the implementation before that cutover.
+record the implementation before that cutover. The successor
+Platform design now groups universes into Better Auth organization-backed
+accounts, uses scoped account/universe roles and permits multiple universe
+Owners. Earlier creator-key or unique-owner proposals below are historical;
+see [the agreed account model](p209-platform-authentication-and-authorization.md).
 
 ## Problem
 

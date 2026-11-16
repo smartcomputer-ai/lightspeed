@@ -1,9 +1,9 @@
 # P208b — A resource-oriented HTTP API
 
-**Status:** HTTP cutover implemented; final integration validation in progress,
-2026-11-16. Runtime, SDKs, CLI and Platform now use the resource contract.
+**Status:** HTTP cutover implemented; final integration validation on hold,
+2026-11-16, at the user’s request. Runtime, SDKs, CLI and Platform now use the resource contract.
 Application JSON-RPC transport and generated artifacts are removed. Platform
-personal/service-account tokens remain in P209.
+account hierarchy and personal/application credentials remain in P209.
 
 This accompanies [runtime access simplification](p208-runtime-access-simplification.md)
 and changes the transport assumed by
@@ -80,7 +80,7 @@ Proposed path layout:
 | Surface | Address | Contract owner |
 | --- | --- | --- |
 | Shared application API | `/api/v1/...` on either runtime or Platform | Runtime operation declarations; Platform applies its policy and lifecycle handling |
-| Platform-only resources | `/api/v1/platform/...` on Platform | Platform: tokens, service accounts, membership and ownership operations |
+| Platform-only resources | `/api/v1/platform/...` on Platform | Platform: accounts, applications, tokens and scoped role grants |
 | Frontend-specific adapters | `/api/ui/...` on Platform | Platform web application; may aggregate several operations |
 | Browser sign-in and sessions | `/api/auth/...` on Platform | Existing authentication integration |
 | Public runtime callbacks, metadata and webhooks | `/ingress/...` | Runtime integration endpoints; protocol behavior retained under the grouped paths |
@@ -414,9 +414,11 @@ would expose the runtime's full authority.
 
 ### Operations that need a Platform handler
 
-Universe creation is the clearest example: it must enforce creator/owner
-rules and quotas, create runtime state, and establish Platform records and
-membership. Listing universes must filter the inventory. Deletion and related
+Universe creation is the clearest example: it must authorize the selected
+account, enforce Creator/Admin permission, credential restrictions, account
+quotas and protection policy, create runtime state, and establish Platform
+linkage with an initial universe Owner grant. Multiple Owners are supported;
+there is no single-principal ownership field. Listing universes must filter the inventory. Deletion and related
 lifecycle operations must coordinate the Platform state as well.
 
 These use the same generated request/response types and shared route binding,
@@ -431,7 +433,8 @@ The composed contract and SDK below follow the transport prototype and belong
 with the Platform authentication integration. They are not a prerequisite for
 proving the runtime catalog and generic forwarder.
 
-Platform-only resources, such as service accounts and tokens, are declared
+Platform-only resources, such as accounts, applications, role grants and
+tokens, are declared
 once by Platform under `/api/v1/platform`. Keep their TypeScript/Zod schema
 ownership there and generate their types, validators and OpenAPI fragment.
 Do not put Platform identity models into Rust merely to share a generator.
@@ -451,7 +454,7 @@ again. Discovery's Platform variant follows this same native export path.
 The Platform OpenAPI document combines the admitted runtime operations with
 those native operations. It reuses runtime schema components and omits
 machine-only routes. Shared operations retain the same response contract;
-Platform-specific ownership views belong to its native contract. Connection
+Platform-specific account and role views belong to its native contract. Connection
 discovery has a common shape with an explicit runtime/Platform discriminator
 and typed access information, rather than two incompatible `initialize`
 responses hidden behind the same client method.
@@ -657,8 +660,8 @@ does not imply permission to cache it publicly.
    and Platform lifecycle services. Prove proxy and native-handler paths
    with the existing browser principal. No unrestricted public proxy is
    enabled as a shortcut.
-6. **Platform authentication integration.** P209 supplies personal/service
-   tokens, ownership and the remaining principal policies. Compose and publish
+6. **Platform authentication integration.** P209 supplies the account hierarchy,
+   personal/application credentials and scoped principal policies. Compose and publish
    the admitted shared API plus the Platform-owned contract. Those features
    are not implied by finishing the HTTP transport.
 7. **Cutover and removal.** Regenerate all artifacts and documentation;
@@ -768,13 +771,13 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   configuration now uses `LIGHTSPEED_API_TOKEN` and named/file variants;
   Platform uses `LIGHTSPEED_PLATFORM_API_TOKEN`.
 
-- Final cutover validation is in progress. CLI tests (256 passed, 2 ignored),
+- Final cutover validation is on hold at the user’s request. CLI tests (256 passed, 2 ignored),
   launcher tests (56), release tests (19), OpenAPI lint and documentation
   checks/build pass. Full workspace, Platform and local runtime integration
   results will be recorded after the final run.
 
-- Remaining outside this transport cutover: P209 personal/service-account
-  authentication, its Platform-owned resource API, range support and composed
+- Remaining outside this transport cutover: P209 account hierarchy and
+  personal/application authentication, its Platform-owned resource API, range support and composed
   SDK work. Browser sessions use the shared API with existing Platform policy.
 
 - 2026-11-16: core implementation started after `cargo test --workspace
@@ -801,3 +804,9 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   structural OpenAPI checks; deferred SDK dialect migration and composed SDK
   work. Clarified shared API use by the web app and the limits of path-based
   gateway policy. No API implementation or dependency changes were made.
+
+- 2026-11-16: aligned the future Platform integration with P209's agreed
+  account hierarchy, account-scoped Creator role, multiple universe Owners
+  and administrative unprotection. These are native Platform policies, not
+  additional runtime identity fields or duplicated shared route definitions.
+  Tests and final cutover validation remain on hold.

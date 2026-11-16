@@ -1,437 +1,523 @@
-# P209 — Platform authentication and authorization
+# P209 — Platform accounts, authentication and authorization
 
-**Status:** Proposed, 2026-11-16. Nothing is implemented. What is settled and
-what is still open is listed under [Decisions](#decisions).
+**Status:** Account and role model agreed, 2026-11-16. Not implemented.
+The shared HTTP adapter foundation exists from P208b; the current database
+still maps one Better Auth organization to one universe, and authentication
+still centers on browser users. Final HTTP-cutover validation is on hold at
+the user's request. This document records the target, not current behavior.
 
-This is the second of two documents.
-[Runtime access simplification](p208-runtime-access-simplification.md) takes
-the permission model for callers out of the runtime. This one builds the
-single place that replaces it: the Platform backend as the door for every
-person and every program.
+[Runtime access simplification](p208-runtime-access-simplification.md) leaves
+trusted component authentication in the runtime and puts caller authorization
+in Platform. [The resource HTTP API](p208b-resource-http-api.md) supplies the
+shared transport and generated operation catalog. This document defines the
+account hierarchy, identities, credentials and authorization above it.
 
-The companion [resource HTTP API design](p208b-resource-http-api.md) replaces
-the original JSON-RPC transport assumption: the shared API uses generated
-HTTP resource routes, with an authorized Platform proxy and explicit native
-handlers. Authentication and authorization decisions remain in this document.
+## Decision
 
-## Goal
+A deployment contains accounts. An account contains universes. People and
+applications receive roles at the account and universe levels. The same
+Platform gate serves browser, CLI, SDK and integration requests.
 
-One access system, built once:
+- A Better Auth **organization represents an account**, not a universe.
+- Every universe belongs to exactly one account. The account is its durable
+  home; deleting or disabling its creator does not orphan it.
+- Accounts can be personal or shared. They use the same underlying model.
+- Platform Admin is rare, deployment-wide authority. Ordinary universe
+  creation is an account capability, not a deployment-administration role.
+- Account roles are **Admin, Creator, Member**. The name Creator replaces
+  the working name Builder; it is not merely a `createdBy` attribution.
+- Universe roles are **Owner, Operator, Contributor, Viewer**. Owner replaces
+  the present universe Admin role. Multiple Owners are supported.
+- No separate single-principal universe `ownerId` exists. `createdBy` is
+  attribution, never a permanent authorization bypass.
+- A credential authenticates an identity. Its restrictions can only narrow
+  that identity's current authority.
+- Runtime tokens remain separate full-authority infrastructure credentials.
 
-- **Everyone comes through one door.** The web app, the CLI, SDKs,
-  applications and pipelines all reach the runtime through the Platform
-  backend.
-- **One model of who may do what.** Roles apply to people and to programs
-  alike. A developer's token can do what the developer can do, no more and no
-  less.
-- **Several ways to authenticate,** and room for more, without the runtime
-  knowing about any of them.
-- **A level between one universe and the whole deployment.** People and
-  applications can create universes and control the ones they own, without
-  administering the deployment. This is what the creator design set out to
-  do, rebuilt on roles.
-- **Programs that work with a chosen set of universes,** whoever created
-  them.
+## Accounts and deployment configuration
 
-## Terms
+An account groups universes, membership, administration, applications and
+resource limits. It supplies a future billing boundary without requiring a
+billing feature in the first version. It is not Better Auth's OAuth `account`
+record: the implementation uses its `organization` entity.
 
-| Term | Meaning |
+A public signup can automatically receive a personal account and begin
+creating universes without a separate organization-creation wizard. The
+person administers that account. Enterprise deployments may also enable
+personal accounts for work, development and exploration.
+
+A deployment can instead provision a single corporate account, several
+accounts for business units or verticals, or a mixture of shared and personal
+accounts. Accounts are siblings; nested organizations are not required.
+Membership in one account does not grant access to another.
+
+Deployment policy controls these independently:
+
+- Signup and sign-in admission.
+- Personal-account provisioning and who may create shared accounts.
+- Account membership and account-role assignment, including company-group
+  mappings.
+- Universe-creation quotas and defaults or requirements for deletion
+  protection.
+
+A local development deployment can provision one shared account with Creator
+access for its developers. A corporate deployment may give ordinary users
+Member access and selected groups Creator or Account Admin access. Personal
+accounts remain subject to deployment administration and corporate policy.
+The first-release defaults are listed below; deployment configuration can
+change them independently. There is no mandatory public-versus-enterprise
+mode that fixes all of them.
+
+Account membership alone does not reveal or grant access to every universe.
+Creators and Members see universes to which they have access. Account Admins
+administer and can access all universes in their account; Platform Admins can
+access all accounts and universes. Resource privacy must not imply protection
+from those administrative roles.
+
+## Roles and universe lifecycle
+
+### Deployment
+
+**Platform Admin** administers the deployment and has access across accounts
+and universes. This is a distinct platform function, assigned sparingly.
+Account creation or universe creation does not grant it. Any narrowed
+credential used by an administrator still applies its restrictions.
+
+### Account
+
+| Role | Authority |
 | --- | --- |
-| Principal | Someone or something that can be given roles: a person, or a service account. |
-| Authentication method | How a principal proves who it is: signing in, or presenting a token. |
-| Token | A secret that stands for one principal. |
-| Role | What a principal may do, in one universe or for the deployment. |
-| The door | The Platform backend's API. It authenticates, applies roles, and forwards to the runtime. |
+| Admin | Administer account membership and applications, account policy and universes; recover universe administration. |
+| Creator | Create universes in this account and become an Owner of each one created; no automatic access to other universes. |
+| Member | Access assigned universes; cannot create universes merely by belonging to the account. |
 
-## Principals
+Higher account authority includes creation. Creator is account-scoped: a
+person or application may be a Creator in one account and a Member in another.
+It does not require a deployment-wide Creator flag or entitlement group.
 
-- **A person** has an account, from company sign-in or created locally, as
-  today.
-- **A service account** is a principal that is not a person. It cannot sign
-  in. It is given roles the same way a person is. An application, a
-  pipeline, or a credential for an agent is a service account.
+### Universe
 
-## Authentication methods
+| Role | Authority |
+| --- | --- |
+| Owner | Manage universe access and settings, appoint other Owners, and delete an unprotected universe. |
+| Operator | Configure and operate the universe, without managing membership or deleting the universe. |
+| Contributor | Perform ordinary work under the existing input and resource restrictions. |
+| Viewer | Read resources permitted by the existing visibility rules. |
 
-| Method | For | State |
+Existing session visibility, Contributor restrictions, transcription access
+and other resource rules remain explicit policy. The role rename does not
+turn an Operator or Viewer into a reader of all private sessions.
+
+Universe grants require membership in the containing account. Removing that
+membership disables access through any universe grants there. Universe Owners
+manage universe grants within the account; that does not itself grant them
+account-membership administration or access to a deployment-wide directory.
+Company-group assignments must resolve to the same scoped role model.
+
+### Creating and maintaining Owners
+
+A create request selects an account. Platform checks account creation
+permission, credential restrictions, account policy and quotas. It creates
+the runtime resource and establishes the Platform linkage and an initial
+Owner grant. The creating principal normally receives that grant. A
+Platform Admin provisioning on behalf of someone else must establish an
+explicit initial Owner too.
+
+At least one explicit Owner is required on creation. Ordinary grant edits
+cannot remove or demote the last Owner. Suspension or account-membership
+revocation still takes effect immediately even if it disables the last
+Owner; Account Admins and Platform Admins can recover administration.
+
+Several principals may be Owners with equal authority. An account Member
+may be made Owner of an existing universe without becoming a Creator.
+Losing Creator status prevents new creation but does not revoke existing
+Owner grants or their lifecycle authority. Losing an Owner grant removes
+that authority even from the original creator.
+
+Universes are not re-parented when a creator leaves. Moving universes between
+accounts is deferred. Quotas belong to the account model; the earlier
+per-principal ownership count and its proposed default of 25 are superseded.
+
+### Deletion protection
+
+Reuse the runtime `protected` flag designed in
+[universe metadata, protection and expiry](p207-universe-metadata-protection-and-expiry.md).
+The mechanism is not implemented yet.
+
+- The runtime refuses deletion while `protected` is true, including expiry.
+  Even administrative deletion must first clear the flag explicitly.
+- An Owner may delete an unprotected universe. Account Admins and Platform
+  Admins may also do so, subject to credential restrictions.
+- An Owner may enable protection but cannot clear it. Only an Account Admin
+  for the containing account, or a Platform Admin, may clear it through
+  Platform, subject to account policy.
+- Accounts can default universes to protected or require protection. A
+  mandatory policy must be changed before it can permit unprotection.
+- Owners may manage expiry where protection and account policy permit it.
+- These rules cover UI, CLI, SDK, configuration documents and every update
+  path. `protected: false` in a document must not bypass authorization.
+
+Document-created universes retain the default specified in P207: omitted
+protection protects a newly created universe and leaves an existing universe's
+setting alone. An explicit false is honored only when policy permits it.
+
+## People, applications and credentials
+
+A **principal** is the identity whose permissions are evaluated. Two cases
+must be supported by the authorization design:
+
+- **User:** a person authenticated through the existing Better Auth sign-in
+  and session system. A CLI or script can act as that person.
+- **Application:** independently managed automation associated with an
+  account, with account/universe role assignments and an enabled state.
+  Its administrator is not the identity it authenticates as.
+
+Application is the product term for the non-human principal. It need not
+have a human profile, email address, password login or another universe
+ownership system. In the first release it is a small Platform record with an
+account, name, enabled state and scoped grants. Its API keys use Better Auth's
+organization-owned key configuration, with a server-controlled association
+between key ID and application ID. It is not a fake human user or an OAuth
+client registered solely to obtain a long-lived secret.
+
+An application can be Operator in one universe, Viewer in several universes,
+or Creator in its account and Owner of universes it creates. Application
+suspension removes its access, but its resources remain in the account.
+Application administration and role assignment cannot be inferred merely
+from being the human who generated a credential.
+
+### Better Auth reuse
+
+The installed Better Auth version is 1.7.7. Reuse sign-in, sessions, SSO and
+organizations. Use the API Key plugin for both personal and application API
+keys; do not build a second key generator, hash store or verifier.
+
+The library supports user- and organization-owned keys, not an arbitrary
+principal foreign key. Integrate those supported ownership modes explicitly:
+
+| Credential | Better Auth key owner | Platform authorization subject |
 | --- | --- | --- |
-| Sign-in in the browser, with the company account or a local password | People in the web app | Exists |
-| Sign-in from the CLI, approved in the browser | People at a terminal | New, in a later slice |
-| Personal access token | A person's own scripts and tools | New |
-| Service account token | Applications, pipelines, agents | New |
-| A token from the company identity provider; a pipeline's short-lived identity | Programs that should hold no long-lived secret | Later; the model leaves room |
+| Personal API key | User | That user, with current roles and key restrictions. |
+| Application API key | Organization representing the containing account | The associated application, with its current roles and key restrictions. |
 
-All of them end the same way: the door knows the principal, and from there
-only roles matter.
+Platform stores the application and a server-controlled key-to-application
+association. Verification checks that the key's configuration and organization
+match that application and account, and that both remain active. An unlinked
+organization key is refused by the shared API. Neither key ownership nor the
+human who created it supplies the application's permissions. Arbitrary key
+metadata or caller-supplied identifiers cannot choose the principal.
 
-### Signing in from the CLI
+Use separate plugin configurations for personal and application keys. Expose
+key creation, association, updates and revocation through reviewed Platform
+services. Do not expose unrestricted plugin management endpoints that bypass
+application or credential-restriction policy. Interrupted creation must not
+leave an unassociated key with usable Platform authority.
 
-This comes after the rest. Until then a person uses a personal access token
-with the CLI.
+Better Auth handles credential generation, hash storage, verification and
+expiry. Platform handles application identity, scoped roles, resource rules,
+key-to-application association and any restrictions beyond the library's
+permission metadata. Verify once and keep subject plus credential limits in
+the request context; do not emulate an unrestricted browser session.
 
-`lightspeed connect login <address>` signs a person in without an API key:
+An API key is sent directly with API requests (the SDK can use the standard
+Authorization Bearer header). It may be long-lived but still expires and is
+revocable. It is not an OAuth access token that an integration must first
+obtain from a token endpoint. OAuth client-credentials authentication is not
+required in the first release; it may be added later for integrations that
+want it. Browser-approved CLI sign-in is a separate future authentication
+method for the same user and authorization gate.
 
-1. The CLI asks the door to start a sign-in and prints a short code and an
-   address.
-2. The person opens the address in a browser, signs in the way they normally
-   do, including company sign-in, and approves the code.
-3. The CLI receives a token for that person and stores it in its private
-   credential file.
+References checked 2026-11-16:
 
-This is the device authorization flow. It needs no browser on the machine
-running the CLI, so it also works over SSH and in a container. The version
-of the authentication library the Platform uses ships it as a plugin.
+- [Better Auth organizations](https://better-auth.com/docs/plugins/organization).
+- [API Key ownership, schema and configuration](https://better-auth.com/docs/plugins/api-key/reference).
+- [API Key sessions and organization-owned keys](https://better-auth.com/docs/plugins/api-key/advanced).
+- [Device authorization](https://better-auth.com/docs/plugins/device-authorization)
+  for the later CLI sign-in flow. OAuth clients and token exchange are not a
+  prerequisite for API-key authentication.
 
-### Tokens
+### Personal tokens and narrowing
 
-- **A personal access token acts as the person.** It sees exactly what they
-  see, in every universe they are a member of, and stops working on the next
-  request after they are suspended or lose a membership. A person creates
-  and revokes their own under **Account**.
-- **A service account token acts as the service account.** Whoever
-  administers the service account creates and revokes its tokens.
-- **Every token has an expiry.** How long each kind lasts is still to be
-  decided (open decision 2).
-- **A token can be narrower than its principal.** It may carry a list of API
-  families, taken from the runtime contract's classification of methods, and
-  then reaches only those methods, within the principal's roles. A
-  credential handed to an agent needs this: it may configure a universe and
-  not read its sessions.
-- **A token can be declared** with a supplied secret, so a pipeline that
-  keeps secrets in a secret store never has one printed to it. Repeating a
-  declaration changes nothing; a changed secret replaces the old one at once.
-- **Only a hash is stored,** with a short prefix for recognizing a token in
-  listings. Tokens have their own prefix, so a secret shows whether it is a
-  door token or a runtime token.
+A personal token acts with its user's current permissions. An unrestricted
+token follows those permissions; a restricted token intersects them with its
+allowed accounts/universes and API capabilities or operations. Neither token
+issuance nor verification may manufacture additional authority.
 
-## Roles
+Restriction semantics are part of the first release:
 
-### In a universe
+- Restrictions are ceilings, not independent role grants.
+- Membership loss, suspension and role changes are evaluated on requests;
+  permissions are not copied into a permanent credential snapshot.
+- Explicit read-only or universe restrictions remain in force if the user's
+  broader roles grow.
+- Creation requires an allowed target account and creation capability. A
+  token limited to existing universes does not implicitly allow creation.
+  Account-scoped credentials can use newly created universes only where the
+  principal's new grant and the credential's operation limits both permit it.
+- Restricted credentials must not mint or modify broader credentials as a
+  way to escape their restrictions.
 
-The four roles stay as they are: Viewer, Contributor, Operator, Admin. They
-now apply to service accounts as well. A service account is added to a
-universe with a role, like a member.
+Tokens have expiry, independent revocation and a recognizable identifier or
+prefix for listings. Secrets are not returned in ordinary listings. Reuse
+library storage and lifecycle capabilities; validate integration details for
+the API Key plugin. The initial lifetimes and company-access freshness policy
+are recorded below. Expiry of a browser session does not by itself invalidate
+an otherwise valid API key.
 
-An application that works with a set of universes is a service account with
-a role in each of them. It does not matter who created those universes: an
-administrator adds it to a universe made in the web app or deployed from a
-configuration document the same way.
+There is no separate universe-key authority model. A credential can be
+limited to one universe while still authenticating its user or application.
+The runtime's configured infrastructure tokens remain outside this caller
+credential system and must not be handed to users, browsers or agents.
 
-### For the deployment
+### CLI sign-in and external actors
 
-| Role | May |
+The desired CLI experience is identity-preserving: sign in, create universes
+where permitted, list accessible universes, and use SDK/API operations with
+the same permissions as the web app. Personal tokens can provide this first.
+Browser-approved CLI login follows this implementation and supports the same
+user permissions alongside API-key connections. Prefer Better Auth's device
+authorization flow, which can work over SSH; settle the detailed session/token
+refresh behavior in that slice. CLI repair and compatibility are not blockers
+for the account and API-key implementation.
+
+An application's own end-user attribution is optional future behavior. If
+introduced, it must be explicitly authorized, namespaced under the verified
+application, and never replace the authenticated application identity used
+for permission checks and auditing. This is not required for initial tokens.
+
+## Platform gate and API boundary
+
+The HTTP adapter foundation from P208b is implemented with browser member
+policy; it is not completion of this identity and account design. `/api/v1`
+serves shared resources and `/api/ui` serves remaining browser adapters. Both
+must use the same gate and lifecycle services.
+
+Each request resolves an authenticated subject and credential restrictions.
+Platform checks active identity, account membership, account/universe scope,
+operation admission, role, enabled features and the existing resource rules.
+It resolves the runtime universe UUID and sets attribution itself. A client
+cannot choose a trusted upstream or impersonate another principal by header.
+Unknown operations are refused until reviewed.
+
+| Operation | Platform admission |
 | --- | --- |
-| Creator | Create universes, and control the ones it owns. |
-| Platform admin | Everything, as today. |
+| Create universe | Creator or Admin in the selected account; Platform Admin may provision into an account. |
+| List universes | Return only accessible universes within the authorized account/token scope; administrative visibility follows its scope. |
+| Manage universe membership and lifecycle | Universe Owner or scoped administrative authority, with protection enforced separately. |
+| Clear deletion protection | Containing Account Admin or Platform Admin, subject to account policy. |
+| Manage account membership/policy | Account Admin or Platform Admin. |
+| Deployment infrastructure and environment-provider administration | Platform Admin; preserve existing infrastructure boundaries. |
+| Machine-only runtime operations | Not exposed through the general Platform API. |
 
-Both can be held by a person or by a service account.
+Creation, deletion and native lifecycle handling coordinate both databases
+with retry/recovery semantics. Account selection for creation is Platform
+context: design it in the native contract without adding account identity or
+policy to runtime DTOs or duplicating runtime route declarations.
 
-- **With company sign-in,** Creator comes from a third entitlement group,
-  `LIGHTSPEED_PLATFORM_OIDC_CREATOR_GROUP`, next to the user and admin
-  groups. Setting it to the user group makes every user a Creator, which
-  suits a development deployment. Leaving it unset means only Platform
-  admins create universes.
-- **Without company sign-in,** a Platform admin sets it under **Platform
-  admin → Users**.
-- **For a service account,** a Platform admin grants it.
+Account management, applications, grants and token management live under the
+Platform-owned `/api/v1/platform` contract. Generate its types and descriptors
+once and compose them with admitted runtime operations as specified in P208b.
+Do not move Platform identity records into Rust merely to share a generator.
+Discovery and CLI status must expose the authenticated identity and relevant
+account context without disclosing credentials or unrestricted inventories.
 
-### Owning a universe
+## Clients, declarations and configuration
 
-A universe has at most one owner, a principal.
+The `lightspeed` CLI supports Platform credentials and direct runtime
+infrastructure credentials. Direct mode remains available where the
+operator permits it, including local development. It has full runtime
+authority and does not implement account authorization.
 
-- **Creating.** A Creator who creates a universe owns it. A universe a
-  Platform admin creates has no owner unless they name one.
-- **What the owner may do.** The owner acts as Admin in the universe without
-  a membership, and decides about the universe itself: protecting it,
-  setting its expiry, transferring it and deleting it.
-- **Deleting.** Only the owner or a Platform admin deletes a universe. A
-  universe Admin cannot: that role is about what happens inside the
-  universe, and it can come from a directory group mapping.
-- **Transfer.** The owner hands a universe to another Creator. A Platform
-  admin assigns or clears any owner.
-- **The limit.** A principal may own a bounded number of universes, 25 by
-  default, set for the deployment with
-  `LIGHTSPEED_PLATFORM_UNIVERSES_PER_OWNER_MAX`. It stops a runaway loop and
-  bounds what a leaked token can create. A limit for one principal can be
-  added later; the door has a record of each principal to hold it.
-- **Losing the Creator role.** The person stays Admin in the universes they
-  own and loses the rest: creating, the admin area, deleting, protecting,
-  expiry and transfer. The universe keeps its owner, so the authority
-  returns with the role. Meanwhile a Platform admin can delete or reassign
-  it.
+Account selection is explicit or resolved from an unambiguous saved context.
+Runtime universe paths continue to identify a universe; Platform verifies its
+containing account. SDK helpers and CLI commands share the same HTTP contract.
+The planned consolidation of the separate `lightspeed-platform` CLI remains;
+necessary functionality moves into `lightspeed`.
 
-### What a Creator sees
+Declared members and company-group mappings belong in Platform. Remove the
+runtime's temporary storage of that access policy as declarations move to
+Platform-native services. Preserve existing enterprise admission and group
+mapping behavior during that migration.
 
-A Creator gets the Platform admin area, restricted to what they own:
+Configuration application runs as the authenticated user or application,
+with normal role and token checks. Account selection, initial Owner grants,
+quotas and protection policy apply to declared universe creation too.
+Supplied-secret key declarations are deferred until their fit with the API
+Key plugin is established; they are not a reason to maintain an independent
+legacy key implementation. Generated API keys cover the first release.
 
-| Page | For a Creator |
+The Configurator's intended access is an application with Operator rights in
+its target universe and credentials limited to configuration operations. It
+must not receive a broad runtime token as the replacement for a restricted
+Platform credential. Connector retirement/reintroduction is separate from
+this account model and must not silently determine application permissions.
+
+## Storage and rollout
+
+The current unique organization-to-universe mapping is replaced with one
+account-to-many-universes. Better Auth organization membership stores the
+account relationship; explicit universe grants store universe roles. Reuse
+library identity records where appropriate, with application storage chosen
+after the credential integration decision.
+
+Platform stores account policy and linkage, universe account ID and
+attribution, scoped grants, and credential restrictions not already modeled
+by the chosen library. There is no single-principal universe owner column.
+Runtime stores the resource protection/expiry facts, never account roles.
+
+Existing installations will be migrated separately with an agent, as directed
+by the user. Do not build a compatibility layer or automatic account-grouping
+migration for them as part of this implementation. Required database schema
+migrations still belong to the change. The separate operational migration
+must preserve intended universe grants and privacy, and must not promote old
+universe administrators into account-wide administrators by inference.
+
+Implement in these slices:
+
+1. **Account hierarchy and grants:** database mapping, configurable account
+   provisioning, account roles, universe Owner grants, shared authorization
+   context and required schema migrations. Existing-installation data mapping
+   is handled separately.
+2. **Creation and protected lifecycle:** account-selected creation, quotas,
+   initial Owner assignment, runtime protection/expiry from P207 and Platform
+   unprotection policy across all callers.
+3. **Personal tokens:** Better Auth API Key integration, narrowing,
+   revocation, management and CLI/SDK access as the user.
+4. **Applications:** organization-owned Better Auth API keys associated with
+   application identities, scoped grants, credential lifecycle and the
+   restricted Configurator path.
+5. **Native access declarations and client consolidation:** move remaining
+   runtime policy fields to Platform and expose the generated native API.
+6. **CLI browser sign-in:** use the same subject and authorization path.
+
+## Validation requirements
+
+These are required future checks, not results. Tests remain on hold until
+requested to resume.
+
+- Account membership never implies access to every universe. Creator sees
+  assigned universes and can create; Member cannot create without that role.
+- A user/application may have different roles in different accounts and
+  universes. UUIDs, handles, list queries and tokens cannot cross the boundary.
+- Creation grants an initial Owner and enforces account quotas atomically
+  under concurrency; retries do not duplicate resources or grants.
+- Multiple Owners work; the original creator has no hidden authority.
+  Last-Owner edits are guarded, but suspension still revokes access.
+- Losing Creator status leaves existing Owner grants intact. Losing account
+  membership removes effective access to all its universes.
+- Owners can delete unprotected universes but cannot clear protection via
+  any route, document or configuration update. Account-required protection
+  cannot be disabled while that policy remains in force.
+- Protected universes cannot expire or be deleted even on direct runtime
+  access; authorized deletion first clears protection explicitly.
+- Browser, personal-token and application requests share role/resource
+  enforcement. Narrowed credentials cannot mint broader credentials.
+- Role changes, local suspension, expiry and revocation take effect on the
+  next admission; IdP changes obey the agreed freshness policy. Long-lived
+  streams have bounded reauthorization behavior.
+- Application credentials do not silently become the administrator's user
+  credentials. Audit attribution distinguishes subject and credential.
+- Existing enterprise memberships, directory mappings and resource privacy
+  survive the account migration without administrative privilege expansion.
+
+## First-release defaults
+
+The user delegated selection of sensible defaults, 2026-11-16. These are
+initial product defaults, configurable by the deployment rather than new
+hard-coded role distinctions.
+
+| Setting | Initial default |
 | --- | --- |
-| Universes | The universes they own, with their metadata, protection, expiry and deletion state. Create, protect, set expiry, transfer, delete. |
-| Service accounts and tokens | Those they administer. |
-| Users, Audit log, Environment providers | Not shown, and refused by the door. |
+| Public self-signup | Disabled unless explicitly enabled; preserve configured company admission. |
+| Personal accounts | Provision one for each admitted user; deployments may disable this. The user is its Account Admin. |
+| Shared-account creation | Platform Admins provision them initially; broader self-service can be enabled explicitly. |
+| New shared-account members | Member; Creator and Account Admin require explicit grants or configured company-group mappings. |
+| Local development | One shared development account; admitted developers are Creators. |
+| Application management | Account Admins create/manage applications and their keys and grant their scoped roles. Personal-account users can do this as their own Account Admin. |
+| Universe quota | 25 active universes per personal account; 100 per shared account, with deployment and account overrides. |
+| Interactive/API-created protection | Off for personal accounts; on by default for shared accounts. Development accounts default off. Accounts may change the default or require protection. |
+| Document-created protection | On when omitted; existing universes retain their current value when omitted, as specified in P207. |
+| Personal and application API-key expiry | 365 days by default and as the default maximum; deployments can choose a different maximum. Shorter expiry is selectable; keys are revocable at any time. |
+| API-key rotation | Issue another key for the same principal, move consumers, then revoke the old key. Overlap is explicit; do not silently invalidate a working key on new-key creation. |
+| Browser and future CLI login | Target a 30-day inactivity window with a 90-day absolute login lifetime and renewal during use. Provider/deployment policy may require earlier authentication. CLI mechanics are deferred. |
+| Local access changes | Check local revocation, suspension and effective grants on admission; no artificial delay is required. |
+| Company access refresh | Target a background refresh at least hourly, independent of API-key or login lifetime. See the integration requirement below. |
 
-A Creator adds members to their universes like any universe Admin, and so
-sees the list of accounts. That is what every universe Admin sees today, and
-it stays open. A closed mode, where members are added by exact email address
-without a list and the grant takes effect when that identity signs in, is a
-described option and is not built.
+The shared-account protection default is not mandatory protection: an Account
+Admin can configure a development account for disposable universes. Mandatory
+protection remains a distinct account policy. Quotas count admitted creations
+and resources still consuming their allocation; deletion does not release a
+slot before the resource is actually removed. Applications consume their
+containing account's quota, not a separate creator quota.
 
-### Naming an application's users
+### Company identity freshness
 
-A service account may be allowed to name its own users, so an application
-with its own sign-in can have the runtime record which of them acted. The
-door forwards the name prefixed with the service account, so it can never
-pass for a Platform user. Without this permission, a caller cannot set the
-actor at all.
+Long credential lifetime and timely access revocation are separate concerns.
+A one-year API key does not preserve stale roles for a year. Refresh company
+admission and group assignments in the background, with an hourly freshness
+target, while checking locally recorded changes on request admission.
 
-## The door
+The current integration stores admission claims at sign-in and deliberately
+discards provider access/refresh tokens. It cannot meet the background target
+just by increasing session duration or expiring a cache. Generic OIDC login
+alone is not a directory-change feed.
 
-### One HTTP contract through the Platform
+The implementation must establish an actual supported freshness source for
+configured company providers: directory synchronization/events, an appropriate
+provider API, or refresh that yields authoritative current admission/group
+information. Ordinary JWT validation alone is insufficient. If a source cannot
+refresh, use a documented bounded reauthentication/staleness policy rather
+than silently claim hourly revocation. Do not enable longer company-session
+windows without that policy; retain the current bounded sign-in policy until
+the freshness integration is ready. A successful routine refresh must not
+require another interactive login. Disabling an application is local Platform
+state and does not depend on company identity refresh.
 
-The Platform backend exposes the runtime's resource-oriented HTTP contract:
-the same operation bindings and DTOs, universe-qualified paths, watch streams
-and blob transfers. A client using shared operations works against the
-runtime or the door by changing the address and credential. Platform-owned
-operations are an explicit extension, described in P208b.
+## Remaining implementation choices
 
-Today the Platform has hand-written routes for the web app and no general
-HTTP gateway. The web app keeps frontend adapters under `/api/ui`; the shared
-API uses `/api/v1`. Both use the same gate and application services. Runtime
-routes and types are generated into Platform rather than declared again.
+The principal, API-key and role model is settled. These are implementation
+choices to resolve within the work, not further architecture approvals:
 
-### The gate
+- Confirm the API Key plugin's Drizzle schema and protected management paths,
+  including organization ownership checks, limits and failure recovery.
+- Define native account selection and handle addressing. Keep existing
+  universe UUIDs; do not introduce arbitrary runtime account identity fields.
+- Select the supported background identity-freshness mechanism for each
+  configured company provider, and the bounded outage/fallback behavior.
+- Complete capability grouping for key restrictions and ensure every shared
+  operation is admitted deliberately.
 
-The gate exists for members. It is generalized from "a member" to "a
-principal and, if any, its token's restriction":
+CLI browser-login implementation comes later. Existing-installation migration
+is separate and will be performed with an agent. External application-user
+attribution, supplied-secret key declarations and broader request auditing
+remain follow-up work, not prerequisites for the fixed-role account model.
 
-1. An unknown method is refused. The gate fails closed.
-2. A method outside the token's API families is refused.
-3. The feature the method belongs to is on in the universe.
-4. The principal's role in the universe meets the method's role.
-5. The finer rules that exist today: what a Contributor may set when
-   starting a session, visibility of private sessions, creator-only methods,
-   who may close and delete, forced soft deletion, the narrowed session
-   list, and reading only one's own transcriptions.
-6. Deployment methods get deployment roles:
+## Outside the first version
 
-| Methods | Who |
-| --- | --- |
-| Create a universe | Creator, Platform admin |
-| List universes | A Creator sees the ones they own; a Platform admin sees all |
-| Read, rename, configure, protect, set expiry, delete; purge deleted sessions | The owner, Platform admin |
-| Environment providers and their bindings | Platform admin |
-| Methods meant for machines only | Nobody through the door |
-
-The door alone sets the universe and the actor on what it forwards.
-
-### The door's own methods
-
-Tokens, service accounts, members, roles and ownership are operations of the
-door, not of the runtime. They are exposed under `/api/v1/platform`, so the
-CLI and configuration documents manage them like everything else. Through
-the door, connection discovery reports the principal and its roles using
-the typed Platform variant described in P208b.
-
-## Clients
-
-### CLI
-
-One CLI, `lightspeed`, with two kinds of connection:
-
-| Connection | Credential | Authority |
-| --- | --- | --- |
-| Through the door | Sign-in, or a personal or service account token | The principal's roles |
-| Direct to the runtime | A runtime token | Everything |
-
-- `lightspeed connect add <address>` asks the address what it is, so the
-  person does not have to say.
-- `lightspeed connect login <address>` signs in through the browser, once
-  that slice is built.
-- A direct connection works wherever the runtime can be reached and a token
-  is at hand. That is the normal case on a local stack and an operator's
-  choice elsewhere; a shared deployment keeps the runtime's listener private,
-  and then only the door answers.
-- `connect status` shows the principal and its roles, or that the
-  connection is direct.
-- New command groups manage what the door owns: `token`, `service-account`
-  and `member`. On a direct connection they say that they need the door.
-- With a Creator's sign-in, `universe create`, `universe list` and
-  `universe delete` work on the universes that person owns.
-
-The separate `lightspeed-platform` CLI, which signs in with a password and a
-session token, is retired. What it does that is still needed moves into
-`lightspeed`.
-
-### SDKs
-
-The TypeScript and Python clients take the door's address and a token. Their
-actor option is honoured for a service account allowed to name its users,
-and on a direct connection.
-
-### Configuration documents
-
-`config apply` runs through the door with a service account's token.
-
-- **Declared access goes to the door.** Members and directory group mappings
-  in a universe document are declared to the door directly. They are stored
-  in the runtime today only because the CLI could not talk to the Platform,
-  which then reads them back and enforces them. The runtime's fields for
-  them are removed.
-- **Service accounts and tokens can be declared,** with supplied secrets.
-- **A universe created through the door is known to it at once.** Adoption
-  and the periodic inventory comparison remain only as a repair for
-  universes created directly in the runtime.
-
-### The Configurator setup
-
-The setup that lets an agent configure its universe comes back. It creates a
-service account with the Operator role in that universe and a token narrowed
-to the configuration API families, and stores that token for the agent. The
-agent cannot read sessions with it.
-
-## Security
-
-- **One place decides.** There is no second check to keep in step.
-- **A token is bounded by its principal.** A leaked personal token can do
-  what that person can do and is revoked under their account. A leaked
-  service account token is bounded by its roles and its restriction.
-- **People leaving is handled once.** Suspending a person stops their
-  sign-ins and every token they have, on the next request. Removal at the
-  company identity provider is only seen when the person signs in again, so
-  how long a token may live without a fresh sign-in is part of the open
-  decision on lifetimes.
-- **The actor cannot be forged through the door.** The door sets it, and a
-  service account that may name users names them under its own prefix.
-- **Isolation between universes rests on the door.** One function sets the
-  universe header from the principal's memberships, and the gate refuses
-  methods it does not know.
-- **The door is on the path of every request.** It is built as a gateway:
-  streams and transfers pass through without buffering, and it runs in
-  several replicas.
-- **Everything passes one place,** which makes complete request auditing
-  possible later.
-
-## Storage
-
-Platform database:
-
-- **Tokens:** hash, prefix, principal, label, API families, expiry, last
-  use, who created it.
-- **Service accounts:** principals that cannot sign in, with memberships
-  like people.
-- **Universes:** the owner.
-- **Roles:** the Creator value next to user and admin.
-
-The installed version of the authentication library has a device
-authorization plugin and no API key plugin, so tokens are a table of the
-Platform's own.
-
-Runtime: the fields and the column for declared access are removed, with a
-migration and `release/metadata.env` aligned.
-
-## Slices
-
-1. **The API and personal tokens.** The HTTP API with streams, the
-   gate generalized to principals, deployment roles for Platform admin,
-   personal access tokens, the CLI and SDKs through the door.
-2. **Service accounts.** Memberships, narrowed tokens, declared tokens, the
-   door's own methods in the CLI, the Configurator setup.
-3. **Creators.** The role and its entitlement, ownership, the limit, the
-   restricted admin area, and the universe fields from
-   [universe metadata, protection and expiry](p207-universe-metadata-protection-and-expiry.md)
-   in the web app.
-4. **Declared access moves to the door,** and the runtime's fields go.
-5. **Documentation,** for review before it lands: the access overview,
-   people and roles, API keys and service access, company sign-in, the CLI
-   guide, configuration as code.
-6. **Signing in from the CLI,** later.
-
-Later, and not designed here: tokens from the identity provider, pipeline
-identities, a limit per principal, the closed mode for the account list,
-complete request auditing, rate limits.
-
-## Tests
-
-- **The gate fails closed.** Every method in the contract is either
-  classified in the gate or refused, checked against the generated manifest.
-- **Role by method.** For each role, a method above it is refused through
-  the endpoint, for a personal token and for a service account.
-- **No crossing.** A principal with a role in one universe is refused in
-  another, by UUID and by handle. A caller-supplied actor header is ignored.
-- **A personal token equals its person.** It lists and reads exactly the
-  sessions the person sees in the web app, including private ones.
-- **Narrowed tokens.** A token limited to some API families is refused
-  outside them even when the role would allow the call.
-- **Revocation.** Suspension, a removed membership and an expired token each
-  stop access on the next request.
-- **CLI sign-in,** when it is built: end to end against a local identity
-  provider, including approval by a person without a universe membership.
-- **Creators.** A Creator creates, lists only their own, cannot read
-  another's, hits the limit, transfers and deletes. A universe Admin who is
-  not the owner cannot delete. Losing the role leaves Admin and removes the
-  rest.
-- **Service accounts.** One with roles in two universes reaches those two
-  and no third. One allowed to name users has them recorded under its
-  prefix.
-- **Streams and transfers** pass through the door: the watch stream, long
-  polls, a large blob.
-- **Declared access** applied through the door takes effect, and the runtime
-  no longer stores it.
-
-## Decisions
-
-Decided, 2026-11-16:
-
-- **Authentication and authorization live in the Platform,** in one system.
-- **The CLI can go through the Platform or directly to the runtime,** where
-  the deployment allows the direct path, as on a local stack.
-- **The CLI can sign in through the Platform** to obtain a token, without an
-  API key. This can come after the rest.
-- **Channel connectors are switched off** in this work; channels are being
-  removed for now.
-- **Declared access leaves the runtime.**
-- **Creators are rebuilt here, on roles,** and not as a kind of key.
-- **The `lightspeed-platform` CLI is retired.** What is still needed from it
-  moves into `lightspeed`.
-- **The runtime's key model is removed first** and this is built after, on
-  one branch.
-
-Carried over from the creator design:
-
-- The name Creator.
-- Only the owner or a Platform admin deletes a universe.
-- The limit is one number for the deployment, 25 by default.
-- A person who loses the Creator role stays Admin in what they own.
-- A universe a Platform admin creates has no owner unless one is named.
-- The account list stays open to Creators; the closed mode is described and
-  not built.
-
-Still to confirm:
-
-1. **The device authorization flow for CLI sign-in,** to settle when that
-   slice is built. The alternative opens a browser on the same machine and
-   receives the answer on a local port, which is one step shorter and does
-   not work over SSH.
-2. **Token lifetimes.** To be discussed. The question is how long a token
-   from CLI sign-in and a token created by hand may live, given that removal
-   at the company identity provider is only noticed at the next sign-in. A
-   starting point: as long as a browser session for the first, and a
-   deployment maximum for the second.
-3. **Tokens narrowed by API family,** from the first version.
-4. **A service account may name its own users,** under its own prefix.
-5. **Transfer goes to another Creator.** Only a Platform admin assigns a
-   universe to a principal without the role.
-
-## Not doing
-
-- A permission model in the runtime, of any size.
-- A second door. The web app's routes and the shared HTTP API use one gate.
-- Several owners on one universe.
-- Rules driven by universe metadata.
-- Splitting what a Platform admin can see or do.
+- Nested accounts, cross-account universe transfer/sharing and arbitrary
+  custom-role or policy-language editors.
+- An authorization model in the runtime or a second gate for the browser.
+- Single-principal universe ownership and privileged `createdBy` behavior.
+- Automatic application impersonation of human users.
+- OAuth client-credentials issuance as a prerequisite for integrations that
+  can use API keys; applications initially use the API Key plugin.
+- Compatibility/data-migration tooling for existing installations in this
+  implementation; operational migration is handled separately.
 
 ## Validation and progress
 
-- 2026-11-16: design written from the conversation that led to it and from a
-  survey of the Platform's authentication, its member gate and routes, the
-  CLI's connection model and the holders of runtime keys. No code changed.
+- 2026-11-16: initial proposal followed runtime access simplification. Its
+  deployment-scoped Creator, unique universe owner and custom token-table
+  assumptions are superseded by the agreed account model above.
+- 2026-11-16: checked Better Auth capabilities and current repository state;
+  recorded account hierarchy, Creator naming, multiple universe Owners,
+  account-controlled protection, credential attenuation and explicit remaining
+  integration decisions. Documentation only; no authentication/account code
+  implemented and no tests run or resumed for this revision.
+
+- 2026-11-16: selected the Better Auth API Key plugin for both personal and
+  application keys, with organization-owned application keys explicitly
+  associated with Platform application identities. Recorded long credential
+  lifetimes, hourly company-access freshness target and configurable product
+  defaults. Existing-installation migration and CLI work are deferred by user
+  instruction. Documentation only; tests remain on hold.

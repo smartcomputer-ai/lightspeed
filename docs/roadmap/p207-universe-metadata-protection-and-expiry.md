@@ -1,11 +1,13 @@
 # P207 — Universe metadata, protection and expiry
 
-**Status:** Proposed, 2026-11-16. Nothing is implemented.
+**Status:** Resource mechanism and Platform protection policy agreed,
+2026-11-16. Nothing is implemented. The current universe DTOs and storage do
+not yet contain these fields.
 
 This document began as the design for creators and self-service universes,
 with a creator level built into the runtime as a third kind of API key. That
-part has been taken out. Who may create, own and delete universes is now a
-matter of roles, designed in
+part has been taken out. Accounts contain universes, and creation and lifecycle authority are now
+scoped roles, designed in
 [Platform authentication and authorization](p209-platform-authentication-and-authorization.md),
 after the runtime's own key model is removed in
 [runtime access simplification](p208-runtime-access-simplification.md).
@@ -38,8 +40,9 @@ one deployed from a document.
 `metadata` containment filter. The record of a deleted universe keeps its
 metadata.
 
-The runtime holds no owner. Who owns a universe is recorded where roles are
-decided.
+The runtime holds no account or principal ownership. Platform records the
+containing account and grants the Owner role to one or more principals; there
+is no unique principal owner.
 
 ### Metadata
 
@@ -53,20 +56,31 @@ runtime acts on it.
 
 ### Protection
 
-`protected` is a guard against accidents, not a permission.
+`protected` is a runtime resource guard. Platform separately authorizes who
+may change it; the flag itself grants no permission.
 
 - `deployment/universes/delete` is refused with `rejected` while it is set.
   The refusal is in the runtime, so it holds for the CLI, the web app, an
   SDK script that loops over universes, and expiry alike.
-- Whoever may delete a universe may clear the protection first; it is two
-  steps.
+- Through Platform, universe Owners may delete unprotected universes and
+  enable protection, but cannot clear protection. Only an Admin of the
+  containing account or a Platform Admin may clear it, subject to account
+  policy. Even administrators first clear the flag explicitly; deletion
+  has no bypass option.
+- Account policy can default to or require protection. Mandatory protection
+  must be changed at the account-policy level before unprotection is allowed.
+- Direct runtime callers retain full infrastructure authority and may clear
+  the flag; the runtime never duplicates Platform role checks.
 - A protected universe cannot have an expiry, and an expiring universe
   cannot be protected. One of the two has to be cleared first.
 
 Universes deployed from documents are the ones this exists for:
 
 - A document may state `protected: true` or `protected: false`, and `apply`
-  then keeps the universe that way.
+  then keeps the universe that way only if the caller and account policy
+  permit it. Clearing protection through a document requires the same
+  administrative authority as clearing it through the UI or SDK. An explicit
+  false on creation is refused when account policy requires protection.
 - When a document leaves it out, `apply` protects a universe it creates and
   otherwise leaves the field alone. A universe that was created first and
   configured from a document afterwards, such as an expiring test universe,
@@ -108,11 +122,13 @@ If the run crashes before the last line, the universe expires.
 
 ## Who may use them
 
-The runtime does not decide that. With a direct connection, a caller holding
-a runtime token may set all three. Through the Platform, the owner of a
-universe and a Platform admin may, as described in
-[Platform authentication and authorization](p209-platform-authentication-and-authorization.md#owning-a-universe).
-The web app shows the fields and offers the actions there too.
+The runtime does not decide caller roles. With a direct connection, a caller
+holding a runtime token may set all three, subject to resource invariants.
+Through Platform, universe Owners and scoped administrators manage metadata,
+expiry and enabling protection; only the containing Account Admin or a
+Platform Admin may clear protection, subject to account policy. See
+[Platform accounts and authorization](p209-platform-authentication-and-authorization.md#deletion-protection).
+The same rules apply to the web app, CLI, SDK and configuration documents.
 
 ## Storage
 
@@ -146,6 +162,11 @@ consumer are regenerated.
 - `config apply` protects a universe it creates when the document does not
   say otherwise, keeps an explicit value, and leaves an existing universe's
   protection alone when the document is silent.
+- Through Platform, an Owner cannot clear protection using configuration
+  updates or `config apply`; Account Admin authority is scoped to the
+  containing account. Mandatory account protection refuses explicit false.
+- Administrative deletion has no protected-flag bypass; it requires the
+  explicit authorized unprotection step.
 
 ## Decisions
 
@@ -155,7 +176,10 @@ Decided, 2026-11-16:
   Metadata reuses the map sessions and environments have.
 - **Protection is enforced by the server,** not only by the CLI.
 - **`config apply` protects a universe it creates,** unless the document
-  says `protected: false`.
+  says `protected: false` and account policy permits it.
+- **Platform controls unprotection:** only the containing Account Admin or a
+  Platform Admin may clear it; universe Owner is insufficient. This supersedes
+  the earlier rule that anyone allowed to delete could unprotect first.
 - **Expiry is a time on the universe.** There is no maximum lifetime
   attached to a credential.
 - **Creator keys and an owner in the runtime are dropped.** Creators are
@@ -171,3 +195,8 @@ Decided, 2026-11-16:
 - 2026-11-16: written as the design for creators and self-service
   universes. Reduced the same day to the universe fields, after the decision
   to decide access in one place outside the runtime. No code changed.
+
+- 2026-11-16: aligned with the agreed account hierarchy and multiple universe
+  Owners. Retained the runtime boolean and document-creation default; added
+  the Platform administrative restriction on unprotection and account policy.
+  Documentation only; implementation and tests remain pending.
