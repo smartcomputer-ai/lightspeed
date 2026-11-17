@@ -16,7 +16,7 @@ before choosing an exporter or changing a version.
 | --- | --- | --- |
 | Public application API | DTOs, typed operation catalogs, HTTP bindings and service interfaces in `crates/api/src/` | JSON Schema, HTTP routing catalog, OpenAPI, API reference, TypeScript and Python clients, Configurator tools, Platform method-action map, and profile-editor reference. |
 | Native Platform API | Zod route descriptors in `platform/shared/src/platform-api.ts` and `credential-api.ts` | Native JSON Schema/HTTP catalog and TypeScript/Python clients. |
-| Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
+| Workflow integration | Harness emission types, workflow recipes and recovery types, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
 | Platform database | Schema modules and Drizzle configuration in `platform/db` | SQL migrations, snapshots, journal, and the separate Platform release revision and upgrade baseline. |
@@ -252,15 +252,6 @@ explains the two histories involved, and
 [Workflow tools](../integrating-and-extending/workflow-tools.md) explains the
 external receiver and controller contract.
 
-Channel delivery and prepared-media DTOs are included in the workflow export
-and reach connectors through `@lightspeed-ai/sdk/workflow`. Some
-checks remain authored on both sides: `CHANNEL_DELIVERY_VERSION` exists in
-[`crates/channels/src/delivery.rs`](../../../crates/channels/src/delivery.rs)
-and the connector's
-[`delivery.ts`](../../../platform/connectors/src/providers/delivery.ts).
-When changing delivery compatibility, check both validators and their tests;
-regenerating TypeScript shapes does not prove they accept the same versions.
-
 ## Change stored session events and state
 
 The runtime database crosses every release, whichever namespace the release runs on,
@@ -348,7 +339,7 @@ covers the controller, daemon, and gateway responsibilities in more detail.
 
 Runtime and Platform data have separate owners and migration histories.
 Runtime PostgreSQL holds universes, sessions, creator attribution,
-visibility, and domain records such as bots and channel accounts. Platform owns
+visibility, and domain records such as bots. Platform owns
 login credentials, organizations, memberships and roles, universe
 mapping, and setup provenance. Add a table to the database that owns its
 behavior. [Access and security](../access-and-security/overview.md) explains the
@@ -372,7 +363,7 @@ tables, backfills, and copy steps are unnecessary when no existing data must
 survive.
 
 A new baseline requires fresh schemas and ledgers. The consolidated runtime
-baseline ends at revision 8, and the Platform journal starts at
+baseline ends at revision 7, and the Platform journal starts at
 `0000_initial_platform`. For disposable local state, stop the supervisor
 before `./dev.sh reset`. That command recreates both databases and clears the
 Lightspeed MinIO prefix. For retained data, see

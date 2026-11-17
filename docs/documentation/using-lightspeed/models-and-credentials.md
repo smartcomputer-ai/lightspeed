@@ -148,7 +148,7 @@ two independent defaults:
 | Default | Used for |
 | --- | --- |
 | **Agent runs** | New sessions whose setup and profile leave the model unset. |
-| **Speech-to-text** | Transcription jobs without an explicit model, including web dictation and channel voice messages. |
+| **Speech-to-text** | Transcription jobs without an explicit model, including web dictation. |
 
 Choose **Choose model** or **Change**, select a discovered model or enter its
 provider, API kind, and model name, then choose **Save default**. Manual models
@@ -173,7 +173,7 @@ review their selection before saving again.
 
 ## Configure speech-to-text
 
-To use web dictation or channel voice messages, configure a provider that
+To use web dictation, configure a provider that
 supports `openai:audio-transcriptions`, then choose its transcription model
 under **Models → Defaults → Speech-to-text**. The built-in OpenAI provider and
 compatible endpoints use this protocol. A compatible endpoint uses its saved
@@ -189,8 +189,7 @@ unavailable.
 The microphone in the [session composer](sessions-and-runs.md#dictate-a-message)
 reports why dictation is unavailable. Check the selected speech route and its
 credential, browser recording support, microphone permission, and a secure
-browser origin. [Channel voice messages](chat-channels.md#understand-replies-and-media)
-use the same universe default before delivering text to the bot.
+browser origin.
 
 ## Understand deployment credentials
 

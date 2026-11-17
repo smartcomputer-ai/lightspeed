@@ -1560,7 +1560,6 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
     let workspace_base = put("vfs workspace base manifest").await;
     let bot_document = put("bot event document").await;
     let bot_prompt = put("bot event prompt rendering").await;
-    let bot_media = put("bot event media attachment").await;
     let parent = put("nested parent that embeds a child ref").await;
     let child = put("nested child referenced by an edge only").await;
     let unreferenced_object = put("unreferenced object-backed payload").await;
@@ -1655,15 +1654,14 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         r#"
         INSERT INTO bot_events (
             universe_id, bot_id, event_id, seq, kind, summary, occurred_at_ms, received_at_ms,
-            document_ref, prompt_ref, media_json
+            document_ref, prompt_ref
         )
-        VALUES ($1, 'sweep-bot', 'evt-1', 1, 'test.event', 'holds blobs', 1, 1, $2, $3, $4)
+        VALUES ($1, 'sweep-bot', 'evt-1', 1, 'test.event', 'holds blobs', 1, 1, $2, $3)
         "#,
     )
     .bind(universe_id)
     .bind(bot_document.as_str())
     .bind(bot_prompt.as_str())
-    .bind(serde_json::json!([{ "blobRef": bot_media.as_str(), "kind": "image", "mime": "image/png" }]))
     .execute(store.pool())
     .await
     .expect("insert bot event");
@@ -1671,7 +1669,7 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
     // roots in the same transaction (covered by the bot-store live tests).
     sqlx::query("INSERT INTO cas_bot_event_roots (universe_id, bot_id, event_id, digest) SELECT $1, 'sweep-bot', 'evt-1', unnest($2::text[])")
         .bind(universe_id)
-        .bind([&bot_document, &bot_prompt, &bot_media].map(digest))
+        .bind([&bot_document, &bot_prompt].map(digest))
         .execute(store.pool()).await.expect("fixture bot roots");
     store
         .record_blob_edges(vec![BlobEdge::contains(parent.clone(), child.clone())])
@@ -1786,7 +1784,6 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         &workspace_base,
         &bot_document,
         &bot_prompt,
-        &bot_media,
         &child,
         &fresh,
     ]

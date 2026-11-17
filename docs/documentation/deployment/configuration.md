@@ -153,8 +153,7 @@ secrets must use that key. Replacing it is not an automatic key rotation: the
 existing ciphertext remains encrypted with the previous value.
 
 Keep `LIGHTSPEED_PLATFORM_AUTH_SECRET` stable across Platform restarts.
-It protects sign-in state. If you retain historic WhatsApp data, keep the
-media-locator key and authentication directory with it. See
+It protects sign-in state. See
 [the recovery inventory](upgrades-and-recovery.md#preserve-a-complete-recovery-set).
 
 Configure [models and credentials](../using-lightspeed/models-and-credentials.md)
@@ -316,14 +315,6 @@ registered identity needs to survive restarts. See
 Register a provisioner under **Admin → Platform → Environment providers**.
 It can serve every universe or be limited to selected ones. Follow the
 [Incus setup guide](../environments/incus-vms.md) for a working provider.
-
-### Chat connectors
-
-Run the Telegram and WhatsApp connector host separately. Give it the
-private runtime API URL, a configured runtime token, and the same Temporal
-namespace as the runtime. When moving a WhatsApp account, keep its
-authentication directory and media-locator key. See
-[Channel connectors](../integrating-and-extending/channel-connectors.md).
 
 ### MCP and Configurator
 

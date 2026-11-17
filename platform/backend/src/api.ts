@@ -13,13 +13,11 @@ import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { botRoutes } from "./routes/bots.js";
-import { channelAccountAdminRoutes, channelUniverseRoutes } from "./routes/channel-accounts.js";
 import { environmentDeploymentRoutes } from "./routes/environment-deployment.js";
 import { gatewayRoutes } from "./routes/gateway.js";
 import { universeRoutes } from "./routes/universes.js";
 import { registerWebApp } from "./static.js";
 import { sessionAllows } from "./context.js";
-import { readChannelsStatus } from "./channels-status.js";
 import { publicAuthConfig } from "./auth.js";
 
 
@@ -75,12 +73,6 @@ export function buildApp(ctx: AppContext) {
     return c.json({ user: session.user });
   });
 
-  api.get("/status/channels", async (c) => {
-    if (!sessionAllows(c.get("session"), "configureDeployment")) {
-      return c.json({ error: "deployment permission required: configureDeployment" }, 403);
-    }
-    return c.json({ connectors: await readChannelsStatus(ctx.env.channelsHealthUrls) });
-  });
 
   api.get("/admin/audit", async (c) => {
     if (!sessionAllows(c.get("session"), "readAudit")) return c.json({ error: "deployment permission required: readAudit" }, 403);
@@ -104,10 +96,8 @@ export function buildApp(ctx: AppContext) {
   api.route("/universes", universeRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));
   api.route("/universes", botRoutes(ctx));
-  api.route("/universes", channelUniverseRoutes(ctx));
   api.route("/admin", sessionAdminRoutes(ctx));
   api.route("/admin", environmentDeploymentRoutes(ctx));
-  api.route("/channel-accounts", channelAccountAdminRoutes(ctx));
 
   app.route("/api/ui", api);
 

@@ -554,7 +554,7 @@ macro_rules! for_each_universe_operation {
         ["Grant access to a GitHub App installation", "Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ConfigureResource),
         http: (POST, "/api/v1/universes/{universe}/credentials/providers/{providerId}/github/installations/{installationId}/grant", [("providerId", "providerId"), ("installationId", "installationId")], [], Json, Ok),
     $crate::METHOD_BOTS_CREATE => create_bot($crate::BotCreateParams) -> $crate::BotCreateResponse =>
-        ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id."], access: $crate::MethodAccess::Universe($crate::UniverseAction::CreateBot),
+        ["Create a bot", "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id."], access: $crate::MethodAccess::Universe($crate::UniverseAction::CreateBot),
         http: (POST, "/api/v1/universes/{universe}/bots", [], [], Json, Ok),
     $crate::METHOD_BOTS_PUT => put_bot($crate::BotPutParams) -> $crate::BotPutResponse =>
         ["Create or replace a bot document", "Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
@@ -578,19 +578,19 @@ macro_rules! for_each_universe_operation {
         ["Rotate a bot session", "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
         http: (POST, "/api/v1/universes/{universe}/bots/{botId}/sessions/rotate", [("botId", "botId")], [], Json, Ok),
     $crate::METHOD_BOTS_TRIGGERS_PUT => put_bot_trigger($crate::BotTriggerPutParams) -> $crate::BotTriggerPutResponse =>
-        ["Create or replace a trigger", "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
+        ["Create or replace a trigger", "Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
         http: (PUT, "/api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}", [("botId", "botId"), ("triggerId", "trigger.triggerId")], [], Json, Ok),
     $crate::METHOD_BOTS_TRIGGERS_READ => read_bot_trigger($crate::BotTriggerReadParams) -> $crate::BotTriggerReadResponse =>
-        ["Read a trigger", "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
+        ["Read a trigger", "Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
         http: (GET, "/api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}", [("botId", "botId"), ("triggerId", "triggerId")], [], Json, Ok),
     $crate::METHOD_BOTS_TRIGGERS_LIST => list_bot_triggers($crate::BotTriggerListParams) -> $crate::BotTriggerListResponse =>
-        ["List a bot's triggers", "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
+        ["List a bot's triggers", "Returns every trigger of the bot ordered by id, without ingest paths."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
         http: (GET, "/api/v1/universes/{universe}/bots/{botId}/triggers", [("botId", "botId")], [], Json, Ok),
     $crate::METHOD_BOTS_TRIGGERS_SECRETS_READ => read_bot_trigger_secrets($crate::BotTriggerSecretsReadParams) -> $crate::BotTriggerSecretsReadResponse =>
-        ["Read a trigger's secrets", "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
+        ["Read a trigger's secrets", "Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
         http: (GET, "/api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}/secrets", [("botId", "botId"), ("triggerId", "triggerId")], [], Json, Ok),
     $crate::METHOD_BOTS_TRIGGERS_DELETE => delete_bot_trigger($crate::BotTriggerDeleteParams) -> $crate::BotTriggerDeleteResponse =>
-        ["Delete a trigger", "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
+        ["Delete a trigger", "Drops the trigger's Temporal Schedule, then the record; stored events keep their history."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
         http: (DELETE, "/api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}", [("botId", "botId"), ("triggerId", "triggerId")], [], Json, Ok),
     $crate::METHOD_BOTS_EVENTS_ADMIT => admit_bot_event($crate::BotEventAdmitParams) -> $crate::BotEventAdmitResponse =>
         ["Admit an event manually", "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row."], access: $crate::MethodAccess::Universe($crate::UniverseAction::InvokeBot),
@@ -607,33 +607,6 @@ macro_rules! for_each_universe_operation {
     $crate::METHOD_BOTS_FILTERS_TEST => test_bot_filter($crate::BotFilterTestParams) -> $crate::BotFilterTestResponse =>
         ["Test a CEL filter", "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ManageBot),
         http: (POST, "/api/v1/universes/{universe}/bots/{botId}/filters/test", [("botId", "botId")], [], Json, Ok),
-    $crate::METHOD_CHANNELS_ACCOUNTS_CREATE => create_channel_account($crate::ChannelAccountCreateParams) -> $crate::ChannelAccountCreateResponse =>
-        ["Create a channel account", "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ConfigureResource),
-        http: (POST, "/api/v1/universes/{universe}/channels/accounts", [], [], Json, Ok),
-    $crate::METHOD_CHANNELS_ACCOUNTS_PUT => put_channel_account($crate::ChannelAccountPutParams) -> $crate::ChannelAccountPutResponse =>
-        ["Create or replace a channel account", "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ConfigureResource),
-        http: (PUT, "/api/v1/universes/{universe}/channels/accounts/{accountId}", [("accountId", "account.accountId")], [], Json, Ok),
-    $crate::METHOD_CHANNELS_ACCOUNTS_READ => read_channel_account($crate::ChannelAccountReadParams) -> $crate::ChannelAccountReadResponse =>
-        ["Read a channel account", "Returns the account document and revision."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
-        http: (GET, "/api/v1/universes/{universe}/channels/accounts/{accountId}", [("accountId", "accountId")], [], Json, Ok),
-    $crate::METHOD_CHANNELS_ACCOUNTS_LIST => list_channel_accounts($crate::ChannelAccountListParams) -> $crate::ChannelAccountListResponse =>
-        ["List channel accounts", "Lists this universe's provider accounts, optionally by provider."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
-        http: (GET, "/api/v1/universes/{universe}/channels/accounts", [], ["provider"], Json, Ok),
-    $crate::METHOD_CHANNELS_ACCOUNTS_DELETE => delete_channel_account($crate::ChannelAccountDeleteParams) -> $crate::ChannelAccountDeleteResponse =>
-        ["Delete a channel account", "Removes the account and its pairings; chat triggers that reference it stop serving conversations."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ConfigureResource),
-        http: (DELETE, "/api/v1/universes/{universe}/channels/accounts/{accountId}", [("accountId", "accountId")], [], Json, Ok),
-    $crate::METHOD_CHANNELS_INBOUND_ADMIT => admit_channel_inbound($crate::ChannelInboundAdmitParams) -> $crate::ChannelInboundAdmitResponse =>
-        ["Admit a provider message", "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns."], access: $crate::MethodAccess::Service,
-        http: (POST, "/api/v1/universes/{universe}/channels/accounts/{accountId}/inbound", [("accountId", "accountId")], [], Json, Ok),
-    $crate::METHOD_CHANNELS_PAIRINGS_LIST => list_channel_pairings($crate::ChannelPairingListParams) -> $crate::ChannelPairingListResponse =>
-        ["List chat pairings", "Lists conversations paired to chat triggers, optionally by account or bot."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
-        http: (GET, "/api/v1/universes/{universe}/channels/pairings", [], ["accountId", "botId"], Json, Ok),
-    $crate::METHOD_CHANNELS_PAIRINGS_DELETE => delete_channel_pairing($crate::ChannelPairingDeleteParams) -> $crate::ChannelPairingDeleteResponse =>
-        ["Unpair a conversation", "Removes one pairing; the conversation must present the pairing code again to reconnect."], access: $crate::MethodAccess::Universe($crate::UniverseAction::ConfigureResource),
-        http: (DELETE, "/api/v1/universes/{universe}/channels/accounts/{accountId}/pairings/{chatId}", [("accountId", "accountId"), ("chatId", "chatId")], [], Json, Ok),
-    $crate::METHOD_CHANNELS_CONVERSATIONS_READ => read_channel_conversation($crate::ChannelConversationReadParams) -> $crate::ChannelConversationReadResponse =>
-        ["Read a conversation snapshot", "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet."], access: $crate::MethodAccess::Universe($crate::UniverseAction::Read),
-        http: (GET, "/api/v1/universes/{universe}/channels/accounts/{accountId}/conversations/{chatId}", [("accountId", "accountId"), ("chatId", "chatId")], ["threadId"], Json, Ok),
         }
     };
 }

@@ -65,7 +65,6 @@ import {
   TriggersSection,
   inboxSelectionSpec,
   triggerInputOf,
-  useChannelAccounts,
   type BotEnvStatus,
 } from "./triggers";
 
@@ -102,7 +101,6 @@ export function BotSetup({
     queryFn: () =>
       api<{ triggers?: BotTriggerView[] }>("GET", `/api/ui/universes/${universeId}/bots/${bot.botId}/triggers`),
   });
-  const accounts = useChannelAccounts(universeId);
   const defaultEnvironmentId = defaultEnvironmentAttachment(profile.data?.config)?.environmentId;
   const env: BotEnvStatus =
     profile.isLoading || profile.isError || profile.data === undefined
@@ -117,7 +115,7 @@ export function BotSetup({
       ? "Nothing wakes it yet — you can always message it"
       : `${wakeups.length} ${wakeups.length === 1 ? "trigger" : "triggers"} · ${wakeups
           .slice(0, 2)
-          .map((trigger) => `${trigger.triggerId}: ${triggerSummary(trigger, accounts.data?.accounts ?? [])}`)
+          .map((trigger) => `${trigger.triggerId}: ${triggerSummary(trigger)}`)
           .join(" · ")}${wakeups.length > 2 ? " · …" : ""}`;
 
   return (
@@ -128,7 +126,7 @@ export function BotSetup({
         <SetupSection
           id="triggers"
           title="Triggers"
-          description="When this bot wakes up: schedules, webhooks, polls, chats, other bots."
+          description="When this bot wakes up: schedules, webhooks, polls, and other bots."
           summary={triggersLine}
           defaultOpen
         >

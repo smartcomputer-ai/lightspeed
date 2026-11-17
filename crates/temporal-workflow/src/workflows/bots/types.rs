@@ -3,7 +3,7 @@
 //! serde-stable; the domain vocabulary comes from the `bots` crate.
 
 use api::{BotEventOutcome, BotId, BotTriggerId, LlmUsageView, ProfileId};
-use bots::{BotDeliveryPhase, BotEvent};
+use bots::BotEvent;
 use harness::{RunStatus, WorkflowEndpointRef};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -40,10 +40,6 @@ pub struct BotEnsureSessionRequest {
     /// The controller itself: receiver of every pushed `bot_*` invocation
     /// and the session's lifecycle controller.
     pub controller: WorkflowEndpointRef,
-    /// CAS ref of receiver-bound declarations to merge after the bot tools
-    /// (a chat conversation's `message_*` tools).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,19 +47,23 @@ pub struct BotEnsureSessionRequest {
 pub enum BotEnsureSessionResult {
     Ready {
         profile_revision: u64,
-        #[serde(default)]
-        carried_tool_ids: Vec<String>,
     },
     /// The session exists under another tool declaration; declarations are
     /// immutable per session, so the controller rotates to a successor.
-    DeclarationMismatch { message: String },
+    DeclarationMismatch {
+        message: String,
+    },
     /// The session cannot take the profile's new config (its provider api
     /// kind is pinned for its lifetime); the controller rotates.
-    ProfileUnapplicable { message: String },
+    ProfileUnapplicable {
+        message: String,
+    },
     /// The session is closed, or open with its workflow execution stopped. Nothing
     /// on this path restarts it, so the controller moves the conversation to a
     /// successor.
-    SessionDead { message: String },
+    SessionDead {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,25 +330,6 @@ pub struct BotRecordClosedRequest {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotRecordClosedResult {
     pub sessions: Vec<String>,
-}
-
-/// Signal `bot_delivery` receipts to every notify endpoint recorded on the
-/// listed events, one per distinct `(workflow, token)`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BotSendDeliveryReceiptsRequest {
-    pub universe_id: Uuid,
-    pub bot_id: BotId,
-    pub event_ids: Vec<String>,
-    pub phase: BotDeliveryPhase,
-    pub delivery_id: String,
-    pub seqs: Vec<u64>,
-    pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<BotEventOutcome>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

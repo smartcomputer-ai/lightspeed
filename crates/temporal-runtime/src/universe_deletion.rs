@@ -94,10 +94,6 @@ impl UniverseRuntime {
                         increment(record, "schedulesDeleted", 1);
                     }
                 }
-                sqlx::query("DELETE FROM channel_accounts WHERE universe_id = $1")
-                    .bind(id)
-                    .execute(&mut *guard)
-                    .await?;
                 guard.commit().await?;
                 advance(record, UniverseDeletionStep::Workflows);
             }

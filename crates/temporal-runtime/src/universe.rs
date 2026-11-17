@@ -477,7 +477,6 @@ impl UniverseRuntime {
         let mut api = GatewayAgentApi::builder(self.client.clone(), store.clone())
             .with_task_queue(self.task_queues.sessions.clone())
             .with_bot_task_queue(self.task_queues.bots.clone())
-            .with_channel_task_queue(self.task_queues.channels.clone())
             .with_code_task_queue(self.task_queues.code.clone())
             .with_oauth_token_client(self.clients.oauth_token.clone())
             .with_oauth_metadata_client(self.clients.oauth_metadata.clone())

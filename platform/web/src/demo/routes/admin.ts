@@ -1,10 +1,9 @@
 /// Deployment-scoped administration: deployment environment providers and
-/// their per-universe bindings, the operator channel-account listing, and
+/// their per-universe bindings and
 /// connector health.
 import { Hono } from "hono";
 import type { EnvironmentProviderBinding, EnvironmentTemplate } from "@/api";
 import type {
-  DeploymentChannelAccountView,
   DeploymentEnvironmentProviderView,
 } from "@lightspeed-ai/sdk";
 import { DEMO_POWER_STATES } from "../fixtures/builders";
@@ -196,17 +195,6 @@ export function adminRoutes(store: DemoStore): Hono {
   /// Deployment-wide listing from the core's deployment scope: every account
   /// across universes, each row carrying its universe id. The demo uses the
   /// platform universe id as the core `universeId`.
-  app.get("/channel-accounts", (c) => {
-    const accounts: DeploymentChannelAccountView[] = [];
-    for (const state of store.universes.values()) {
-      for (const account of state.channelAccounts.values()) {
-        accounts.push({ ...account, universeId: state.universe.id });
-      }
-    }
-    return c.json({ accounts });
-  });
-
-  app.get("/status/channels", (c) => c.json(store.channelsStatus));
 
   return app;
 }

@@ -35,11 +35,6 @@ import type {
   BotTriggerRoute,
   BotTriggerView,
   BotView,
-  ChannelAccountView,
-  ChannelPairingView,
-  ChatActivation,
-  ChatAccess,
-  ChatScope,
   EnvironmentCloseReasonView,
   EnvironmentIdentityModeView,
   EnvironmentIdlePolicyView,
@@ -299,33 +294,6 @@ export function briefPut(brief: string): DemoToolCall {
     { brief },
     { group: "bot", verb: "Update brief", detail: firstLine(brief) },
     JSON.stringify({ brief, appliesAt: "next idle boundary" }),
-  );
-}
-
-/// `message_send` in a chat conversation; `sent` is the bot's #N for the
-/// archived send. A push (a brief, a reminder) replies to nothing.
-export function messageSend(
-  conversation: { label: string },
-  text: string,
-  replyTo: number | null,
-  sent: number,
-): DemoToolCall {
-  return tool(
-    "message_send",
-    "message_send",
-    { text, ...(replyTo === null ? {} : { replyTo }) },
-    { group: "message", verb: "Send", target: firstLine(text), detail: replyTo === null ? conversation.label : `${conversation.label} · reply to #${replyTo}` },
-    JSON.stringify({ sent }),
-  );
-}
-
-export function messageNoop(conversation: { label: string }, reason: string): DemoToolCall {
-  return tool(
-    "message_noop",
-    "message_noop",
-    { reason },
-    { group: "message", verb: "Skip", target: conversation.label, detail: reason },
-    JSON.stringify({ accepted: true }),
   );
 }
 
@@ -721,14 +689,6 @@ export const SELF_CONFIG_TOOLS: DeclaredWorkflowTool[] = [
   { workflowToolId: "bots.trigger.put", name: "bot_trigger_put", semanticType: "bots.trigger.put.v1", target: "bound", completion: "accepted" },
   { workflowToolId: "bots.trigger.delete", name: "bot_trigger_delete", semanticType: "bots.trigger.delete.v1", target: "bound", completion: "accepted" },
 ];
-/// Carried by chat-trigger events into their conversation sessions.
-export const MESSAGE_TOOLS: DeclaredWorkflowTool[] = [
-  { workflowToolId: "channels.message.send", name: "message_send", semanticType: "channels.message.send.v1", target: "bound", completion: "accepted" },
-  { workflowToolId: "channels.message.edit", name: "message_edit", semanticType: "channels.message.edit.v1", target: "bound", completion: "accepted" },
-  { workflowToolId: "channels.message.react", name: "message_react", semanticType: "channels.message.react.v1", target: "bound", completion: "accepted" },
-  { workflowToolId: "channels.message.noop", name: "message_noop", semanticType: "channels.message.noop.v1", target: "bound", completion: "accepted" },
-];
-
 /// The first thing a freshly created bot is asked.
 export const INTRODUCTION_PROMPT =
   "You were just created. Introduce yourself in two sentences and confirm your setup: the triggers that wake you, the tools and environment you can use. Ask about anything that is unclear or missing.";
@@ -877,33 +837,6 @@ export function inboxTrigger(botId: string, from: string[] | undefined, rest: Tr
   } as BotTriggerView;
 }
 
-export interface ChatSpecInit {
-  /// The universe's channel account this connection serves.
-  accountId: string;
-  matchScope?: ChatScope | null;
-  activation?: ChatActivation | null;
-  access?: ChatAccess | null;
-  /// A code makes the connection `pairing: "code"`; null opens it.
-  pairingCode?: string | null;
-  priority?: number;
-}
-
-/// A chat connection, stored with its pairing code: one session per
-/// conversation, kept forever.
-export function chatTrigger(botId: string, triggerId: string, spec: ChatSpecInit, rest: TriggerRest): StoredBotTrigger {
-  return {
-    ...baseTrigger(botId, triggerId, { route: { policy: "perKey", key: null }, sessionCloseAfterMs: 0, ...rest }),
-    kind: "chat",
-    accountId: spec.accountId,
-    matchScope: spec.matchScope ?? null,
-    ...(spec.activation ? { activation: spec.activation } : {}),
-    ...(spec.access ? { access: spec.access } : {}),
-    pairing: spec.pairingCode ? "code" : "open",
-    priority: spec.priority ?? 100,
-    pairingCode: spec.pairingCode ?? null,
-  } as StoredBotTrigger;
-}
-
 export interface ControlledInit {
   id: string;
   botId: string;
@@ -996,14 +929,11 @@ export interface EventLog {
 const eventOwners = new WeakMap<BotEventView, string>();
 
 /// The admitting trigger, read off the document source the fixtures name:
-/// `webhook:x`/`poll:x`/`schedule:x` → `x`, a bot sender → the inbox, a
-/// chat provider source → the provider-named chat trigger.
+/// `webhook:x`/`poll:x`/`schedule:x` → `x` and a bot sender → the inbox.
 function triggerIdFromSource(source: string): string | null {
-  const prefixed = /^(?:webhook|poll|schedule|chat):(.+)$/.exec(source);
+  const prefixed = /^(?:webhook|poll|schedule):(.+)$/.exec(source);
   if (prefixed?.[1]) return prefixed[1];
   if (source.startsWith("bot:")) return "inbox";
-  const provider = /^(telegram|whatsapp):/.exec(source);
-  if (provider?.[1]) return provider[1];
   return null;
 }
 
@@ -1062,21 +992,19 @@ export function eventLog(store: DemoStore, botId: string): EventLog {
   return { botId, events, add };
 }
 
-/// One chat conversation a chat trigger routes into its own session.
+/// A scripted conversation displayed in its own session.
 export interface Conversation {
   sessionId: string;
   label: string;
-  provider: "telegram" | "whatsapp";
   source: string;
   chatId: string;
   scope: "direct" | "group";
 }
 
-/// An inbound chat message as the chat trigger admits it.
-export function chatMessage(
+/// An incoming message in a scripted event log.
+export function inboundMessage(
   log: EventLog,
   conversation: Conversation,
-  trigger: string,
   sender: string,
   text: string,
   at: number,
@@ -1085,12 +1013,11 @@ export function chatMessage(
 ): ScriptedEvent {
   const messageId = String(1_000 + log.events.length * 7 + conversation.chatId.length);
   return log.add({
-    kind: "chat.message",
+    kind: "request.received",
     source: conversation.source,
-    triggerId: trigger,
     at,
     summary: `${sender} (${clockLabel(at)}): ${text}`,
-    eventId: `chat:${trigger}:${conversation.chatId}:${messageId}`,
+    eventId: `request:${conversation.chatId}:${messageId}`,
     session: conversation,
     outcome,
     ...(detail === undefined ? {} : { detail }),
@@ -1099,7 +1026,6 @@ export function chatMessage(
         key: conversation.sessionId.slice(`bot:v1:${log.botId}:`.length),
         label: conversation.label,
         scope: conversation.scope,
-        provider: conversation.provider,
         chatId: conversation.chatId,
       },
       sender: { name: sender, memberRole: "member" },
@@ -1112,7 +1038,7 @@ export function chatMessage(
 }
 
 /// A send the bot made, archived so the model can refer to it by #N.
-export function chatSent(
+export function archivedReply(
   log: EventLog,
   conversation: Conversation,
   text: string,
@@ -1121,18 +1047,17 @@ export function chatSent(
 ): ScriptedEvent {
   const line = `sent: ${text}`;
   return log.add({
-    kind: "chat.sent",
+    kind: "reply.recorded",
     source: conversation.source,
-    triggerId: conversation.provider,
     at,
     summary: line,
-    eventId: `chat:${conversation.provider}:${conversation.chatId}:sent:${log.events.length + 1}`,
+    eventId: `reply:${conversation.chatId}:${log.events.length + 1}`,
     session: conversation,
     outcome: "archived",
     detail: line.length > 120 ? `${line.slice(0, 119)}…` : line,
     resolvedAfterMs: 0,
     data: {
-      conversation: { label: conversation.label, provider: conversation.provider, chatId: conversation.chatId },
+      conversation: { label: conversation.label, chatId: conversation.chatId },
       text,
       fromMe: true,
       replyTo,
@@ -1314,45 +1239,4 @@ export function botState(init: StateInit): BotControllerSnapshot {
     descendantsToday: init.descendantsToday ?? 0,
     lastError: null,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Channels
-// ---------------------------------------------------------------------------
-
-export interface ChannelAccountInit {
-  accountId: string;
-  provider: string;
-  /// Provider-native identity: the Telegram bot username, the WhatsApp number.
-  providerAccountId: string;
-  displayName: string;
-  credentialGrantId?: string | null;
-  settings?: ChannelAccountView["settings"];
-  enabled?: boolean;
-  createdAtMs: number;
-  updatedAtMs: number;
-}
-
-/// A universe channel account in the core wire shape, stored on the universe.
-export function channelAccount(universe: UniverseState, init: ChannelAccountInit): ChannelAccountView {
-  const account: ChannelAccountView = {
-    accountId: init.accountId,
-    provider: init.provider,
-    providerAccountId: init.providerAccountId,
-    displayName: init.displayName,
-    credentialGrantId: init.credentialGrantId ?? null,
-    settings: init.settings ?? {},
-    enabled: init.enabled ?? true,
-    revision: 1,
-    createdAtMs: init.createdAtMs,
-    updatedAtMs: init.updatedAtMs,
-  };
-  universe.channelAccounts.set(account.accountId, account);
-  return account;
-}
-
-/// A pairing row: the routing authority binding one conversation to a bot.
-export function channelPairing(universe: UniverseState, pairing: ChannelPairingView): ChannelPairingView {
-  universe.channelPairings.push(pairing);
-  return pairing;
 }

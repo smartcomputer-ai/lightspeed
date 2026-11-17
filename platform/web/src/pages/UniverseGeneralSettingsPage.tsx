@@ -95,8 +95,7 @@ function FeaturesCard({ universe }: { universe: Universe }) {
         <CardTitle>Features</CardTitle>
         <CardDescription>
           A feature that is off is hidden and unavailable to everyone in this
-          universe. Turning one off does not stop what already runs: a bot keeps
-          answering on its channels until it is paused or closed.
+          universe. Running bots continue until they are paused or closed.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

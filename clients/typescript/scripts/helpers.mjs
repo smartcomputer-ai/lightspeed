@@ -135,15 +135,6 @@ export const HELPERS = [
   ["bots/events/read", "readBotEvent", "botId"],
   ["bots/filters/test", "testBotFilter", "botId"],
 
-  ["channels/accounts/create", "createChannelAccount"],
-  ["channels/accounts/put", "putChannelAccount"],
-  ["channels/accounts/read", "readChannelAccount", "accountId"],
-  ["channels/accounts/list", "listChannelAccounts"],
-  ["channels/accounts/delete", "deleteChannelAccount", "accountId"],
-  ["channels/inbound/admit", "admitChannelInbound", "accountId"],
-  ["channels/pairings/list", "listChannelPairings"],
-  ["channels/pairings/delete", "deleteChannelPairing", "accountId", "chatId"],
-  ["channels/conversations/read", "readChannelConversation", "accountId", "chatId"],
 
   ["deployment/universes/deleted/list", "listDeletedUniverses"],
   ["deployment/sessions/deleted/list", "listDeletedSessions", "universe"],
@@ -162,7 +153,6 @@ export const HELPERS = [
   ["deployment/environment-providers/delete", "deleteEnvironmentProvider", "providerId"],
   ["deployment/environment-providers/bindings/put", "putUniverseEnvironmentProviderBinding", "universe", "providerId"],
   ["deployment/environment-providers/bindings/delete", "deleteUniverseEnvironmentProviderBinding", "universe", "providerId"],
-  ["deployment/channels/accounts/list", "listDeploymentChannelAccounts"],
 ];
 
 // These helpers preserve ergonomic inputs or implement byte/stream transports.

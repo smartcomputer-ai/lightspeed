@@ -1,5 +1,5 @@
 //! Store, then wake. Every event path — hook route, manual admit, replay,
-//! schedule and poll fires, chat emit, `bot_emit`, receipts — runs through
+//! schedule and poll fires, `bot_emit`, receipts — runs through
 //! here. The row in Postgres is the record of the event and the controller
 //! signal delivers it. A fresh controller does not rescan stored rows, so an
 //! event whose signal went unprocessed waits for a manual replay.
@@ -10,7 +10,7 @@
 //! trigger is enabled and the breaker has not tripped.
 
 use api::{
-    BotEventDocument, BotEventMedia, BotEventOutcome, BotEventReplyRef, BotId, BotSessionKind,
+    BotEventDocument, BotEventOutcome, BotEventReplyRef, BotId, BotSessionKind, BotTriggerRoute,
     BotTriggerSpec, BotWhenBusy,
 };
 use bots::{
@@ -21,7 +21,6 @@ use bots::{
     ids::{bot_controller_workflow_id, coalesce_key},
     records::{BotEventOutcomeWrite, BotEventRateScope},
     render::{DEFAULT_PROMPT_BUDGET, render_event_prompt},
-    validate::{effective_coalesce, effective_route},
 };
 use harness::storage::BlobStore;
 use serde_json::Value;
@@ -53,13 +52,8 @@ pub struct StoreBotEventInput {
     pub sender_bot_id: Option<BotId>,
     pub hops: u32,
     pub in_reply_to: Option<BotEventReplyRef>,
-    pub media: Vec<BotEventMedia>,
-    /// Who hears back when the delivery finishes: the admitting chat
-    /// conversation, or the asking bot of a `bot_emit { reply: true }`.
+    /// The bot that requested a reply when delivery finishes.
     pub receiver: Option<EventReceiver>,
-    /// `false` archives the row at birth (a chat send, a replay's original)
-    /// and never wakes the controller.
-    pub deliver: bool,
     /// Reuse an already-stored envelope document (replays).
     pub document_ref: Option<String>,
 }
@@ -77,9 +71,7 @@ impl StoreBotEventInput {
             sender_bot_id: None,
             hops: 0,
             in_reply_to: None,
-            media: Vec::new(),
             receiver: None,
-            deliver: true,
             document_ref: None,
         }
     }
@@ -159,15 +151,14 @@ impl GatewayAgentApi {
             document_ref,
             prompt_ref: Some(prompt_ref),
             session: input.session.clone(),
-            media: input.media.clone(),
             sender_bot_id: input.sender_bot_id.clone(),
             hops: input.hops,
             in_reply_to: input.in_reply_to.clone(),
             receiver: input.receiver.clone(),
-            outcome: (!input.deliver).then_some(BotEventOutcome::Archived),
+            outcome: None,
             outcome_detail: None,
             run_id: None,
-            resolved_at_ms: (!input.deliver).then_some(now),
+            resolved_at_ms: None,
         };
         let inserted = store.insert_bot_event(record).await?;
         let duplicate = inserted.is_duplicate();
@@ -185,14 +176,9 @@ impl GatewayAgentApi {
             coalesce: input.coalesce,
             when_busy: input.when_busy,
             hops: input.hops,
-            reply: matches!(input.receiver, Some(EventReceiver::Bot { .. })),
-            media: input.media,
-            tools_ref: record.tools_ref().map(str::to_owned),
-            notify: matches!(input.receiver, Some(EventReceiver::Workflow { .. })),
+            reply: input.receiver.is_some(),
         };
-        if input.deliver
-            && let Err(error) = self.wake_bot_controller(bot, &event).await
-        {
+        if let Err(error) = self.wake_bot_controller(bot, &event).await {
             // Compensation: a row this call inserted is discarded when the
             // wake fails, so the caller's retry admits from scratch with
             // nothing stranded. A duplicate's row is left alone.
@@ -331,10 +317,13 @@ impl GatewayAgentApi {
         }
         let preset = match &trigger.document.spec {
             BotTriggerSpec::Webhook { preset, .. } => preset.map(RoutePreset::from),
-            BotTriggerSpec::Chat { .. } => Some(RoutePreset::Chat),
             _ => None,
         };
-        let route = effective_route(&trigger.document);
+        let route = trigger
+            .document
+            .route
+            .clone()
+            .unwrap_or(BotTriggerRoute::Bot);
         let routed = compute_route_session(&bot.bot_id, &route, preset, &input.event_id, &context);
         // Per-trigger idle-close policy rides on the routed target: absent inherits
         // the bot's setting, 0 keeps the session open indefinitely.
@@ -347,7 +336,7 @@ impl GatewayAgentApi {
             session
         });
         input.trigger_id = Some(trigger.trigger_id.clone());
-        input.coalesce = effective_coalesce(&trigger.document).map(|policy| {
+        input.coalesce = trigger.document.coalesce.map(|policy| {
             BotCoalesceParams::from_policy(
                 coalesce_key(
                     &trigger.trigger_id,
@@ -477,35 +466,6 @@ impl GatewayAgentApi {
             )),
             Err(error) => Err(error),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn archived_admissions_never_deliver() {
-        let mut input = StoreBotEventInput::new(
-            "e1".to_owned(),
-            BotEventDocument {
-                version: 1,
-                kind: "chat.sent".to_owned(),
-                source: "chat:x".to_owned(),
-                occurred_at_ms: 0,
-                summary: "sent".to_owned(),
-                data: None,
-                headers: Default::default(),
-                correlation_id: None,
-                links: Vec::new(),
-                sender: None,
-                hops: 0,
-                in_reply_to: None,
-            },
-        );
-        input.deliver = false;
-        assert!(!input.deliver);
-        assert!(input.trigger_id.is_none());
     }
 }
 

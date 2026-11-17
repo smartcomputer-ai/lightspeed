@@ -19,10 +19,8 @@ import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
 import { UnclaimedUniversesPage } from "@/pages/UnclaimedUniversesPage";
 import { AdminAuditPage } from "@/pages/AdminAuditPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
-import { AdminChannelsPage } from "@/pages/AdminChannelsPage";
 import { AdminEnvironmentProvidersPage } from "@/pages/AdminEnvironmentProvidersPage";
 import { BotsPage } from "@/pages/BotsPage";
-import { ChannelsPage } from "@/pages/ChannelsPage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
 import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
@@ -162,10 +160,6 @@ export function App() {
         <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
         <Route path="u/:handle/settings/general" element={<UniverseGeneralSettingsPage />} />
         <Route path="u/:handle/settings/members" element={<UniverseMembersPage />} />
-        <Route
-          path="u/:handle/settings/channels"
-          element={<FeatureGate feature="channels"><ChannelsPage /></FeatureGate>}
-        />
         <Route element={<AdminGate />}>
           <Route path="admin" element={<AdminIndexRedirect />} />
           <Route element={<AdminGate universes />}>
@@ -198,7 +192,6 @@ export function App() {
             <Route path="admin/platform/users" element={<AdminUsersPage currentUser={user} />} />
           </Route>
           <Route element={<AdminGate deploymentAction="configureDeployment" />}>
-            <Route path="admin/platform/channels" element={<AdminChannelsPage />} />
             <Route path="admin/platform/environment-providers" element={<AdminEnvironmentProvidersPage />} />
             <Route path="admin/platform/settings" element={<PlatformSettingsPage />} />
           </Route>

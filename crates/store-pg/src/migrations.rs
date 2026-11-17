@@ -9,8 +9,8 @@ use sha2::{Digest as _, Sha256};
 use sqlx::{Acquire as _, Executor as _, PgPool, Postgres, Transaction};
 
 use crate::{
-    BOTS_SCHEMA_SQL, CHANNELS_SCHEMA_SQL, CORE_SCHEMA_SQL, CREDENTIALS_SCHEMA_SQL,
-    ENVIRONMENT_SCHEMA_SQL, MCP_SCHEMA_SQL, PROFILE_SCHEMA_SQL, PgStoreError, VFS_SCHEMA_SQL,
+    BOTS_SCHEMA_SQL, CORE_SCHEMA_SQL, CREDENTIALS_SCHEMA_SQL, ENVIRONMENT_SCHEMA_SQL,
+    MCP_SCHEMA_SQL, PROFILE_SCHEMA_SQL, PgStoreError, VFS_SCHEMA_SQL,
 };
 
 /// Serializes every Lightspeed schema inspection and migration in a database.
@@ -30,8 +30,6 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "cas_bot_event_roots",
     "cas_session_roots",
     "cas_sweep_cursors",
-    "channel_accounts",
-    "channel_pairings",
     "credentials_clients",
     "credentials_flows",
     "credentials_grants",
@@ -101,14 +99,9 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "bots",
         sql: BOTS_SCHEMA_SQL,
     },
-    EmbeddedMigration {
-        version: 8,
-        name: "channels",
-        sql: CHANNELS_SCHEMA_SQL,
-    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 8;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 7;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

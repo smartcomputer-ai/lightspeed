@@ -1,6 +1,6 @@
 # Lightspeed platform
 
-The first-party Lightspeed management plane, web UI, connector host, and
+The first-party Lightspeed management plane, web UI, and
 supporting TypeScript packages. The repository root is the npm workspace root;
 run Node commands from there.
 
@@ -13,11 +13,6 @@ run Node commands from there.
   web UI, and generated clients. The Rust `lightspeed` CLI consumes the native
   Platform route catalog alongside the runtime contract.
 - `db/` — Drizzle schemas, migrations, and the platform database adapter.
-- `connectors/` — the connector host: one process serving every enabled
-  Telegram and WhatsApp account across universes, discovered through the core
-  API, with grant-leased provider tokens and one Temporal activity worker per
-  account queue. Run it separately as a trusted runtime client. Bot and
-  channel workflows run in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
   universe-scoped Lightspeed API. The Platform setup and development process
   use restricted Platform service-user keys, with the development process
@@ -85,13 +80,13 @@ for the user controls.
 
 The authoritative configuration reference is
 [environment-variable reference](../docs/documentation/reference/environment-variables.md), with separate sections for the
-Platform backend, connector host, Configurator MCP, and development-only
+Platform backend, Configurator MCP, and development-only
 settings.
 
 The browser uses `/u/:handle` for universe work and `/admin` for organization
-and deployment administration. An Owner enables **Bots** and **Channels** in
+and deployment administration. An Owner enables **Bots** in
 the universe's **Settings → General → Features**. The Platform gate enforces
-these switches for member requests. Admitted work can continue after a
+the switch for member requests. Admitted work can continue after a
 switch changes.
 
 ## People, universes and access
@@ -120,8 +115,7 @@ The Platform backend reads its runtime credential from
 `LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`.
 Configure the same secret as one of the runtime's full-authority tokens.
 In local development, Configurator targets Platform using a restricted
-service-user key, and the standalone connector host uses a direct runtime
-token. See the [environment-variable reference](../docs/documentation/reference/environment-variables.md)
+service-user key. See the [environment-variable reference](../docs/documentation/reference/environment-variables.md)
 for settings.
 
 ## HTTP surfaces
@@ -247,23 +241,16 @@ Common server settings are listed below. The [Platform variable reference](../do
 - `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` and
   `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET`;
 - `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` and
-  `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES`; and
-- `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS`.
+  `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES`.
 
 Live database tests require explicit opt-in variables and are not part of the
-ordinary unit-test run. Never point a local connector host at production
-channel accounts.
+ordinary unit-test run.
 
 CI runs the migration boundary explicitly. To reproduce it:
 
 ```bash
 LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 ```
-
-Release construction stages one platform runtime and one connector-host
-runtime (published as `platform-workers`). An operator configures its runtime
-token and Temporal connection separately. The release manifest records one
-digest for each image.
 
 ### Testing & Visual Tests
 

@@ -21,19 +21,16 @@ pub enum Role {
     /// Bot controller and trigger-fire workflows with their activities and
     /// the schedule reconciler.
     Bots,
-    /// Conversation workflows with their activities.
-    Channels,
     /// JavaScript execution workflows and their isolated activity capacity.
     Code,
 }
 
 impl Role {
-    pub const ALL: [Role; 6] = [
+    pub const ALL: [Role; 5] = [
         Role::Gateway,
         Role::EnvironmentGateway,
         Role::Sessions,
         Role::Bots,
-        Role::Channels,
         Role::Code,
     ];
 
@@ -43,7 +40,6 @@ impl Role {
             Self::EnvironmentGateway => "environment-gateway",
             Self::Sessions => "sessions",
             Self::Bots => "bots",
-            Self::Channels => "channels",
             Self::Code => "code",
         }
     }
@@ -68,10 +64,9 @@ impl FromStr for Role {
             "environment-gateway" => Ok(Self::EnvironmentGateway),
             "sessions" => Ok(Self::Sessions),
             "bots" => Ok(Self::Bots),
-            "channels" => Ok(Self::Channels),
             "code" => Ok(Self::Code),
             other => Err(format!(
-                "unknown role {other:?}; expected a comma-separated subset of gateway, environment-gateway, sessions, bots, channels, code"
+                "unknown role {other:?}; expected a comma-separated subset of gateway, environment-gateway, sessions, bots, code"
             )),
         }
     }

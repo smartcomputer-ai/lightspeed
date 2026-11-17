@@ -37,15 +37,14 @@ change (see Maintenance for sign-off).
   wire documentation on the Rust manifest and DTOs so generated consumers stay
   aligned.
 - Side effects belong in runtime adapters, Temporal activities, stores, or tool
-  packages. Domain crates such as `bots`, `channels`, and `environments` define
+  packages. Domain crates such as `bots` and `environments` define
   records, validation, and policy without taking on infrastructure I/O.
 - The Incus environment provider depends only on the environment protocol
   boundary. It must not depend on Lightspeed stores, API internals, the harness,
   or Temporal runtime.
 - The hosted runtime remains one binary with selectable roles. Cross-subsystem
   work uses workflow starts and signals, not activities dispatched onto another
-  role's queue. Telegram and WhatsApp connectors remain thin API/activity
-  bridges with no database access or bot-routing authority.
+  role's queue.
 - Managed sessions and workflow-backed tools use the generic workflow-tool
   protocol. Do not introduce feature-specific transports into the stable
   session worker.

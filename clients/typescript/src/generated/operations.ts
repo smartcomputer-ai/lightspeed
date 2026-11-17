@@ -125,15 +125,6 @@ export const OPERATIONS = [
   "bots/events/list",
   "bots/events/read",
   "bots/filters/test",
-  "channels/accounts/create",
-  "channels/accounts/put",
-  "channels/accounts/read",
-  "channels/accounts/list",
-  "channels/accounts/delete",
-  "channels/inbound/admit",
-  "channels/pairings/list",
-  "channels/pairings/delete",
-  "channels/conversations/read",
   "deployment/universes/deleted/list",
   "deployment/sessions/deleted/list",
   "deployment/sessions/purge",
@@ -151,7 +142,6 @@ export const OPERATIONS = [
   "deployment/environment-providers/delete",
   "deployment/environment-providers/bindings/put",
   "deployment/environment-providers/bindings/delete",
-  "deployment/channels/accounts/list",
   "blobs/upload",
 ] as const;
 
@@ -978,7 +968,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"createBot","kind":"universe"},
     summary: "Create a bot",
-    description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
+    description: "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.",
   },
   "bots/put": {
     scope: "universe",
@@ -1042,7 +1032,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"manageBot","kind":"universe"},
     summary: "Create or replace a trigger",
-    description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
+    description: "Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.",
   },
   "bots/triggers/read": {
     scope: "universe",
@@ -1050,7 +1040,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "Read a trigger",
-    description: "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
+    description: "Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.",
   },
   "bots/triggers/list": {
     scope: "universe",
@@ -1058,7 +1048,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "List a bot's triggers",
-    description: "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
+    description: "Returns every trigger of the bot ordered by id, without ingest paths.",
   },
   "bots/triggers/secrets/read": {
     scope: "universe",
@@ -1066,7 +1056,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"manageBot","kind":"universe"},
     summary: "Read a trigger's secrets",
-    description: "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+    description: "Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.",
   },
   "bots/triggers/delete": {
     scope: "universe",
@@ -1074,7 +1064,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"manageBot","kind":"universe"},
     summary: "Delete a trigger",
-    description: "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
+    description: "Drops the trigger's Temporal Schedule, then the record; stored events keep their history.",
   },
   "bots/events/admit": {
     scope: "universe",
@@ -1115,78 +1105,6 @@ export const OPERATION_INFO = {
     access: {"action":"manageBot","kind":"universe"},
     summary: "Test a CEL filter",
     description: "Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.",
-  },
-  "channels/accounts/create": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"configureResource","kind":"universe"},
-    summary: "Create a channel account",
-    description: "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
-  },
-  "channels/accounts/put": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"configureResource","kind":"universe"},
-    summary: "Create or replace a channel account",
-    description: "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
-  },
-  "channels/accounts/read": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"read","kind":"universe"},
-    summary: "Read a channel account",
-    description: "Returns the account document and revision.",
-  },
-  "channels/accounts/list": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"read","kind":"universe"},
-    summary: "List channel accounts",
-    description: "Lists this universe's provider accounts, optionally by provider.",
-  },
-  "channels/accounts/delete": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"configureResource","kind":"universe"},
-    summary: "Delete a channel account",
-    description: "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
-  },
-  "channels/inbound/admit": {
-    scope: "service",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"service"},
-    summary: "Admit a provider message",
-    description: "Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.",
-  },
-  "channels/pairings/list": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"read","kind":"universe"},
-    summary: "List chat pairings",
-    description: "Lists conversations paired to chat triggers, optionally by account or bot.",
-  },
-  "channels/pairings/delete": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"configureResource","kind":"universe"},
-    summary: "Unpair a conversation",
-    description: "Removes one pairing; the conversation must present the pairing code again to reconnect.",
-  },
-  "channels/conversations/read": {
-    scope: "universe",
-    streaming: false,
-    notifications: [],
-    access: {"action":"read","kind":"universe"},
-    summary: "Read a conversation snapshot",
-    description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
   },
   "deployment/universes/deleted/list": {
     scope: "deployment",
@@ -1323,14 +1241,6 @@ export const OPERATION_INFO = {
     access: {"kind":"deployment"},
     summary: "Delete an environment provider binding",
     description: "Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.",
-  },
-  "deployment/channels/accounts/list": {
-    scope: "deployment",
-    streaming: false,
-    notifications: [],
-    access: {"kind":"deployment"},
-    summary: "List channel accounts across universes",
-    description: "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.",
   },
   "blobs/upload": {
     scope: "universe",
@@ -2279,7 +2189,7 @@ export interface OperationMap {
   /**
    * Create a bot
    *
-   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
+   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.
    */
   "bots/create": {
     params: Api.BotCreateParams;
@@ -2351,7 +2261,7 @@ export interface OperationMap {
   /**
    * Create or replace a trigger
    *
-   * Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
+   * Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.
    */
   "bots/triggers/put": {
     params: Api.BotTriggerPutParams;
@@ -2360,7 +2270,7 @@ export interface OperationMap {
   /**
    * Read a trigger
    *
-   * Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
+   * Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.
    */
   "bots/triggers/read": {
     params: Api.BotTriggerReadParams;
@@ -2369,7 +2279,7 @@ export interface OperationMap {
   /**
    * List a bot's triggers
    *
-   * Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+   * Returns every trigger of the bot ordered by id, without ingest paths.
    */
   "bots/triggers/list": {
     params: Api.BotTriggerListParams;
@@ -2378,7 +2288,7 @@ export interface OperationMap {
   /**
    * Read a trigger's secrets
    *
-   * Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+   * Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.
    */
   "bots/triggers/secrets/read": {
     params: Api.BotTriggerSecretsReadParams;
@@ -2387,7 +2297,7 @@ export interface OperationMap {
   /**
    * Delete a trigger
    *
-   * Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
+   * Drops the trigger's Temporal Schedule, then the record; stored events keep their history.
    */
   "bots/triggers/delete": {
     params: Api.BotTriggerDeleteParams;
@@ -2437,87 +2347,6 @@ export interface OperationMap {
   "bots/filters/test": {
     params: Api.BotFilterTestParams;
     result: Api.BotFilterTestResponse;
-  };
-  /**
-   * Create a channel account
-   *
-   * Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
-   */
-  "channels/accounts/create": {
-    params: Api.ChannelAccountCreateParams;
-    result: Api.ChannelAccountCreateResponse;
-  };
-  /**
-   * Create or replace a channel account
-   *
-   * Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
-   */
-  "channels/accounts/put": {
-    params: Api.ChannelAccountPutParams;
-    result: Api.ChannelAccountPutResponse;
-  };
-  /**
-   * Read a channel account
-   *
-   * Returns the account document and revision.
-   */
-  "channels/accounts/read": {
-    params: Api.ChannelAccountReadParams;
-    result: Api.ChannelAccountReadResponse;
-  };
-  /**
-   * List channel accounts
-   *
-   * Lists this universe's provider accounts, optionally by provider.
-   */
-  "channels/accounts/list": {
-    params: Api.ChannelAccountListParams;
-    result: Api.ChannelAccountListResponse;
-  };
-  /**
-   * Delete a channel account
-   *
-   * Removes the account and its pairings; chat triggers that reference it stop serving conversations.
-   */
-  "channels/accounts/delete": {
-    params: Api.ChannelAccountDeleteParams;
-    result: Api.ChannelAccountDeleteResponse;
-  };
-  /**
-   * Admit a provider message
-   *
-   * Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
-   */
-  "channels/inbound/admit": {
-    params: Api.ChannelInboundAdmitParams;
-    result: Api.ChannelInboundAdmitResponse;
-  };
-  /**
-   * List chat pairings
-   *
-   * Lists conversations paired to chat triggers, optionally by account or bot.
-   */
-  "channels/pairings/list": {
-    params: Api.ChannelPairingListParams;
-    result: Api.ChannelPairingListResponse;
-  };
-  /**
-   * Unpair a conversation
-   *
-   * Removes one pairing; the conversation must present the pairing code again to reconnect.
-   */
-  "channels/pairings/delete": {
-    params: Api.ChannelPairingDeleteParams;
-    result: Api.ChannelPairingDeleteResponse;
-  };
-  /**
-   * Read a conversation snapshot
-   *
-   * Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
-   */
-  "channels/conversations/read": {
-    params: Api.ChannelConversationReadParams;
-    result: Api.ChannelConversationReadResponse;
   };
   /**
    * List deleted universes
@@ -2671,15 +2500,6 @@ export interface OperationMap {
   "deployment/environment-providers/bindings/delete": {
     params: Api.DeploymentProviderBindingDeleteParams;
     result: Api.DeploymentProviderBindingDeleteResponse;
-  };
-  /**
-   * List channel accounts across universes
-   *
-   * The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
-   */
-  "deployment/channels/accounts/list": {
-    params: Api.DeploymentChannelAccountListParams;
-    result: Api.DeploymentChannelAccountListResponse;
   };
   /**
    * Upload a content-addressed blob

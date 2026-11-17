@@ -30,12 +30,10 @@ export const SCREENS: Screen[] = [
   { id: "api-keys", path: "account#api-keys" },
   { id: "members", path: `${factory}/members` },
   { id: "settings-general", path: `${factory}/settings/general` },
-  { id: "settings-channels", path: `${factory}/settings/channels` },
   { id: "admin-users", path: "admin/users" },
   { id: "admin-audit", path: "admin/audit" },
   { id: "admin-universes", path: "admin/universes" },
   { id: "accounts", path: "accounts" },
-  { id: "admin-channels", path: "admin/channels" },
   { id: "admin-environment-providers", path: "admin/environment-providers" },
   { id: "account", path: "account" },
 ];

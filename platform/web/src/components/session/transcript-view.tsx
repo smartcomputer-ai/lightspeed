@@ -287,7 +287,7 @@ function eventSourceLabel(
   const family = source.slice(0, colon);
   const name = source.slice(colon + 1);
   if (family === "bot") return botName?.(name) ?? name;
-  if (["webhook", "schedule", "poll", "chat"].includes(family)) return `${name} ${family}`;
+  if (["webhook", "schedule", "poll"].includes(family)) return `${name} ${family}`;
   return source;
 }
 

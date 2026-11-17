@@ -4524,8 +4524,8 @@ export function seedSoftwareFactory(store: DemoStore): void {
     role: "owner",
     createdAt: agoIso(70 * DAY_MS),
     responder,
-    // Bots and channels are off in a new universe; this one is built on them.
-    features: { bots: true, channels: true },
+    // Bots are enabled in this demo universe.
+    features: { bots: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);

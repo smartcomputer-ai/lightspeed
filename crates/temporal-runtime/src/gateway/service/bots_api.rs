@@ -14,9 +14,8 @@ use ::bots::{
         bot_controller_workflow_id, is_bot_session, manual_event_id, replay_event_id,
         routed_session_base,
     },
-    validate::{validate_pairing_code, validate_trigger_document},
+    validate::validate_trigger_document,
 };
-use ::channels::ChannelAccountStore;
 use rand::TryRng as _;
 use serde_json::Value;
 use temporalio_client::{UntypedQuery, UntypedSignal, UntypedWorkflow, errors::WorkflowQueryError};
@@ -49,7 +48,7 @@ pub fn webhook_ingest_path(
 }
 
 /// The stored secrets in their wire form: a webhook's URL token as the
-/// ingest path it completes, a chat trigger's pairing code as it is.
+/// ingest path it completes.
 pub(crate) fn trigger_secrets_view(
     universe_id: uuid::Uuid,
     record: &BotTriggerRecord,
@@ -58,7 +57,6 @@ pub(crate) fn trigger_secrets_view(
         ingest_path: record.secrets.webhook_token.as_deref().map(|token| {
             webhook_ingest_path(universe_id, &record.bot_id, &record.trigger_id, token)
         }),
-        pairing_code: record.secrets.pairing_code.clone(),
     }
 }
 
@@ -81,10 +79,6 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
-}
-
-fn mint_pairing_code() -> String {
-    ::bots::pairing_code_from_bytes(&random_bytes(::bots::PAIRING_CODE_LEN))
 }
 
 fn decode_raw_value<T: serde::de::DeserializeOwned>(raw: RawValue) -> Result<T, AgentApiError> {
@@ -243,8 +237,8 @@ impl GatewayAgentApi {
         }
     }
 
-    /// Create or replace a trigger: validation, one inbox per bot, chat
-    /// account existence, grant checks, secret minting, poll cursor reset,
+    /// Create or replace a trigger: validation, one inbox per bot,
+    /// grant checks, secret minting, poll cursor reset,
     /// then the row and its Schedule.
     pub(crate) async fn put_bot_trigger_record(
         &self,
@@ -294,23 +288,6 @@ impl GatewayAgentApi {
                 )));
             }
         }
-        if let BotTriggerSpec::Chat { account_id, .. } = &input.document.spec {
-            let account_id = ChannelAccountId::try_new(account_id.clone()).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid channel account id: {error}"))
-            })?;
-            let accounts: &dyn ChannelAccountStore = store.as_ref();
-            accounts
-                .read_channel_account(&account_id)
-                .await
-                .map_err(|error| match error {
-                    ::channels::ChannelError::AccountNotFound { .. } => {
-                        AgentApiError::invalid_request(format!(
-                            "unknown channel account: {account_id}"
-                        ))
-                    }
-                    other => AgentApiError::internal(other.to_string()),
-                })?;
-        }
         self.validate_trigger_grants(&input.document).await?;
         let mut secrets = existing
             .as_ref()
@@ -323,18 +300,6 @@ impl GatewayAgentApi {
                 if secrets.webhook_token.is_none() {
                     secrets.webhook_token = Some(mint_webhook_token());
                 }
-            }
-            BotTriggerSpec::Chat { pairing, .. } => {
-                secrets.pairing_code = match pairing {
-                    ChatPairing::Open => None,
-                    ChatPairing::Code => match input.pairing_code {
-                        Some(code) => {
-                            validate_pairing_code(&code).map_err(map_bot_error)?;
-                            Some(code)
-                        }
-                        None => Some(secrets.pairing_code.unwrap_or_else(mint_pairing_code)),
-                    },
-                };
             }
             _ => secrets = BotTriggerSecrets::default(),
         }
@@ -670,7 +635,6 @@ impl GatewayAgentApi {
         input.trigger_id = original.trigger_id.clone();
         input.document_ref = Some(original.document_ref.clone());
         input.session = original.session.clone();
-        input.media = original.media.clone();
         input.receiver = original.receiver.clone();
         input.hops = original.hops;
         input.sender_bot_id = original.sender_bot_id.clone();
@@ -1010,7 +974,7 @@ mod tests {
     }
 
     #[test]
-    fn a_trigger_view_holds_no_secret_and_the_secrets_view_holds_both() {
+    fn a_trigger_view_holds_no_secret_and_the_secrets_view_holds_the_ingest_path() {
         let universe_id = uuid::Uuid::from_u128(7);
         let webhook = record(
             BotTriggerSpec::Webhook {
@@ -1019,12 +983,10 @@ mod tests {
             },
             BotTriggerSecrets {
                 webhook_token: Some("tok-1".to_owned()),
-                pairing_code: Some("ABCDEFGH2345".to_owned()),
             },
         );
         let view = serde_json::to_string(&webhook.view()).expect("trigger view");
         assert!(!view.contains("tok-1"), "{view}");
-        assert!(!view.contains("ABCDEFGH2345"), "{view}");
         assert!(!view.contains("/ingress/webhooks/"), "{view}");
 
         let secrets = trigger_secrets_view(universe_id, &webhook);
@@ -1035,7 +997,6 @@ mod tests {
                     .as_str()
             )
         );
-        assert_eq!(secrets.pairing_code.as_deref(), Some("ABCDEFGH2345"));
     }
 
     #[test]

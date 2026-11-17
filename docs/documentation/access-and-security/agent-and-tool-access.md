@@ -32,10 +32,9 @@ Both can read work in their own session tree and shared conversations in the
 same universe. The session's configured tools determine what the agent can
 actually use.
 
-A bot that creates a webhook or chat trigger receives its new ingest URL or
-pairing code once, in its Main conversation. People who can read that
-conversation can see the result. Regular trigger readings exclude those
-secrets. See [Bots and triggers](../using-lightspeed/bots-and-triggers.md).
+A bot that creates a webhook receives the ingest URL once in Main. Anyone
+who can read that session can see the tool result. See
+[Bots and triggers](../using-lightspeed/bots-and-triggers.md).
 
 ## Follow credentials across a tool call
 

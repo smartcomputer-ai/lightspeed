@@ -114,7 +114,7 @@ The current implementation includes:
 - [x] **Sub-agents**: delegate work to supervised child agents with configurable profiles and limits
 - [x] **Agent profiles**: reusable session setups, shared across clients and sub-agents
 
-**Bots & channels**
+**Bots**
 
 - [x] **Bots**: create always-on agents that wake up for scheduled tasks,
   incoming webhooks, data changes, or chat messages; session instructions
@@ -122,7 +122,6 @@ The current implementation includes:
 - [x] **Bot federation**: bots talk to each other and coordinate work
 - [x] **Triggers**: bots can create and manage their own schedules, webhooks,
   and pollers
-- [x] **Chat channels**: talk to bots via Telegram and WhatsApp
 
 **Durability & scale**
 

@@ -52,8 +52,6 @@ export interface ServerEnv {
   lightspeedApiUrl: string | null;
   /// Full-authority runtime credential, held only by the Platform backend.
   lightspeedApiToken?: string | null;
-  /// Internal connector health endpoints aggregated for platform admins.
-  channelsHealthUrls: string[];
   /// Development convenience: a directly attached `lightspeed-envd` endpoint
   /// (started by ./dev.sh) offered as the default when registering an
   /// external environment. Never set in deployed configuration.
@@ -120,7 +118,6 @@ export function loadEnv(): ServerEnv {
     passwordSignIn: passwordSignIn as ServerEnv["passwordSignIn"],
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,
     lightspeedApiToken,
-    channelsHealthUrls: csv(process.env.LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS),
     devEnvdEndpoint: process.env.LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT ?? null,
     workspaceUploadLimits: {
       maxBytes: integerEnv(

@@ -386,7 +386,7 @@ separate purge action for permanent deletion. Both modes require closed sessions
 and use `cascade` for retention descendants. Automatic retention soft-deletes
 closed sessions.
 
-Bot and channel conversations have a lifecycle controller. Their session
+Bot conversations have a lifecycle controller. Their session
 inspector identifies what manages them; use that controller's reset or close
 actions. If you enable direct input in a managed-session inspector, you bypass
 the controller's normal event admission, routing, and delivery policies. Use

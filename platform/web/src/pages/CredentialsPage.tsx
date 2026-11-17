@@ -78,15 +78,13 @@ type SecretKind = "token" | "environment";
 const REUSABLE_CREDENTIAL_KINDS = new Set(["staticToken", "gitHubApp", "customOAuth"]);
 
 /// A credential made for exactly one thing lives on that thing's page: model
-/// keys and subscription logins on Models, MCP server logins on MCP servers,
-/// channel bot tokens on Channels. Credential pickers elsewhere still offer
-/// every grant.
+/// keys and subscription logins on Models, and MCP server logins on MCP servers.
+/// Credential pickers elsewhere still offer every grant.
 export function isReusableCredential(
   grant: Pick<SecretGrant, "providerKind" | "providerId" | "metadata">,
 ): boolean {
   return REUSABLE_CREDENTIAL_KINDS.has(grant.providerKind)
-    && !isSubscriptionGrant(grant)
-    && grant.providerId !== "telegram";
+    && !isSubscriptionGrant(grant);
 }
 
 export function CredentialsPage() {

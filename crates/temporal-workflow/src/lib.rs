@@ -107,12 +107,10 @@ pub use types::{
     compose_workflow_tool_execution_id, split_workflow_id, workflow_tool_recipe_fingerprint,
 };
 pub use workflows::bots;
-pub use workflows::channels;
 pub use workflows::{
-    AgentSessionWorkflow, BotControllerWorkflow, BotTriggerFireWorkflow,
-    ChannelConversationWorkflow, CodeExecutionWorkflow, EnvironmentJobWorkflow,
-    SubagentExecutionWorkflow, TranscriptionActivityResult, TranscriptionSnapshot,
-    TranscriptionWorkflow, TranscriptionWorkflowArgs, emission_signal_input,
+    AgentSessionWorkflow, BotControllerWorkflow, BotTriggerFireWorkflow, CodeExecutionWorkflow,
+    EnvironmentJobWorkflow, SubagentExecutionWorkflow, TranscriptionActivityResult,
+    TranscriptionSnapshot, TranscriptionWorkflow, TranscriptionWorkflowArgs, emission_signal_input,
     run_terminal_emissions, subagent_child_session_id, subagent_submission_id, transcription_id,
     transcription_workflow_id,
 };

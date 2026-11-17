@@ -19,7 +19,7 @@ vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")
 
 const universe = (id: string, overrides: Partial<Universe> = {}): Universe => ({
   id, organizationId: "team", lightspeedUniverseId: `core-${id}`, name: id, handle: id, status: "active",
-  createdAt: "2026-01-01T00:00:00Z", role: "owner", actions: [...universeActions(["owner"])], features: { bots: true, channels: true }, ...overrides,
+  createdAt: "2026-01-01T00:00:00Z", role: "owner", actions: [...universeActions(["owner"])], features: { bots: true }, ...overrides,
 });
 const orphan = (universeId: string, overrides: Partial<EngineUniverse> = {}): EngineUniverse => ({
   universeId, handle: `u-${universeId}`, sessions: 3, workspaces: 1, profiles: 2, blobBytes: 2048, createdAtMs: 0, ...overrides,
@@ -36,7 +36,7 @@ beforeEach(() => {
   universes = [
     universe("zeta", { name: "Zeta", role: "owner", actions: [...universeActions(["owner"])] }),
     universe("alpha", { name: "Alpha", status: "archived" }),
-    universe("mid", { name: "Mid", features: { bots: false, channels: false } }),
+    universe("mid", { name: "Mid", features: { bots: false } }),
   ];
   reconcile = {
     platform: [

@@ -123,15 +123,6 @@ export const CLIENT_HELPERS = {
   replayBotEvent: "bots/events/replay",
   readBotEvent: "bots/events/read",
   testBotFilter: "bots/filters/test",
-  createChannelAccount: "channels/accounts/create",
-  putChannelAccount: "channels/accounts/put",
-  readChannelAccount: "channels/accounts/read",
-  listChannelAccounts: "channels/accounts/list",
-  deleteChannelAccount: "channels/accounts/delete",
-  admitChannelInbound: "channels/inbound/admit",
-  listChannelPairings: "channels/pairings/list",
-  deleteChannelPairing: "channels/pairings/delete",
-  readChannelConversation: "channels/conversations/read",
   listDeletedUniverses: "deployment/universes/deleted/list",
   listDeletedSessions: "deployment/sessions/deleted/list",
   purgeSession: "deployment/sessions/purge",
@@ -149,7 +140,6 @@ export const CLIENT_HELPERS = {
   deleteEnvironmentProvider: "deployment/environment-providers/delete",
   putUniverseEnvironmentProviderBinding: "deployment/environment-providers/bindings/put",
   deleteUniverseEnvironmentProviderBinding: "deployment/environment-providers/bindings/delete",
-  listDeploymentChannelAccounts: "deployment/channels/accounts/list",
   watch: "universe/watch",
   startRun: "session/runs/start",
   steerRun: "session/runs/steer",
@@ -1094,7 +1084,7 @@ export abstract class LightspeedHelpers {
   /**
    * Create a bot
    *
-   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
+   * Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.
    */
   createBot(options: Api.BotCreateParams & CallOptions): Promise<Api.BotCreateResponse> {
     return this.invoke("bots/create", {  }, options);
@@ -1148,7 +1138,7 @@ export abstract class LightspeedHelpers {
   /**
    * Create or replace a trigger
    *
-   * Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
+   * Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.
    */
   putBotTrigger(botId: Api.BotTriggerPutParams["botId"], options: Omit<Api.BotTriggerPutParams, "botId"> & CallOptions): Promise<Api.BotTriggerPutResponse> {
     return this.invoke("bots/triggers/put", { botId }, options);
@@ -1157,7 +1147,7 @@ export abstract class LightspeedHelpers {
   /**
    * Read a trigger
    *
-   * Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
+   * Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.
    */
   readBotTrigger(botId: Api.BotTriggerReadParams["botId"], triggerId: Api.BotTriggerReadParams["triggerId"], options: Omit<Api.BotTriggerReadParams, "botId" | "triggerId"> & CallOptions = {}): Promise<Api.BotTriggerReadResponse> {
     return this.invoke("bots/triggers/read", { botId, triggerId }, options);
@@ -1166,7 +1156,7 @@ export abstract class LightspeedHelpers {
   /**
    * List a bot's triggers
    *
-   * Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+   * Returns every trigger of the bot ordered by id, without ingest paths.
    */
   listBotTriggers(botId: Api.BotTriggerListParams["botId"], options: Omit<Api.BotTriggerListParams, "botId"> & CallOptions = {}): Promise<Api.BotTriggerListResponse> {
     return this.invoke("bots/triggers/list", { botId }, options);
@@ -1175,7 +1165,7 @@ export abstract class LightspeedHelpers {
   /**
    * Read a trigger's secrets
    *
-   * Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+   * Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.
    */
   readBotTriggerSecrets(botId: Api.BotTriggerSecretsReadParams["botId"], triggerId: Api.BotTriggerSecretsReadParams["triggerId"], options: Omit<Api.BotTriggerSecretsReadParams, "botId" | "triggerId"> & CallOptions = {}): Promise<Api.BotTriggerSecretsReadResponse> {
     return this.invoke("bots/triggers/secrets/read", { botId, triggerId }, options);
@@ -1184,7 +1174,7 @@ export abstract class LightspeedHelpers {
   /**
    * Delete a trigger
    *
-   * Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
+   * Drops the trigger's Temporal Schedule, then the record; stored events keep their history.
    */
   deleteBotTrigger(botId: Api.BotTriggerDeleteParams["botId"], triggerId: Api.BotTriggerDeleteParams["triggerId"], options: Omit<Api.BotTriggerDeleteParams, "botId" | "triggerId"> & CallOptions = {}): Promise<Api.BotTriggerDeleteResponse> {
     return this.invoke("bots/triggers/delete", { botId, triggerId }, options);
@@ -1215,87 +1205,6 @@ export abstract class LightspeedHelpers {
    */
   testBotFilter(botId: Api.BotFilterTestParams["botId"], options: Omit<Api.BotFilterTestParams, "botId"> & CallOptions): Promise<Api.BotFilterTestResponse> {
     return this.invoke("bots/filters/test", { botId }, options);
-  }
-
-  /**
-   * Create a channel account
-   *
-   * Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
-   */
-  createChannelAccount(options: Api.ChannelAccountCreateParams & CallOptions): Promise<Api.ChannelAccountCreateResponse> {
-    return this.invoke("channels/accounts/create", {  }, options);
-  }
-
-  /**
-   * Create or replace a channel account
-   *
-   * Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
-   */
-  putChannelAccount(options: Api.ChannelAccountPutParams & CallOptions): Promise<Api.ChannelAccountPutResponse> {
-    return this.invoke("channels/accounts/put", {  }, options);
-  }
-
-  /**
-   * Read a channel account
-   *
-   * Returns the account document and revision.
-   */
-  readChannelAccount(accountId: Api.ChannelAccountReadParams["accountId"], options: Omit<Api.ChannelAccountReadParams, "accountId"> & CallOptions = {}): Promise<Api.ChannelAccountReadResponse> {
-    return this.invoke("channels/accounts/read", { accountId }, options);
-  }
-
-  /**
-   * List channel accounts
-   *
-   * Lists this universe's provider accounts, optionally by provider.
-   */
-  listChannelAccounts(options: Api.ChannelAccountListParams & CallOptions = {}): Promise<Api.ChannelAccountListResponse> {
-    return this.invoke("channels/accounts/list", {  }, options);
-  }
-
-  /**
-   * Delete a channel account
-   *
-   * Removes the account and its pairings; chat triggers that reference it stop serving conversations.
-   */
-  deleteChannelAccount(accountId: Api.ChannelAccountDeleteParams["accountId"], options: Omit<Api.ChannelAccountDeleteParams, "accountId"> & CallOptions = {}): Promise<Api.ChannelAccountDeleteResponse> {
-    return this.invoke("channels/accounts/delete", { accountId }, options);
-  }
-
-  /**
-   * Admit a provider message
-   *
-   * Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
-   */
-  admitChannelInbound(accountId: Api.ChannelInboundAdmitParams["accountId"], options: Omit<Api.ChannelInboundAdmitParams, "accountId"> & CallOptions): Promise<Api.ChannelInboundAdmitResponse> {
-    return this.invoke("channels/inbound/admit", { accountId }, options);
-  }
-
-  /**
-   * List chat pairings
-   *
-   * Lists conversations paired to chat triggers, optionally by account or bot.
-   */
-  listChannelPairings(options: Api.ChannelPairingListParams & CallOptions = {}): Promise<Api.ChannelPairingListResponse> {
-    return this.invoke("channels/pairings/list", {  }, options);
-  }
-
-  /**
-   * Unpair a conversation
-   *
-   * Removes one pairing; the conversation must present the pairing code again to reconnect.
-   */
-  deleteChannelPairing(accountId: Api.ChannelPairingDeleteParams["accountId"], chatId: Api.ChannelPairingDeleteParams["chatId"], options: Omit<Api.ChannelPairingDeleteParams, "accountId" | "chatId"> & CallOptions = {}): Promise<Api.ChannelPairingDeleteResponse> {
-    return this.invoke("channels/pairings/delete", { accountId, chatId }, options);
-  }
-
-  /**
-   * Read a conversation snapshot
-   *
-   * Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
-   */
-  readChannelConversation(accountId: Api.ChannelConversationReadParams["accountId"], chatId: Api.ChannelConversationReadParams["chatId"], options: Omit<Api.ChannelConversationReadParams, "accountId" | "chatId"> & CallOptions = {}): Promise<Api.ChannelConversationReadResponse> {
-    return this.invoke("channels/conversations/read", { accountId, chatId }, options);
   }
 
   /**
@@ -1449,14 +1358,5 @@ export abstract class LightspeedHelpers {
    */
   deleteUniverseEnvironmentProviderBinding(universe: Api.DeploymentProviderBindingDeleteParams["universe"], providerId: Api.DeploymentProviderBindingDeleteParams["providerId"], options: Omit<Api.DeploymentProviderBindingDeleteParams, "universe" | "providerId"> & CallOptions = {}): Promise<Api.DeploymentProviderBindingDeleteResponse> {
     return this.invoke("deployment/environment-providers/bindings/delete", { universe, providerId }, options);
-  }
-
-  /**
-   * List channel accounts across universes
-   *
-   * The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
-   */
-  listDeploymentChannelAccounts(options: Api.DeploymentChannelAccountListParams & CallOptions = {}): Promise<Api.DeploymentChannelAccountListResponse> {
-    return this.invoke("deployment/channels/accounts/list", {  }, options);
   }
 }

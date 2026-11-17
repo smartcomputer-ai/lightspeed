@@ -219,7 +219,7 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
             definition: WorkflowToolDefinitionInput {
                 workflow_tool_id: "channel-noop".to_owned(),
                 schema_revision: 1,
-                semantic_type: "channels.noop.v1".to_owned(),
+                semantic_type: "plugin.noop.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "channel_noop".to_owned(),
                     kind: WorkflowToolKindInput::Function {
@@ -234,8 +234,8 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
             },
             target: WorkflowToolTargetInput::Bound {
                 receiver: WorkflowEndpointInput {
-                    workflow_id: "channels/session-1".to_owned(),
-                    workflow_kind: "channels.session".to_owned(),
+                    workflow_id: "plugins/session-1".to_owned(),
+                    workflow_kind: "plugin.session".to_owned(),
                 },
                 dispatch: BoundWorkflowToolDispatchInput::Push,
             },
@@ -252,8 +252,8 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
         declaration.tools[0].target,
         WorkflowToolTarget::Bound {
             receiver: WorkflowEndpointRef {
-                workflow_id: "channels/session-1".to_owned(),
-                workflow_kind: "channels.session".to_owned(),
+                workflow_id: "plugins/session-1".to_owned(),
+                workflow_kind: "plugin.session".to_owned(),
             },
             dispatch: BoundWorkflowToolDispatch::Push,
         }
@@ -271,7 +271,7 @@ fn declared_workflow_tools_api_maps_joined_completion() {
             definition: WorkflowToolDefinitionInput {
                 workflow_tool_id: "message-send".to_owned(),
                 schema_revision: 1,
-                semantic_type: "channels.receipt.v1".to_owned(),
+                semantic_type: "plugin.receipt.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "message_send".to_owned(),
                     kind: WorkflowToolKindInput::Function {
@@ -286,8 +286,8 @@ fn declared_workflow_tools_api_maps_joined_completion() {
             },
             target: WorkflowToolTargetInput::Bound {
                 receiver: WorkflowEndpointInput {
-                    workflow_id: "channels/session-1".to_owned(),
-                    workflow_kind: "channels.session".to_owned(),
+                    workflow_id: "plugins/session-1".to_owned(),
+                    workflow_kind: "plugin.session".to_owned(),
                 },
                 dispatch: BoundWorkflowToolDispatchInput::Push,
             },
@@ -311,7 +311,7 @@ fn declared_workflow_tools_api_maps_joined_completion() {
 #[test]
 fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-    let recipe_bytes = br#"{"workflowType":"ChannelsSendWorkflow","taskQueue":"channels"}"#;
+    let recipe_bytes = br#"{"workflowType":"PluginSendWorkflow","taskQueue":"plugin"}"#;
     let recipe_ref = BlobRef::from_bytes(recipe_bytes);
     let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(recipe_bytes);
     let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
@@ -321,7 +321,7 @@ fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
             definition: WorkflowToolDefinitionInput {
                 workflow_tool_id: "channel-send".to_owned(),
                 schema_revision: 1,
-                semantic_type: "channels.send.v1".to_owned(),
+                semantic_type: "plugin.send.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "channel_send".to_owned(),
                     kind: WorkflowToolKindInput::Function {
@@ -1975,7 +1975,7 @@ async fn context_entry_input_from_api_stores_text_as_user_message() {
         &InputItem::Text {
             provenance_ref: None,
             origin: None,
-            text: " [telegram] Alice (12:01): hi ".to_owned(),
+            text: " [support] Alice (12:01): hi ".to_owned(),
         },
     )
     .await
@@ -1993,7 +1993,7 @@ async fn context_entry_input_from_api_stores_text_as_user_message() {
             .read_text(&entry.content.content_ref)
             .await
             .expect("stored text"),
-        "[telegram] Alice (12:01): hi"
+        "[support] Alice (12:01): hi"
     );
 }
 

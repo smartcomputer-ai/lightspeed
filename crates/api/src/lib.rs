@@ -18,7 +18,6 @@ use thiserror::Error;
 
 mod access;
 mod bots;
-mod channels;
 mod connection;
 mod constants;
 mod credentials;
@@ -48,7 +47,6 @@ mod watch;
 
 pub use access::*;
 pub use bots::*;
-pub use channels::*;
 pub use connection::*;
 pub use constants::*;
 pub use credentials::*;

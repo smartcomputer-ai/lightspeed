@@ -28,7 +28,7 @@ it("creates one shared development organization, Creator memberships and separat
   const memberships = await fixture.db.select().from(schema.member);
   expect(memberships.map(member => member.role).sort()).toEqual(["admin", "creator", "creator", "creator"]);
   expect((await fixture.db.select().from(schema.universeGrants)).map(grant => grant.role).sort()).toEqual(["contributor", "operator", "owner", "viewer"]);
-  expect(await fixture.db.select().from(schema.universes)).toMatchObject([{ handle: "test", features: { bots: true, channels: true } }]);
+  expect(await fixture.db.select().from(schema.universes)).toMatchObject([{ handle: "test", features: { bots: true } }]);
 });
 it("reruns without duplicating organizations, universe grants or credential logins", async () => {
   await seedDevelopment(fixture.db, fixture.env); await seedDevelopment(fixture.db, fixture.env);

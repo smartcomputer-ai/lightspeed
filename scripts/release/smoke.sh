@@ -58,20 +58,9 @@ done
 test -f dist/configurator-mcp/dist/bin.js
 test -f dist/configurator-mcp/node_modules/@lightspeed-ai/sdk/dist/index.js
 
-for runtime in platform platform-workers; do
-  test -f "dist/runtime/$runtime.tar.gz"
-  tar -tzf "dist/runtime/$runtime.tar.gz" ./package.json >/dev/null
-done
+tar -tzf dist/runtime/platform.tar.gz ./package.json >/dev/null
 tar -tzf dist/runtime/platform.tar.gz ./platform/backend/src/main.ts >/dev/null
 tar -tzf dist/runtime/platform.tar.gz ./platform/web/dist/index.html >/dev/null
-tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/host/main.ts >/dev/null
-tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/providers/telegram/connector.ts >/dev/null
-tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/providers/whatsapp/connector.ts >/dev/null
-platform_worker_files="$(mktemp)"
-trap 'rm -f "$demo_files" "$platform_worker_files"' EXIT
-tar -tzf dist/runtime/platform-workers.tar.gz > "$platform_worker_files"
-grep -Eq '^\./node_modules/baileys/' "$platform_worker_files"
-
 (cd dist && sha256sum --check checksums.txt)
 scripts/release/verify-manifest.mjs "$@"
 
@@ -84,7 +73,7 @@ scripts/release/verify-manifest.mjs "$@"
 # kills a daemon that is still retrying, never by a panic.
 probe_dir="$(mktemp -d)"
 probe_pid=""
-trap 'rm -rf "$demo_files" "$platform_worker_files" "$probe_dir"; if [[ -n "$probe_pid" ]]; then kill "$probe_pid" 2>/dev/null || true; fi' EXIT
+trap 'rm -rf "$demo_files" "$probe_dir"; if [[ -n "$probe_pid" ]]; then kill "$probe_pid" 2>/dev/null || true; fi' EXIT
 mkdir -p "$probe_dir/cwd" "$probe_dir/state"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout "$probe_dir/key.pem" -out "$probe_dir/cert.pem" -days 2 -subj "/CN=localhost" \

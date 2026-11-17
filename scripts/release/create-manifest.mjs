@@ -154,7 +154,6 @@ const manifest = {
     runtime: process.env.LIGHTSPEED_RUNTIME_IMAGE ?? null,
     configuratorMcp: process.env.LIGHTSPEED_CONFIGURATOR_MCP_IMAGE ?? null,
     platform: process.env.LIGHTSPEED_PLATFORM_IMAGE ?? null,
-    platformWorkers: process.env.LIGHTSPEED_PLATFORM_WORKERS_IMAGE ?? null,
   },
   binaries: {
     runtime: archive("RUNTIME", "-runtime-"),

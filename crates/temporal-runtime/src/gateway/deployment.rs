@@ -457,31 +457,6 @@ impl DeploymentApiService for GatewayDeploymentApi {
         .await
     }
 
-    async fn list_deployment_channel_accounts(
-        &self,
-        params: api::DeploymentChannelAccountListParams,
-    ) -> Result<api::DeploymentChannelAccountListResponse, AgentApiError> {
-        self.admitted(api::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST, async {
-            let accounts = store_pg::list_channel_accounts_all(
-                self.pool(),
-                params.provider,
-                params.include_disabled,
-            )
-            .await
-            .map_err(map_store_error)?;
-            Ok(api::DeploymentChannelAccountListResponse {
-                accounts: accounts
-                    .into_iter()
-                    .map(|(universe_id, record)| api::DeploymentChannelAccountView {
-                        universe_id: universe_id.to_string(),
-                        account: record.view(),
-                    })
-                    .collect(),
-            })
-        })
-        .await
-    }
-
     async fn read_universe(
         &self,
         params: DeploymentUniverseReadParams,

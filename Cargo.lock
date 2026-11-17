@@ -618,24 +618,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "channels"
-version = "0.1.0"
-dependencies = [
- "api",
- "async-trait",
- "bots",
- "chrono",
- "hex",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.21",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5164,7 +5146,6 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bots",
- "channels",
  "credentials",
  "environment-protocol",
  "environments",
@@ -5354,7 +5335,6 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bots",
- "channels",
  "chrono",
  "clap",
  "codemode",
@@ -5415,7 +5395,6 @@ dependencies = [
  "anyhow",
  "api",
  "bots",
- "channels",
  "chrono",
  "futures",
  "futures-util",

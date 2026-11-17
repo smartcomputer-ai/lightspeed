@@ -5,11 +5,6 @@ use uuid::Uuid;
 #[test]
 fn every_execution_composer_uses_the_universe_prefix() {
     let universe = Uuid::from_u128(42);
-    let conversation = ::channels::ConversationRef {
-        account_id: api::ChannelAccountId::new("account"),
-        chat_id: "chat".into(),
-        thread_id: None,
-    };
     let transcription = TranscriptionWorkflowArgs {
         universe_id: universe,
         transcription_id: "transcription_one".into(),
@@ -41,11 +36,6 @@ fn every_execution_composer_uses_the_universe_prefix() {
             universe,
             &api::BotId::new("bot"),
             &api::BotTriggerId::new("trigger"),
-        ),
-        ::channels::conversation_workflow_id(
-            universe,
-            &api::ChannelProvider::new("telegram"),
-            &conversation,
         ),
         transcription_workflow_id(&transcription),
     ];

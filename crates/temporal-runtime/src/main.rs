@@ -14,9 +14,7 @@ use temporal_runtime::{
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
-    worker::{
-        self, BotWorkerActivities, ChannelWorkerActivities, CodeWorkerActivities, WorkerActivities,
-    },
+    worker::{self, BotWorkerActivities, CodeWorkerActivities, WorkerActivities},
 };
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -26,7 +24,7 @@ use tracing_subscriber::{EnvFilter, fmt};
     version = release_info::LONG_VERSION,
     about = "Run the Lightspeed hosted runtime",
     after_help = "When no command is supplied, the server runs every role in this process: \
-gateway, environment-gateway, sessions, bots, channels, code. Select a subset with --roles \
+gateway, environment-gateway, sessions, bots, code. Select a subset with --roles \
 (or LIGHTSPEED_ROLES). Each worker role runs its workflows and activities together."
 )]
 struct Cli {
@@ -77,7 +75,7 @@ enum UniverseCommand {
 #[derive(Clone, Debug, Args)]
 struct RunArgs {
     /// Roles this process runs: a comma-separated subset of gateway,
-    /// environment-gateway, sessions, bots, channels, code (default: all).
+    /// environment-gateway, sessions, bots, code (default: all).
     /// Environment gateway replicas advertise their own direct peer URLs.
     #[arg(long, env = "LIGHTSPEED_ROLES")]
     roles: Option<String>,
@@ -100,9 +98,6 @@ struct RunArgs {
 
     #[arg(long, env = "LIGHTSPEED_TASK_QUEUE_BOTS")]
     bots_task_queue: Option<String>,
-
-    #[arg(long, env = "LIGHTSPEED_TASK_QUEUE_CHANNELS")]
-    channels_task_queue: Option<String>,
 
     #[arg(long, env = "LIGHTSPEED_TASK_QUEUE_CODE")]
     code_task_queue: Option<String>,
@@ -231,13 +226,6 @@ impl RunArgs {
             .filter(|value| !value.is_empty())
         {
             queues.bots = queue.to_owned();
-        }
-        if let Some(queue) = self
-            .channels_task_queue
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            queues.channels = queue.to_owned();
         }
         if let Some(queue) = self
             .code_task_queue
@@ -466,7 +454,6 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         temporal_api_key = temporal.uses_api_key(),
         sessions_queue = %task_queues.sessions,
         bots_queue = %task_queues.bots,
-        channels_queue = %task_queues.channels,
         code_queue = %task_queues.code,
         "lightspeed-runtime starting"
     );
@@ -530,18 +517,6 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         ));
         background.push(tokio::spawn(
             universes.clone().run_bot_schedule_reconciler(),
-        ));
-    }
-    if roles.has(Role::Channels) {
-        let activities = ChannelWorkerActivities::with_runtime(universes.clone());
-        workers.push((
-            Role::Channels,
-            worker::channels_worker(
-                &runtime,
-                client.clone(),
-                task_queues.channels.clone(),
-                activities,
-            )?,
         ));
     }
 
@@ -785,7 +760,7 @@ mod tests {
                     GatewayRoutes::ENVIRONMENT,
                 ],
             ),
-            ("sessions,bots,channels,code", vec![]),
+            ("sessions,bots,code", vec![]),
         ] {
             let args = listener_args(roles, "127.0.0.1:18082", "127.0.0.1:18083");
             let listeners = args.listeners(&args.roles().unwrap()).unwrap();

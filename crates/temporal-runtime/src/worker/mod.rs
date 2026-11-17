@@ -2,7 +2,6 @@
 
 mod activities;
 mod bots;
-mod channels;
 mod code;
 mod fake;
 pub(crate) mod mcp;
@@ -15,9 +14,7 @@ mod universes;
 use temporalio_client::Client;
 use temporalio_sdk::{Runtime, Worker, WorkerOptions, runtime::RuntimeOptions};
 
-use temporal_workflow::{
-    BotControllerWorkflow, BotTriggerFireWorkflow, ChannelConversationWorkflow,
-};
+use temporal_workflow::{BotControllerWorkflow, BotTriggerFireWorkflow};
 
 pub use activities::{
     ActivityState, AudioActivityDeps, AudioTranscodeError, AudioTranscodeOutput,
@@ -27,7 +24,6 @@ pub use activities::{
     default_audio_transcoder_from_env, subagent_catalog_snapshot,
 };
 pub use bots::BotWorkerActivities;
-pub use channels::ChannelWorkerActivities;
 pub use code::CodeWorkerActivities;
 pub use fake::{FAKE_TRANSIENT_RETRY_AFTER, FakeLlm, FakeRuntimeCounters, FakeTools};
 pub use reaper::{
@@ -97,21 +93,6 @@ pub fn bots_worker(
     let worker_options = WorkerOptions::new(task_queue)
         .register_workflow::<BotControllerWorkflow>()?
         .register_workflow::<BotTriggerFireWorkflow>()?
-        .register_activities(activities)
-        .build();
-    Ok(Worker::new(runtime, client, worker_options)?)
-}
-
-/// The `channels` worker: conversation workflows with their core-side
-/// activities.
-pub fn channels_worker(
-    runtime: &Runtime,
-    client: Client,
-    task_queue: String,
-    activities: ChannelWorkerActivities,
-) -> anyhow::Result<Worker> {
-    let worker_options = WorkerOptions::new(task_queue)
-        .register_workflow::<ChannelConversationWorkflow>()?
         .register_activities(activities)
         .build();
     Ok(Worker::new(runtime, client, worker_options)?)

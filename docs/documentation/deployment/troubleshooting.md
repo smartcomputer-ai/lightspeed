@@ -6,7 +6,7 @@ but does not progress, inspect its state and workers. This narrows the problem
 without repeatedly restarting services that are already doing their job.
 
 Record the deployed release, time, exact error, universe UUID, and the affected
-session/run, bot, environment, or channel account IDs. Capture the relevant
+session/run, bot, or environment IDs. Capture the relevant
 logs before changing state. Keep credential values and private conversation
 content out of reports unless they are necessary and the report's recipients
 are authorized to see them.
@@ -23,7 +23,6 @@ are authorized to see them.
 | The model rejects a call or tools are absent | [Models and MCP](#models-and-mcp) |
 | A machine is disconnected or a command cannot see a file | [Execution environments](#execution-environments) |
 | A larger upload or stored payload fails | [Blob writes](#blob-writes) |
-| Chat messages do not reach the agent or return | [Chat delivery](#chat-delivery) |
 | Closing work does not reclaim storage or compute | [Retention and cleanup](#retention-and-cleanup) |
 
 The [operations guide](operations.md) lists health endpoints and their limits.
@@ -200,15 +199,6 @@ disk. Transfer required inputs explicitly and verify the process working
 directory. [Processes and jobs](../environments/processes-and-jobs.md) also
 explains why a daemon restart interrupts persisted active jobs and loses
 interactive process handles.
-
-## Chat delivery
-
-Check that the separately run connector host can reach the private
-runtime API and uses the same Temporal namespace as the runtime. Inspect
-`/healthz` for the expected account and `/readyz` for readiness. If the
-account is ready, check pairing, the bot trigger, and the sender policy.
-If the run completed, inspect outbound delivery in the account worker.
-See [Channel connectors](../integrating-and-extending/channel-connectors.md).
 
 ## Blob writes
 

@@ -121,22 +121,17 @@ available to that script.
 
 A bot adds ongoing behavior around managed sessions. Instead of waiting for a
 person to send every message, the incident reviewer could wake when an alert
-arrives through a webhook, on a schedule, or through a chat connection.
+arrives through a webhook or when a schedule fires.
 
 Triggers determine which events a bot receives and how they reach its
 sessions. A bot can maintain several conversations, so a bot and a session are
 not interchangeable terms. The bot coordinates the ongoing work; each session
 holds a particular conversation and executes its runs.
 
-Chat channels connect Telegram or WhatsApp conversations to bots. A channel
-account supplies the connection to the messaging service, and a chat trigger
-routes incoming messages to the bot.
-
 ```mermaid
 flowchart TB
   Schedule["Schedule"] --> Triggers
   Webhook["Alert webhook"] --> Triggers
-  Chat["Chat message"] --> Triggers
   Triggers["Configured triggers<br/>Admit and route events"] --> Routing
   subgraph Bot["Incident response bot"]
     Routing["Choose the conversation"]

@@ -24,7 +24,6 @@ environment and then applies the defaults from `scripts/dev/env.sh`.
 | --- | --- |
 | `LIGHTSPEED_*` | Core runtime and shared client/deployment settings. Check the owning section because a few, such as `LIGHTSPEED_API_URL`, are client-side rather than server-side. |
 | `LIGHTSPEED_PLATFORM_*` | TypeScript Platform management plane and its database. |
-| `LIGHTSPEED_CONNECTOR_*` | The connector host (Telegram and WhatsApp bridges over the core API). |
 | `LIGHTSPEED_CONFIGURATOR_MCP_*` | Configurator MCP service. |
 | `LIGHTSPEED_ENVD_*` | Environment daemon. |
 | `OPENAI_*` / `ANTHROPIC_*` | Provider transport and live-test overrides. |
@@ -44,12 +43,11 @@ They do not configure the TypeScript Platform backend.
 | `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. TLS is supported; use `sslmode=verify-full` for remote databases to verify the certificate and hostname. |
 | `LIGHTSPEED_POSTGRES_AUTH_MODE` | `password` | `password` or `workload_identity`. With `workload_identity`, the Runtime logs in with a Microsoft Entra token using the [`AZURE_*` settings](#object-storage). The URL must name the identity as its user, hold no password, and set `sslmode=verify-full`. |
 | `LIGHTSPEED_PG_UNIVERSE_ID` | **Required in `single` auth mode** | UUID of the sole universe in a single-tenant deployment. Not used to auto-create universes in multi-tenant modes. |
-| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels,code` | Roles this process runs, a comma-separated subset of `gateway` (private HTTP API plus a separate public OAuth callback/webhook listener), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels`, `code` (isolated JavaScript execution; also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Environment gateway replicas require individual peer URLs and a shared gateway token. |
+| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,code` | Roles this process runs, a comma-separated subset of `gateway` (private HTTP API plus a separate public OAuth callback/webhook listener), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `code` (isolated JavaScript execution; also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Environment gateway replicas require individual peer URLs and a shared gateway token. |
 | `LIGHTSPEED_TASK_QUEUE` | `lightspeed-sessions` | Sessions task queue shared by the gateway and the `sessions` role. Deployments sharing a Temporal namespace must use distinct queues. |
 | `LIGHTSPEED_TASK_QUEUE_BOTS` | `lightspeed-bots` | Task queue of the `bots` role (bot controllers, trigger fires, bot activities). |
-| `LIGHTSPEED_TASK_QUEUE_CHANNELS` | `lightspeed-channels` | Task queue of the `channels` role (conversation workflows and core channel activities). Connector activities run on the per-account `lightspeed-connector-*` queues served by the connector host. |
-| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend address as `host:port` (also `--temporal-target`). An `http://` or `https://` URL is accepted too, and `https://` turns TLS on. The address names a host and port only: user information, a path, or a query is a startup error. Written without a port, a bare host uses `7233` and a URL the default port of its scheme (`80` or `443`). Shared with the connector host. |
-| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace (also `--namespace`). Shared with the connector host. |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend address as `host:port` (also `--temporal-target`). An `http://` or `https://` URL is accepted too, and `https://` turns TLS on. The address names a host and port only: user information, a path, or a query is a startup error. Written without a port, a bare host uses `7233` and a URL the default port of its scheme (`80` or `443`). |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace (also `--namespace`). |
 | `TEMPORAL_TLS`, `TEMPORAL_TLS_*`, `TEMPORAL_API_KEY`, `TEMPORAL_API_KEY_FILE` | Unset: unencrypted, unauthenticated | TLS, client certificate, and API key for the Temporal connection. See [Temporal connection security](#temporal-connection-security). |
 | `LIGHTSPEED_GATEWAY_BIND` | `127.0.0.1:18080` | Private HTTP API listener (`--bind`), started by the `gateway` role. Admit only trusted components and operators. |
 | `LIGHTSPEED_PUBLIC_BIND` | `127.0.0.1:18082` | OAuth callback, client metadata and bot webhook listener (`--public-bind`), started by the `gateway` role. Never serves `/api/v1`. |
@@ -85,8 +83,7 @@ and actor headers and only serves its configured universe. See
 
 ### Temporal connection security
 
-The runtime and the connector host read these variables with the same rules, so
-one set of values secures both. With none of them set the connection is
+With none of these variables set, the connection is
 unencrypted and carries no credential, which suits only a Temporal frontend on
 a private network that accepts such connections.
 
@@ -403,7 +400,6 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_API_URL` | Unset | Runtime endpoint used with the Platform API token. Per-universe overrides must match it exactly. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` | `33554432` (32 MiB) | Total file content one workspace upload may carry, from 1 byte to 256 MiB. The request body limit follows at 1.5 times this value (at least 1 MiB) for base64 and paths. The web UI reads the effective value, so browser and server agree. An upload is held in memory while it is stored, so raising this raises the Platform's peak memory per upload. Each file reaches the runtime in its own request: a single file above about 47 MiB also needs a larger `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` on the runtime. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES` | `10000` | Files and folders one workspace upload may contain, from 1 to 1,000,000. |
-| `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` | Empty list | Comma-separated internal connector-host health base URLs (`/healthz` reports every served account) aggregated for Platform administrators. |
 | `LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT` | unset | Development only: `lightspeed-envd` endpoint offered as the default when registering an external environment. Set by `./dev.sh`; never in deployed configuration. |
 | `LIGHTSPEED_PLATFORM_DEV_SEED` | `false` (`true` in the authenticated full dev profile) | Development only: ensure the Test universe and Admin, Operator, Contributor, Viewer logins at startup. New logins share the bootstrap Admin password; existing passwords are preserved. |
 
@@ -431,29 +427,6 @@ deployment; `--connection` chooses a saved connection. The Node SDK
 use the same configuration directory unless one is supplied explicitly.
 See [CLI connections](../using-lightspeed/cli.md) and
 [SDK connection reuse](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
-
-## Connector host
-
-The standalone host is a trusted runtime/Temporal bridge. Start it with
-`npm run start --workspace @lightspeed-ai/connectors`; the development launcher
-does not start it or supply its runtime token. The token has full deployment
-authority and must not be installed for an agent. The host shares the
-`TEMPORAL_*` connection settings above.
-
-| Variable | Requirement/default | Purpose |
-| --- | --- | --- |
-| `LIGHTSPEED_API_URL` | Required | Direct runtime HTTP API base URL. |
-| `LIGHTSPEED_CONNECTOR_API_TOKEN` | Required | A configured runtime token, at least 32 printable non-whitespace ASCII characters. |
-| `LIGHTSPEED_CONNECTOR_PROVIDERS` | `telegram,whatsapp` | Comma-separated providers to serve. |
-| `LIGHTSPEED_CONNECTOR_ACCOUNTS` | All discovered accounts | Optional comma-separated `<universeId>/<accountId>` selectors. Partition these across hosts to avoid duplicate ingress ownership. |
-| `LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS` | `30000` | Positive interval between account discovery passes. |
-| `LIGHTSPEED_CONNECTOR_INGRESS_MAX_PER_MINUTE` | `120` | Positive per-minute inbound rate limit. |
-| `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` | Required when serving WhatsApp | Persistent provider session-state directory. |
-| `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY` | Required when serving WhatsApp | 32-byte key encoded as base64 for sealed media locators. |
-| `LIGHTSPEED_CONNECTOR_HEALTH_HOST` | `0.0.0.0` | Health listener host. |
-| `LIGHTSPEED_CONNECTOR_HEALTH_PORT` | `8090` | Health listener port. |
-| `LIGHTSPEED_CONNECTOR_METRICS_HOST` | `0.0.0.0` | Metrics listener host. |
-| `LIGHTSPEED_CONNECTOR_METRICS_PORT` | `9090` | Metrics listener port. |
 
 ## Configurator MCP
 
@@ -484,12 +457,11 @@ Never reuse their credentials in a deployed environment.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_AUTH_MODE` | `authenticated` | Both `full` and `runtime` configure a CLI token and connection handoff; full also configures a Platform token when needed. Explicit `single` remains supported for runtime-only local use. |
-| `LIGHTSPEED_CHANNELS_CONNECTORS` | Disabled | The launcher refuses a nonempty selection; standalone connector hosts require explicit configuration. |
 | `PORT` | `3000` | Platform backend port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |
 
 The supervisor also honors runtime, Platform, and Configurator variables
-documented above. Configure connector hosts separately.
+documented above.
 
 The `full` and `runtime` development profiles warn when neither
 `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set: they still start, and provider
@@ -605,7 +577,6 @@ them on services.
 | `LIGHTSPEED_ENVD_TARGETS` | Complete comma-separated daemon target set from release metadata, baked into release servers so `initialize` reports Linux musl and Windows MSVC. A direct local Cargo build reports its own target unless overridden. |
 | `LIGHTSPEED_RUNTIME_IMAGE` | Digest-pinned runtime image recorded in the manifest. |
 | `LIGHTSPEED_PLATFORM_IMAGE` | Digest-pinned Platform image recorded in the manifest. |
-| `LIGHTSPEED_PLATFORM_WORKERS_IMAGE` | Digest-pinned connector-host image (still published as `platform-workers`) recorded in the manifest. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_IMAGE` | Digest-pinned Configurator image recorded in the manifest. |
 
 `release/metadata.env` additionally owns these release-source values. They are

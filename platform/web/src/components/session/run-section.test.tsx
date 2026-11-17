@@ -177,7 +177,7 @@ it("counts only other tool failures in a mixed run's badge", async () => {
   const batch = section.work.find((entry) => entry.kind === "tool-group")!;
   batch.calls.push(read("send", {
     toolId: "channel.send", toolName: "send_message", status: "failed", isError: true,
-    error: "Delivery failed", display: { group: "message", verb: "Send", target: "Alice" },
+    error: "Delivery failed", display: { group: "other", verb: "Send", target: "Alice" },
   }));
   await render(section);
   expect(strip().textContent).toContain("3 tool calls");

@@ -4,7 +4,6 @@ import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
 import { effectiveFeatures, mergeFeatureOverrides, type AuditEvent, type PlatformSettingKey, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor, type OrganizationRole, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
-  ChannelsStatus,
   EngineUniverse,
   Environment,
   EnvironmentCredential,
@@ -30,8 +29,6 @@ import type {
   BotEventView,
   BotTriggerView,
   BotView,
-  ChannelAccountView,
-  ChannelPairingView,
   ContextEntryView,
   DeploymentEnvironmentProviderView,
   RunFailureKindView,
@@ -151,8 +148,6 @@ export interface WorkspaceRecord {
 export type StoredBotTrigger = BotTriggerView & {
   /// Webhook triggers: the ingest path including its URL token.
   ingestPath?: string | null;
-  /// Chat triggers with `pairing: code`.
-  pairingCode?: string | null;
 };
 
 export interface BotRecord {
@@ -194,10 +189,6 @@ export interface UniverseState {
   models: ModelListResponse;
   modelDefaults: ModelDefaults;
   bots: Map<string, BotRecord>;
-  /// Universe channel accounts (core wire shape), keyed by `accountId`.
-  channelAccounts: Map<string, ChannelAccountView>;
-  /// Conversation → bot pairing rows (core wire shape).
-  channelPairings: ChannelPairingView[];
   /// Fallback responder for sessions without their own script.
   responder: DemoResponder;
 }
@@ -241,7 +232,6 @@ export class DemoStore {
   readonly orphanEngineUniverses: EngineUniverse[] = [];
   readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
   /// Deployment keys; universe keys live on their universe.
-  channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
   /// Debug commands (`debug: …` messages); see debug-commands.ts.
@@ -329,8 +319,6 @@ export class DemoStore {
       models: { models: [], providers: [] },
       modelDefaults: { revision: 0, agentRun: null, speechToText: null },
       bots: new Map(),
-      channelAccounts: new Map(),
-      channelPairings: [],
       responder: init.responder ?? fallbackResponder,
     };
     if (role) {

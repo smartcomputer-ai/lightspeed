@@ -37,38 +37,6 @@ export type Attribution =
       component: string;
       kind: "internal";
     };
-export type BotId = string;
-export type BotTriggerId = string;
-export type ChannelAccountId = string;
-/**
- * What a connector executes: provider message ids and their direction.
- */
-export type ChannelDeliveryOperation =
-  | {
-      replyContext?: ReplyContext | null;
-      replyTo?: string | null;
-      text: string;
-      type: "send";
-    }
-  | {
-      messageId: string;
-      text: string;
-      type: "edit";
-    }
-  | {
-      emoji: string;
-      /**
-       * Whether the reacted-to message is the bot's own.
-       */
-      fromMe: boolean;
-      messageId: string;
-      type: "react";
-    };
-export type ChannelProvider = string;
-export type ChannelMediaKind = "image" | "audio" | "document";
-export type ChatTurnAccess = "anyone" | "listed";
-export type ChatGroupActivation = "mention" | "always";
-export type ChatScope = "direct" | "group";
 export type CodeExecutionInterruption =
   | "holder_cancelled"
   | "workflow_cancelled"
@@ -245,81 +213,6 @@ export interface AttachmentSource {
   path: string;
 }
 /**
- * One connector activity call. `idempotency_key` is the invocation id, or
- * `{invocation}:chunk:{i}/{n}` for a chunk of a split send.
- */
-export interface ChannelDeliveryCommand {
-  idempotencyKey: string;
-  invocationId: string;
-  operation: ChannelDeliveryOperation;
-  route: ChannelRoute;
-  version: number;
-}
-/**
- * The message a send replies to, for providers that quote it themselves.
- */
-export interface ReplyContext {
-  senderId: string;
-  text: string;
-}
-/**
- * Where a delivery goes: one account's chat, optionally a thread.
- */
-export interface ChannelRoute {
-  accountId: ChannelAccountId;
-  chatId: string;
-  provider: ChannelProvider;
-  threadId?: string | null;
-}
-export interface ChannelDeliveryResult {
-  /**
-   * Every provider id the delivery produced (a chunked send has several;
-   * the first is the anchor).
-   */
-  messageIds: string[];
-  provider: ChannelProvider;
-  version: number;
-}
-/**
- * A provider-owned attachment reference; never bytes. The connector
- * downloads it when the conversation workflow asks (`prepare_channel_media`).
- */
-export interface ChannelInboundMedia {
-  byteSize?: number | null;
-  /**
-   * Provider file handle (a Telegram file id, a sealed WhatsApp locator).
-   */
-  fileId: string;
-  kind: ChannelMediaKind;
-  mime: string;
-  name?: string | null;
-}
-/**
- * Who may take a turn and who may issue control commands, by provider
- * handle (Telegram user id, WhatsApp JID). Handle allowlists on the
- * trigger replace any platform membership lookup.
- */
-export interface ChatAccess {
-  /**
-   * Handles allowed to take a turn when `turn` is `listed`.
-   */
-  allowed?: string[];
-  /**
-   * Handles allowed to issue `/activation` and `/status`; empty denies
-   * control commands to everyone.
-   */
-  controllers?: string[];
-  turn?: ChatTurnAccess & string;
-}
-/**
- * When the bot acts in a conversation.
- */
-export interface ChatActivation {
-  group?: ChatGroupActivation | null;
-  mentionNames?: string[];
-  triggerPrefixes?: string[];
-}
-/**
  * Close admission immediately and cancel admitted work. Closing a scope does
  * not roll back any completed effects.
  */
@@ -467,41 +360,6 @@ export interface ContentRef {
   provider_kind?: string | null;
 }
 /**
- * The conversation a message belongs to: one account's chat, optionally
- * a thread inside it.
- */
-export interface ConversationRef {
-  accountId: ChannelAccountId;
-  chatId: string;
-  threadId?: string | null;
-}
-/**
- * Secret-free durable input of one conversation workflow: the chat trigger
- * it serves and the conversation it fronts. The workflow owns nothing on
- * the core side: the bot controller creates and controls the session; the
- * workflow is the source of the conversation's events and the receiver of
- * its `message_*` tools.
- */
-export interface ConversationStart {
-  access: ChatAccess;
-  accountId: ChannelAccountId;
-  activation: ChatActivation;
-  botId: BotId;
-  /**
-   * Task queue of the connector host serving the account.
-   */
-  connectorTaskQueue: string;
-  conversation: ConversationRef;
-  /**
-   * Human label of the conversation (routed session label, display name).
-   */
-  label: string;
-  provider: ChannelProvider;
-  scope: ChatScope;
-  triggerId: BotTriggerId;
-  universeId: string;
-}
-/**
  * Bounded durable record of one admitted workflow-tool call. A joined call is
  * recorded while it is still pending.
  *
@@ -556,13 +414,6 @@ export interface InvokeCodeToolRequest {
   execution_id: string;
   request_id: string;
 }
-/**
- * `maintain_channel_typing`: keep the provider's typing indicator up for
- * the conversation until the activity is cancelled.
- */
-export interface MaintainChannelTypingInput {
-  route: ChannelRoute;
-}
 export interface ModelConfig {
   apiKind: string;
   model: string;
@@ -583,27 +434,6 @@ export interface OpenCodeToolScopeRequest {
   max_calls: number;
   max_in_flight: number;
   parent_invocation_id: WorkflowToolInvocationId;
-}
-/**
- * `prepare_channel_media`: the connector downloads the provider file and
- * stores it in the universe's CAS.
- */
-export interface PrepareChannelMediaInput {
-  media: ChannelInboundMedia;
-  route: ChannelRoute;
-  universeId: string;
-}
-export interface PrepareChannelMediaResult {
-  item: PreparedMediaItem;
-}
-/**
- * A prepared attachment: a CAS reference, never bytes.
- */
-export interface PreparedMediaItem {
-  blobRef: string;
-  kind: ChannelMediaKind;
-  mime: string;
-  name?: string | null;
 }
 export interface TranscriptionFailure {
   kind: TranscriptionFailureKind;

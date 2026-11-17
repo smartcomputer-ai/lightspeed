@@ -1605,7 +1605,7 @@ Creates or refreshes a universe credential grant for one accessible installation
 
 **Create a bot**
 
-Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
+Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.
 
 - HTTP: `POST /api/v1/universes/{universe}/bots`
 - Success: `200`
@@ -1731,7 +1731,7 @@ Asks the controller to close one of the bot's sessions at its next idle boundary
 
 **Create or replace a trigger**
 
-Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
+Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.
 
 - HTTP: `PUT /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}`
 - Success: `200`
@@ -1747,7 +1747,7 @@ Validates the trigger document (CEL parses, grants exist, one inbox per bot, cha
 
 **Read a trigger**
 
-Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
+Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.
 
 - HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}`
 - Success: `200`
@@ -1763,7 +1763,7 @@ Returns one trigger with its incidents and cursor. The ingest path and pairing c
 
 **List a bot's triggers**
 
-Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+Returns every trigger of the bot ordered by id, without ingest paths.
 
 - HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/triggers`
 - Success: `200`
@@ -1779,7 +1779,7 @@ Returns every trigger of the bot ordered by id, without ingest paths or pairing 
 
 **Read a trigger's secrets**
 
-Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.
 
 - HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}/secrets`
 - Success: `200`
@@ -1795,7 +1795,7 @@ Returns a webhook trigger's ingest path, whose token lets the holder post events
 
 **Delete a trigger**
 
-Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
+Drops the trigger's Temporal Schedule, then the record; stored events keep their history.
 
 - HTTP: `DELETE /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}`
 - Success: `200`
@@ -1887,131 +1887,6 @@ Evaluates a filter against one payload or a sample of recent stored events, repo
 - Group: `bots`
 - Role: `operator`
 
-### `channels/accounts/create`
-
-**Create a channel account**
-
-Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
-
-- HTTP: `POST /api/v1/universes/{universe}/channels/accounts`
-- Success: `200`
-- Transfer: `json`
-- Query: none
-- Request body: JSON object: `account`
-- Access: `{"action":"configureResource","kind":"universe"}`
-- Group: `channels`
-- Role: `operator`
-
-### `channels/accounts/put`
-
-**Create or replace a channel account**
-
-Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
-
-- HTTP: `PUT /api/v1/universes/{universe}/channels/accounts/{accountId}`
-- Success: `200`
-- Transfer: `json`
-- Query: none
-- Path input fields: `accountId` → `account.accountId`
-- Request body: JSON object: `account`, `expectedRevision`
-- Access: `{"action":"configureResource","kind":"universe"}`
-- Group: `channels`
-- Role: `operator`
-
-### `channels/accounts/read`
-
-**Read a channel account**
-
-Returns the account document and revision.
-
-- HTTP: `GET /api/v1/universes/{universe}/channels/accounts/{accountId}`
-- Success: `200`
-- Transfer: `json`
-- Query: none
-- Path input fields: `accountId` → `accountId`
-- Request body: none
-- Access: `{"action":"read","kind":"universe"}`
-- Group: `channels`
-- Role: `viewer`
-
-### `channels/accounts/list`
-
-**List channel accounts**
-
-Lists this universe's provider accounts, optionally by provider.
-
-- HTTP: `GET /api/v1/universes/{universe}/channels/accounts`
-- Success: `200`
-- Transfer: `json`
-- Query: `provider`
-- Request body: none
-- Access: `{"action":"read","kind":"universe"}`
-- Group: `channels`
-- Role: `viewer`
-
-### `channels/accounts/delete`
-
-**Delete a channel account**
-
-Removes the account and its pairings; chat triggers that reference it stop serving conversations.
-
-- HTTP: `DELETE /api/v1/universes/{universe}/channels/accounts/{accountId}`
-- Success: `200`
-- Transfer: `json`
-- Query: none
-- Path input fields: `accountId` → `accountId`
-- Request body: none
-- Access: `{"action":"configureResource","kind":"universe"}`
-- Group: `channels`
-- Role: `operator`
-
-### `channels/pairings/list`
-
-**List chat pairings**
-
-Lists conversations paired to chat triggers, optionally by account or bot.
-
-- HTTP: `GET /api/v1/universes/{universe}/channels/pairings`
-- Success: `200`
-- Transfer: `json`
-- Query: `accountId`, `botId`
-- Request body: none
-- Access: `{"action":"read","kind":"universe"}`
-- Group: `channels`
-- Role: `viewer`
-
-### `channels/pairings/delete`
-
-**Unpair a conversation**
-
-Removes one pairing; the conversation must present the pairing code again to reconnect.
-
-- HTTP: `DELETE /api/v1/universes/{universe}/channels/accounts/{accountId}/pairings/{chatId}`
-- Success: `200`
-- Transfer: `json`
-- Query: none
-- Path input fields: `accountId` → `accountId`, `chatId` → `chatId`
-- Request body: none
-- Access: `{"action":"configureResource","kind":"universe"}`
-- Group: `channels`
-- Role: `operator`
-
-### `channels/conversations/read`
-
-**Read a conversation snapshot**
-
-Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
-
-- HTTP: `GET /api/v1/universes/{universe}/channels/accounts/{accountId}/conversations/{chatId}`
-- Success: `200`
-- Transfer: `json`
-- Query: `threadId`
-- Path input fields: `accountId` → `accountId`, `chatId` → `chatId`
-- Request body: none
-- Access: `{"action":"read","kind":"universe"}`
-- Group: `channels`
-- Role: `viewer`
-
 ### `blobs/upload`
 
 **Upload a content-addressed blob**
@@ -2045,22 +1920,6 @@ Service callers only. Resolves the current access token through the broker, reco
 - Request body: JSON object: `audience`
 - Access: `{"kind":"service"}`
 - Group: `credentials/lease`
-- Role: `none`
-
-### `channels/inbound/admit`
-
-**Admit a provider message**
-
-Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
-
-- HTTP: `POST /api/v1/universes/{universe}/channels/accounts/{accountId}/inbound`
-- Success: `200`
-- Transfer: `json`
-- Query: none
-- Path input fields: `accountId` → `accountId`
-- Request body: JSON object: `inbound`
-- Access: `{"kind":"service"}`
-- Group: `channels/inbound`
 - Role: `none`
 
 
@@ -2332,20 +2191,5 @@ Stops a universe from using a provider that is not available to all universes. I
 - Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
-- Role: `none`
-
-### `deployment/channels/accounts/list`
-
-**List channel accounts across universes**
-
-The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
-
-- HTTP: `GET /api/v1/deployment/channels/accounts`
-- Success: `200`
-- Transfer: `json`
-- Query: `includeDisabled`, `provider`
-- Request body: none
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/channels`
 - Role: `none`
 

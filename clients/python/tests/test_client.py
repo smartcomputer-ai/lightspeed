@@ -517,13 +517,13 @@ async def test_named_administration_helpers_preserve_targets_nulls_and_query_map
     async def handle(request):
         requests.append(request)
         return httpx.Response(200, json={"result": len(requests)})
-    account = {"accountId": "channel/account", "provider": "telegram", "providerAccountId": "bot", "displayName": "Bot", "settings": {}}
+    bot = {"botId": "bot/one", "profileId": "profile", "displayName": "Bot"}
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         client = AsyncLightspeedClient("https://runtime.test/base", universe="u", http_client=http)
         await client.list_universes(metadata={"team": "build"})
         await client.put_universe_configuration("target", protected=False, display_name=None)
         await client.put_credential_grant("grant/one", token="secret", expires_at_ms=None)
-        await client.put_channel_account(account=account, expected_revision=7)
+        await client.put_bot(bot=bot, expected_revision=7)
         await client.read_bot_event("bot/one", seq=12)
         await client.put_environment_provider("provider/one", controller_endpoint="https://controller.test", credential=None, clear_credential=True)
     assert json.loads(requests[0].url.params["metadata"]) == {"team": "build"}
@@ -532,9 +532,9 @@ async def test_named_administration_helpers_preserve_targets_nulls_and_query_map
     assert json.loads(requests[1].content) == {"protected": False, "displayName": None}
     assert requests[2].url.raw_path == b"/base/api/v1/universes/u/credentials/grants/grant%2Fone"
     assert json.loads(requests[2].content) == {"token": "secret", "expiresAtMs": None}
-    assert requests[3].url.raw_path == b"/base/api/v1/universes/u/channels/accounts/channel%2Faccount"
-    assert json.loads(requests[3].content) == {"account": {key: value for key, value in account.items() if key != "accountId"}, "expectedRevision": 7}
-    assert account["accountId"] == "channel/account", "helper must not mutate caller-owned nested input"
+    assert requests[3].url.raw_path == b"/base/api/v1/universes/u/bots/bot%2Fone"
+    assert json.loads(requests[3].content) == {"bot": {key: value for key, value in bot.items() if key != "botId"}, "expectedRevision": 7}
+    assert bot["botId"] == "bot/one", "helper must not mutate caller-owned nested input"
     assert requests[4].url.raw_path == b"/base/api/v1/universes/u/bots/bot%2Fone/events/12"
     assert requests[5].url.raw_path == b"/base/api/v1/environment-providers/provider%2Fone"
     assert json.loads(requests[5].content) == {"controllerEndpoint": "https://controller.test", "credential": None, "clearCredential": True}

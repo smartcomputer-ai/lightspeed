@@ -181,7 +181,7 @@ impl TestBoundPluginWorkflow {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SelfReceiverControllerSnapshot {
-    /// Channels-shaped durable outbox: invocation id is the idempotency key.
+    /// Plugin durable outbox: invocation id is the idempotency key.
     outbox: std::collections::BTreeMap<String, harness::WorkflowToolInvocation>,
     duplicate_invocations: u32,
     replies_sent: u32,
@@ -199,7 +199,7 @@ pub struct SelfReceiverControllerArgs {
     snapshot: SelfReceiverControllerSnapshot,
 }
 
-/// Channels-shaped lifecycle controller and promise-bearing tool receiver.
+/// Plugin lifecycle controller and promise-bearing tool receiver.
 /// Pushed invocations are processed directly from the workflow inbox while
 /// the declared session's run is active; run-terminal handling is a separate branch and
 /// is never a prerequisite for enqueue or reply.
@@ -1146,7 +1146,7 @@ async fn workflow_tool_bound_request_reply_resolves_via_plugin_worker() -> anyho
     .await
 }
 
-/// Channels-shaped Joined proof: one workflow is both lifecycle controller
+/// Plugin Joined proof: one workflow is both lifecycle controller
 /// and pushed bound receiver. It durably deduplicates an outbox enqueue,
 /// resolves the runtime-owned reply while the run is active, continues as
 /// new, and then consumes that run's terminal notification. The model sees
@@ -1161,11 +1161,11 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
 
     run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
         let universe_id = live_universe_id()?;
-        let controller_id = format!("channels/session-{}", uuid::Uuid::new_v4().simple());
+        let controller_id = format!("plugins/session-{}", uuid::Uuid::new_v4().simple());
         let receipt_ref = blobs.put_bytes(br#"{"status":"sent"}"#.to_vec()).await?;
         let controller = WorkflowEndpointRef {
             workflow_id: controller_id.clone(),
-            workflow_kind: "channels.session".to_owned(),
+            workflow_kind: "plugin.session".to_owned(),
         };
         client
             .start_workflow(
@@ -1180,13 +1180,13 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 WorkflowStartOptions::new(plugin_queue, controller_id.clone()).build(),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("start Channels controller: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("start plugin controller: {error}"))?;
 
         let definition = tool_definition(
             &blobs,
             "message-send",
             MESSAGE_SEND_TOOL,
-            "channels.message.send.v1",
+            "plugin.message.send.v1",
         )
         .await?;
         api.start_integrated_session_for_workflow_with_profile(
@@ -1206,7 +1206,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start declared Channels session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start declared plugin session: {error:?}"))?;
 
         let terminal_token = format!("channel-terminal-{}", uuid::Uuid::new_v4().simple());
         let started = api
@@ -1226,7 +1226,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 config: None,
             })
             .await
-            .map_err(|error| anyhow::anyhow!("start declared Channels run: {error:?}"))?;
+            .map_err(|error| anyhow::anyhow!("start declared plugin run: {error:?}"))?;
         let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let output = final_assistant_text(&run).expect("assistant output");
@@ -1271,7 +1271,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                         temporalio_client::WorkflowQueryOptions::default(),
                     )
                     .await
-                    .map_err(|error| anyhow::anyhow!("query Channels controller: {error}"))?;
+                    .map_err(|error| anyhow::anyhow!("query plugin controller: {error}"))?;
                 if snapshot
                     .terminal_tokens
                     .iter()
@@ -1314,7 +1314,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("redeliver Channels invocation: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("redeliver plugin invocation: {error}"))?;
         let started = std::time::Instant::now();
         loop {
             if started.elapsed() > Duration::from_secs(20) {
@@ -1359,7 +1359,7 @@ async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::
             &blobs,
             "accepted-message",
             MESSAGE_SEND_TOOL,
-            "channels.message.accepted.v1",
+            "plugin.message.accepted.v1",
         )
         .await?;
         let run = start_integrated_session_and_run(
@@ -1438,10 +1438,10 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
 
     run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
         let universe_id = live_universe_id()?;
-        let controller_id = format!("channels/stalled-{}", uuid::Uuid::new_v4().simple());
+        let controller_id = format!("plugins/stalled-{}", uuid::Uuid::new_v4().simple());
         let controller = WorkflowEndpointRef {
             workflow_id: controller_id.clone(),
-            workflow_kind: "channels.session".to_owned(),
+            workflow_kind: "plugin.session".to_owned(),
         };
         client
             .start_workflow(
@@ -1462,7 +1462,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             &blobs,
             "message-send",
             MESSAGE_SEND_TOOL,
-            "channels.message.send.v1",
+            "plugin.message.send.v1",
         )
         .await?;
         api.start_integrated_session_for_workflow_with_profile(
@@ -2202,8 +2202,8 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
     run_with_plugin_worker(
         |_client, api, blobs, session_id, _plugin_queue| async move {
             let absent_controller = WorkflowEndpointRef {
-                workflow_id: format!("channels/never-started-{}", uuid::Uuid::new_v4().simple()),
-                workflow_kind: "channels.session".to_owned(),
+                workflow_id: format!("plugins/never-started-{}", uuid::Uuid::new_v4().simple()),
+                workflow_kind: "plugin.session".to_owned(),
             };
             let definition = tool_definition(
                 &blobs,
@@ -2892,7 +2892,7 @@ async fn workflow_tool_pushed_accepted_delivers_before_the_next_generation_finis
             &blobs,
             "accepted-message",
             MESSAGE_SEND_TOOL,
-            "channels.message.accepted.v1",
+            "plugin.message.accepted.v1",
         )
         .await?;
         let run_id = start_integrated_session_and_hold_run(

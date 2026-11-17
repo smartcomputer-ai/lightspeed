@@ -396,8 +396,7 @@ docker logs --tail 100 lightspeed-platform
 Use [Operations](operations.md) for monitoring, role scaling, and retention,
 and [Troubleshooting](troubleshooting.md) for a failing request path.
 [Upgrades and recovery](upgrades-and-recovery.md) gives the maintenance
-procedure and the complete recovery inventory, including optional connector
-and machine state.
+procedure and the complete recovery inventory.
 
 [Access and security](../access-and-security/overview.md) covers organizations, roles,
 runtime tokens, and isolation; [Managing universes](multi-tenancy.md) explains

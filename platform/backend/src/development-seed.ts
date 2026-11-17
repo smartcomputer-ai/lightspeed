@@ -25,7 +25,7 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
   const created = await client.call("deployment/universes/create", { universeId: testUniverseId, handle: "test" });
   const [prior] = await db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, testUniverseId)).limit(1);
   if (prior && prior.organizationId !== developmentOrganizationId) throw new Error("development Test universe must belong to the development organization");
-  const universe = prior ?? (await db.insert(schema.universes).values({ organizationId: developmentOrganizationId, name: "Test", handle: created.universe.handle, lightspeedUniverseId: testUniverseId, createdBy: admin.id, features: { bots: true, channels: true }, runtimeConfiguration: { protected: false } }).returning())[0]!;
+  const universe = prior ?? (await db.insert(schema.universes).values({ organizationId: developmentOrganizationId, name: "Test", handle: created.universe.handle, lightspeedUniverseId: testUniverseId, createdBy: admin.id, features: { bots: true }, runtimeConfiguration: { protected: false } }).returning())[0]!;
   await db.update(schema.universes).set({ handle: created.universe.handle }).where(eq(schema.universes.id, universe.id));
   await ensureMember(db, admin.id, "admin"); await ensureGrant(db, universe.id, admin.id, "owner");
   for (const fixture of testUsers) {

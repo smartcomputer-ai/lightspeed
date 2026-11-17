@@ -27,36 +27,6 @@ fn access_error(error: store_pg::AccessStoreError) -> AgentApiError {
 }
 
 impl GatewayAgentApi {
-    /// A channel conversation reads the runs of sessions that admitted it as a
-    /// bound receiver; it acts with the authority of the bot that owns them.
-    pub(crate) async fn read_run_for_channel(
-        &self,
-        workflow_id: &str,
-        params: RunReadParams,
-    ) -> Result<RunReadResponse, AgentApiError> {
-        if !workflow_id.starts_with(&format!("{}/chat-", self.universe_id())) {
-            return Err(denied());
-        }
-        let session = SessionId::try_new(params.session_id.clone()).map_err(|_| denied())?;
-        let loaded = self.load_session_state(&session).await?;
-        let bound = loaded.state.workflow_tools.bindings.values().any(|binding| matches!(&binding.target,
-            harness::WorkflowToolTarget::Bound { receiver, .. }
-                if receiver.workflow_id == workflow_id && receiver.workflow_kind == temporal_workflow::channels::CHANNEL_CONVERSATION_WORKFLOW_KIND));
-        let bot = self
-            .access_store()
-            .session_access(self.universe_id(), &params.session_id)
-            .await
-            .map_err(access_error)?
-            .and_then(|access| access.bot);
-        let (true, Some(bot)) = (bound, bot) else {
-            return Err(denied());
-        };
-        let context = self
-            .controller_context(ResourceRef::Bot(bot), workflow_id.to_owned())
-            .await?;
-        with_controller_authority(context, self.read_run(params)).await
-    }
-
     /// Cascade deletion checks every session of the retention tree.
     pub(super) async fn authorize_session_subtree(
         &self,

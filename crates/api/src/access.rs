@@ -93,12 +93,6 @@ pub enum MethodGroup {
     Environments,
     #[serde(rename = "bots")]
     Bots,
-    /// Channel accounts, pairings and conversations.
-    #[serde(rename = "channels")]
-    Channels,
-    /// `channels/inbound/admit`: what a connector delivers.
-    #[serde(rename = "channels/inbound")]
-    ChannelsInbound,
     /// `credentials/*` except leasing.
     #[serde(rename = "credentials")]
     Credentials,
@@ -110,15 +104,12 @@ pub enum MethodGroup {
     /// Environment providers and their universe bindings.
     #[serde(rename = "deployment/environment-providers")]
     DeploymentEnvironmentProviders,
-    /// `deployment/channels/accounts/list`: a connector host's discovery.
-    #[serde(rename = "deployment/channels")]
-    DeploymentChannels,
     #[serde(rename = "deployment/sessions")]
     DeploymentSessions,
 }
 
 impl MethodGroup {
-    pub const ALL: [MethodGroup; 18] = [
+    pub const ALL: [MethodGroup; 15] = [
         Self::Session,
         Self::SessionDelete,
         Self::BlobsPut,
@@ -129,13 +120,10 @@ impl MethodGroup {
         Self::Mcp,
         Self::Environments,
         Self::Bots,
-        Self::Channels,
-        Self::ChannelsInbound,
         Self::Credentials,
         Self::CredentialsLease,
         Self::DeploymentUniverses,
         Self::DeploymentEnvironmentProviders,
-        Self::DeploymentChannels,
         Self::DeploymentSessions,
     ];
 
@@ -152,13 +140,10 @@ impl MethodGroup {
             Self::Mcp => "mcp",
             Self::Environments => "environments",
             Self::Bots => "bots",
-            Self::Channels => "channels",
-            Self::ChannelsInbound => "channels/inbound",
             Self::Credentials => "credentials",
             Self::CredentialsLease => "credentials/lease",
             Self::DeploymentUniverses => "deployment/universes",
             Self::DeploymentEnvironmentProviders => "deployment/environment-providers",
-            Self::DeploymentChannels => "deployment/channels",
             Self::DeploymentSessions => "deployment/sessions",
         }
     }
@@ -173,7 +158,6 @@ impl MethodGroup {
             self,
             Self::DeploymentUniverses
                 | Self::DeploymentEnvironmentProviders
-                | Self::DeploymentChannels
                 | Self::DeploymentSessions
         )
     }
@@ -206,10 +190,6 @@ impl MethodGroup {
                 Self::Environments
             } else if group("bots/") {
                 Self::Bots
-            } else if group("channels/inbound/") {
-                Self::ChannelsInbound
-            } else if group("channels/") {
-                Self::Channels
             } else if method == "credentials/grants/lease" {
                 Self::CredentialsLease
             } else if group("credentials/") {
@@ -218,8 +198,6 @@ impl MethodGroup {
                 Self::DeploymentUniverses
             } else if group("deployment/environment-provider") {
                 Self::DeploymentEnvironmentProviders
-            } else if group("deployment/channels/") {
-                Self::DeploymentChannels
             } else {
                 return None;
             },
@@ -367,7 +345,7 @@ pub enum UniverseAction {
     /// Use a workspace, environment or MCP server, or store bytes.
     UseResource,
     /// Configure a workspace, environment, MCP server or shared
-    /// configuration such as credentials and channels.
+    /// configuration such as credentials.
     ConfigureResource,
     CreateWorkspace,
 }
@@ -526,8 +504,6 @@ mod tests {
             ("mcp/servers/put", Some(MethodGroup::Mcp)),
             ("environments/jobs/create", Some(MethodGroup::Environments)),
             ("bots/create", Some(MethodGroup::Bots)),
-            ("channels/accounts/create", Some(MethodGroup::Channels)),
-            ("channels/inbound/admit", Some(MethodGroup::ChannelsInbound)),
             ("credentials/grants/import", Some(MethodGroup::Credentials)),
             (
                 "credentials/grants/lease",
@@ -544,10 +520,6 @@ mod tests {
             (
                 "deployment/environment-provider-bindings/list",
                 Some(MethodGroup::DeploymentEnvironmentProviders),
-            ),
-            (
-                "deployment/channels/accounts/list",
-                Some(MethodGroup::DeploymentChannels),
             ),
             ("initialize", None),
             ("deployment/identity/apply", None),
@@ -626,10 +598,6 @@ mod tests {
         }
         // Machine methods have distinct families for external gates.
         assert_eq!(
-            MethodGroup::of(METHOD_CHANNELS_INBOUND_ADMIT),
-            Some(MethodGroup::ChannelsInbound)
-        );
-        assert_eq!(
             MethodGroup::of(METHOD_CREDENTIALS_GRANTS_LEASE),
             Some(MethodGroup::CredentialsLease)
         );
@@ -659,7 +627,6 @@ mod tests {
         );
         for method in [
             METHOD_CREDENTIALS_GRANTS_LEASE,
-            METHOD_CHANNELS_INBOUND_ADMIT,
             METHOD_DEPLOYMENT_UNIVERSES_CREATE,
         ] {
             assert_eq!(

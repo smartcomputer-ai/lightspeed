@@ -751,7 +751,6 @@ mod tests {
             sender_bot_id: None,
             hops: 0,
             in_reply_to: None,
-            media: Vec::new(),
             receiver: None,
             outcome: None,
             outcome_detail: None,
@@ -1556,13 +1555,6 @@ mod tests {
                 .await
                 .unwrap()),
             vec![("b-alpha".to_owned(), "feed".to_owned())]
-        );
-        assert!(
-            store
-                .list_bot_triggers_by_kind(BotTriggerKind::Chat)
-                .await
-                .unwrap()
-                .is_empty()
         );
         assert!(
             store

@@ -73,8 +73,7 @@ where
 
     let builder = GatewayAgentApi::builder(client.clone(), store.clone())
         .with_task_queue(queues.sessions.clone())
-        .with_bot_task_queue(queues.bots.clone())
-        .with_channel_task_queue(queues.channels.clone());
+        .with_bot_task_queue(queues.bots.clone());
     let activity_state = match llm {
         Llm::Fake => {
             let blobs: Arc<dyn BlobStore> = store.clone();
@@ -487,7 +486,6 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
                     session_close_after_ms: None,
                     enabled: true,
                 },
-                pairing_code: None,
             }],
         )
         .await?;
@@ -607,7 +605,6 @@ async fn bots_live_webhook_trigger_coalesces_events() -> anyhow::Result<()> {
                     session_close_after_ms: None,
                     enabled: true,
                 },
-                pairing_code: None,
             }],
         )
         .await?;
@@ -764,7 +761,6 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
                         session_close_after_ms: None,
                         enabled: true,
                     },
-                    pairing_code: None,
                 },
                 expected_revision: None,
             })

@@ -286,9 +286,6 @@ class BotEventInput(TypedDict):
     summary: str
 
 
-BotEventMediaKind: TypeAlias = Literal['image', 'audio', 'document']
-
-
 BotEventOutcome: TypeAlias = Literal[
     'handled',
     'deferred',
@@ -444,30 +441,16 @@ class BotTriggerSecretsReadResponse(TypedDict):
     """
     Webhook triggers: the ingest path including its URL token.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code a conversation sends
-    once to connect.
-    """
 
 
 class BotTriggerSecretsView(TypedDict):
     """
-    What lets an outsider reach a trigger: whoever holds the ingest path can
-    post events to the bot, and whoever holds the pairing code can connect a
-    conversation to it. Kept apart from [`BotTriggerView`] so that reading or
-    listing triggers never discloses either; only bot-management methods
-    return this.
+    The webhook ingest path, available through bot-management methods.
     """
 
     ingestPath: NotRequired[str | None]
     """
     Webhook triggers: the ingest path including its URL token.
-    """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code a conversation sends
-    once to connect.
     """
 
 
@@ -494,107 +477,6 @@ class CallerAccess(TypedDict):
     """
     Configured token name, absent for unauthenticated access.
     """
-
-
-ChannelAccountId: TypeAlias = str
-
-
-class ChannelAccountReadParams(TypedDict):
-    accountId: ChannelAccountId
-
-
-class ChannelAccountSettings(TypedDict):
-    printQr: NotRequired[bool | None]
-    """
-    WhatsApp: print the pairing QR code on the connector's terminal.
-    """
-
-
-class ChannelConversationReadParams(TypedDict):
-    accountId: ChannelAccountId
-    chatId: str
-    threadId: NotRequired[str | None]
-
-
-class ChannelConversationSnapshot(TypedDict):
-    """
-    The conversation workflow's live snapshot, for debugging.
-    """
-
-    activeDeliveries: int
-    botId: str
-    deliveredCount: int
-    deniedInboundCount: int
-    droppedInboundCount: int
-    duplicateInboundCount: int
-    emittedCount: int
-    failedDeliveryCount: int
-    inboundCount: int
-    label: str
-    protocolErrors: NotRequired[list[str]]
-    triggerId: str
-    typing: bool
-
-
-ChannelInboundDecision: TypeAlias = Literal[
-    'bound', 'paired', 'pairingRequired', 'pairingPending', 'unbound'
-]
-"""
-What the connector should do after admission. Pairing replies are the
-connector's to send, in the provider's own voice.
-"""
-
-
-ChannelMediaKind: TypeAlias = Literal['image', 'audio', 'document']
-
-
-ChannelPairedVia: TypeAlias = Literal['open', 'code']
-"""
-How a chat got its route: claimed by an open trigger's first contact,
-or paired by code.
-"""
-
-
-class ChannelPairingDeleteParams(TypedDict):
-    accountId: ChannelAccountId
-    chatId: str
-
-
-class ChannelPairingListParams(TypedDict):
-    accountId: NotRequired[ChannelAccountId | None]
-    botId: NotRequired[BotId | None]
-
-
-class ChannelPairingView(TypedDict):
-    """
-    A conversation's route: the chat is identified by `(accountId, chatId)`
-    and owned by the paired trigger.
-    """
-
-    accountId: ChannelAccountId
-    botId: BotId
-    chatId: str
-    pairedAtMs: int
-    pairedVia: ChannelPairedVia
-    triggerId: BotTriggerId
-
-
-ChannelProvider: TypeAlias = str
-
-
-ChatGroupActivation: TypeAlias = Literal['mention', 'always']
-
-
-ChatPairing: TypeAlias = Literal['code', 'open']
-"""
-Whether a conversation must present a pairing code before it connects.
-"""
-
-
-ChatScope: TypeAlias = Literal['direct', 'group']
-
-
-ChatTurnAccess: TypeAlias = Literal['anyone', 'listed']
 
 
 class CitationView(TypedDict):
@@ -1144,43 +1026,6 @@ class DeletedUniverseView(TypedDict):
     requestedBy: Attribution
     summary: Any
     universeId: str
-
-
-class DeploymentChannelAccountListParams(TypedDict):
-    includeDisabled: NotRequired[bool]
-    """
-    Include disabled accounts; by default only enabled ones are listed.
-    """
-    provider: NotRequired[ChannelProvider | None]
-
-
-class DeploymentChannelAccountView(TypedDict):
-    """
-    One channel account of any universe, for the connector host's discovery
-    pass.
-    """
-
-    accountId: ChannelAccountId
-    createdAtMs: int
-    credentialGrantId: NotRequired[str | None]
-    """
-    Retrievable credential grant holding the provider token (a Telegram bot
-    token); the connector host leases it. Absent for providers whose
-    credential is a session state directory (WhatsApp).
-    """
-    displayName: str
-    enabled: NotRequired[bool]
-    provider: ChannelProvider
-    providerAccountId: str
-    """
-    Provider-native account identity: the Telegram bot username or
-    numeric id, the WhatsApp phone number. Unique per universe and
-    provider.
-    """
-    revision: int
-    settings: NotRequired[ChannelAccountSettings]
-    universeId: str
-    updatedAtMs: int
 
 
 class DeploymentDeletedSessionsListParams(TypedDict):
@@ -2328,12 +2173,9 @@ MethodGroup: TypeAlias = (
     | Literal['session/delete']
     | Literal['blobs/put']
     | Literal['environments']
-    | Literal['channels']
-    | Literal['channels/inbound']
     | Literal['credentials']
     | Literal['credentials/lease']
     | Literal['deployment/environment-providers']
-    | Literal['deployment/channels']
 )
 """
 The API family of a method, published for external authorization gates.
@@ -3666,7 +3508,6 @@ ToolCallDisplayGroup: TypeAlias = (
     | Literal['mcp']
     | Literal['agent']
     | Literal['bot']
-    | Literal['message']
 )
 """
 Coarse activity family of a tool call, chosen by the projection from the
@@ -4299,22 +4140,6 @@ class BotEventListParams(TypedDict):
     """
 
 
-class BotEventMedia(TypedDict):
-    """
-    A prepared attachment appended to the run input after the rendering;
-    bytes live in the CAS.
-    """
-
-    blobRef: str
-    kind: BotEventMediaKind
-    mime: str
-    name: NotRequired[str | None]
-    textRef: NotRequired[str | None]
-    """
-    Optional prepared UTF-8 text; the source attachment remains in blobRef.
-    """
-
-
 class BotEventReadParams(TypedDict):
     botId: BotId
     seq: int
@@ -4367,9 +4192,8 @@ class BotEventView(TypedDict):
     kind: str
     """
     Event kind as authored by the source (`github.push`,
-    `schedule.fire`, `chat.message`, `bot.reply`).
+    `schedule.fire`, `bot.reply`).
     """
-    media: NotRequired[list[BotEventMedia]]
     occurredAtMs: int
     """
     When the source says it happened.
@@ -4525,18 +4349,11 @@ class BotTriggerInputSchedule(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     atMs: NotRequired[int | None]
@@ -4572,18 +4389,11 @@ class BotTriggerInputWebhook(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     kind: Literal['webhook']
@@ -4605,18 +4415,11 @@ class BotTriggerInputPoll(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     cursor: PollCursorSpec
@@ -4637,7 +4440,6 @@ BotTriggerInputBot = TypedDict(
         'deliver': NotRequired[BotDeliverPolicy | None],
         'enabled': NotRequired[bool],
         'filter': NotRequired[str | None],
-        'pairingCode': NotRequired[str | None],
         'route': NotRequired[BotTriggerRoute | None],
         'sessionCloseAfterMs': NotRequired[int | None],
         'triggerId': BotTriggerId,
@@ -4645,6 +4447,28 @@ BotTriggerInputBot = TypedDict(
         'kind': Literal['bot'],
     },
 )
+
+
+BotTriggerInput: TypeAlias = (
+    BotTriggerInputSchedule
+    | BotTriggerInputWebhook
+    | BotTriggerInputPoll
+    | BotTriggerInputBot
+)
+"""
+The whole configuration of one trigger, replaced with an expected
+revision.
+"""
+
+
+class BotTriggerPutParams(TypedDict):
+    botId: BotId
+    expectedRevision: NotRequired[int | None]
+    """
+    Checked only when the trigger already exists; absent replaces (or
+    creates) unconditionally.
+    """
+    trigger: BotTriggerInput
 
 
 class BotTriggerViewSchedule(TypedDict):
@@ -4682,8 +4506,7 @@ class BotTriggerViewSchedule(TypedDict):
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     updatedAtMs: int
@@ -4741,8 +4564,7 @@ class BotTriggerViewWebhook(TypedDict):
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     updatedAtMs: int
@@ -4786,8 +4608,7 @@ class BotTriggerViewPoll(TypedDict):
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     updatedAtMs: int
@@ -4825,6 +4646,18 @@ BotTriggerViewBot = TypedDict(
         'kind': Literal['bot'],
     },
 )
+
+
+BotTriggerView: TypeAlias = (
+    BotTriggerViewSchedule
+    | BotTriggerViewWebhook
+    | BotTriggerViewPoll
+    | BotTriggerViewBot
+)
+"""
+The whole configuration of one trigger, replaced with an expected
+revision.
+"""
 
 
 class BotView(TypedDict):
@@ -4892,143 +4725,6 @@ class BotView(TypedDict):
     (`bot_trigger_put`, `bot_trigger_delete`, `bot_brief_put`).
     """
     updatedAtMs: int
-
-
-class ChannelAccountDeleteParams(TypedDict):
-    accountId: ChannelAccountId
-
-
-class ChannelAccountInput(TypedDict):
-    """
-    A provider account served by the connector host. Secret material stays
-    in the referenced grant; this document is routing identity and
-    operational configuration.
-    """
-
-    accountId: ChannelAccountId
-    credentialGrantId: NotRequired[str | None]
-    """
-    Retrievable credential grant holding the provider token (a Telegram bot
-    token); the connector host leases it. Absent for providers whose
-    credential is a session state directory (WhatsApp).
-    """
-    displayName: str
-    enabled: NotRequired[bool]
-    provider: ChannelProvider
-    providerAccountId: str
-    """
-    Provider-native account identity: the Telegram bot username or
-    numeric id, the WhatsApp phone number. Unique per universe and
-    provider.
-    """
-    settings: NotRequired[ChannelAccountSettings]
-
-
-class ChannelAccountListParams(TypedDict):
-    provider: NotRequired[ChannelProvider | None]
-
-
-class ChannelAccountPutParams(TypedDict):
-    account: ChannelAccountInput
-    expectedRevision: NotRequired[int | None]
-
-
-class ChannelAccountView(TypedDict):
-    """
-    A provider account served by the connector host. Secret material stays
-    in the referenced grant; this document is routing identity and
-    operational configuration.
-    """
-
-    accountId: ChannelAccountId
-    createdAtMs: int
-    credentialGrantId: NotRequired[str | None]
-    """
-    Retrievable credential grant holding the provider token (a Telegram bot
-    token); the connector host leases it. Absent for providers whose
-    credential is a session state directory (WhatsApp).
-    """
-    displayName: str
-    enabled: NotRequired[bool]
-    provider: ChannelProvider
-    providerAccountId: str
-    """
-    Provider-native account identity: the Telegram bot username or
-    numeric id, the WhatsApp phone number. Unique per universe and
-    provider.
-    """
-    revision: int
-    settings: NotRequired[ChannelAccountSettings]
-    updatedAtMs: int
-
-
-class ChannelConversationReadResponse(TypedDict):
-    conversation: NotRequired[ChannelConversationSnapshot | None]
-    """
-    Absent when no conversation workflow exists for the chat yet.
-    """
-
-
-class ChannelInboundAdmitResponse(TypedDict):
-    botId: NotRequired[BotId | None]
-    """
-    The bot serving the conversation, when decided.
-    """
-    decision: ChannelInboundDecision
-    triggerId: NotRequired[BotTriggerId | None]
-
-
-class ChannelInboundMedia(TypedDict):
-    """
-    A provider-owned attachment reference; never bytes. The connector
-    downloads it when the conversation workflow asks (`prepare_channel_media`).
-    """
-
-    byteSize: NotRequired[int | None]
-    fileId: str
-    """
-    Provider file handle (a Telegram file id, a sealed WhatsApp locator).
-    """
-    kind: ChannelMediaKind
-    mime: str
-    name: NotRequired[str | None]
-
-
-class ChannelPairingDeleteResponse(TypedDict):
-    pairing: ChannelPairingView
-
-
-class ChannelPairingListResponse(TypedDict):
-    pairings: NotRequired[list[ChannelPairingView]]
-
-
-class ChatAccess(TypedDict):
-    """
-    Who may take a turn and who may issue control commands, by provider
-    handle (Telegram user id, WhatsApp JID). Handle allowlists on the
-    trigger replace any platform membership lookup.
-    """
-
-    allowed: NotRequired[list[str]]
-    """
-    Handles allowed to take a turn when `turn` is `listed`.
-    """
-    controllers: NotRequired[list[str]]
-    """
-    Handles allowed to issue `/activation` and `/status`; empty denies
-    control commands to everyone.
-    """
-    turn: NotRequired[ChatTurnAccess]
-
-
-class ChatActivation(TypedDict):
-    """
-    When the bot acts in a conversation.
-    """
-
-    group: NotRequired[ChatGroupActivation | None]
-    mentionNames: NotRequired[list[str]]
-    triggerPrefixes: NotRequired[list[str]]
 
 
 class ConnectionResponse(TypedDict):
@@ -5163,10 +4859,6 @@ class CredentialGrantView(TypedDict):
     status: CredentialGrantStatus
     subjectHint: NotRequired[str | None]
     updatedAtMs: int
-
-
-class DeploymentChannelAccountListResponse(TypedDict):
-    accounts: NotRequired[list[DeploymentChannelAccountView]]
 
 
 class DeploymentEnvironmentProviderDeleteResponse(TypedDict):
@@ -6365,6 +6057,25 @@ class BotControllerSnapshot(TypedDict):
     setupStatus: BotSetupStatus
 
 
+class BotCreateParams(TypedDict):
+    bot: BotInput
+    triggers: NotRequired[list[BotTriggerInput]]
+    """
+    Triggers created with the bot in one go; a failure rolls the bot
+    back.
+    """
+
+
+class BotCreateResponse(TypedDict):
+    bot: BotView
+    triggerSecrets: NotRequired[dict[str, BotTriggerSecretsView]]
+    """
+    Secrets of the triggers created with the bot, by trigger id; a
+    trigger that has none is left out.
+    """
+    triggers: NotRequired[list[BotTriggerView]]
+
+
 class BotDeleteResponse(TypedDict):
     bot: BotView
     deletedSessions: NotRequired[list[str]]
@@ -6536,189 +6247,24 @@ class BotStateView(TypedDict):
     """
 
 
-class BotTriggerInputChat(TypedDict):
-    """
-    The whole configuration of one trigger, replaced with an expected
-    revision.
-    """
-
-    coalesce: NotRequired[BotCoalescePolicy | None]
-    deliver: NotRequired[BotDeliverPolicy | None]
-    enabled: NotRequired[bool]
-    filter: NotRequired[str | None]
-    """
-    CEL over `{event, data, headers}`; a non-matching event is refused
-    and never stored. Fails closed.
-    """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
-    route: NotRequired[BotTriggerRoute | None]
-    sessionCloseAfterMs: NotRequired[int | None]
-    """
-    Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
-    """
-    triggerId: BotTriggerId
-    access: NotRequired[ChatAccess]
-    accountId: str
-    """
-    The universe's channel account this connection serves.
-    """
-    activation: NotRequired[ChatActivation]
-    kind: Literal['chat']
-    matchScope: NotRequired[ChatScope | None]
-    pairing: NotRequired[ChatPairing]
-    priority: NotRequired[int]
-    """
-    Lower wins among matching chat triggers on one account.
-    """
+class BotTriggerDeleteResponse(TypedDict):
+    trigger: BotTriggerView
 
 
-BotTriggerInput: TypeAlias = (
-    BotTriggerInputSchedule
-    | BotTriggerInputWebhook
-    | BotTriggerInputPoll
-    | BotTriggerInputBot
-    | BotTriggerInputChat
-)
-"""
-The whole configuration of one trigger, replaced with an expected
-revision.
-"""
+class BotTriggerListResponse(TypedDict):
+    triggers: NotRequired[list[BotTriggerView]]
 
 
-class BotTriggerPutParams(TypedDict):
-    botId: BotId
-    expectedRevision: NotRequired[int | None]
+class BotTriggerPutResponse(TypedDict):
+    secrets: NotRequired[BotTriggerSecretsView]
     """
-    Checked only when the trigger already exists; absent replaces (or
-    creates) unconditionally.
+    The trigger's secrets as stored after this write, minted or kept.
     """
-    trigger: BotTriggerInput
+    trigger: BotTriggerView
 
 
-class BotTriggerViewChat(TypedDict):
-    """
-    The whole configuration of one trigger, replaced with an expected
-    revision.
-    """
-
-    botId: BotId
-    coalesce: NotRequired[BotCoalescePolicy | None]
-    createdAtMs: int
-    cursorState: NotRequired[PollCursorState | None]
-    """
-    Poll triggers: the advancing runtime cursor. Named apart from the
-    poll spec's dedupe `cursor`, which the flattened document already
-    serializes under that key.
-    """
-    deliver: NotRequired[BotDeliverPolicy | None]
-    disabledAtMs: NotRequired[int | None]
-    disabledReason: NotRequired[BotTriggerDisabledReason | None]
-    enabled: NotRequired[bool]
-    filter: NotRequired[str | None]
-    """
-    CEL over `{event, data, headers}`; a non-matching event is refused
-    and never stored. Fails closed.
-    """
-    lastFilterError: NotRequired[str | None]
-    """
-    Last runtime failure of the CEL filter (the event was refused);
-    cleared by the next match.
-    """
-    lastFilterErrorAtMs: NotRequired[int | None]
-    revision: int
-    route: NotRequired[BotTriggerRoute | None]
-    sessionCloseAfterMs: NotRequired[int | None]
-    """
-    Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
-    """
-    triggerId: BotTriggerId
-    updatedAtMs: int
-    access: NotRequired[ChatAccess]
-    accountId: str
-    """
-    The universe's channel account this connection serves.
-    """
-    activation: NotRequired[ChatActivation]
-    kind: Literal['chat']
-    matchScope: NotRequired[ChatScope | None]
-    pairing: NotRequired[ChatPairing]
-    priority: NotRequired[int]
-    """
-    Lower wins among matching chat triggers on one account.
-    """
-
-
-BotTriggerView: TypeAlias = (
-    BotTriggerViewSchedule
-    | BotTriggerViewWebhook
-    | BotTriggerViewPoll
-    | BotTriggerViewBot
-    | BotTriggerViewChat
-)
-"""
-The whole configuration of one trigger, replaced with an expected
-revision.
-"""
-
-
-class ChannelAccountCreateParams(TypedDict):
-    account: ChannelAccountInput
-
-
-class ChannelAccountCreateResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelAccountDeleteResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelAccountListResponse(TypedDict):
-    accounts: NotRequired[list[ChannelAccountView]]
-
-
-class ChannelAccountPutResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelAccountReadResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelInbound(TypedDict):
-    """
-    One normalized provider message, as the connector host hands it to the
-    core. Provider and account come from the admitting account.
-    """
-
-    chatId: str
-    isDirect: bool
-    isReplyToBot: bool
-    media: NotRequired[list[ChannelInboundMedia]]
-    mentionedBot: bool
-    messageId: str
-    senderId: str
-    """
-    Provider handle of the sender (Telegram user id, WhatsApp JID).
-    """
-    senderName: str
-    text: str
-    threadId: NotRequired[str | None]
-    timestampMs: int
-
-
-class ChannelInboundAdmitParams(TypedDict):
-    accountId: ChannelAccountId
-    inbound: ChannelInbound
+class BotTriggerReadResponse(TypedDict):
+    trigger: BotTriggerView
 
 
 class ContextAppendEntry(TypedDict):
@@ -7507,47 +7053,8 @@ class AgentProfileInput(TypedDict):
     """
 
 
-class BotCreateParams(TypedDict):
-    bot: BotInput
-    triggers: NotRequired[list[BotTriggerInput]]
-    """
-    Triggers created with the bot in one go; a failure rolls the bot
-    back.
-    """
-
-
-class BotCreateResponse(TypedDict):
-    bot: BotView
-    triggerSecrets: NotRequired[dict[str, BotTriggerSecretsView]]
-    """
-    Secrets of the triggers created with the bot, by trigger id; a
-    trigger that has none is left out.
-    """
-    triggers: NotRequired[list[BotTriggerView]]
-
-
 class BotStateReadResponse(TypedDict):
     state: BotStateView
-
-
-class BotTriggerDeleteResponse(TypedDict):
-    trigger: BotTriggerView
-
-
-class BotTriggerListResponse(TypedDict):
-    triggers: NotRequired[list[BotTriggerView]]
-
-
-class BotTriggerPutResponse(TypedDict):
-    secrets: NotRequired[BotTriggerSecretsView]
-    """
-    The trigger's secrets as stored after this write, minted or kept.
-    """
-    trigger: BotTriggerView
-
-
-class BotTriggerReadResponse(TypedDict):
-    trigger: BotTriggerView
 
 
 class ContextAppendResult(TypedDict):

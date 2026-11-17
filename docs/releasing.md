@@ -2,7 +2,7 @@
 
 Lightspeed owns and publishes a coherent release containing the hosted runtime,
 the Incus provider, envd, the CLI, Configurator MCP, the platform backend/web
-image, the connector-host image (published as `platform-workers`), the generated
+image, the generated
 TypeScript client, the static in-browser demo and documentation site, API
 contracts, checksums, an SPDX SBOM, and a release manifest. A consumer should
 pin one manifest rather than selecting components separately.
@@ -102,16 +102,10 @@ It requires no application runtime and is not included in the Platform image.
 The [documentation serving contract](site/README.md#content-negotiation-at-deployment)
 describes how the deployment can select Markdown using the `Accept` header.
 
-The same root lockfile deterministically stages the platform and connector-host
-runtime payloads. `make release-images` copies those prebuilt files into the
-`runtime`, Configurator, platform, and `platform-workers` images; it does not
-invoke Cargo or rebuild the web UI. The `platform-workers` image is the
-connector host (`platform/connectors`) with every provider dependency; it
-keeps its name so image references and manifest keys stay stable while Bots
-and Channels core run inside the `runtime` image. Image smoke tests compare
-the runtime's `lightspeed-runtime` executable byte-for-byte, start the platform
-image against PostgreSQL, check its health and SPA, and load the connector
-host's configuration and task-queue derivation from the staged runtime.
+The root lockfile stages the Platform payload for the release image.
+`make release-images` assembles the runtime, Configurator, and Platform images
+from the staged files. Smoke tests compare the runtime binary and run Platform
+against PostgreSQL.
 
 The Rust container is named `runtime` because it is the hosted product core,
 not merely an HTTP server. Its executable is `lightspeed-runtime`; standalone
@@ -212,8 +206,7 @@ and use those notes as the annotated tag message, as described in
   GitHub-hosted runners. Rust
   inputs run formatting, lint, cached workspace tests, contract checks, and
   the live migration-ledger acceptance test. TypeScript/contract inputs run
-  every generated consumer, all platform unit tests, the Channels Temporal
-  integration suite, and the platform empty-install/upgrade migration gate.
+  every generated consumer, all Platform unit tests, and the Platform empty-install/upgrade migration gate.
   Published manual, site, asset, and included reference changes run the docs
   adapter tests, Astro diagnostics, and a static build with link and asset
   validation. Shared dependency changes also select docs; build, release,

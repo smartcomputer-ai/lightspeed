@@ -169,9 +169,6 @@ pub fn task_queue_from_env() -> anyhow::Result<String> {
     Ok(DEFAULT_TASK_QUEUE.to_owned())
 }
 
-/// Default task queue of the `channels` worker role.
-pub const DEFAULT_CHANNELS_TASK_QUEUE: &str = "lightspeed-channels";
-
 /// Default task queue of the `code` worker role.
 pub const DEFAULT_CODE_TASK_QUEUE: &str = "lightspeed-code";
 
@@ -185,7 +182,6 @@ pub const DEFAULT_CODE_MAX_CONCURRENT_EXECUTIONS: usize = 4;
 pub struct TaskQueues {
     pub sessions: String,
     pub bots: String,
-    pub channels: String,
     pub code: String,
 }
 
@@ -194,7 +190,6 @@ impl TaskQueues {
         Self {
             sessions: DEFAULT_TASK_QUEUE.to_owned(),
             bots: DEFAULT_BOTS_TASK_QUEUE.to_owned(),
-            channels: DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
             code: DEFAULT_CODE_TASK_QUEUE.to_owned(),
         }
     }
@@ -205,7 +200,6 @@ impl TaskQueues {
         let sessions = sessions.into();
         Self {
             bots: format!("{sessions}-bots"),
-            channels: format!("{sessions}-channels"),
             code: format!("{sessions}-code"),
             sessions,
         }
@@ -216,21 +210,18 @@ impl TaskQueues {
             crate::roles::Role::Gateway | crate::roles::Role::EnvironmentGateway => None,
             crate::roles::Role::Sessions => Some(&self.sessions),
             crate::roles::Role::Bots => Some(&self.bots),
-            crate::roles::Role::Channels => Some(&self.channels),
             crate::roles::Role::Code => Some(&self.code),
         }
     }
 }
 
 /// `LIGHTSPEED_TASK_QUEUE` (sessions), `LIGHTSPEED_TASK_QUEUE_BOTS`,
-/// `LIGHTSPEED_TASK_QUEUE_CHANNELS`, and `LIGHTSPEED_TASK_QUEUE_CODE`, with
-/// the deployment defaults.
+/// and `LIGHTSPEED_TASK_QUEUE_CODE`, with deployment defaults.
 pub fn task_queues_from_env() -> anyhow::Result<TaskQueues> {
     let defaults = TaskQueues::defaults();
     Ok(TaskQueues {
         sessions: task_queue_from_env()?,
         bots: optional_env("LIGHTSPEED_TASK_QUEUE_BOTS").unwrap_or(defaults.bots),
-        channels: optional_env("LIGHTSPEED_TASK_QUEUE_CHANNELS").unwrap_or(defaults.channels),
         code: optional_env("LIGHTSPEED_TASK_QUEUE_CODE").unwrap_or(defaults.code),
     })
 }
@@ -416,7 +407,6 @@ mod tests {
         let queues = TaskQueues::derived_from("deployment-session");
         assert_eq!(queues.code, "deployment-session-code");
         assert_ne!(queues.code, queues.bots);
-        assert_ne!(queues.code, queues.channels);
     }
 
     #[test]

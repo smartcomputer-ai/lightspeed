@@ -42,9 +42,6 @@ Before switching clients to a deployment with the new baseline:
    `credentials/*`. See [API and TypeScript](../integrating-and-extending/api-and-typescript.md).
 3. Point Configurator at Platform and install it with a restricted
    service-user key. See [Configurator MCP](../integrating-and-extending/configurator-mcp.md).
-4. If you use Telegram or WhatsApp, give the separately run connector host a
-   private runtime token and update its Temporal namespace with the runtime.
-   See [Channel connectors](../integrating-and-extending/channel-connectors.md).
 
 Verify that intended users and keys can reach their universes. Check
 private-session access using a creator, an Owner, and an ordinary member.
@@ -70,7 +67,7 @@ Platform schema revisions, Platform migration baseline, environment protocol,
 image references, and binary checksums.
 
 Select runtime and Platform from the same release. Review compatible
-Configurator, connector host, CLI/client, environment provider, and daemon
+Configurator, CLI/client, environment provider, and daemon
 artifacts when those components are installed. A mutable image tag alone is
 insufficient to reproduce the installation; retain revision-specific tags or
 the manifest's immutable image references.
@@ -109,7 +106,7 @@ namespace.
 ### Move a breaking release to a new namespace
 
 Create the namespace in your Temporal service. Set `TEMPORAL_NAMESPACE` to it on every
-runtime process, on the connector host, and on any custom worker running your workflow
+runtime process and on any custom worker running your workflow
 tools, in the same step as the release change. No history replays on changed code, so
 no ordering between old and new builds matters, and the old namespace stays available
 for inspection until you retire it. Bot schedules left behind in it start workflows
@@ -130,7 +127,6 @@ their own:
 | Bot controller | Starts again at the bot's next event, moving past every retained main and per-key generation, so its conversations carry on in new sessions with no earlier context. |
 | Undelivered bot events | Not rescanned. They stay stored without being delivered, and need replaying from Activity. |
 | Bot dedupe tails, daily budget counts | Reset. |
-| Group `/activation` changes in a chat | Revert. |
 
 Old main sessions stay open until someone closes them. Drain first, as the procedure
 below describes: everything in this table is much smaller on an idle installation.
@@ -142,7 +138,7 @@ environment before starting current workers; both variables are retired and
 cause startup to fail. After the runtime is available, save the intended
 provider/API/model route in each universe's **Agent runs** default using
 **Models → Defaults** or `lightspeed model defaults set agent-run`. Configure
-**Speech-to-text** separately for dictation and channel voice messages.
+**Speech-to-text** separately for dictation.
 Deployment provider credentials remain supported, but do not choose a model.
 See [Configure universe model defaults](../using-lightspeed/cli.md#configure-universe-model-defaults).
 
@@ -179,13 +175,12 @@ record how their recovery points fit together.
 
 | Material | Why recovery needs it |
 | --- | --- |
-| Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, environment registration keys, bots, channels, and environment state. |
+| Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, environment registration keys, bots, and environment state. |
 | Platform PostgreSQL database and migration ledger | Login accounts and sessions, organizations, memberships and universe grants, Platform API keys, settings, and access history. |
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Without it, open sessions can [restart from the runtime database](#restart-a-stopped-session), with [these losses](#move-a-breaking-release-to-a-new-namespace). Nothing rebuilds the rest. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
 | Deployment configuration and other stable secrets | Runtime API tokens, Platform authentication secret, environment routing token, service addresses, task queues, provider configuration, and credentials. |
-| WhatsApp connector state, when used | The complete authentication directory and unchanged media-locator key preserve linked-device state and the ability to resolve sealed media locators. |
 | Machine/VM storage and daemon state | Real environment files, daemon identity, and persisted job records/output live outside the VFS and application databases. |
 | Release artifacts | The exact compatible images, executables, and manifests needed to run the restored state. |
 
@@ -209,9 +204,8 @@ procedure, and retain the configuration and release record from that point.
 
 Restore a copy before relying on the recovery procedure. Use separate
 PostgreSQL databases, Temporal state, and object storage, and keep external
-effects contained during the rehearsal. A restored bot or connector can still
-hold valid credentials; starting it against production chat accounts, Incus,
-or webhook destinations can perform real work.
+effects contained during the rehearsal. A restored bot can still hold valid credentials. Starting it against
+production Incus or webhook destinations can perform real work.
 
 Start with existing data: sign in, open a known universe and session, read a
 workspace file and attachment, and verify that stored credentials can be
@@ -237,25 +231,22 @@ Stop old workers before the first new worker begins polling their queues.
 On Kubernetes, use the `Recreate` strategy to avoid an overlap.
 
 1. [Decide whether the release is breaking](#decide-whether-the-release-breaks-open-work).
-2. Restrict incoming user and webhook traffic. Stop connector ingress and
-   other clients that submit work. Remember that runtime timers and schedules
+2. Restrict incoming user and webhook traffic. Stop clients that submit work. Remember that runtime timers and schedules
    can produce work independently of the public HTTP listener.
-3. Drain. Inspect active runs, environment jobs, bot activity, and channel
-   deliveries. Let important work finish, or cancel it and inspect effects
+3. Drain. Inspect active runs, environment jobs, and bot activity. Let important work finish, or cancel it and inspect effects
    already performed. Answer pending approvals you care about. This matters most
    for a breaking release, which loses what is still in flight. Closing a session
    is a permanent lifecycle operation, so do not use it as a temporary maintenance
    pause.
 4. Stop all application writers and workers, including separately deployed
-   connectors and Configurator services. Keep the durable infrastructure
+   Configurator services. Keep the durable infrastructure
    available for the migration and backup procedure.
 5. Capture or confirm the coordinated recovery set described above.
 6. Apply runtime migrations with the target image. For a breaking release, create
-   the new namespace and set `TEMPORAL_NAMESPACE` on the runtime, the connector host
-   and any custom worker.
+   the new namespace and set `TEMPORAL_NAMESPACE` on the runtime and any custom worker.
    Then recreate the application containers from that same release.
 7. Verify existing data and useful work before reopening ingress. Inspect
-   delayed bot and channel work as processing resumes. After a breaking release,
+   delayed bot work as processing resumes. After a breaking release,
    restart the open sessions you still want.
 
 For the two application containers in the self-hosting recipe:
@@ -311,8 +302,7 @@ Platform applies its own database migrations when the new container starts.
 Recreate installed optional services from their compatible artifacts. Check
 health and logs, sign in, open an existing session, read existing content, and
 complete a small run. Verify resumed workflow processing, machine access, and
-connector account readiness where used. Reopen ingress after those checks and
-observe the deferred work that follows.
+bot delivery. Reopen ingress after those checks and observe deferred work.
 
 ## Restart a stopped session
 
@@ -431,7 +421,7 @@ migration path. Resetting a disposable development database is a separate
 choice, not a production recovery method.
 
 If restoration is required, restore the compatible databases, Temporal state,
-objects, configuration, keys, and relevant machine/connector state together,
+objects, configuration, keys, and relevant machine state together,
 using the release recorded with that recovery point. Rehearse the restoration
 in isolation first. Changing one store while leaving the others at a different
 point can leave missing blobs, mismatched workflow state, or broken universe

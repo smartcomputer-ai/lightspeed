@@ -9808,7 +9808,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/create",
     "group": "bots",
     "summary": "Create a bot",
-    "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.",
+    "description": "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.",
     "paramsType": "BotCreateParams",
     "resultType": "BotCreateResponse",
     "inputSchema": {
@@ -10101,66 +10101,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "kind"
               ],
               "type": "object"
-            },
-            {
-              "properties": {
-                "access": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatAccess"
-                    }
-                  ],
-                  "default": {
-                    "turn": "anyone"
-                  }
-                },
-                "accountId": {
-                  "description": "The universe's channel account this connection serves.",
-                  "type": "string"
-                },
-                "activation": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatActivation"
-                    }
-                  ],
-                  "default": {}
-                },
-                "kind": {
-                  "const": "chat",
-                  "type": "string"
-                },
-                "matchScope": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/ChatScope"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "pairing": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatPairing"
-                    }
-                  ],
-                  "default": "code"
-                },
-                "priority": {
-                  "default": 100,
-                  "description": "Lower wins among matching chat triggers on one account.",
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "kind",
-                "accountId"
-              ],
-              "type": "object"
             }
           ],
           "properties": {
@@ -10195,13 +10135,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "route": {
               "anyOf": [
                 {
@@ -10213,7 +10146,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "sessionCloseAfterMs": {
-              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the\nchat default).",
+              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.",
               "format": "uint64",
               "minimum": 0,
               "type": [
@@ -10294,112 +10227,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "const": "append",
               "description": "Append the events as context without starting a run.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatAccess": {
-          "description": "Who may take a turn and who may issue control commands, by provider\nhandle (Telegram user id, WhatsApp JID). Handle allowlists on the\ntrigger replace any platform membership lookup.",
-          "properties": {
-            "allowed": {
-              "description": "Handles allowed to take a turn when `turn` is `listed`.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "controllers": {
-              "description": "Handles allowed to issue `/activation` and `/status`; empty denies\ncontrol commands to everyone.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "turn": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChatTurnAccess"
-                }
-              ],
-              "default": "anyone"
-            }
-          },
-          "type": "object"
-        },
-        "ChatActivation": {
-          "description": "When the bot acts in a conversation.",
-          "properties": {
-            "group": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ChatGroupActivation"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "mentionNames": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "triggerPrefixes": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "ChatGroupActivation": {
-          "oneOf": [
-            {
-              "const": "mention",
-              "description": "Act on mentions, replies to the bot, and trigger prefixes only.",
-              "type": "string"
-            },
-            {
-              "const": "always",
-              "description": "Act on every message.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatPairing": {
-          "description": "Whether a conversation must present a pairing code before it connects.",
-          "oneOf": [
-            {
-              "const": "code",
-              "description": "A conversation connects once someone sends the trigger's pairing\ncode (minted by the server, shown to managers).",
-              "type": "string"
-            },
-            {
-              "const": "open",
-              "description": "Every matching conversation connects implicitly.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatScope": {
-          "enum": [
-            "direct",
-            "group"
-          ],
-          "type": "string"
-        },
-        "ChatTurnAccess": {
-          "oneOf": [
-            {
-              "const": "anyone",
-              "description": "Anyone in the conversation may take a turn.",
-              "type": "string"
-            },
-            {
-              "const": "listed",
-              "description": "Only the listed provider handles may take a turn.",
               "type": "string"
             }
           ]
@@ -10936,7 +10763,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/put",
     "group": "bots",
     "summary": "Create or replace a trigger",
-    "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.",
+    "description": "Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.",
     "paramsType": "BotTriggerPutParams",
     "resultType": "BotTriggerPutResponse",
     "inputSchema": {
@@ -11135,66 +10962,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "kind"
               ],
               "type": "object"
-            },
-            {
-              "properties": {
-                "access": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatAccess"
-                    }
-                  ],
-                  "default": {
-                    "turn": "anyone"
-                  }
-                },
-                "accountId": {
-                  "description": "The universe's channel account this connection serves.",
-                  "type": "string"
-                },
-                "activation": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatActivation"
-                    }
-                  ],
-                  "default": {}
-                },
-                "kind": {
-                  "const": "chat",
-                  "type": "string"
-                },
-                "matchScope": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/ChatScope"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "pairing": {
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/ChatPairing"
-                    }
-                  ],
-                  "default": "code"
-                },
-                "priority": {
-                  "default": 100,
-                  "description": "Lower wins among matching chat triggers on one account.",
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "kind",
-                "accountId"
-              ],
-              "type": "object"
             }
           ],
           "properties": {
@@ -11229,13 +10996,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 "null"
               ]
             },
-            "pairingCode": {
-              "description": "Chat triggers with `pairing: code`: set a specific pairing code\n(8–64 chars) instead of the server-minted one. Absent keeps the\nstored code, so an edit never has to send it back.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "route": {
               "anyOf": [
                 {
@@ -11247,7 +11007,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               ]
             },
             "sessionCloseAfterMs": {
-              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the\nchat default).",
+              "description": "Idle-close policy for sessions this trigger routes to: absent inherits the\nbot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.",
               "format": "uint64",
               "minimum": 0,
               "type": [
@@ -11328,112 +11088,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "const": "append",
               "description": "Append the events as context without starting a run.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatAccess": {
-          "description": "Who may take a turn and who may issue control commands, by provider\nhandle (Telegram user id, WhatsApp JID). Handle allowlists on the\ntrigger replace any platform membership lookup.",
-          "properties": {
-            "allowed": {
-              "description": "Handles allowed to take a turn when `turn` is `listed`.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "controllers": {
-              "description": "Handles allowed to issue `/activation` and `/status`; empty denies\ncontrol commands to everyone.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "turn": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChatTurnAccess"
-                }
-              ],
-              "default": "anyone"
-            }
-          },
-          "type": "object"
-        },
-        "ChatActivation": {
-          "description": "When the bot acts in a conversation.",
-          "properties": {
-            "group": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ChatGroupActivation"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "mentionNames": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "triggerPrefixes": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "ChatGroupActivation": {
-          "oneOf": [
-            {
-              "const": "mention",
-              "description": "Act on mentions, replies to the bot, and trigger prefixes only.",
-              "type": "string"
-            },
-            {
-              "const": "always",
-              "description": "Act on every message.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatPairing": {
-          "description": "Whether a conversation must present a pairing code before it connects.",
-          "oneOf": [
-            {
-              "const": "code",
-              "description": "A conversation connects once someone sends the trigger's pairing\ncode (minted by the server, shown to managers).",
-              "type": "string"
-            },
-            {
-              "const": "open",
-              "description": "Every matching conversation connects implicitly.",
-              "type": "string"
-            }
-          ]
-        },
-        "ChatScope": {
-          "enum": [
-            "direct",
-            "group"
-          ],
-          "type": "string"
-        },
-        "ChatTurnAccess": {
-          "oneOf": [
-            {
-              "const": "anyone",
-              "description": "Anyone in the conversation may take a turn.",
-              "type": "string"
-            },
-            {
-              "const": "listed",
-              "description": "Only the listed provider handles may take a turn.",
               "type": "string"
             }
           ]
@@ -11672,7 +11326,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/read",
     "group": "bots",
     "summary": "Read a trigger",
-    "description": "Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.",
+    "description": "Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.",
     "paramsType": "BotTriggerReadParams",
     "resultType": "BotTriggerReadResponse",
     "inputSchema": {
@@ -11705,7 +11359,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/list",
     "group": "bots",
     "summary": "List a bot's triggers",
-    "description": "Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.",
+    "description": "Returns every trigger of the bot ordered by id, without ingest paths.",
     "paramsType": "BotTriggerListParams",
     "resultType": "BotTriggerListResponse",
     "inputSchema": {
@@ -11731,7 +11385,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/secrets/read",
     "group": "bots",
     "summary": "Read a trigger's secrets",
-    "description": "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.",
+    "description": "Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.",
     "paramsType": "BotTriggerSecretsReadParams",
     "resultType": "BotTriggerSecretsReadResponse",
     "inputSchema": {
@@ -11764,7 +11418,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/triggers/delete",
     "group": "bots",
     "summary": "Delete a trigger",
-    "description": "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.",
+    "description": "Drops the trigger's Temporal Schedule, then the record; stored events keep their history.",
     "paramsType": "BotTriggerDeleteParams",
     "resultType": "BotTriggerDeleteResponse",
     "inputSchema": {
@@ -12015,377 +11669,6 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "BotId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_create",
-    "method": "channels/accounts/create",
-    "group": "channels",
-    "summary": "Create a channel account",
-    "description": "Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.",
-    "paramsType": "ChannelAccountCreateParams",
-    "resultType": "ChannelAccountCreateResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "account": {
-          "$ref": "#/definitions/ChannelAccountInput"
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        },
-        "ChannelAccountInput": {
-          "description": "A provider account served by the connector host. Secret material stays\nin the referenced grant; this document is routing identity and\noperational configuration.",
-          "properties": {
-            "accountId": {
-              "$ref": "#/definitions/ChannelAccountId"
-            },
-            "credentialGrantId": {
-              "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "displayName": {
-              "type": "string"
-            },
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
-            "provider": {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            "providerAccountId": {
-              "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
-              "type": "string"
-            },
-            "settings": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChannelAccountSettings"
-                }
-              ],
-              "default": {}
-            }
-          },
-          "required": [
-            "accountId",
-            "provider",
-            "providerAccountId",
-            "displayName"
-          ],
-          "type": "object"
-        },
-        "ChannelAccountSettings": {
-          "additionalProperties": {},
-          "properties": {
-            "printQr": {
-              "description": "WhatsApp: print the pairing QR code on the connector's terminal.",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "ChannelProvider": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_put",
-    "method": "channels/accounts/put",
-    "group": "channels",
-    "summary": "Create or replace a channel account",
-    "description": "Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.",
-    "paramsType": "ChannelAccountPutParams",
-    "resultType": "ChannelAccountPutResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "account": {
-          "$ref": "#/definitions/ChannelAccountInput"
-        },
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "account"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        },
-        "ChannelAccountInput": {
-          "description": "A provider account served by the connector host. Secret material stays\nin the referenced grant; this document is routing identity and\noperational configuration.",
-          "properties": {
-            "accountId": {
-              "$ref": "#/definitions/ChannelAccountId"
-            },
-            "credentialGrantId": {
-              "description": "Retrievable credential grant holding the provider token (a Telegram bot\ntoken); the connector host leases it. Absent for providers whose\ncredential is a session state directory (WhatsApp).",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "displayName": {
-              "type": "string"
-            },
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
-            "provider": {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            "providerAccountId": {
-              "description": "Provider-native account identity: the Telegram bot username or\nnumeric id, the WhatsApp phone number. Unique per universe and\nprovider.",
-              "type": "string"
-            },
-            "settings": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ChannelAccountSettings"
-                }
-              ],
-              "default": {}
-            }
-          },
-          "required": [
-            "accountId",
-            "provider",
-            "providerAccountId",
-            "displayName"
-          ],
-          "type": "object"
-        },
-        "ChannelAccountSettings": {
-          "additionalProperties": {},
-          "properties": {
-            "printQr": {
-              "description": "WhatsApp: print the pairing QR code on the connector's terminal.",
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "ChannelProvider": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_read",
-    "method": "channels/accounts/read",
-    "group": "channels",
-    "summary": "Read a channel account",
-    "description": "Returns the account document and revision.",
-    "paramsType": "ChannelAccountReadParams",
-    "resultType": "ChannelAccountReadResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        }
-      },
-      "required": [
-        "accountId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_list",
-    "method": "channels/accounts/list",
-    "group": "channels",
-    "summary": "List channel accounts",
-    "description": "Lists this universe's provider accounts, optionally by provider.",
-    "paramsType": "ChannelAccountListParams",
-    "resultType": "ChannelAccountListResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "provider": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ChannelProvider"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object",
-      "definitions": {
-        "ChannelProvider": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_accounts_delete",
-    "method": "channels/accounts/delete",
-    "group": "channels",
-    "summary": "Delete a channel account",
-    "description": "Removes the account and its pairings; chat triggers that reference it stop serving conversations.",
-    "paramsType": "ChannelAccountDeleteParams",
-    "resultType": "ChannelAccountDeleteResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        }
-      },
-      "required": [
-        "accountId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_pairings_list",
-    "method": "channels/pairings/list",
-    "group": "channels",
-    "summary": "List chat pairings",
-    "description": "Lists conversations paired to chat triggers, optionally by account or bot.",
-    "paramsType": "ChannelPairingListParams",
-    "resultType": "ChannelPairingListResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ChannelAccountId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "botId": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/BotId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "type": "object",
-      "definitions": {
-        "BotId": {
-          "type": "string"
-        },
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_pairings_delete",
-    "method": "channels/pairings/delete",
-    "group": "channels",
-    "summary": "Unpair a conversation",
-    "description": "Removes one pairing; the conversation must present the pairing code again to reconnect.",
-    "paramsType": "ChannelPairingDeleteParams",
-    "resultType": "ChannelPairingDeleteResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "chatId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "accountId",
-        "chatId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
-          "type": "string"
-        }
-      }
-    }
-  },
-  {
-    "name": "lightspeed_channels_conversations_read",
-    "method": "channels/conversations/read",
-    "group": "channels",
-    "summary": "Read a conversation snapshot",
-    "description": "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
-    "paramsType": "ChannelConversationReadParams",
-    "resultType": "ChannelConversationReadResponse",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "chatId": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "accountId",
-        "chatId"
-      ],
-      "type": "object",
-      "definitions": {
-        "ChannelAccountId": {
           "type": "string"
         }
       }

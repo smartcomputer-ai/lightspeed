@@ -130,15 +130,6 @@ OPERATIONS = (
     'bots/events/list',
     'bots/events/read',
     'bots/filters/test',
-    'channels/accounts/create',
-    'channels/accounts/put',
-    'channels/accounts/read',
-    'channels/accounts/list',
-    'channels/accounts/delete',
-    'channels/inbound/admit',
-    'channels/pairings/list',
-    'channels/pairings/delete',
-    'channels/conversations/read',
     'deployment/universes/deleted/list',
     'deployment/sessions/deleted/list',
     'deployment/sessions/purge',
@@ -156,7 +147,6 @@ OPERATIONS = (
     'deployment/environment-providers/delete',
     'deployment/environment-providers/bindings/put',
     'deployment/environment-providers/bindings/delete',
-    'deployment/channels/accounts/list',
     'blobs/upload',
 )
 
@@ -275,7 +265,7 @@ OPERATION_INFO = {
     'credentials/providers/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete a credential provider', 'description': 'Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.', 'streaming': False, 'notifications': []},
     'credentials/github/installations/list': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'List GitHub App installations', 'description': 'Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.', 'streaming': False, 'notifications': []},
     'credentials/github/installations/grant': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Grant access to a GitHub App installation', 'description': 'Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.', 'streaming': False, 'notifications': []},
-    'bots/create': {'scope': 'universe', 'access': {'action': 'createBot', 'kind': 'universe'}, 'summary': 'Create a bot', 'description': "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.", 'streaming': False, 'notifications': []},
+    'bots/create': {'scope': 'universe', 'access': {'action': 'createBot', 'kind': 'universe'}, 'summary': 'Create a bot', 'description': "Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.", 'streaming': False, 'notifications': []},
     'bots/put': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Create or replace a bot document', 'description': 'Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.', 'streaming': False, 'notifications': []},
     'bots/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a bot', 'description': 'Returns the bot record, its current revision, and lifecycle columns.', 'streaming': False, 'notifications': []},
     'bots/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List bots', 'description': 'Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.', 'streaming': False, 'notifications': []},
@@ -283,25 +273,16 @@ OPERATION_INFO = {
     'bots/delete': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Delete a bot', 'description': 'Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.', 'streaming': False, 'notifications': []},
     'bots/state/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read bot controller state', 'description': "Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.", 'streaming': False, 'notifications': []},
     'bots/sessions/rotate': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Rotate a bot session', 'description': "Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.", 'streaming': False, 'notifications': []},
-    'bots/triggers/put': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Create or replace a trigger', 'description': "Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.", 'streaming': False, 'notifications': []},
-    'bots/triggers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a trigger', 'description': 'Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.', 'streaming': False, 'notifications': []},
-    'bots/triggers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': "List a bot's triggers", 'description': 'Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.', 'streaming': False, 'notifications': []},
-    'bots/triggers/secrets/read': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': "Read a trigger's secrets", 'description': "Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.", 'streaming': False, 'notifications': []},
-    'bots/triggers/delete': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Delete a trigger', 'description': "Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.", 'streaming': False, 'notifications': []},
+    'bots/triggers/put': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Create or replace a trigger', 'description': "Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.", 'streaming': False, 'notifications': []},
+    'bots/triggers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a trigger', 'description': "Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.", 'streaming': False, 'notifications': []},
+    'bots/triggers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': "List a bot's triggers", 'description': 'Returns every trigger of the bot ordered by id, without ingest paths.', 'streaming': False, 'notifications': []},
+    'bots/triggers/secrets/read': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': "Read a trigger's secrets", 'description': 'Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.', 'streaming': False, 'notifications': []},
+    'bots/triggers/delete': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Delete a trigger', 'description': "Drops the trigger's Temporal Schedule, then the record; stored events keep their history.", 'streaming': False, 'notifications': []},
     'bots/events/admit': {'scope': 'universe', 'access': {'action': 'invokeBot', 'kind': 'universe'}, 'summary': 'Admit an event manually', 'description': "Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.", 'streaming': False, 'notifications': []},
     'bots/events/replay': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Replay a stored event', 'description': 'Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.', 'streaming': False, 'notifications': []},
     'bots/events/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': "List a bot's events", 'description': 'Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.', 'streaming': False, 'notifications': []},
     'bots/events/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an event by number', 'description': 'Returns the event row and its full stored envelope document.', 'streaming': False, 'notifications': []},
     'bots/filters/test': {'scope': 'universe', 'access': {'action': 'manageBot', 'kind': 'universe'}, 'summary': 'Test a CEL filter', 'description': 'Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.', 'streaming': False, 'notifications': []},
-    'channels/accounts/create': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Create a channel account', 'description': 'Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.', 'streaming': False, 'notifications': []},
-    'channels/accounts/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Create or replace a channel account', 'description': 'Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.', 'streaming': False, 'notifications': []},
-    'channels/accounts/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a channel account', 'description': 'Returns the account document and revision.', 'streaming': False, 'notifications': []},
-    'channels/accounts/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List channel accounts', 'description': "Lists this universe's provider accounts, optionally by provider.", 'streaming': False, 'notifications': []},
-    'channels/accounts/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Delete a channel account', 'description': 'Removes the account and its pairings; chat triggers that reference it stop serving conversations.', 'streaming': False, 'notifications': []},
-    'channels/inbound/admit': {'scope': 'service', 'access': {'kind': 'service'}, 'summary': 'Admit a provider message', 'description': 'Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.', 'streaming': False, 'notifications': []},
-    'channels/pairings/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List chat pairings', 'description': 'Lists conversations paired to chat triggers, optionally by account or bot.', 'streaming': False, 'notifications': []},
-    'channels/pairings/delete': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Unpair a conversation', 'description': 'Removes one pairing; the conversation must present the pairing code again to reconnect.', 'streaming': False, 'notifications': []},
-    'channels/conversations/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read a conversation snapshot', 'description': "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.", 'streaming': False, 'notifications': []},
     'deployment/universes/deleted/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List deleted universes', 'description': 'Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.', 'streaming': False, 'notifications': []},
     'deployment/sessions/deleted/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List deleted sessions', 'description': 'Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.', 'streaming': False, 'notifications': []},
     'deployment/sessions/purge': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Permanently delete a session', 'description': 'Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.', 'streaming': False, 'notifications': []},
@@ -319,7 +300,6 @@ OPERATION_INFO = {
     'deployment/environment-providers/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider', 'description': 'Deletes a deployment provider only when no universe binding and no non-closed environment references it.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/bindings/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider binding', 'description': 'Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/bindings/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider binding', 'description': 'Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.', 'streaming': False, 'notifications': []},
-    'deployment/channels/accounts/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List channel accounts across universes', 'description': "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.", 'streaming': False, 'notifications': []},
     'blobs/upload': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Upload a content-addressed blob', 'description': "Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.", 'streaming': False, 'notifications': []},
 }
 
@@ -439,15 +419,6 @@ CLIENT_HELPERS = {
     'replay_bot_event': 'bots/events/replay',
     'read_bot_event': 'bots/events/read',
     'test_bot_filter': 'bots/filters/test',
-    'create_channel_account': 'channels/accounts/create',
-    'put_channel_account': 'channels/accounts/put',
-    'read_channel_account': 'channels/accounts/read',
-    'list_channel_accounts': 'channels/accounts/list',
-    'delete_channel_account': 'channels/accounts/delete',
-    'admit_channel_inbound': 'channels/inbound/admit',
-    'list_channel_pairings': 'channels/pairings/list',
-    'delete_channel_pairing': 'channels/pairings/delete',
-    'read_channel_conversation': 'channels/conversations/read',
     'list_deleted_universes': 'deployment/universes/deleted/list',
     'list_deleted_sessions': 'deployment/sessions/deleted/list',
     'purge_session': 'deployment/sessions/purge',
@@ -465,7 +436,6 @@ CLIENT_HELPERS = {
     'delete_environment_provider': 'deployment/environment-providers/delete',
     'put_universe_environment_provider_binding': 'deployment/environment-providers/bindings/put',
     'delete_universe_environment_provider_binding': 'deployment/environment-providers/bindings/delete',
-    'list_deployment_channel_accounts': 'deployment/channels/accounts/list',
     'watch': 'universe/watch',
     'start_run': 'session/runs/start',
     'steer_run': 'session/runs/steer',
@@ -852,33 +822,6 @@ class GeneratedClient:
     async def call(self, method: Literal['bots/filters/test'], params: Api.BotFilterTestParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BotFilterTestResponse: ...
     @overload
-    async def call(self, method: Literal['channels/accounts/create'], params: Api.ChannelAccountCreateParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountCreateResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/accounts/put'], params: Api.ChannelAccountPutParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountPutResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/accounts/read'], params: Api.ChannelAccountReadParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountReadResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/accounts/list'], params: Api.ChannelAccountListParams | None = None,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountListResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/accounts/delete'], params: Api.ChannelAccountDeleteParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelAccountDeleteResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/inbound/admit'], params: Api.ChannelInboundAdmitParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelInboundAdmitResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/pairings/list'], params: Api.ChannelPairingListParams | None = None,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelPairingListResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/pairings/delete'], params: Api.ChannelPairingDeleteParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelPairingDeleteResponse: ...
-    @overload
-    async def call(self, method: Literal['channels/conversations/read'], params: Api.ChannelConversationReadParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.ChannelConversationReadResponse: ...
-    @overload
     async def call(self, method: Literal['deployment/universes/deleted/list'], params: Api.DeploymentDeletedUniversesListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentDeletedUniversesListResponse: ...
     @overload
@@ -929,9 +872,6 @@ class GeneratedClient:
     @overload
     async def call(self, method: Literal['deployment/environment-providers/bindings/delete'], params: Api.DeploymentProviderBindingDeleteParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentProviderBindingDeleteResponse: ...
-    @overload
-    async def call(self, method: Literal['deployment/channels/accounts/list'], params: Api.DeploymentChannelAccountListParams | None = None,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.DeploymentChannelAccountListResponse: ...
     @overload
     async def call(self, method: Literal['blobs/upload'], params: Api.BlobUploadParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.BlobPutResult: ...
@@ -2618,8 +2558,8 @@ class GeneratedClient:
         """Create a bot
 
         Creates the bot record, optionally with its triggers, and starts its controller. Fails if
-        the bot id exists; a trigger failure rolls the bot back. Returns the created triggers'
-        ingest paths and pairing codes by trigger id.
+        the bot id exists; a trigger failure rolls the bot back. Returns the created webhook
+        triggers' ingest paths by trigger id.
 
         Args:
             triggers: Triggers created with the bot in one go; a failure rolls the bot back.
@@ -2697,10 +2637,9 @@ class GeneratedClient:
     async def put_bot_trigger(self, bot_id: Api.BotId, *, expected_revision: int | None | Unset = UNSET, trigger: Api.BotTriggerInput, headers: HeadersInput | None = None) -> Api.BotTriggerPutResponse:
         """Create or replace a trigger
 
-        Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per
-        conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the
-        cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code
-        beside the view.
+        Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its
+        Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its
+        URL token. Returns a webhook's ingest path beside the view.
 
         Args:
             expected_revision: Checked only when the trigger already exists; absent replaces (or
@@ -2716,8 +2655,8 @@ class GeneratedClient:
     async def read_bot_trigger(self, bot_id: Api.BotId, trigger_id: Api.BotTriggerId, *, headers: HeadersInput | None = None) -> Api.BotTriggerReadResponse:
         """Read a trigger
 
-        Returns one trigger with its incidents and cursor. The ingest path and pairing code are
-        never part of it; bots/triggers/secrets/read returns them.
+        Returns one trigger with its incidents and cursor. Read a webhook's ingest path through
+        bots/triggers/secrets/read.
         """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
@@ -2727,7 +2666,7 @@ class GeneratedClient:
     async def list_bot_triggers(self, bot_id: Api.BotId, *, headers: HeadersInput | None = None) -> Api.BotTriggerListResponse:
         """List a bot's triggers
 
-        Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+        Returns every trigger of the bot ordered by id, without ingest paths.
         """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
@@ -2736,9 +2675,8 @@ class GeneratedClient:
     async def read_bot_trigger_secrets(self, bot_id: Api.BotId, trigger_id: Api.BotTriggerId, *, headers: HeadersInput | None = None) -> Api.BotTriggerSecretsReadResponse:
         """Read a trigger's secrets
 
-        Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot,
-        or a chat trigger's pairing code, which connects a conversation to it. Both are absent for
-        other triggers. Needs bot management, unlike reading the trigger.
+        Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires
+        bot-management permission.
         """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
@@ -2748,8 +2686,7 @@ class GeneratedClient:
     async def delete_bot_trigger(self, bot_id: Api.BotId, trigger_id: Api.BotTriggerId, *, headers: HeadersInput | None = None) -> Api.BotTriggerDeleteResponse:
         """Delete a trigger
 
-        Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep
-        their history.
+        Drops the trigger's Temporal Schedule, then the record; stored events keep their history.
         """
         params: dict[str, Any] = {}
         params['botId'] = bot_id
@@ -2796,104 +2733,6 @@ class GeneratedClient:
         if payload is not UNSET:
             params['payload'] = payload
         return cast(Api.BotFilterTestResponse, await self._invoke('bots/filters/test', params, headers))
-
-    async def create_channel_account(self, *, account: Api.ChannelAccountInput, headers: HeadersInput | None = None) -> Api.ChannelAccountCreateResponse:
-        """Create a channel account
-
-        Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a
-        retrievable grant reference; no token is accepted here.
-        """
-        params: dict[str, Any] = {}
-        params['account'] = account
-        return cast(Api.ChannelAccountCreateResponse, await self._invoke('channels/accounts/create', params, headers))
-
-    async def put_channel_account(self, *, account: Api.ChannelAccountInput, expected_revision: int | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelAccountPutResponse:
-        """Create or replace a channel account
-
-        Replaces the account document whole; pass expectedRevision when replacing. The connector
-        host picks the change up on its next discovery pass.
-        """
-        params: dict[str, Any] = {}
-        params['account'] = account
-        if expected_revision is not UNSET:
-            params['expectedRevision'] = expected_revision
-        return cast(Api.ChannelAccountPutResponse, await self._invoke('channels/accounts/put', params, headers))
-
-    async def read_channel_account(self, account_id: Api.ChannelAccountId, *, headers: HeadersInput | None = None) -> Api.ChannelAccountReadResponse:
-        """Read a channel account
-
-        Returns the account document and revision.
-        """
-        params: dict[str, Any] = {}
-        params['accountId'] = account_id
-        return cast(Api.ChannelAccountReadResponse, await self._invoke('channels/accounts/read', params, headers))
-
-    async def list_channel_accounts(self, *, provider: Api.ChannelProvider | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelAccountListResponse:
-        """List channel accounts
-
-        Lists this universe's provider accounts, optionally by provider.
-        """
-        params: dict[str, Any] = {}
-        if provider is not UNSET:
-            params['provider'] = provider
-        return cast(Api.ChannelAccountListResponse, await self._invoke('channels/accounts/list', params, headers))
-
-    async def delete_channel_account(self, account_id: Api.ChannelAccountId, *, headers: HeadersInput | None = None) -> Api.ChannelAccountDeleteResponse:
-        """Delete a channel account
-
-        Removes the account and its pairings; chat triggers that reference it stop serving
-        conversations.
-        """
-        params: dict[str, Any] = {}
-        params['accountId'] = account_id
-        return cast(Api.ChannelAccountDeleteResponse, await self._invoke('channels/accounts/delete', params, headers))
-
-    async def admit_channel_inbound(self, account_id: Api.ChannelAccountId, *, inbound: Api.ChannelInbound, headers: HeadersInput | None = None) -> Api.ChannelInboundAdmitResponse:
-        """Admit a provider message
-
-        Service callers only. Resolves the chat trigger for the conversation, applies pairing, and
-        signals the conversation workflow. Returns the decision so the connector can send pairing
-        prompts itself; acknowledge the provider only after this returns.
-        """
-        params: dict[str, Any] = {}
-        params['accountId'] = account_id
-        params['inbound'] = inbound
-        return cast(Api.ChannelInboundAdmitResponse, await self._invoke('channels/inbound/admit', params, headers))
-
-    async def list_channel_pairings(self, *, account_id: Api.ChannelAccountId | None | Unset = UNSET, bot_id: Api.BotId | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelPairingListResponse:
-        """List chat pairings
-
-        Lists conversations paired to chat triggers, optionally by account or bot.
-        """
-        params: dict[str, Any] = {}
-        if account_id is not UNSET:
-            params['accountId'] = account_id
-        if bot_id is not UNSET:
-            params['botId'] = bot_id
-        return cast(Api.ChannelPairingListResponse, await self._invoke('channels/pairings/list', params, headers))
-
-    async def delete_channel_pairing(self, account_id: Api.ChannelAccountId, chat_id: str, *, headers: HeadersInput | None = None) -> Api.ChannelPairingDeleteResponse:
-        """Unpair a conversation
-
-        Removes one pairing; the conversation must present the pairing code again to reconnect.
-        """
-        params: dict[str, Any] = {}
-        params['accountId'] = account_id
-        params['chatId'] = chat_id
-        return cast(Api.ChannelPairingDeleteResponse, await self._invoke('channels/pairings/delete', params, headers))
-
-    async def read_channel_conversation(self, account_id: Api.ChannelAccountId, chat_id: str, *, thread_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.ChannelConversationReadResponse:
-        """Read a conversation snapshot
-
-        Queries the conversation workflow's live state for one chat, for debugging; absent when no
-        workflow exists yet.
-        """
-        params: dict[str, Any] = {}
-        params['accountId'] = account_id
-        params['chatId'] = chat_id
-        if thread_id is not UNSET:
-            params['threadId'] = thread_id
-        return cast(Api.ChannelConversationReadResponse, await self._invoke('channels/conversations/read', params, headers))
 
     async def list_deleted_universes(self, *, after: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentDeletedUniversesListResponse:
         """List deleted universes
@@ -3166,20 +3005,3 @@ class GeneratedClient:
         params['providerId'] = provider_id
         params['universe'] = universe
         return cast(Api.DeploymentProviderBindingDeleteResponse, await self._invoke('deployment/environment-providers/bindings/delete', params, headers))
-
-    async def list_deployment_channel_accounts(self, *, include_disabled: bool | Unset = UNSET, provider: Api.ChannelProvider | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentChannelAccountListResponse:
-        """List channel accounts across universes
-
-        The connector host's discovery call: every enabled provider account of the deployment with
-        its universe id and credential grant reference. Re-poll to pick up accounts created or
-        disabled since.
-
-        Args:
-            include_disabled: Include disabled accounts; by default only enabled ones are listed.
-        """
-        params: dict[str, Any] = {}
-        if include_disabled is not UNSET:
-            params['includeDisabled'] = include_disabled
-        if provider is not UNSET:
-            params['provider'] = provider
-        return cast(Api.DeploymentChannelAccountListResponse, await self._invoke('deployment/channels/accounts/list', params, headers))

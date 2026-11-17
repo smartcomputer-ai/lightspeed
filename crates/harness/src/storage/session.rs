@@ -3465,8 +3465,8 @@ mod tests {
                     declared_bindings_event(
                         11,
                         Some(crate::WorkflowEndpointRef {
-                            workflow_id: "channels/session-1".to_owned(),
-                            workflow_kind: "channelSessionWorkflowV1".to_owned(),
+                            workflow_id: "plugins/session-1".to_owned(),
+                            workflow_kind: "PluginSessionWorkflow".to_owned(),
                         }),
                     ),
                 ],

@@ -23,18 +23,6 @@ export const WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX =
 export const REPLY_COMPLETION_KEY =
   WORKFLOW_CONTRACT_MANIFEST.workflowTools.replyCompletionKey;
 
-/** Activity names a connector host registers on its account task queues. */
-export const CHANNEL_CONNECTOR_ACTIVITIES =
-  WORKFLOW_CONTRACT_MANIFEST.channels.connectorActivities;
-export const CHANNEL_CONVERSATION_WORKFLOW_KIND =
-  WORKFLOW_CONTRACT_MANIFEST.channels.workflowKind;
-export const CHANNEL_INBOUND_SIGNAL =
-  WORKFLOW_CONTRACT_MANIFEST.channels.inboundSignal;
-export const CHANNEL_STATE_QUERY =
-  WORKFLOW_CONTRACT_MANIFEST.channels.stateQuery;
-export const CHANNEL_DELIVERY_RECEIPT_SIGNAL =
-  WORKFLOW_CONTRACT_MANIFEST.channels.deliveryReceiptSignal;
-
 /** Known-answer vectors emitted by Rust and shared by every generated consumer. */
 export const WORKFLOW_CONTRACT_VECTORS = WORKFLOW_CONTRACT_MANIFEST.vectors;
 
@@ -189,32 +177,6 @@ export function environmentJobWorkflowId(
   requireNonEmpty(environmentId, "environmentId");
   requireNonEmpty(jobGroupId, "jobGroupId");
   return `${normalizeUniverseId(universeId)}/envjob-${environmentId}-${jobGroupId}`;
-}
-
-/**
- * Task queue of the connector host serving one channel account:
- * `lightspeed-connector-{provider}-{24 hex}`, the hex being sha256 over the
- * length-prefixed domain, hyphenated lowercase universe id, provider, and
- * account id. The core routes connector activities here; the host polls it.
- */
-export function connectorTaskQueue(
-  universeId: string,
-  provider: string,
-  accountId: string,
-): string {
-  requireNonEmpty(provider, "provider");
-  requireNonEmpty(accountId, "accountId");
-  const digest = sha256.create();
-  for (const part of [
-    utf8(WORKFLOW_CONTRACT_MANIFEST.channels.domains.connectorTaskQueue),
-    utf8(normalizeUniverseId(universeId)),
-    utf8(provider),
-    utf8(accountId),
-  ]) {
-    digest.update(u64be(part.length));
-    digest.update(part);
-  }
-  return `lightspeed-connector-${provider}-${hex(digest.digest()).slice(0, 24)}`;
 }
 
 /** Split a canonical session workflow id, returning undefined for other ids. */

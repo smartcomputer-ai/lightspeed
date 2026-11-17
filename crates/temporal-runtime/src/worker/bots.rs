@@ -301,22 +301,6 @@ impl BotWorkerActivities {
         .await
     }
 
-    #[activity(name = ACTIVITY_BOT_SEND_DELIVERY_RECEIPTS)]
-    pub async fn send_delivery_receipts(
-        self: Arc<Self>,
-        _ctx: ActivityContext,
-        request: BotSendDeliveryReceiptsRequest,
-    ) -> Result<BotReceiptsSent, ActivityError> {
-        let (api, authority) = self
-            .controller(&_ctx, request.universe_id, Some(&request.bot_id))
-            .await?;
-        crate::gateway::service::authorization::with_controller_authority(
-            authority,
-            crate::bots::receipts::send_delivery_receipts(&api, request),
-        )
-        .await
-    }
-
     #[activity(name = ACTIVITY_BOT_SEND_BOT_RECEIPTS)]
     pub async fn send_bot_receipts(
         self: Arc<Self>,
@@ -407,10 +391,6 @@ mod tests {
         assert_eq!(
             BotWorkerActivities::poll_trigger.name(),
             BotActivities::poll_trigger.name()
-        );
-        assert_eq!(
-            BotWorkerActivities::send_delivery_receipts.name(),
-            BotActivities::send_delivery_receipts.name()
         );
     }
 }

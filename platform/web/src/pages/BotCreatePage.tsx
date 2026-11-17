@@ -111,8 +111,6 @@ export function templateHighlights(template: BotTemplate): string[] {
         return describeCron(trigger.cron, trigger.timezone === "UTC" ? null : trigger.timezone);
       case "webhook":
         return trigger.preset === "github" ? "GitHub events" : "Webhook";
-      case "chat":
-        return "Chat messages";
       case "bot":
         return "Other bots";
     }

@@ -1,4 +1,4 @@
-import type { BotTriggerView, ChannelAccountView } from "@/api";
+import type { BotTriggerView } from "@/api";
 import { cronBuilderFromExpression, cronFromBuilder, type CronBuilderState } from "./cron-builder";
 
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -40,14 +40,9 @@ function hostOf(url: string): string {
   }
 }
 
-/**
- * One line saying what wakes the bot, in the person's words. Chat triggers
- * carry only the account id; pass the universe's channel accounts to name
- * the account (there is no server-side join on the trigger).
- */
+/** A description of what wakes the bot. */
 export function triggerSummary(
   trigger: BotTriggerView,
-  accounts?: Pick<ChannelAccountView, "accountId" | "provider" | "displayName">[],
 ): string {
   switch (trigger.kind) {
     case "schedule": {
@@ -64,13 +59,6 @@ export function triggerSummary(
       return trigger.source.kind === "http"
         ? `Checks ${hostOf(trigger.source.url)} ${every}`
         : `Runs ${trigger.source.argv[0] ?? "a command"} ${every}`;
-    }
-    case "chat": {
-      const account = accounts?.find((entry) => entry.accountId === trigger.accountId);
-      const name = account ? `${account.provider} · ${account.displayName}` : "a messaging account";
-      const scope =
-        trigger.matchScope === "direct" ? "direct messages" : trigger.matchScope === "group" ? "groups" : "all chats";
-      return `${name} · ${scope}${(trigger.pairing ?? "code") === "code" ? " · pairing required" : ""}`;
     }
     case "bot": {
       return trigger.from == null
@@ -99,18 +87,14 @@ export interface DeliveryShape {
  * and idle close do, as one sentence. Reads the same for a form and a saved
  * trigger, so a person learns the vocabulary before opening the fields.
  */
-export function deliverySentence(shape: DeliveryShape, chat = false): string {
+export function deliverySentence(shape: DeliveryShape): string {
   const parts: string[] = [];
   if (shape.routePolicy === "bot") parts.push("to Main");
   else if (shape.routePolicy === "perKey") {
     parts.push(
-      chat
-        ? "one thread per conversation"
-        : shape.routeKey.trim()
-          ? `one thread per ${shape.routeKey.trim()}`
-          : "one thread per key",
+      shape.routeKey.trim() ? `one thread per ${shape.routeKey.trim()}` : "one thread per key",
     );
-  } else parts.push(chat ? "one thread per message" : "one thread per event");
+  } else parts.push("one thread per event");
   if (shape.filter.trim()) parts.push("filtered");
   const debounce = Number(shape.debounceSeconds);
   if (shape.debounceSeconds.trim() !== "" && debounce > 0) {
@@ -134,7 +118,7 @@ export function deliverySentence(shape: DeliveryShape, chat = false): string {
 
 export function deliveryShapeOf(trigger: BotTriggerView): DeliveryShape {
   return {
-    routePolicy: trigger.route?.policy ?? (trigger.kind === "chat" ? "perKey" : "bot"),
+    routePolicy: trigger.route?.policy ?? "bot",
     routeKey: trigger.route?.policy === "perKey" ? (trigger.route.key ?? "") : "",
     filter: trigger.filter ?? "",
     whenBusy: trigger.deliver?.whenBusy ?? "queue",

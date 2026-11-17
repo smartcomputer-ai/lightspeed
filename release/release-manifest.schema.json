@@ -71,14 +71,12 @@
       "required": [
         "runtime",
         "configuratorMcp",
-        "platform",
-        "platformWorkers"
+        "platform"
       ],
       "properties": {
         "runtime": { "$ref": "#/$defs/imageReference" },
         "configuratorMcp": { "$ref": "#/$defs/imageReference" },
-        "platform": { "$ref": "#/$defs/imageReference" },
-        "platformWorkers": { "$ref": "#/$defs/imageReference" }
+        "platform": { "$ref": "#/$defs/imageReference" }
       }
     },
     "binaries": {

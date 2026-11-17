@@ -7,7 +7,6 @@ mod bots_api;
 pub(crate) mod credentials_api;
 pub(super) use bots_api::bot_list_item;
 mod catalogs;
-pub(crate) mod channels_api;
 mod common;
 mod controller;
 pub(crate) use crate::environments::lifecycle as environment_lifecycle;
@@ -504,7 +503,6 @@ pub struct GatewayAgentApiBuilder {
     store: Arc<PgStore>,
     task_queue: String,
     bot_task_queue: String,
-    channel_task_queue: String,
     code_task_queue: String,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
@@ -530,12 +528,6 @@ impl GatewayAgentApiBuilder {
     /// Task queue of the `bots` worker role (bot controllers, trigger fires).
     pub fn with_bot_task_queue(mut self, task_queue: impl Into<String>) -> Self {
         self.bot_task_queue = task_queue.into();
-        self
-    }
-
-    /// Task queue of the `channels` worker role (conversation workflows).
-    pub fn with_channel_task_queue(mut self, task_queue: impl Into<String>) -> Self {
-        self.channel_task_queue = task_queue.into();
         self
     }
 
@@ -701,7 +693,6 @@ impl GatewayAgentApiBuilder {
             store: self.store,
             task_queue: self.task_queue,
             bot_task_queue: self.bot_task_queue,
-            channel_task_queue: self.channel_task_queue,
             code_task_queue: self.code_task_queue,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
@@ -728,7 +719,6 @@ pub struct GatewayAgentApi {
     store: Arc<PgStore>,
     task_queue: String,
     pub(crate) bot_task_queue: String,
-    pub(crate) channel_task_queue: String,
     pub(crate) code_task_queue: String,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
@@ -770,7 +760,6 @@ impl GatewayAgentApi {
             store,
             task_queue: DEFAULT_TASK_QUEUE.to_owned(),
             bot_task_queue: temporal_workflow::bots::DEFAULT_BOTS_TASK_QUEUE.to_owned(),
-            channel_task_queue: crate::config::DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
             code_task_queue: crate::config::DEFAULT_CODE_TASK_QUEUE.to_owned(),
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
@@ -1821,89 +1810,6 @@ impl AgentApiService for GatewayAgentApi {
         )
         .await?;
         self.test_bot_filter_records(params).await
-    }
-
-    // ── Channels ────────────────────────────────────────────────────────
-
-    async fn create_channel_account(
-        &self,
-        params: ChannelAccountCreateParams,
-    ) -> Result<ChannelAccountCreateResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_CREATE, None)
-            .await?;
-        self.create_channel_account_record(params).await
-    }
-
-    async fn put_channel_account(
-        &self,
-        params: ChannelAccountPutParams,
-    ) -> Result<ChannelAccountPutResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_PUT, None)
-            .await?;
-        self.put_channel_account_record(params).await
-    }
-
-    async fn read_channel_account(
-        &self,
-        params: ChannelAccountReadParams,
-    ) -> Result<ChannelAccountReadResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_READ, None)
-            .await?;
-        self.read_channel_account_record(params).await
-    }
-
-    async fn list_channel_accounts(
-        &self,
-        params: ChannelAccountListParams,
-    ) -> Result<ChannelAccountListResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_LIST, None)
-            .await?;
-        self.list_channel_account_records(params).await
-    }
-
-    async fn delete_channel_account(
-        &self,
-        params: ChannelAccountDeleteParams,
-    ) -> Result<ChannelAccountDeleteResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_DELETE, None)
-            .await?;
-        self.delete_channel_account_record(params).await
-    }
-
-    async fn admit_channel_inbound(
-        &self,
-        params: ChannelInboundAdmitParams,
-    ) -> Result<ChannelInboundAdmitResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_INBOUND_ADMIT, None)
-            .await?;
-        self.admit_channel_inbound_message(params).await
-    }
-
-    async fn list_channel_pairings(
-        &self,
-        params: ChannelPairingListParams,
-    ) -> Result<ChannelPairingListResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_PAIRINGS_LIST, None)
-            .await?;
-        self.list_channel_pairing_records(params).await
-    }
-
-    async fn delete_channel_pairing(
-        &self,
-        params: ChannelPairingDeleteParams,
-    ) -> Result<ChannelPairingDeleteResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_PAIRINGS_DELETE, None)
-            .await?;
-        self.delete_channel_pairing_record(params).await
-    }
-
-    async fn read_channel_conversation(
-        &self,
-        params: ChannelConversationReadParams,
-    ) -> Result<ChannelConversationReadResponse, AgentApiError> {
-        self.authorize_method(METHOD_CHANNELS_CONVERSATIONS_READ, None)
-            .await?;
-        self.read_channel_conversation_snapshot(params).await
     }
 
     async fn start_transcription(

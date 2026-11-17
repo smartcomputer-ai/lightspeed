@@ -5,16 +5,15 @@
 
 use crate::workflows::WorkflowContextExt as _;
 use api::{BotEventOutcome, BotRecentDeliverySnapshot, LlmUsageView};
-use bots::{BotDeliveryPhase, RoutedSession, ids};
+use bots::{RoutedSession, ids};
 use harness::{BlobRef, EmissionEnvelope, PromiseResolution, REPLY_COMPLETION_KEY};
 
 use super::super::{
     BOT_BUSY_RETRY_DELAY, BOT_EXTRA_SESSION_CAP, BotActivities, BotAppendContextRequest,
     BotEnsureSessionResult, BotExecuteToolRequest, BotExecuteToolResult,
     BotPublishDirectoryRequest, BotReadRunUsageRequest, BotRecordOutcomesRequest,
-    BotSendBotReceiptsRequest, BotSendDeliveryReceiptsRequest, BotSessionRequest, BotSessionStatus,
-    BotStartRunRequest, BotStartRunResult, BotSteerRunRequest, BotSteerRunResult,
-    bot_start_run_activity_options,
+    BotSendBotReceiptsRequest, BotSessionRequest, BotSessionStatus, BotStartRunRequest,
+    BotStartRunResult, BotSteerRunRequest, BotSteerRunResult, bot_start_run_activity_options,
 };
 use super::state::{
     BotDelivery, ControlledSession, DeliveryOutcome, LaneTerminal, PendingInvocation, WaitingLane,
@@ -71,17 +70,17 @@ async fn run_delivery_inner(
     delivery: &BotDelivery,
     target: &mut String,
 ) -> Result<(), String> {
-    let Some(first_event) = delivery.events.first() else {
+    if delivery.events.is_empty() {
         ctx.state_mut(|state| {
             state.active_by_session.remove(target.as_str());
             state.lane_tick += 1;
         });
         return Ok(());
-    };
+    }
     let universe_id = ctx.state(|state| state.config.universe_id);
 
     if let Some(session) = &delivery.session {
-        match ensure_routed_session(ctx, session, target, first_event.tools_ref.clone()).await {
+        match ensure_routed_session(ctx, session, target).await {
             RoutedSessionEnsured::Dead {
                 session_id,
                 message,
@@ -227,17 +226,6 @@ async fn run_delivery_inner(
     };
     let started_at = now_ms(ctx);
     ctx.state_mut(|state| state.mark_lane_started(target, &run_id, started_at));
-    send_delivery_receipts(
-        ctx,
-        delivery,
-        target,
-        BotDeliveryPhase::Started,
-        Some(run_id.clone()),
-        None,
-        None,
-    )
-    .await;
-
     if let Some(status) = finished {
         // An earlier attempt's run ended while no lane held this delivery, so
         // its terminal left the log unread and found nothing to attach to.
@@ -431,7 +419,6 @@ async fn ensure_routed_session(
     ctx: &Ctx,
     session: &RoutedSession,
     resolved_id: &str,
-    tools_ref: Option<String>,
 ) -> RoutedSessionEnsured {
     let mut session_id = resolved_id.to_owned();
     for attempt in 0..2 {
@@ -450,14 +437,11 @@ async fn ensure_routed_session(
                 // Routed sessions take the profile at creation; only the
                 // main session tracks profile revisions across its life.
                 None,
-                tools_ref.clone(),
                 Some(session),
             )
         });
         match activity(ctx, BotActivities::ensure_session, request).await {
-            Ok(BotEnsureSessionResult::Ready {
-                carried_tool_ids, ..
-            }) => {
+            Ok(BotEnsureSessionResult::Ready { .. }) => {
                 let now = now_ms(ctx);
                 let kind = ids::bot_session_kind(&session_id);
                 ctx.state_mut(|state| {
@@ -468,7 +452,6 @@ async fn ensure_routed_session(
                         kind,
                         last_active_at_ms: Some(now),
                         close_policy: session.close_policy,
-                        carried_tool_ids,
                     });
                 });
                 enforce_extra_session_cap(ctx, &session_id).await;
@@ -544,7 +527,7 @@ pub(super) async fn run_busy_sidecar(ctx: Ctx, delivery: BotDelivery, target: St
             state.remember_delivery(recent);
             state.release_sidecar(&target, now);
         });
-        settle_delivery(&ctx, &delivery, &target, &outcome).await;
+        settle_delivery(&ctx, &delivery, &outcome).await;
     } else {
         ctx.state_mut(|state| state.release_sidecar(&target, now));
     }
@@ -638,19 +621,12 @@ async fn finish_delivery(
         state.remember_delivery(recent);
         state.release_lane(session_id, now);
     });
-    settle_delivery(ctx, delivery, session_id, &outcome).await;
+    settle_delivery(ctx, delivery, &outcome).await;
 }
 
 /// The write-once outcome on every event row, `bot.reply` receipts for
-/// events that asked, and the `finished` delivery receipt for events whose
-/// source asked. Each is best effort — a failed write costs a pending
-/// badge or a receipt, never a delivery.
-async fn settle_delivery(
-    ctx: &Ctx,
-    delivery: &BotDelivery,
-    session_id: &str,
-    outcome: &DeliveryOutcome,
-) {
+/// events that asked. Each is best effort.
+async fn settle_delivery(ctx: &Ctx, delivery: &BotDelivery, outcome: &DeliveryOutcome) {
     let (universe_id, bot_id) =
         ctx.state(|state| (state.config.universe_id, state.config.bot_id.clone()));
     if let Err(message) = activity(
@@ -692,58 +668,6 @@ async fn settle_delivery(
         }
         ctx.state_mut(|state| state.lane_tick += 1);
     }
-
-    send_delivery_receipts(
-        ctx,
-        delivery,
-        session_id,
-        BotDeliveryPhase::Finished,
-        outcome.run_id.clone(),
-        Some(outcome.outcome),
-        outcome.summary.clone(),
-    )
-    .await;
-}
-
-/// `started` / `finished` receipts to the admitting source of any event in
-/// the delivery that asked for them (a chat conversation waiting to type
-/// and to send the fallback reply). Best effort.
-async fn send_delivery_receipts(
-    ctx: &Ctx,
-    delivery: &BotDelivery,
-    session_id: &str,
-    phase: BotDeliveryPhase,
-    run_id: Option<String>,
-    outcome: Option<BotEventOutcome>,
-    summary: Option<String>,
-) {
-    let event_ids = delivery.notify_event_ids();
-    if event_ids.is_empty() {
-        return;
-    }
-    let (universe_id, bot_id) =
-        ctx.state(|state| (state.config.universe_id, state.config.bot_id.clone()));
-    if let Err(message) = activity(
-        ctx,
-        BotActivities::send_delivery_receipts,
-        BotSendDeliveryReceiptsRequest {
-            universe_id,
-            bot_id,
-            event_ids,
-            phase,
-            delivery_id: delivery.id.clone(),
-            seqs: delivery.seqs(),
-            session_id: session_id.to_owned(),
-            run_id,
-            outcome,
-            summary,
-        },
-    )
-    .await
-    {
-        ctx.state_mut(|state| state.record_error(message));
-    }
-    ctx.state_mut(|state| state.lane_tick += 1);
 }
 
 // ── Pushed tools ────────────────────────────────────────────────────────────

@@ -10,7 +10,6 @@ mod blob_cache;
 mod bots;
 mod cas_sweep;
 pub mod changes;
-mod channels;
 mod credentials;
 mod deployment;
 mod environment;
@@ -62,7 +61,6 @@ pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/004_mcp.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/005_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/006_agent_profiles.sql");
 pub const BOTS_SCHEMA_SQL: &str = include_str!("../migrations/007_bots.sql");
-pub const CHANNELS_SCHEMA_SQL: &str = include_str!("../migrations/008_channels.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 
@@ -341,7 +339,6 @@ pub use cas_sweep::{
     CasObjectDeletion, CasSweepCandidate, CasSweepCursor, CasSweepError, CasSweepLeader,
     CasSweepPage,
 };
-pub use channels::list_channel_accounts_all;
 pub use deployment::{
     UNIVERSE_HANDLE_MAX_LEN, UniverseDeletionRecord, UniverseStats, begin_universe_deletion,
     create_universe, create_universe_with_configuration, create_universe_with_handle,

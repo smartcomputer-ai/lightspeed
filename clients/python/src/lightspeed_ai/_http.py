@@ -4582,8 +4582,8 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                  'description': 'Creates the bot record, optionally with its '
                                 'triggers, and starts its controller. Fails if '
                                 'the bot id exists; a trigger failure rolls '
-                                "the bot back. Returns the created triggers' "
-                                'ingest paths and pairing codes by trigger id.',
+                                'the bot back. Returns the created webhook '
+                                "triggers' ingest paths by trigger id.",
                  'events': None,
                  'group': 'bots',
                  'method': 'POST',
@@ -4845,12 +4845,11 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
  'bots/triggers/put': {'access': {'action': 'manageBot', 'kind': 'universe'},
                        'description': 'Validates the trigger document (CEL '
                                       'parses, grants exist, one inbox per '
-                                      'bot, chat routes per conversation), '
-                                      'reconciles its Temporal Schedule, and '
-                                      'stores it. A poll spec edit resets the '
-                                      'cursor; a webhook keeps its URL token. '
-                                      "Returns the trigger's ingest path or "
-                                      'pairing code beside the view.',
+                                      'bot), reconciles its Temporal Schedule, '
+                                      'and stores it. A poll spec edit resets '
+                                      'the cursor; a webhook keeps its URL '
+                                      "token. Returns a webhook's ingest path "
+                                      'beside the view.',
                        'events': None,
                        'group': 'bots',
                        'method': 'PUT',
@@ -4888,10 +4887,9 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                        'transfer': 'json'},
  'bots/triggers/read': {'access': {'action': 'read', 'kind': 'universe'},
                         'description': 'Returns one trigger with its incidents '
-                                       'and cursor. The ingest path and '
-                                       'pairing code are never part of it; '
-                                       'bots/triggers/secrets/read returns '
-                                       'them.',
+                                       "and cursor. Read a webhook's ingest "
+                                       'path through '
+                                       'bots/triggers/secrets/read.',
                         'events': None,
                         'group': 'bots',
                         'method': 'GET',
@@ -4929,8 +4927,7 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                         'transfer': 'json'},
  'bots/triggers/list': {'access': {'action': 'read', 'kind': 'universe'},
                         'description': 'Returns every trigger of the bot '
-                                       'ordered by id, without ingest paths or '
-                                       'pairing codes.',
+                                       'ordered by id, without ingest paths.',
                         'events': None,
                         'group': 'bots',
                         'method': 'GET',
@@ -4963,15 +4960,11 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                         'transfer': 'json'},
  'bots/triggers/secrets/read': {'access': {'action': 'manageBot',
                                            'kind': 'universe'},
-                                'description': "Returns a webhook trigger's "
-                                               'ingest path, whose token lets '
-                                               'the holder post events to the '
-                                               "bot, or a chat trigger's "
-                                               'pairing code, which connects a '
-                                               'conversation to it. Both are '
-                                               'absent for other triggers. '
-                                               'Needs bot management, unlike '
-                                               'reading the trigger.',
+                                'description': 'Returns the webhook ingest '
+                                               'path. Its token lets the '
+                                               'holder post events to the bot. '
+                                               'Requires bot-management '
+                                               'permission.',
                                 'events': None,
                                 'group': 'bots',
                                 'method': 'GET',
@@ -5011,9 +5004,8 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                 'transfer': 'json'},
  'bots/triggers/delete': {'access': {'action': 'manageBot', 'kind': 'universe'},
                           'description': "Drops the trigger's Temporal "
-                                         'Schedule and pairings, then the '
-                                         'record; stored events keep their '
-                                         'history.',
+                                         'Schedule, then the record; stored '
+                                         'events keep their history.',
                           'events': None,
                           'group': 'bots',
                           'method': 'DELETE',
@@ -5251,359 +5243,6 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                        'summary': 'Test a CEL filter',
                        'target': None,
                        'transfer': 'json'},
- 'channels/accounts/create': {'access': {'action': 'configureResource',
-                                         'kind': 'universe'},
-                              'description': 'Registers a provider account '
-                                             '(Telegram, WhatsApp) for this '
-                                             'universe. The credential is a '
-                                             'retrievable grant reference; no '
-                                             'token is accepted here.',
-                              'events': None,
-                              'group': 'channels',
-                              'method': 'POST',
-                              'operationId': 'channels/accounts/create',
-                              'parameters': [{'in': 'path',
-                                              'name': 'universe',
-                                              'required': True,
-                                              'schema': {'description': 'Universe '
-                                                                        'UUID '
-                                                                        'or '
-                                                                        'active '
-                                                                        'handle.',
-                                                         'type': 'string'}}],
-                              'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountCreateParams'},
-                                         'type': 'ChannelAccountCreateParams'},
-                              'path': '/api/v1/universes/{universe}/channels/accounts',
-                              'pathFields': [],
-                              'queryFields': [],
-                              'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountCreateResponse'},
-                                         'type': 'ChannelAccountCreateResponse'},
-                              'role': 'operator',
-                              'scope': 'universe',
-                              'success': 'ok',
-                              'summary': 'Create a channel account',
-                              'target': None,
-                              'transfer': 'json'},
- 'channels/accounts/put': {'access': {'action': 'configureResource',
-                                      'kind': 'universe'},
-                           'description': 'Replaces the account document '
-                                          'whole; pass expectedRevision when '
-                                          'replacing. The connector host picks '
-                                          'the change up on its next discovery '
-                                          'pass.',
-                           'events': None,
-                           'group': 'channels',
-                           'method': 'PUT',
-                           'operationId': 'channels/accounts/put',
-                           'parameters': [{'in': 'path',
-                                           'name': 'universe',
-                                           'required': True,
-                                           'schema': {'description': 'Universe '
-                                                                     'UUID or '
-                                                                     'active '
-                                                                     'handle.',
-                                                      'type': 'string'}},
-                                          {'in': 'path',
-                                           'name': 'accountId',
-                                           'required': True,
-                                           'schema': {'$ref': '#/schemas/ChannelAccountId'}}],
-                           'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountPutParams'},
-                                      'type': 'ChannelAccountPutParams'},
-                           'path': '/api/v1/universes/{universe}/channels/accounts/{accountId}',
-                           'pathFields': [{'field': 'account.accountId',
-                                           'parameter': 'accountId'}],
-                           'queryFields': [],
-                           'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountPutResponse'},
-                                      'type': 'ChannelAccountPutResponse'},
-                           'role': 'operator',
-                           'scope': 'universe',
-                           'success': 'ok',
-                           'summary': 'Create or replace a channel account',
-                           'target': None,
-                           'transfer': 'json'},
- 'channels/accounts/read': {'access': {'action': 'read', 'kind': 'universe'},
-                            'description': 'Returns the account document and '
-                                           'revision.',
-                            'events': None,
-                            'group': 'channels',
-                            'method': 'GET',
-                            'operationId': 'channels/accounts/read',
-                            'parameters': [{'in': 'path',
-                                            'name': 'universe',
-                                            'required': True,
-                                            'schema': {'description': 'Universe '
-                                                                      'UUID or '
-                                                                      'active '
-                                                                      'handle.',
-                                                       'type': 'string'}},
-                                           {'in': 'path',
-                                            'name': 'accountId',
-                                            'required': True,
-                                            'schema': {'$ref': '#/schemas/ChannelAccountId'}}],
-                            'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountReadParams'},
-                                       'type': 'ChannelAccountReadParams'},
-                            'path': '/api/v1/universes/{universe}/channels/accounts/{accountId}',
-                            'pathFields': [{'field': 'accountId',
-                                            'parameter': 'accountId'}],
-                            'queryFields': [],
-                            'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountReadResponse'},
-                                       'type': 'ChannelAccountReadResponse'},
-                            'role': 'viewer',
-                            'scope': 'universe',
-                            'success': 'ok',
-                            'summary': 'Read a channel account',
-                            'target': None,
-                            'transfer': 'json'},
- 'channels/accounts/list': {'access': {'action': 'read', 'kind': 'universe'},
-                            'description': "Lists this universe's provider "
-                                           'accounts, optionally by provider.',
-                            'events': None,
-                            'group': 'channels',
-                            'method': 'GET',
-                            'operationId': 'channels/accounts/list',
-                            'parameters': [{'in': 'path',
-                                            'name': 'universe',
-                                            'required': True,
-                                            'schema': {'description': 'Universe '
-                                                                      'UUID or '
-                                                                      'active '
-                                                                      'handle.',
-                                                       'type': 'string'}},
-                                           {'explode': True,
-                                            'in': 'query',
-                                            'name': 'provider',
-                                            'required': False,
-                                            'schema': {'anyOf': [{'$ref': '#/schemas/ChannelProvider'},
-                                                                 {'type': 'null'}]},
-                                            'style': 'form',
-                                            'x-lightspeed-encoding': 'scalar'}],
-                            'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountListParams'},
-                                       'type': 'ChannelAccountListParams'},
-                            'path': '/api/v1/universes/{universe}/channels/accounts',
-                            'pathFields': [],
-                            'queryFields': ['provider'],
-                            'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountListResponse'},
-                                       'type': 'ChannelAccountListResponse'},
-                            'role': 'viewer',
-                            'scope': 'universe',
-                            'success': 'ok',
-                            'summary': 'List channel accounts',
-                            'target': None,
-                            'transfer': 'json'},
- 'channels/accounts/delete': {'access': {'action': 'configureResource',
-                                         'kind': 'universe'},
-                              'description': 'Removes the account and its '
-                                             'pairings; chat triggers that '
-                                             'reference it stop serving '
-                                             'conversations.',
-                              'events': None,
-                              'group': 'channels',
-                              'method': 'DELETE',
-                              'operationId': 'channels/accounts/delete',
-                              'parameters': [{'in': 'path',
-                                              'name': 'universe',
-                                              'required': True,
-                                              'schema': {'description': 'Universe '
-                                                                        'UUID '
-                                                                        'or '
-                                                                        'active '
-                                                                        'handle.',
-                                                         'type': 'string'}},
-                                             {'in': 'path',
-                                              'name': 'accountId',
-                                              'required': True,
-                                              'schema': {'$ref': '#/schemas/ChannelAccountId'}}],
-                              'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountDeleteParams'},
-                                         'type': 'ChannelAccountDeleteParams'},
-                              'path': '/api/v1/universes/{universe}/channels/accounts/{accountId}',
-                              'pathFields': [{'field': 'accountId',
-                                              'parameter': 'accountId'}],
-                              'queryFields': [],
-                              'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelAccountDeleteResponse'},
-                                         'type': 'ChannelAccountDeleteResponse'},
-                              'role': 'operator',
-                              'scope': 'universe',
-                              'success': 'ok',
-                              'summary': 'Delete a channel account',
-                              'target': None,
-                              'transfer': 'json'},
- 'channels/inbound/admit': {'access': {'kind': 'service'},
-                            'description': 'Service callers only. Resolves the '
-                                           'chat trigger for the conversation, '
-                                           'applies pairing, and signals the '
-                                           'conversation workflow. Returns the '
-                                           'decision so the connector can send '
-                                           'pairing prompts itself; '
-                                           'acknowledge the provider only '
-                                           'after this returns.',
-                            'events': None,
-                            'group': 'channels/inbound',
-                            'method': 'POST',
-                            'operationId': 'channels/inbound/admit',
-                            'parameters': [{'in': 'path',
-                                            'name': 'universe',
-                                            'required': True,
-                                            'schema': {'description': 'Universe '
-                                                                      'UUID or '
-                                                                      'active '
-                                                                      'handle.',
-                                                       'type': 'string'}},
-                                           {'in': 'path',
-                                            'name': 'accountId',
-                                            'required': True,
-                                            'schema': {'$ref': '#/schemas/ChannelAccountId'}}],
-                            'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelInboundAdmitParams'},
-                                       'type': 'ChannelInboundAdmitParams'},
-                            'path': '/api/v1/universes/{universe}/channels/accounts/{accountId}/inbound',
-                            'pathFields': [{'field': 'accountId',
-                                            'parameter': 'accountId'}],
-                            'queryFields': [],
-                            'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelInboundAdmitResponse'},
-                                       'type': 'ChannelInboundAdmitResponse'},
-                            'role': None,
-                            'scope': 'service',
-                            'success': 'ok',
-                            'summary': 'Admit a provider message',
-                            'target': None,
-                            'transfer': 'json'},
- 'channels/pairings/list': {'access': {'action': 'read', 'kind': 'universe'},
-                            'description': 'Lists conversations paired to chat '
-                                           'triggers, optionally by account or '
-                                           'bot.',
-                            'events': None,
-                            'group': 'channels',
-                            'method': 'GET',
-                            'operationId': 'channels/pairings/list',
-                            'parameters': [{'in': 'path',
-                                            'name': 'universe',
-                                            'required': True,
-                                            'schema': {'description': 'Universe '
-                                                                      'UUID or '
-                                                                      'active '
-                                                                      'handle.',
-                                                       'type': 'string'}},
-                                           {'explode': True,
-                                            'in': 'query',
-                                            'name': 'accountId',
-                                            'required': False,
-                                            'schema': {'anyOf': [{'$ref': '#/schemas/ChannelAccountId'},
-                                                                 {'type': 'null'}]},
-                                            'style': 'form',
-                                            'x-lightspeed-encoding': 'scalar'},
-                                           {'explode': True,
-                                            'in': 'query',
-                                            'name': 'botId',
-                                            'required': False,
-                                            'schema': {'anyOf': [{'$ref': '#/schemas/BotId'},
-                                                                 {'type': 'null'}]},
-                                            'style': 'form',
-                                            'x-lightspeed-encoding': 'scalar'}],
-                            'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelPairingListParams'},
-                                       'type': 'ChannelPairingListParams'},
-                            'path': '/api/v1/universes/{universe}/channels/pairings',
-                            'pathFields': [],
-                            'queryFields': ['accountId', 'botId'],
-                            'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelPairingListResponse'},
-                                       'type': 'ChannelPairingListResponse'},
-                            'role': 'viewer',
-                            'scope': 'universe',
-                            'success': 'ok',
-                            'summary': 'List chat pairings',
-                            'target': None,
-                            'transfer': 'json'},
- 'channels/pairings/delete': {'access': {'action': 'configureResource',
-                                         'kind': 'universe'},
-                              'description': 'Removes one pairing; the '
-                                             'conversation must present the '
-                                             'pairing code again to reconnect.',
-                              'events': None,
-                              'group': 'channels',
-                              'method': 'DELETE',
-                              'operationId': 'channels/pairings/delete',
-                              'parameters': [{'in': 'path',
-                                              'name': 'universe',
-                                              'required': True,
-                                              'schema': {'description': 'Universe '
-                                                                        'UUID '
-                                                                        'or '
-                                                                        'active '
-                                                                        'handle.',
-                                                         'type': 'string'}},
-                                             {'in': 'path',
-                                              'name': 'accountId',
-                                              'required': True,
-                                              'schema': {'$ref': '#/schemas/ChannelAccountId'}},
-                                             {'in': 'path',
-                                              'name': 'chatId',
-                                              'required': True,
-                                              'schema': {'type': 'string'}}],
-                              'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelPairingDeleteParams'},
-                                         'type': 'ChannelPairingDeleteParams'},
-                              'path': '/api/v1/universes/{universe}/channels/accounts/{accountId}/pairings/{chatId}',
-                              'pathFields': [{'field': 'accountId',
-                                              'parameter': 'accountId'},
-                                             {'field': 'chatId',
-                                              'parameter': 'chatId'}],
-                              'queryFields': [],
-                              'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelPairingDeleteResponse'},
-                                         'type': 'ChannelPairingDeleteResponse'},
-                              'role': 'operator',
-                              'scope': 'universe',
-                              'success': 'ok',
-                              'summary': 'Unpair a conversation',
-                              'target': None,
-                              'transfer': 'json'},
- 'channels/conversations/read': {'access': {'action': 'read',
-                                            'kind': 'universe'},
-                                 'description': 'Queries the conversation '
-                                                "workflow's live state for one "
-                                                'chat, for debugging; absent '
-                                                'when no workflow exists yet.',
-                                 'events': None,
-                                 'group': 'channels',
-                                 'method': 'GET',
-                                 'operationId': 'channels/conversations/read',
-                                 'parameters': [{'in': 'path',
-                                                 'name': 'universe',
-                                                 'required': True,
-                                                 'schema': {'description': 'Universe '
-                                                                           'UUID '
-                                                                           'or '
-                                                                           'active '
-                                                                           'handle.',
-                                                            'type': 'string'}},
-                                                {'in': 'path',
-                                                 'name': 'accountId',
-                                                 'required': True,
-                                                 'schema': {'$ref': '#/schemas/ChannelAccountId'}},
-                                                {'in': 'path',
-                                                 'name': 'chatId',
-                                                 'required': True,
-                                                 'schema': {'type': 'string'}},
-                                                {'explode': True,
-                                                 'in': 'query',
-                                                 'name': 'threadId',
-                                                 'required': False,
-                                                 'schema': {'type': ['string',
-                                                                     'null']},
-                                                 'style': 'form',
-                                                 'x-lightspeed-encoding': 'scalar'}],
-                                 'params': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelConversationReadParams'},
-                                            'type': 'ChannelConversationReadParams'},
-                                 'path': '/api/v1/universes/{universe}/channels/accounts/{accountId}/conversations/{chatId}',
-                                 'pathFields': [{'field': 'accountId',
-                                                 'parameter': 'accountId'},
-                                                {'field': 'chatId',
-                                                 'parameter': 'chatId'}],
-                                 'queryFields': ['threadId'],
-                                 'result': {'schema': {'$ref': 'api.schema.json#/definitions/ChannelConversationReadResponse'},
-                                            'type': 'ChannelConversationReadResponse'},
-                                 'role': 'viewer',
-                                 'scope': 'universe',
-                                 'success': 'ok',
-                                 'summary': 'Read a conversation snapshot',
-                                 'target': None,
-                                 'transfer': 'json'},
  'deployment/universes/deleted/list': {'access': {'kind': 'deployment'},
                                        'description': 'Permanent deletion '
                                                       'records, newest first, '
@@ -6289,63 +5928,6 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                                                  'binding',
                                                       'target': None,
                                                       'transfer': 'json'},
- 'deployment/channels/accounts/list': {'access': {'kind': 'deployment'},
-                                       'description': "The connector host's "
-                                                      'discovery call: every '
-                                                      'enabled provider '
-                                                      'account of the '
-                                                      'deployment with its '
-                                                      'universe id and '
-                                                      'credential grant '
-                                                      'reference. Re-poll to '
-                                                      'pick up accounts '
-                                                      'created or disabled '
-                                                      'since.',
-                                       'events': None,
-                                       'group': 'deployment/channels',
-                                       'method': 'GET',
-                                       'operationId': 'deployment/channels/accounts/list',
-                                       'parameters': [{'explode': True,
-                                                       'in': 'query',
-                                                       'name': 'includeDisabled',
-                                                       'required': False,
-                                                       'schema': {'default': False,
-                                                                  'description': 'Include '
-                                                                                 'disabled '
-                                                                                 'accounts; '
-                                                                                 'by '
-                                                                                 'default '
-                                                                                 'only '
-                                                                                 'enabled '
-                                                                                 'ones '
-                                                                                 'are '
-                                                                                 'listed.',
-                                                                  'type': 'boolean'},
-                                                       'style': 'form',
-                                                       'x-lightspeed-encoding': 'scalar'},
-                                                      {'explode': True,
-                                                       'in': 'query',
-                                                       'name': 'provider',
-                                                       'required': False,
-                                                       'schema': {'anyOf': [{'$ref': '#/schemas/ChannelProvider'},
-                                                                            {'type': 'null'}]},
-                                                       'style': 'form',
-                                                       'x-lightspeed-encoding': 'scalar'}],
-                                       'params': {'schema': {'$ref': 'api.schema.json#/definitions/DeploymentChannelAccountListParams'},
-                                                  'type': 'DeploymentChannelAccountListParams'},
-                                       'path': '/api/v1/deployment/channels/accounts',
-                                       'pathFields': [],
-                                       'queryFields': ['includeDisabled',
-                                                       'provider'],
-                                       'result': {'schema': {'$ref': 'api.schema.json#/definitions/DeploymentChannelAccountListResponse'},
-                                                  'type': 'DeploymentChannelAccountListResponse'},
-                                       'role': None,
-                                       'scope': 'deployment',
-                                       'success': 'ok',
-                                       'summary': 'List channel accounts '
-                                                  'across universes',
-                                       'target': None,
-                                       'transfer': 'json'},
  'blobs/upload': {'access': {'action': 'useResource', 'kind': 'universe'},
                   'description': 'Streams bytes into immutable universe '
                                  'storage. The path is the expected content '

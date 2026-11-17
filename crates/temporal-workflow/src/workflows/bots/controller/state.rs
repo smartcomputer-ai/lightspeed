@@ -95,14 +95,6 @@ impl BotDelivery {
             .unwrap_or(0)
     }
 
-    pub fn notify_event_ids(&self) -> Vec<String> {
-        self.events
-            .iter()
-            .filter(|event| event.notify)
-            .map(|event| event.id.clone())
-            .collect()
-    }
-
     pub fn reply_event_ids(&self) -> Vec<String> {
         self.events
             .iter()
@@ -170,10 +162,6 @@ pub struct ControlledSession {
     /// Retention from the trigger; `Inherit` takes the bot's.
     #[serde(default)]
     pub close_policy: RoutedSessionClosePolicy,
-    /// Receiver-bound tools the session was created with; a run that used
-    /// one counts as handled.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub carried_tool_ids: Vec<String>,
 }
 
 /// Insertion-ordered dedupe set, tail-capped so it stays bounded across
@@ -1610,19 +1598,6 @@ pub fn resolve_invocations_for_run<'a>(
         .collect()
 }
 
-/// A run that answered through a carried tool (a chat reply) handled its
-/// delivery without a resolve call.
-pub fn used_carried_tool(
-    invocations: &[BotToolInvocationRef],
-    run_id: &str,
-    carried_tool_ids: &[String],
-) -> bool {
-    !carried_tool_ids.is_empty()
-        && invocations.iter().any(|invocation| {
-            invocation.run_id == run_id && carried_tool_ids.contains(&invocation.workflow_tool_id)
-        })
-}
-
 /// The outcome ladder of a lane that started a run.
 pub fn delivery_outcome(
     terminal: &LaneTerminal,
@@ -1754,9 +1729,6 @@ mod tests {
             when_busy: None,
             hops: 0,
             reply: false,
-            media: Vec::new(),
-            tools_ref: None,
-            notify: false,
         }
     }
 
@@ -2877,18 +2849,6 @@ mod tests {
     }
 
     #[test]
-    fn carried_tool_use_counts_as_handled() {
-        let invocations = vec![
-            invocation_ref("run_7", "lightspeed.channels.message.send.v1", "a"),
-            invocation_ref("run_8", "lightspeed.channels.message.send.v1", "b"),
-        ];
-        let carried = vec!["lightspeed.channels.message.send.v1".to_owned()];
-        assert!(used_carried_tool(&invocations, "run_7", &carried));
-        assert!(!used_carried_tool(&invocations, "run_9", &carried));
-        assert!(!used_carried_tool(&invocations, "run_7", &[]));
-    }
-
-    #[test]
     fn terminals_attach_by_delivery_token() {
         let mut state = ready(fresh());
         state.accept_event(event("e1", 1), NOW).unwrap();
@@ -3048,7 +3008,6 @@ mod tests {
             kind: BotSessionKind::PerKey,
             last_active_at_ms: Some(NOW),
             close_policy: RoutedSessionClosePolicy::Never,
-            carried_tool_ids: Vec::new(),
         });
         let summary = state.controller_summary("bot:v1:triage:k-pr-42-abcdef01-g2", NOW);
         assert_eq!(summary.hops, 3);
@@ -3076,7 +3035,6 @@ mod tests {
             kind: BotSessionKind::PerKey,
             last_active_at_ms: Some(last_active),
             close_policy,
-            carried_tool_ids: Vec::new(),
         }
     }
 
@@ -3165,9 +3123,9 @@ mod tests {
     fn routed_keys_survive_session_rotation_and_requests_load_without_optional_fields() {
         let mut state = ready(fresh());
         let route = RoutedSession {
-            session_id: ids::bot_keyed_session_id(&state.config.bot_id, "telegram:12345"),
+            session_id: ids::bot_keyed_session_id(&state.config.bot_id, "customer-12345"),
             label: "Ops room".to_owned(),
-            session_key: Some("telegram:12345".to_owned()),
+            session_key: Some("customer-12345".to_owned()),
             close_policy: RoutedSessionClosePolicy::Never,
         };
         for generation in 1..=2 {
@@ -3182,11 +3140,10 @@ mod tests {
                 session_id.clone(),
                 state.routed_label(&route.label),
                 None,
-                None,
                 Some(&route),
             );
             assert_eq!(request.session_id, session_id);
-            assert_eq!(request.session_key.as_deref(), Some("telegram:12345"));
+            assert_eq!(request.session_key.as_deref(), Some("customer-12345"));
             assert_eq!(request.session_label.as_deref(), Some("Ops room"));
             let mut wire = serde_json::to_value(&request).unwrap();
             assert_eq!(
@@ -3210,7 +3167,6 @@ mod tests {
             state.bot_label(),
             None,
             None,
-            None,
         );
         assert_eq!(main.session_key, None);
         assert_eq!(main.session_label, None);
@@ -3219,14 +3175,14 @@ mod tests {
     #[test]
     fn observing_a_new_event_recovers_a_known_threads_key_without_erasing_it() {
         let mut state = ready(fresh());
-        let id = ids::bot_keyed_session_id(&state.config.bot_id, "telegram:12345");
+        let id = ids::bot_keyed_session_id(&state.config.bot_id, "customer-12345");
         state
             .extra_sessions
             .push(controlled(&id, RoutedSessionClosePolicy::Never, NOW));
         let mut route = RoutedSession {
             session_id: id.clone(),
             label: "Ops room".to_owned(),
-            session_key: Some("telegram:12345".to_owned()),
+            session_key: Some("customer-12345".to_owned()),
             close_policy: RoutedSessionClosePolicy::Never,
         };
         assert!(state.observe_routed_session(&id, &route, NOW + 1));
@@ -3235,7 +3191,7 @@ mod tests {
         let summary = state.controller_summary(&id, NOW + 2);
         assert_eq!(
             summary.routed_session.unwrap().session_key.as_deref(),
-            Some("telegram:12345")
+            Some("customer-12345")
         );
     }
 

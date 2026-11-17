@@ -71,7 +71,6 @@ async def complete_named_helper_types(
     client: AsyncLightspeedClient,
     source: Api.RunStartSource,
     bot: Api.BotInput,
-    account: Api.ChannelAccountInput,
     provider: Api.CredentialProviderConfigInput,
     stream: AsyncIterator[bytes],
 ) -> None:
@@ -85,8 +84,6 @@ async def complete_named_helper_types(
     assert_type(await client.put_credential_provider("provider", config=provider), Api.CredentialProviderPutResponse)
     assert_type(await client.create_bot(bot=bot), Api.BotCreateResponse)
     assert_type(await client.read_bot_event("bot", seq=4), Api.BotEventReadResponse)
-    assert_type(await client.put_channel_account(account=account, expected_revision=2), Api.ChannelAccountPutResponse)
-    assert_type(await client.read_channel_conversation("account", "chat", thread_id=None), Api.ChannelConversationReadResponse)
     assert_type(await client.start_run("session", source, notify_on_terminal={"token": "terminal"}), Api.RunStartResponse)
     assert_type(await client.read_events("session", direction="backward", before={"seq": 5}), Api.SessionEventsReadResponse)
     assert_type(await client.upload_blob("sha256:blob", stream, content_length=3), Api.BlobPutResult)

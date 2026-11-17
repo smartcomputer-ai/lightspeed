@@ -28,14 +28,6 @@ export const METHOD_ACTIONS: Readonly<Record<string, CoreUniverseAction>> = {
   "bots/triggers/put": "manageBot",
   "bots/triggers/read": "read",
   "bots/triggers/secrets/read": "manageBot",
-  "channels/accounts/create": "configureResource",
-  "channels/accounts/delete": "configureResource",
-  "channels/accounts/list": "read",
-  "channels/accounts/put": "configureResource",
-  "channels/accounts/read": "read",
-  "channels/conversations/read": "read",
-  "channels/pairings/delete": "configureResource",
-  "channels/pairings/list": "read",
   "credentials/clients/create": "configureResource",
   "credentials/clients/delete": "configureResource",
   "credentials/clients/list": "read",
@@ -166,9 +158,7 @@ export const SESSION_TARGET_OPERATIONS: ReadonlySet<string> = new Set([
 
 /** Deployment and service methods: never called on a member's behalf. */
 export const UNMEMBERED_OPERATIONS: ReadonlySet<string> = new Set([
-  "channels/inbound/admit",
   "credentials/grants/lease",
-  "deployment/channels/accounts/list",
   "deployment/environment-provider-bindings/list",
   "deployment/environment-providers/bindings/delete",
   "deployment/environment-providers/bindings/put",

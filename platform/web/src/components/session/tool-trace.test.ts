@@ -55,7 +55,7 @@ describe("step rows", () => {
   it("marks a failed call with its first error line while the details stay closed", () => {
     const html = render(group([call({
       toolId: "channel.send", status: "failed", isError: true, error: "Delivery failed\nconnection reset",
-      display: { group: "message", verb: "Send", target: "Alice" }, durationMs: 12_000,
+      display: { group: "other", verb: "Send", target: "Alice" }, durationMs: 12_000,
     })], "completedWithErrors"));
     expect(text(html)).toBe("Send Alice failed · 12s Delivery failed");
     expect(html).toContain("text-destructive");

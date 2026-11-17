@@ -22,7 +22,6 @@ pub const ACTIVITY_BOT_READ_JSON_BLOB: &str = "BotActivities::read_json_blob";
 pub const ACTIVITY_BOT_EXECUTE_TOOL: &str = "BotActivities::execute_tool";
 pub const ACTIVITY_BOT_RECORD_OUTCOMES: &str = "BotActivities::record_outcomes";
 pub const ACTIVITY_BOT_RECORD_CLOSED: &str = "BotActivities::record_closed";
-pub const ACTIVITY_BOT_SEND_DELIVERY_RECEIPTS: &str = "BotActivities::send_delivery_receipts";
 pub const ACTIVITY_BOT_SEND_BOT_RECEIPTS: &str = "BotActivities::send_bot_receipts";
 pub const ACTIVITY_BOT_PUBLISH_DIRECTORY: &str = "BotActivities::publish_directory";
 pub const ACTIVITY_BOT_ADMIT_SCHEDULE_EVENT: &str = "BotActivities::admit_schedule_event";
@@ -170,14 +169,6 @@ impl BotActivities {
         _ctx: ActivityContext,
         _request: BotRecordClosedRequest,
     ) -> Result<BotRecordClosedResult, ActivityError> {
-        unimplemented!("workflow activity definition only")
-    }
-
-    #[activity(name = ACTIVITY_BOT_SEND_DELIVERY_RECEIPTS)]
-    pub async fn send_delivery_receipts(
-        _ctx: ActivityContext,
-        _request: BotSendDeliveryReceiptsRequest,
-    ) -> Result<BotReceiptsSent, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

@@ -3,6 +3,21 @@ use serde_json::{Value, json};
 use super::*;
 
 #[test]
+fn removed_channels_have_no_api_or_bot_trigger() {
+    for operation in crate::schema_export::full_method_manifest() {
+        assert!(!operation.method.starts_with("channels/"));
+        assert!(!operation.method.starts_with("deployment/channels/"));
+    }
+    assert!(
+        serde_json::from_value::<BotTriggerSpec>(json!({
+            "kind": "chat",
+            "accountId": "example"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
 fn mcp_feature_preserves_an_empty_server_list() {
     for value in [json!({}), json!({ "servers": [] })] {
         let feature: McpFeature = serde_json::from_value(value).expect("empty MCP feature");
@@ -431,7 +446,7 @@ fn integrated_session_creation_decodes_joined_completion_with_or_without_a_deadl
                 "definition": {
                     "workflowToolId": "send-message",
                     "schemaRevision": 1,
-                    "semanticType": "channels.receipt.v1",
+                    "semanticType": "plugin.receipt.v1",
                     "tool": {
                         "name": "message_send",
                         "kind": {"type": "function", "inputSchemaRef": "sha256:input"}
@@ -441,8 +456,8 @@ fn integrated_session_creation_decodes_joined_completion_with_or_without_a_deadl
                     "type": "bound",
                     "dispatch": "push",
                     "receiver": {
-                        "workflowId": "channels-1",
-                        "workflowKind": "channels.session"
+                        "workflowId": "plugin-1",
+                        "workflowKind": "plugin.session"
                     }
                 },
                 "completion": {

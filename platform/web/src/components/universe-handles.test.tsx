@@ -137,7 +137,7 @@ it("suggests a valid handle for a name that ends on a separator at the length li
 
 
 it("uses the returned handle for the cached universe and navigates to its new URL", async () => {
-  const universe: Universe = { id: "platform-id", organizationId: "team", lightspeedUniverseId: "runtime-id", name: "Name", handle: "old-handle", status: "active", createdAt: "2026-01-01", features: { bots: true, channels: true } };
+  const universe: Universe = { id: "platform-id", organizationId: "team", lightspeedUniverseId: "runtime-id", name: "Name", handle: "old-handle", status: "active", createdAt: "2026-01-01", features: { bots: true } };
   client.setQueryData(["universes"], [universe]);
   api.mockResolvedValue({ ...universe, handle: "new-handle" });
   function Location() { return <output data-location>{useLocation().pathname}</output>; }

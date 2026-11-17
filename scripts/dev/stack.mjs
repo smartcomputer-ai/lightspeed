@@ -217,10 +217,6 @@ function createPlan(profile, sourceEnv) {
   const envdWorkspace =
     sourceEnv.LIGHTSPEED_DEV_ENVD_CWD ?? path.join(repoRoot, ".lightspeed-dev", "envd", "workspace");
   const envdEndpoint = `ws://${envdListen.startsWith(":") ? "127.0.0.1" : envdListen.split(":")[0]}:${envdPort}/`;
-  const connectorNames = [];
-  if (sourceEnv.LIGHTSPEED_CHANNELS_CONNECTORS?.trim()) {
-    throw new TypeError("Channel connectors are disabled until Platform-scoped tokens are available.");
-  }
   const env = {
     ...sourceEnv,
     LIGHTSPEED_API_URL: platformApiUrl,
@@ -386,7 +382,6 @@ function createPlan(profile, sourceEnv) {
     processes: processes.map(processPlan => ({ ...processPlan, env: processEnvironment(processPlan.env, processPlan.name) })),
     ports: uniquePorts(ports),
     readiness,
-    connectors: connectorNames,
     envd: envdEnabled ? { endpoint: envdEndpoint, workspace: envdWorkspace } : null,
     infra: profile !== "demo" && profile !== "docs",
     tools:
@@ -683,7 +678,6 @@ function printPlan(plan) {
   for (const service of plan.readiness) {
     console.log(`ready: ${service.name} -> ${service.url ?? service.port}`);
   }
-  console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   const configurator = plan.processes.find(process => process.name === "configurator");
   if (configurator) console.log(`configurator upstream: ${configurator.env.LIGHTSPEED_CONFIGURATOR_MCP_API_URL}`);
   if (plan.processes.some(process => process.name === "platform")) console.log(`platform public URL: ${plan.env.LIGHTSPEED_PLATFORM_BASE_URL}`);
@@ -721,9 +715,6 @@ function printRunning(plan) {
   if (plan.profile === "docs") {
     console.log("  documentation http://127.0.0.1:4321/docs/");
   }
-  if (plan.connectors.length > 0) {
-    console.log(`  connectors    ${plan.connectors.join(", ")}`);
-  }
   console.log(
     plan.infra
       ? "\nPress Ctrl-C to stop host processes; infrastructure remains available.\n"
@@ -756,8 +747,8 @@ function printHelp() {
 The npm run dev commands are aliases for the same launcher.
 
 Profiles:
-  full      Infrastructure, Rust runtime (with Bots and Channels core),
-            Platform, web, and the Configurator MCP facade. Channel connectors are disabled.
+  full      Infrastructure, Rust runtime (with Bots),
+            Platform, web, and the Configurator MCP facade.
   platform  Infrastructure, Platform API, and web UI against the runtime at
             LIGHTSPEED_API_URL (start one with the runtime profile).
   runtime   Infrastructure and the migrated Rust runtime.

@@ -6,8 +6,7 @@ an admitted operation. That operation determines how arguments are interpreted,
 which adapter can execute them, and how the result returns to the session.
 
 A VFS file read can return immediately from an activity. A long-running job
-or delegated task needs its own workflow. Bots and channel conversations
-coordinate ongoing work around sessions. The agent loop records each request
+or delegated task needs its own workflow. Bots coordinate ongoing work around sessions. The agent loop records each request
 and result; adapters and controllers manage the work outside it.
 
 ## Give an operation a stable identity
@@ -221,25 +220,6 @@ A run may take as long as it needs, and the controller does not time it out. If 
 target session's workflow stops or the session closes, the controller moves that
 conversation to a next generation with no earlier context. An event whose run had not
 started is retried there once. An event whose run was under way ends as `runFailed`.
-
-### Channel conversations own chat delivery
-
-A channel conversation has a different responsibility. It tracks the activated
-chat and turns incoming messages into bot events. It receives the routed
-session's `message_*` tool calls and coordinates the provider delivery.
-It does not create sessions, start their runs, or own their lifecycle. The bot
-controller owns the agent session and reports delivery receipts to the
-conversation workflow.
-
-Telegram and WhatsApp connectors sit beyond that boundary. They normalize
-provider ingress and execute delivery, media, and typing activities. They do
-not read the database or select the bot that should receive a conversation.
-This keeps external chat transport replaceable without moving routing
-authority into the connector.
-
-See [Bots and triggers](../using-lightspeed/bots-and-triggers.md) and
-[Chat channels](../using-lightspeed/chat-channels.md) for the corresponding
-product setup.
 
 ## Reuse the same mechanism for delegation and compute
 

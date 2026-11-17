@@ -153,7 +153,6 @@ export type SessionLifecycleStatus = "new" | "open" | "closed";
 export type ProfileId = string;
 export type SessionOriginKind = "subagent";
 export type BotId = string;
-export type BotEventMediaKind = "image" | "audio" | "document";
 /**
  * What came of an event: the model's decision (`handled`, `deferred`,
  * `ignored`, `blocked`) or the system's when no decision was possible.
@@ -372,17 +371,10 @@ export type BotTriggerInput = {
    * and never stored. Fails closed.
    */
   filter?: string | null;
-  /**
-   * Chat triggers with `pairing: code`: set a specific pairing code
-   * (8–64 chars) instead of the server-minted one. Absent keeps the
-   * stored code, so an edit never has to send it back.
-   */
-  pairingCode?: string | null;
   route?: BotTriggerRoute | null;
   /**
    * Idle-close policy for sessions this trigger routes to: absent inherits the
-   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-   * chat default).
+   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
    */
   sessionCloseAfterMs?: number | null;
   triggerId: BotTriggerId;
@@ -442,21 +434,6 @@ export type BotTriggerInput1 =
   | {
       from?: BotId[] | null;
       kind: "bot";
-    }
-  | {
-      access?: ChatAccess;
-      /**
-       * The universe's channel account this connection serves.
-       */
-      accountId: string;
-      activation?: ChatActivation;
-      kind: "chat";
-      matchScope?: ChatScope | null;
-      pairing?: ChatPairing & string;
-      /**
-       * Lower wins among matching chat triggers on one account.
-       */
-      priority?: number;
     };
 export type WebhookPreset = "github";
 /**
@@ -521,13 +498,6 @@ export type PollSource =
       timeoutMs?: number | null;
     };
 export type PollHttpMethod = "GET" | "POST";
-export type ChatTurnAccess = "anyone" | "listed";
-export type ChatGroupActivation = "mention" | "always";
-export type ChatScope = "direct" | "group";
-/**
- * Whether a conversation must present a pairing code before it connects.
- */
-export type ChatPairing = "code" | "open";
 /**
  * The whole configuration of one trigger, replaced with an expected
  * revision.
@@ -561,8 +531,7 @@ export type BotTriggerView = {
   route?: BotTriggerRoute | null;
   /**
    * Idle-close policy for sessions this trigger routes to: absent inherits the
-   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-   * chat default).
+   * bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
    */
   sessionCloseAfterMs?: number | null;
   triggerId: BotTriggerId;
@@ -609,40 +578,11 @@ export type BotTriggerView1 =
   | {
       from?: BotId[] | null;
       kind: "bot";
-    }
-  | {
-      access?: ChatAccess;
-      /**
-       * The universe's channel account this connection serves.
-       */
-      accountId: string;
-      activation?: ChatActivation;
-      kind: "chat";
-      matchScope?: ChatScope | null;
-      pairing?: ChatPairing & string;
-      /**
-       * Lower wins among matching chat triggers on one account.
-       */
-      priority?: number;
     };
 /**
  * How an invocation of a bound workflow tool reaches its receiver.
  */
 export type BoundWorkflowToolDispatchInput = "pull" | "push";
-export type ChannelAccountId = string;
-export type ChannelProvider = string;
-export type ChannelMediaKind = "image" | "audio" | "document";
-/**
- * What the connector should do after admission. Pairing replies are the
- * connector's to send, in the provider's own voice.
- */
-export type ChannelInboundDecision =
-  "bound" | "paired" | "pairingRequired" | "pairingPending" | "unbound";
-/**
- * How a chat got its route: claimed by an open trigger's first contact,
- * or paired by code.
- */
-export type ChannelPairedVia = "open" | "code";
 /**
  * Bounded lifecycle telemetry for a session-owned code tool execution.
  */
@@ -808,7 +748,7 @@ export type ToolItemStatus =
  * the specifics. Unknown tools land in `Other`.
  */
 export type ToolCallDisplayGroup =
-  "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot" | "message";
+  "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot";
 /**
  * Why entries left the active context.
  */
@@ -1084,12 +1024,9 @@ export type MethodGroup =
   | "session/delete"
   | "blobs/put"
   | "environments"
-  | "channels"
-  | "channels/inbound"
   | "credentials"
   | "credentials/lease"
-  | "deployment/environment-providers"
-  | "deployment/channels";
+  | "deployment/environment-providers";
 /**
  * Where a method names the session it acts on, so a gate can decide per
  * session without a hand-written table. A creation method may name one that
@@ -1857,10 +1794,9 @@ export interface BotEventView {
   inReplyTo?: BotEventReplyRef | null;
   /**
    * Event kind as authored by the source (`github.push`,
-   * `schedule.fire`, `chat.message`, `bot.reply`).
+   * `schedule.fire`, `bot.reply`).
    */
   kind: string;
-  media?: BotEventMedia[];
   /**
    * When the source says it happened.
    */
@@ -1909,20 +1845,6 @@ export interface BotEventView {
 export interface BotEventReplyRef {
   bot: BotId;
   seq: number;
-}
-/**
- * A prepared attachment appended to the run input after the rendering;
- * bytes live in the CAS.
- */
-export interface BotEventMedia {
-  blobRef: string;
-  kind: BotEventMediaKind;
-  mime: string;
-  name?: string | null;
-  /**
-   * Optional prepared UTF-8 text; the source attachment remains in blobRef.
-   */
-  textRef?: string | null;
 }
 /**
  * The routed session an event was admitted to.
@@ -2762,31 +2684,6 @@ export interface PollHttpAuth {
    */
   scheme?: string | null;
 }
-/**
- * Who may take a turn and who may issue control commands, by provider
- * handle (Telegram user id, WhatsApp JID). Handle allowlists on the
- * trigger replace any platform membership lookup.
- */
-export interface ChatAccess {
-  /**
-   * Handles allowed to take a turn when `turn` is `listed`.
-   */
-  allowed?: string[];
-  /**
-   * Handles allowed to issue `/activation` and `/status`; empty denies
-   * control commands to everyone.
-   */
-  controllers?: string[];
-  turn?: ChatTurnAccess & string;
-}
-/**
- * When the bot acts in a conversation.
- */
-export interface ChatActivation {
-  group?: ChatGroupActivation | null;
-  mentionNames?: string[];
-  triggerPrefixes?: string[];
-}
 export interface BotCreateResponse {
   bot: BotView;
   /**
@@ -2799,22 +2696,13 @@ export interface BotCreateResponse {
   triggers?: BotTriggerView[];
 }
 /**
- * What lets an outsider reach a trigger: whoever holds the ingest path can
- * post events to the bot, and whoever holds the pairing code can connect a
- * conversation to it. Kept apart from [`BotTriggerView`] so that reading or
- * listing triggers never discloses either; only bot-management methods
- * return this.
+ * The webhook ingest path, available through bot-management methods.
  */
 export interface BotTriggerSecretsView {
   /**
    * Webhook triggers: the ingest path including its URL token.
    */
   ingestPath?: string | null;
-  /**
-   * Chat triggers with `pairing: code`: the code a conversation sends
-   * once to connect.
-   */
-  pairingCode?: string | null;
 }
 /**
  * Poll cursor state: Lightspeed-owned, operator-visible, reset by a spec
@@ -3069,11 +2957,6 @@ export interface BotTriggerSecretsReadResponse {
    * Webhook triggers: the ingest path including its URL token.
    */
   ingestPath?: string | null;
-  /**
-   * Chat triggers with `pairing: code`: the code a conversation sends
-   * once to connect.
-   */
-  pairingCode?: string | null;
 }
 /**
  * How the direct runtime connection authenticated. All runtime tokens have
@@ -3088,196 +2971,6 @@ export interface CallerAccess {
    * Configured token name, absent for unauthenticated access.
    */
   tokenName?: string | null;
-}
-export interface ChannelAccountCreateParams {
-  account: ChannelAccountInput;
-}
-/**
- * A provider account served by the connector host. Secret material stays
- * in the referenced grant; this document is routing identity and
- * operational configuration.
- */
-export interface ChannelAccountInput {
-  accountId: ChannelAccountId;
-  /**
-   * Retrievable credential grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  settings?: ChannelAccountSettings;
-}
-export interface ChannelAccountSettings {
-  /**
-   * WhatsApp: print the pairing QR code on the connector's terminal.
-   */
-  printQr?: boolean | null;
-  [k: string]: unknown;
-}
-export interface ChannelAccountCreateResponse {
-  account: ChannelAccountView;
-}
-/**
- * A provider account served by the connector host. Secret material stays
- * in the referenced grant; this document is routing identity and
- * operational configuration.
- */
-export interface ChannelAccountView {
-  accountId: ChannelAccountId;
-  createdAtMs: number;
-  /**
-   * Retrievable credential grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  revision: number;
-  settings?: ChannelAccountSettings;
-  updatedAtMs: number;
-}
-export interface ChannelAccountDeleteParams {
-  accountId: ChannelAccountId;
-}
-export interface ChannelAccountDeleteResponse {
-  account: ChannelAccountView;
-}
-export interface ChannelAccountListParams {
-  provider?: ChannelProvider | null;
-}
-export interface ChannelAccountListResponse {
-  accounts?: ChannelAccountView[];
-}
-export interface ChannelAccountPutParams {
-  account: ChannelAccountInput;
-  expectedRevision?: number | null;
-}
-export interface ChannelAccountPutResponse {
-  account: ChannelAccountView;
-}
-export interface ChannelAccountReadParams {
-  accountId: ChannelAccountId;
-}
-export interface ChannelAccountReadResponse {
-  account: ChannelAccountView;
-}
-export interface ChannelConversationReadParams {
-  accountId: ChannelAccountId;
-  chatId: string;
-  threadId?: string | null;
-}
-export interface ChannelConversationReadResponse {
-  /**
-   * Absent when no conversation workflow exists for the chat yet.
-   */
-  conversation?: ChannelConversationSnapshot | null;
-}
-/**
- * The conversation workflow's live snapshot, for debugging.
- */
-export interface ChannelConversationSnapshot {
-  activeDeliveries: number;
-  botId: string;
-  deliveredCount: number;
-  deniedInboundCount: number;
-  droppedInboundCount: number;
-  duplicateInboundCount: number;
-  emittedCount: number;
-  failedDeliveryCount: number;
-  inboundCount: number;
-  label: string;
-  protocolErrors?: string[];
-  triggerId: string;
-  typing: boolean;
-}
-/**
- * One normalized provider message, as the connector host hands it to the
- * core. Provider and account come from the admitting account.
- */
-export interface ChannelInbound {
-  chatId: string;
-  isDirect: boolean;
-  isReplyToBot: boolean;
-  media?: ChannelInboundMedia[];
-  mentionedBot: boolean;
-  messageId: string;
-  /**
-   * Provider handle of the sender (Telegram user id, WhatsApp JID).
-   */
-  senderId: string;
-  senderName: string;
-  text: string;
-  threadId?: string | null;
-  timestampMs: number;
-}
-/**
- * A provider-owned attachment reference; never bytes. The connector
- * downloads it when the conversation workflow asks (`prepare_channel_media`).
- */
-export interface ChannelInboundMedia {
-  byteSize?: number | null;
-  /**
-   * Provider file handle (a Telegram file id, a sealed WhatsApp locator).
-   */
-  fileId: string;
-  kind: ChannelMediaKind;
-  mime: string;
-  name?: string | null;
-}
-export interface ChannelInboundAdmitParams {
-  accountId: ChannelAccountId;
-  inbound: ChannelInbound;
-}
-export interface ChannelInboundAdmitResponse {
-  /**
-   * The bot serving the conversation, when decided.
-   */
-  botId?: BotId | null;
-  decision: ChannelInboundDecision;
-  triggerId?: BotTriggerId | null;
-}
-export interface ChannelPairingDeleteParams {
-  accountId: ChannelAccountId;
-  chatId: string;
-}
-export interface ChannelPairingDeleteResponse {
-  pairing: ChannelPairingView;
-}
-/**
- * A conversation's route: the chat is identified by `(accountId, chatId)`
- * and owned by the paired trigger.
- */
-export interface ChannelPairingView {
-  accountId: ChannelAccountId;
-  botId: BotId;
-  chatId: string;
-  pairedAtMs: number;
-  pairedVia: ChannelPairedVia;
-  triggerId: BotTriggerId;
-}
-export interface ChannelPairingListParams {
-  accountId?: ChannelAccountId | null;
-  botId?: BotId | null;
-}
-export interface ChannelPairingListResponse {
-  pairings?: ChannelPairingView[];
 }
 /**
  * A source the assistant cited, in the same shape for every provider. The
@@ -3959,43 +3652,6 @@ export interface DeletedUniverseView {
   requestedBy: Attribution;
   summary: unknown;
   universeId: string;
-}
-export interface DeploymentChannelAccountListParams {
-  /**
-   * Include disabled accounts; by default only enabled ones are listed.
-   */
-  includeDisabled?: boolean;
-  provider?: ChannelProvider | null;
-}
-export interface DeploymentChannelAccountListResponse {
-  accounts?: DeploymentChannelAccountView[];
-}
-/**
- * One channel account of any universe, for the connector host's discovery
- * pass.
- */
-export interface DeploymentChannelAccountView {
-  accountId: ChannelAccountId;
-  createdAtMs: number;
-  /**
-   * Retrievable credential grant holding the provider token (a Telegram bot
-   * token); the connector host leases it. Absent for providers whose
-   * credential is a session state directory (WhatsApp).
-   */
-  credentialGrantId?: string | null;
-  displayName: string;
-  enabled?: boolean;
-  provider: ChannelProvider;
-  /**
-   * Provider-native account identity: the Telegram bot username or
-   * numeric id, the WhatsApp phone number. Unique per universe and
-   * provider.
-   */
-  providerAccountId: string;
-  revision: number;
-  settings?: ChannelAccountSettings;
-  universeId: string;
-  updatedAtMs: number;
 }
 export interface DeploymentDeletedSessionsListParams {
   /**

@@ -120,14 +120,6 @@ export const MEMBER_OPERATIONS: ReadonlySet<string> = new Set([
   "bots/events/list",
   "bots/events/read",
   "bots/filters/test",
-  "channels/accounts/create",
-  "channels/accounts/put",
-  "channels/accounts/read",
-  "channels/accounts/list",
-  "channels/accounts/delete",
-  "channels/pairings/list",
-  "channels/pairings/delete",
-  "channels/conversations/read",
   "blobs/upload",
 ]);
 
@@ -153,6 +145,6 @@ export const NATIVE_OPERATIONS: ReadonlySet<string> = new Set([
 /** Service ingress, grants, purge and declared-universe administration have
  * separate trusted or audited entry points; none are public proxy routes. */
 export const DENIED_OPERATIONS: ReadonlySet<string> = new Set([
-  "credentials/grants/lease", "channels/inbound/admit", "deployment/channels/accounts/list",
+  "credentials/grants/lease",
   "deployment/sessions/deleted/list", "deployment/sessions/purge",
 ]);

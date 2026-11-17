@@ -1,12 +1,10 @@
 import pytest
 
 from lightspeed_ai.workflow import (
-    CHANNEL_CONNECTOR_ACTIVITIES,
     DELIVER_EMISSION_SIGNAL,
     REPLY_COMPLETION_KEY,
     WORKFLOW_CONTRACT_VECTORS,
     WORKFLOW_TOOL_RECOVERY_QUERY,
-    connector_task_queue,
     environment_job_workflow_id,
     invocation_cancellation_emission_id,
     parse_emission_envelope,
@@ -60,23 +58,6 @@ def test_splits_only_session_workflow_ids():
     assert (split.universe_id, split.session_id) == (expected["universeId"], expected["sessionId"])
     for other in ("no-separator", f"{INPUTS['universeId']}/a/b", "not-a-uuid/session", f"{INPUTS['universeId']}/"):
         assert split_workflow_id(other) is None
-
-
-def test_derives_the_connector_task_queue_of_a_channel_account():
-    channel = VECTORS["channels"]["inputs"]
-    expected = VECTORS["channels"]["connectorTaskQueue"]
-    assert connector_task_queue(channel["universeId"], channel["provider"], channel["accountId"]) == expected
-    assert connector_task_queue(
-        channel["universeId"].upper(), channel["provider"], channel["accountId"],
-    ) == expected
-    assert connector_task_queue(channel["universeId"], "whatsapp", channel["accountId"]) != expected
-    with pytest.raises(ValueError, match="UUID"):
-        connector_task_queue("not-a-uuid", "telegram", "tg-main")
-    assert CHANNEL_CONNECTOR_ACTIVITIES == {
-        "deliverChannelMessage": "deliverChannelMessage",
-        "prepareChannelMedia": "prepareChannelMedia",
-        "maintainChannelTyping": "maintainChannelTyping",
-    }
 
 
 def test_exports_manifest_owned_names_and_the_reply_convention():

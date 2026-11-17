@@ -69,15 +69,11 @@ universe without authenticating requests.
 | `sessions` | Session workflows and activities, including session and blob retention. |
 | `code` | Code Mode script execution. |
 | `bots` | Bot controllers, triggers, and bot activities. |
-| `channels` | Chat conversation workflows and core channel activities. |
 
-All six roles run by default. Set `LIGHTSPEED_ROLES` to run a subset.
+All five roles run by default. Set `LIGHTSPEED_ROLES` to run a subset.
 For example, `gateway,environment-gateway,sessions,code` serves sessions
-and Code Mode without workers for bots or channels. Platform starts with
-**Bots** and **Channels** switched off for each universe. Owners can enable
-them under **Settings → General → Features**. To use Telegram or WhatsApp,
-run the [channel connector host](../integrating-and-extending/channel-connectors.md)
-as a separate trusted service.
+and Code Mode without bot workers. Platform starts with **Bots** switched
+off for each universe. Owners can enable it under **Settings → General → Features**.
 
 Each worker role has a Temporal task queue. Give each deployment a distinct
 set of queues if you share a namespace. To run multiple environment gateways,

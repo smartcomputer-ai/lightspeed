@@ -118,15 +118,6 @@ Daemons reconnect through the shared address. Confirm what completed before
 retrying an interrupted operation. See
 [Networking and ingress](../environments/networking-and-ingress.md).
 
-### Partition connector accounts
-
-When you run more than one connector host, assign each account to only
-one host with `LIGHTSPEED_CONNECTOR_ACCOUNTS`. Preserve WhatsApp's
-authentication directory when moving an account, and stop the old runner
-before starting the new one. Check the new host's `/healthz` inventory
-and `/readyz` before sending a test message. See
-[Channel connectors](../integrating-and-extending/channel-connectors.md).
-
 ## Manage retention and blob collection
 
 Closing a session preserves its history. A universe Owner can set a

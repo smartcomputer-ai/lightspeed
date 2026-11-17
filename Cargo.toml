@@ -9,7 +9,6 @@ members = [
     "crates/api",
     "crates/credentials",
     "crates/bots",
-    "crates/channels",
     "crates/codemode",
     "crates/environments",
     "crates/harness",

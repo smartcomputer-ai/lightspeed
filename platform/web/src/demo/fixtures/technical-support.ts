@@ -1,6 +1,6 @@
 /// Technical Support: Northwind's developer-support team on Lightspeed.
 /// Northwind sells an events API; a helpdesk bot answers the developers
-/// integrating with it over Telegram and WhatsApp from a knowledge base,
+/// integrating with it through the support portal from a knowledge base,
 /// reproduces bug reports, and hands confirmed bugs to an engineering bot
 /// that files minimal-repro issues, while a status watcher and the on-call
 /// bot it pages keep the helpdesk briefed during incidents — bot federation
@@ -15,7 +15,6 @@ import {
   GPT,
   HOUR_MS,
   INTRODUCTION_PROMPT,
-  MESSAGE_TOOLS,
   MINUTE_MS,
   NOW,
   OPUS,
@@ -29,11 +28,8 @@ import {
   botSession,
   botState,
   briefPut,
-  channelAccount,
-  channelPairing,
-  chatMessage,
-  chatSent,
-  chatTrigger,
+  inboundMessage,
+  archivedReply,
   eventLog,
   github,
   hex,
@@ -42,8 +38,6 @@ import {
   mcpCall,
   mcpServer,
   member,
-  messageNoop,
-  messageSend,
   modelDiscovery,
   modelOption,
   modelProvider,
@@ -66,7 +60,6 @@ import {
   type ScriptedEvent,
   mcpDisplay,
 } from "./builders";
-import { TELEGRAM_ACCOUNT_ID, WHATSAPP_ACCOUNT_ID } from "./platform";
 
 export const TECHNICAL_SUPPORT_UNIVERSE_ID = "22222222-2222-4222-8222-222222222222";
 export const TECHNICAL_SUPPORT_HANDLE = "technical-support";
@@ -92,8 +85,8 @@ const GRANT = {
 const BOT = { helpdesk: "helpdesk", escalations: "escalations", statusWatch: "status-watch", oncall: "oncall" } as const;
 const STATUS_PAGE_URL = "https://status.northwind.dev";
 const STATUS_FEED_URL = `${STATUS_PAGE_URL}/api/v2/incidents.json`;
-const TELEGRAM_SOURCE = "telegram:northwind_support_bot";
-const WHATSAPP_SOURCE = "whatsapp:+4915112345678";
+const SUPPORT_SOURCE = "demo:support";
+const MIGRATION_SOURCE = "demo:migration";
 const REPO = "northwind/platform";
 
 /// Days back to the last Friday whose 15:00 digest has run (a week on Fridays).
@@ -443,7 +436,7 @@ const POSTMORTEM_FILES: Record<string, string> = {
 // Profiles
 // ---------------------------------------------------------------------------
 
-const SUPPORT_INSTRUCTIONS = `You are Northwind's developer-support engineer. You answer the developers integrating with the Northwind API on Telegram and WhatsApp on behalf of the support team.
+const SUPPORT_INSTRUCTIONS = `You are Northwind's developer-support engineer. You answer the developers integrating with the Northwind API in the support portal on behalf of the support team.
 
 Tone: precise, friendly, no filler. Short paragraphs; code in code blocks; one question at a time. Assume the developer is competent and busy.
 
@@ -580,34 +573,30 @@ const KB_AUTHOR_CONFIG: Record<string, unknown> = {
 // ---------------------------------------------------------------------------
 
 const DANA: Conversation = {
-  sessionId: `bot:v1:${BOT.helpdesk}:k-telegram-dm-dana-okafor`,
-  label: "telegram dm · Dana Okafor",
-  provider: "telegram",
-  source: TELEGRAM_SOURCE,
+  sessionId: `bot:v1:${BOT.helpdesk}:k-support-dana-okafor`,
+  label: "Support case · Dana Okafor",
+  source: SUPPORT_SOURCE,
   chatId: "5521",
   scope: "direct",
 };
 const DEVS_GROUP: Conversation = {
-  sessionId: `bot:v1:${BOT.helpdesk}:k-telegram-group-northwind-developers`,
-  label: "telegram group · Northwind Developers",
-  provider: "telegram",
-  source: TELEGRAM_SOURCE,
+  sessionId: `bot:v1:${BOT.helpdesk}:k-discussion-northwind-developers`,
+  label: "Support discussion · Northwind Developers",
+  source: SUPPORT_SOURCE,
   chatId: "-1002391",
   scope: "group",
 };
 const WA_DEV: Conversation = {
-  sessionId: `bot:v1:${BOT.helpdesk}:k-whatsapp-dm-447700900123`,
-  label: "whatsapp dm · +44 7700 900123",
-  provider: "whatsapp",
-  source: WHATSAPP_SOURCE,
-  chatId: "447700900123@s.whatsapp.net",
+  sessionId: `bot:v1:${BOT.helpdesk}:k-migration-447700900123`,
+  label: "Migration case · +44 7700 900123",
+  source: MIGRATION_SOURCE,
+  chatId: "migration-case",
   scope: "direct",
 };
 const LEE: Conversation = {
-  sessionId: `bot:v1:${BOT.helpdesk}:k-telegram-dm-lee-zhang`,
-  label: "telegram dm · Lee Zhang",
-  provider: "telegram",
-  source: TELEGRAM_SOURCE,
+  sessionId: `bot:v1:${BOT.helpdesk}:k-support-lee-zhang`,
+  label: "Support case · Lee Zhang",
+  source: SUPPORT_SOURCE,
   chatId: "7734",
   scope: "direct",
 };
@@ -627,47 +616,6 @@ function nw(argv: string[], output: string): DemoToolCall {
 // ---------------------------------------------------------------------------
 // Universe resources
 // ---------------------------------------------------------------------------
-
-/// The universe's channel accounts and the pairing rows binding each
-/// seeded conversation to the helpdesk's chat triggers.
-function seedChannels(universe: UniverseState): void {
-  channelAccount(universe, {
-    accountId: TELEGRAM_ACCOUNT_ID,
-    provider: "telegram",
-    providerAccountId: "northwind_support_bot",
-    displayName: "Northwind Developer Support (Telegram)",
-    credentialGrantId: "grant-telegram-bot-token",
-    createdAtMs: Date.parse("2026-07-02T10:00:00.000Z"),
-    updatedAtMs: Date.parse("2026-08-15T10:00:00.000Z"),
-  });
-  channelAccount(universe, {
-    accountId: WHATSAPP_ACCOUNT_ID,
-    provider: "whatsapp",
-    providerAccountId: "+4915112345678",
-    displayName: "Northwind Developer Support (WhatsApp)",
-    settings: { printQr: false },
-    createdAtMs: Date.parse("2026-07-20T10:00:00.000Z"),
-    updatedAtMs: Date.parse("2026-08-22T10:00:00.000Z"),
-  });
-  for (const conversation of [DEVS_GROUP, DANA, LEE]) {
-    channelPairing(universe, {
-      accountId: TELEGRAM_ACCOUNT_ID,
-      botId: BOT.helpdesk,
-      triggerId: "telegram",
-      chatId: conversation.chatId,
-      pairedVia: "open",
-      pairedAtMs: ago(12 * DAY_MS),
-    });
-  }
-  channelPairing(universe, {
-    accountId: WHATSAPP_ACCOUNT_ID,
-    botId: BOT.helpdesk,
-    triggerId: "whatsapp",
-    chatId: WA_DEV.chatId,
-    pairedVia: "code",
-    pairedAtMs: ago(9 * DAY_MS),
-  });
-}
 
 function seedMembers(store: DemoStore, universe: UniverseState): void {
   universe.members.push(
@@ -969,7 +917,7 @@ function seedIntegrations(universe: UniverseState): void {
 }
 
 // ---------------------------------------------------------------------------
-// Developer Helpdesk: developers over Telegram and WhatsApp
+// Developer Helpdesk: developers in the support portal
 // ---------------------------------------------------------------------------
 
 const HELPDESK_BRIEF = `Northwind developer helpdesk. Ask for request ids (req_…) before debugging; the first 12 characters of a key are enough. Current SDKs: v3 (Node 3.1.2, Python 3.1.0, Go 3.0.4); v2 gets security fixes only until 2026-12-31. Sandbox is on build 2026.08.27-3, production on 2026.08.20-1.
@@ -1018,7 +966,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
   const record = bot(universe, {
     botId: BOT.helpdesk,
     displayName: "Developer Helpdesk",
-    description: "Answers developers over Telegram and WhatsApp from the KB and Zendesk; escalates confirmed bugs.",
+    description: "Answers developers in the support portal from the KB and Zendesk; escalates confirmed bugs.",
     profileId: PROFILE.support,
     brief: HELPDESK_BRIEF,
     runsPerDay: 500,
@@ -1029,38 +977,6 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
   });
 
   const triggers = new Map([
-    [
-      "telegram",
-      chatTrigger(
-        BOT.helpdesk,
-        "telegram",
-        {
-          accountId: TELEGRAM_ACCOUNT_ID,
-          matchScope: null,
-          activation: { group: "mention", mentionNames: ["@northwind_support_bot"] },
-          access: { turn: "anyone" },
-          pairingCode: null,
-          priority: 10,
-        },
-        { createdAtMs: ago(44 * DAY_MS), updatedAtMs: ago(12 * DAY_MS) },
-      ),
-    ],
-    [
-      "whatsapp",
-      chatTrigger(
-        BOT.helpdesk,
-        "whatsapp",
-        {
-          accountId: WHATSAPP_ACCOUNT_ID,
-          matchScope: "direct",
-          activation: null,
-          access: { turn: "anyone" },
-          pairingCode: "NW-DEV-7K2Q",
-          priority: 20,
-        },
-        { createdAtMs: ago(30 * DAY_MS), deliver: { whenBusy: "queue" } },
-      ),
-    ],
     [
       "inbox",
       inboxTrigger(BOT.helpdesk, [BOT.oncall, BOT.escalations], {
@@ -1090,32 +1006,32 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
       data,
     });
   const e1 = notice("incident.notice", DELAY_NOTICE, at(9, 14, 8), "Brief updated with the delivery-delay notice; developers asking about missing webhooks get the queued-not-dropped wording", { incident: "#inc-0819", severity: 2, until: "15:00" });
-  const e2 = chatMessage(log, DEVS_GROUP, "telegram", "Sam R.", "@northwind_support_bot our webhook deliveries stopped arriving about 20 minutes ago, nothing changed on our side. EU account. Are they lost?", at(9, 14, 31), "handled", "Answered from the incident notice: queued, not dropped; retries carry the original delivery id");
-  const e3 = chatSent(log, DEVS_GROUP, SAM_DELAY_REPLY, at(9, 14, 32), e2.envelope.seq ?? 0);
+  const e2 = inboundMessage(log, DEVS_GROUP, "Sam R.", "@northwind_support_bot our webhook deliveries stopped arriving about 20 minutes ago, nothing changed on our side. EU account. Are they lost?", at(9, 14, 31), "handled", "Answered from the incident notice: queued, not dropped; retries carry the original delivery id");
+  const e3 = archivedReply(log, DEVS_GROUP, SAM_DELAY_REPLY, at(9, 14, 32), e2.envelope.seq ?? 0);
   const e4 = notice("incident.notice", ALL_CLEAR_NOTICE, at(9, 15, 23), "Brief reset: notice dropped; the 15:03–15:20 duplicate window kept for anyone asking today", { incident: "#inc-0819", severity: 2, resolved: true });
-  const e5 = chatMessage(log, DEVS_GROUP, "telegram", "Sam R.", "@northwind_support_bot getting 429s on GET /v3/events since this morning, maybe 1 in 5 requests. Team plan. Is something up?", at(5, 9, 48), "handled", "Rate-limit answer from /kb/rate-limits.md: Team window, honour Retry-After with jitter, webhooks instead of polling");
-  const e6 = chatSent(log, DEVS_GROUP, SAM_429_REPLY, at(5, 9, 49), e5.envelope.seq ?? 0);
-  const e7 = chatMessage(log, DEVS_GROUP, "telegram", "Nadia F.", "@Sam we hit the same thing last month, the SDK's autoThrottle option fixed it for us", at(5, 10, 3), "ignored", "Reply in the bot's thread but addressed to Sam, not the bot; stayed quiet");
-  const e8 = chatMessage(log, DANA, "telegram", "Dana Okafor", "Hi — my webhook signature check fails on every delivery. I'm computing HMAC-SHA256 over the JSON body with the signing secret from the dashboard but it never matches X-Northwind-Signature. Node 22, Express.", at(3, 14, 12), "handled", "Walked through raw-body hashing and the 300 s timestamp tolerance from /kb/webhook-delivery.md");
-  const e9 = chatSent(log, DANA, DANA_REPLY, at(3, 14, 13), e8.envelope.seq ?? 0);
+  const e5 = inboundMessage(log, DEVS_GROUP, "Sam R.", "@northwind_support_bot getting 429s on GET /v3/events since this morning, maybe 1 in 5 requests. Team plan. Is something up?", at(5, 9, 48), "handled", "Rate-limit answer from /kb/rate-limits.md: Team window, honour Retry-After with jitter, webhooks instead of polling");
+  const e6 = archivedReply(log, DEVS_GROUP, SAM_429_REPLY, at(5, 9, 49), e5.envelope.seq ?? 0);
+  const e7 = inboundMessage(log, DEVS_GROUP, "Nadia F.", "@Sam we hit the same thing last month, the SDK's autoThrottle option fixed it for us", at(5, 10, 3), "ignored", "Reply in the bot's thread but addressed to Sam, not the bot; stayed quiet");
+  const e8 = inboundMessage(log, DANA, "Dana Okafor", "Hi — my webhook signature check fails on every delivery. I'm computing HMAC-SHA256 over the JSON body with the signing secret from the dashboard but it never matches X-Northwind-Signature. Node 22, Express.", at(3, 14, 12), "handled", "Walked through raw-body hashing and the 300 s timestamp tolerance from /kb/webhook-delivery.md");
+  const e9 = archivedReply(log, DANA, DANA_REPLY, at(3, 14, 13), e8.envelope.seq ?? 0);
   log.add({
-    kind: "chat.message",
-    source: WHATSAPP_SOURCE,
+    kind: "request.received",
+    source: MIGRATION_SOURCE,
     at: at(2, 11, 6),
     summary: "+44 7700 900456 (11:06): hello is this northwind api support? my integration broke after the sdk update",
-    eventId: "chat:whatsapp:447700900456@s.whatsapp.net:1",
+    eventId: "request:unverified:1",
     session: null,
     outcome: "blocked",
-    detail: "Pairing required: +44 7700 900456 is not paired with this bot; the pairing hint was sent",
+    detail: "Support request blocked because the sender could not be verified",
     resolvedAfterMs: 1_000,
     data: { sender: { name: "+44 7700 900456" }, text: "hello is this northwind api support? my integration broke after the sdk update", isDirect: true },
   });
-  const e11 = chatMessage(log, WA_DEV, "whatsapp", "+44 7700 900123", "Upgrading to SDK v3 (node) and client.events.on('delivery', handler) is gone — TypeError: client.events.on is not a function. Do I have to rewrite all my listeners by hand?", at(2, 16, 40), "handled", "SDK v3 migration: events.on became subscribe(); codemod sent; ticket ZD-5102 opened");
-  const e12 = chatSent(log, WA_DEV, WA_SDK_REPLY, at(2, 16, 42), e11.envelope.seq ?? 0);
-  const e13 = chatMessage(log, LEE, "telegram", "Lee Zhang", "I think I found a bug. GET /v3/events?after=<cursor>&limit=50 returns the last item of the previous page again as the first item of the next page — every page boundary, not just once. Sandbox key.", ago(3 * HOUR_MS + 5 * MINUTE_MS), "handled", "Asked for two consecutive request ids, the cursor, and the client before escalating");
-  const e14 = chatSent(log, LEE, LEE_ASK, ago(3 * HOUR_MS + 4 * MINUTE_MS), e13.envelope.seq ?? 0);
-  const e15 = chatMessage(log, LEE, "telegram", "Lee Zhang", "Sure:\ncurl -H 'Authorization: Bearer nw_test_9f2c…' 'https://api.sandbox.northwind.dev/v3/events?limit=50' → req_01J6F3M8Q2, last item evt_test_8f3a2c\ncurl -H 'Authorization: Bearer nw_test_9f2c…' 'https://api.sandbox.northwind.dev/v3/events?limit=50&after=evt_test_8f3a2c' → req_01J6F3N1KD, first item evt_test_8f3a2c again\nPlain curl, no SDK. X-Northwind-Build: 2026.08.27-3.", ago(2 * HOUR_MS + 42 * MINUTE_MS), "handled", `Reproduced on sandbox build 2026.08.27-3: cursor inclusive at every boundary; ticket ZD-5107; escalated to escalations (#${SEQ.escalationsBug} there) with the repro`);
-  const e16 = chatSent(log, LEE, LEE_CONFIRMED, ago(2 * HOUR_MS + 41 * MINUTE_MS), e15.envelope.seq ?? 0);
+  const e11 = inboundMessage(log, WA_DEV, "+44 7700 900123", "Upgrading to SDK v3 (node) and client.events.on('delivery', handler) is gone — TypeError: client.events.on is not a function. Do I have to rewrite all my listeners by hand?", at(2, 16, 40), "handled", "SDK v3 migration: events.on became subscribe(); codemod sent; ticket ZD-5102 opened");
+  const e12 = archivedReply(log, WA_DEV, WA_SDK_REPLY, at(2, 16, 42), e11.envelope.seq ?? 0);
+  const e13 = inboundMessage(log, LEE, "Lee Zhang", "I think I found a bug. GET /v3/events?after=<cursor>&limit=50 returns the last item of the previous page again as the first item of the next page — every page boundary, not just once. Sandbox key.", ago(3 * HOUR_MS + 5 * MINUTE_MS), "handled", "Asked for two consecutive request ids, the cursor, and the client before escalating");
+  const e14 = archivedReply(log, LEE, LEE_ASK, ago(3 * HOUR_MS + 4 * MINUTE_MS), e13.envelope.seq ?? 0);
+  const e15 = inboundMessage(log, LEE, "Lee Zhang", "Sure:\ncurl -H 'Authorization: Bearer nw_test_9f2c…' 'https://api.sandbox.northwind.dev/v3/events?limit=50' → req_01J6F3M8Q2, last item evt_test_8f3a2c\ncurl -H 'Authorization: Bearer nw_test_9f2c…' 'https://api.sandbox.northwind.dev/v3/events?limit=50&after=evt_test_8f3a2c' → req_01J6F3N1KD, first item evt_test_8f3a2c again\nPlain curl, no SDK. X-Northwind-Build: 2026.08.27-3.", ago(2 * HOUR_MS + 42 * MINUTE_MS), "handled", `Reproduced on sandbox build 2026.08.27-3: cursor inclusive at every boundary; ticket ZD-5107; escalated to escalations (#${SEQ.escalationsBug} there) with the repro`);
+  const e16 = archivedReply(log, LEE, LEE_CONFIRMED, ago(2 * HOUR_MS + 41 * MINUTE_MS), e15.envelope.seq ?? 0);
   const e17 = log.add({
     kind: "bot.reply",
     source: `bot:${BOT.escalations}`,
@@ -1130,10 +1046,10 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     detail: `Relayed ${ISSUE_2287} to Lee; ZD-5107 stays open until the fix ships`,
     data: { status: "handled" },
   });
-  const e18 = chatSent(log, LEE, LEE_ISSUE, ago(2 * HOUR_MS + 37 * MINUTE_MS), e17.envelope.seq ?? 0);
+  const e18 = archivedReply(log, LEE, LEE_ISSUE, ago(2 * HOUR_MS + 37 * MINUTE_MS), e17.envelope.seq ?? 0);
 
   // Sessions: the main desk plus one thread per conversation.
-  const tools = [...BOT_TOOLS, EMIT_TOOL, ...MESSAGE_TOOLS];
+  const tools = [...BOT_TOOLS, EMIT_TOOL];
   const desk = controlledSession(store, universe, {
     id: main(BOT.helpdesk).sessionId,
     botId: BOT.helpdesk,
@@ -1148,7 +1064,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     user: INTRODUCTION_PROMPT,
     steps: [
       {
-        text: "I am the Developer Helpdesk, Northwind's developer-support engineer: I answer developers on Telegram (mentions in groups, every direct message) and on paired WhatsApp numbers, one thread per conversation. I read the knowledge base under /kb, work tickets through Zendesk, reproduce reports with the nw CLI in the support-tools environment, and take notices from on-call through my inbox.\n\nTwo things to check: the WhatsApp connection is still waiting for its phone, and my brief is empty — tell me the current SDK versions and any notice in effect and I will keep them there.",
+        text: "I am the Developer Helpdesk, Northwind's developer-support engineer: I answer developers in the support portal. I read the knowledge base under /kb, work tickets through Zendesk, reproduce reports with the nw CLI in the support-tools environment, and take notices from on-call through my inbox.\n\nMy brief is empty. Tell me the current SDK versions and any notice in effect and I will keep them there.",
       },
     ],
   });
@@ -1188,7 +1104,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     user: e2.prompt,
     steps: [
       {
-        tools: [messageSend(DEVS_GROUP, SAM_DELAY_REPLY, e2.envelope.seq ?? 0, e3.envelope.seq ?? 0)],
+
         text: `Answered from the incident notice in my brief (#${e3.envelope.seq}): queued, not dropped, dedupe by delivery id, update by 15:00. No ticket.`,
       },
     ],
@@ -1202,7 +1118,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
         tools: [vfsReadFile("/kb/rate-limits.md", KB_RATE_LIMITS)],
       },
       {
-        tools: [messageSend(DEVS_GROUP, SAM_429_REPLY, e5.envelope.seq ?? 0, e6.envelope.seq ?? 0)],
+
         text: `Quoted the Team window and burst bucket from /kb/rate-limits.md, Retry-After with jitter, and webhooks instead of polling (#${e6.envelope.seq}). Asked for one 429's request id.`,
       },
     ],
@@ -1212,7 +1128,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     user: e7.prompt,
     steps: [
       {
-        tools: [messageNoop(DEVS_GROUP, "addressed to Sam, not the bot")],
+
         text: "Nadia is answering Sam in my thread; nothing asked of me. Staying quiet.",
       },
     ],
@@ -1236,7 +1152,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
         tools: [vfsReadFile("/kb/webhook-delivery.md", KB_WEBHOOKS)],
       },
       {
-        tools: [messageSend(DANA, DANA_REPLY, e8.envelope.seq ?? 0, e9.envelope.seq ?? 0)],
+
         text: `Raw-body capture for Express plus the timestamp step from /kb/webhook-delivery.md (#${e9.envelope.seq}). Asked for a delivery id if it still fails; no ticket yet.`,
       },
     ],
@@ -1261,11 +1177,11 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
       },
       {
         tools: [
-          mcpCall("zendesk.create_ticket", { subject: "SDK v3: client.events.on removed — migration help", requester: "+44 7700 900123 (WhatsApp)", tags: ["sdk-v3", "whatsapp"], body: "Node SDK v3 upgrade; long-polling listener replaced by events.subscribe(). Sent the subscribe example and the codemod command." }, { id: 5102, url: "https://northwind-dev.zendesk.com/agent/tickets/5102" }),
+          mcpCall("zendesk.create_ticket", { subject: "SDK v3: client.events.on removed — migration help", requester: "+44 7700 900123", tags: ["sdk-v3", "sdk-migration"], body: "Node SDK v3 upgrade; long-polling listener replaced by events.subscribe(). Sent the subscribe example and the codemod command." }, { id: 5102, url: "https://northwind-dev.zendesk.com/agent/tickets/5102" }),
         ],
       },
       {
-        tools: [messageSend(WA_DEV, WA_SDK_REPLY, e11.envelope.seq ?? 0, e12.envelope.seq ?? 0)],
+
         text: `Sent the subscribe() replacement and the codemod command, with the other two v3 changes that usually bite (#${e12.envelope.seq}). ZD-5102 opened and tagged sdk-v3.`,
       },
     ],
@@ -1289,7 +1205,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
         tools: [vfsReadFile("/kb/escalation-matrix.md", KB_ESCALATION)],
       },
       {
-        tools: [messageSend(LEE, LEE_ASK, e13.envelope.seq ?? 0, e14.envelope.seq ?? 0)],
+
         text: `Asked Lee for two consecutive request ids, the cursor and the duplicated id, and the client (#${e14.envelope.seq}). Nothing to escalate until I can reproduce it.`,
       },
     ],
@@ -1308,12 +1224,12 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
       },
       {
         tools: [
-          mcpCall("zendesk.create_ticket", { subject: "Confirmed bug: /v3/events cursor inclusive at page boundaries (sandbox 2026.08.27-3)", requester: "Lee Zhang (Telegram)", tags: ["bug-confirmed", "api-events", "telegram"], body: BUG_CURSOR_SUMMARY }, { id: 5107, url: "https://northwind-dev.zendesk.com/agent/tickets/5107" }),
+          mcpCall("zendesk.create_ticket", { subject: "Confirmed bug: /v3/events cursor inclusive at page boundaries (sandbox 2026.08.27-3)", requester: "Lee Zhang", tags: ["bug-confirmed", "api-events", "support-portal"], body: BUG_CURSOR_SUMMARY }, { id: 5107, url: "https://northwind-dev.zendesk.com/agent/tickets/5107" }),
           botEmit({ to: BOT.escalations, kind: "bug.confirmed", summary: BUG_CURSOR_SUMMARY, data: BUG_CURSOR_DATA, reply: true }, SEQ.escalationsBug),
         ],
       },
       {
-        tools: [messageSend(LEE, LEE_CONFIRMED, e15.envelope.seq ?? 0, e16.envelope.seq ?? 0)],
+
         text: `Reproduced: sandbox pages are inclusive at the cursor (req_01J6F4C2VD → req_01J6F4C4RQ), production pages correctly. Severity 2 by the matrix. Opened ZD-5107, escalated to escalations (their #${SEQ.escalationsBug}) with the repro and a receipt requested, and told Lee with the skip-the-first-item workaround (#${e16.envelope.seq}).`,
       },
     ],
@@ -1323,7 +1239,7 @@ function seedHelpdesk(store: DemoStore, universe: UniverseState): void {
     user: e17.prompt,
     steps: [
       {
-        tools: [messageSend(LEE, LEE_ISSUE, e15.envelope.seq ?? 0, e18.envelope.seq ?? 0)],
+
         text: `Engineering filed ${ISSUE_2287}; relayed it to Lee (#${e18.envelope.seq}). ZD-5107 stays open until the fix ships.`,
       },
     ],
@@ -2028,7 +1944,7 @@ const WEEK34_DIGEST = `# Developer support digest — week 34 (Aug 17–23)
 
 | | Week 34 | Week 33 |
 | --- | --- | --- |
-| Conversations (Telegram + WhatsApp) | 143 | 118 |
+| Support conversations | 143 | 118 |
 | Tickets opened | 61 | 47 |
 | Median first response | 4 min | 5 min |
 | Escalations to engineering | 5 | 2 |
@@ -2306,15 +2222,14 @@ export function seedTechnicalSupport(store: DemoStore): void {
     role: "owner",
     createdAt: agoIso(49 * DAY_MS),
     responder,
-    // Bots and channels are off in a new universe; this one is built on them.
-    features: { bots: true, channels: true },
+    // Bots are enabled in this demo universe.
+    features: { bots: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);
   seedWorkspaces(store, universe);
   seedEnvironments(universe);
   seedIntegrations(universe);
-  seedChannels(universe);
   seedHelpdesk(store, universe);
   seedEscalations(store, universe);
   seedStatusWatch(store, universe);

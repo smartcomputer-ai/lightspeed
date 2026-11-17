@@ -17,7 +17,6 @@ for (const profile of ["full", "platform"]) {
       encoding: "utf8",
       env: {
         ...process.env,
-        LIGHTSPEED_CHANNELS_CONNECTORS: "",
         LIGHTSPEED_API_URL: "http://127.0.0.1:28080/runtime/api/v1",
         LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080",
         LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT: "28081",
@@ -28,7 +27,7 @@ for (const profile of ["full", "platform"]) {
     assert.match(output, /process: platform ->[^\n]+\n  after: runtime gateway -> http:\/\/127\.0\.0\.1:28080\/runtime\/health/);
   });
   test(`${profile} uses the browser origin for CLI approval regardless of the backend port`, () => {
-    const env = { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", PORT: "23000" };
+    const env = { ...process.env, PORT: "23000" };
     delete env.LIGHTSPEED_PLATFORM_BASE_URL;
     const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
       cwd: repoRoot, encoding: "utf8", env,
@@ -42,7 +41,7 @@ for (const profile of ["full", "platform"]) {
 test("an explicit development public origin remains authoritative", () => {
   const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "platform"], {
     cwd: repoRoot, encoding: "utf8",
-    env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_PLATFORM_BASE_URL: "https://dev.example.test" },
+    env: { ...process.env, LIGHTSPEED_PLATFORM_BASE_URL: "https://dev.example.test" },
   });
   assert.match(output, /^platform public URL: https:\/\/dev\.example\.test$/m);
 });
@@ -56,7 +55,7 @@ test("the development web origin forwards API and device approval to the configu
 
 for (const profile of ["full", "platform", "runtime", "demo", "infra"]) {
   test(`${profile} scopes development fixtures to the authenticated full profile`, () => {
-    const env = { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "authenticated" };
+    const env = { ...process.env, LIGHTSPEED_AUTH_MODE: "authenticated" };
     delete env.LIGHTSPEED_PLATFORM_DEV_SEED;
     const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
       cwd: repoRoot, encoding: "utf8", env,
@@ -68,7 +67,7 @@ for (const profile of ["full", "platform", "runtime", "demo", "infra"]) {
 test("full profile can opt out of development fixtures", () => {
   const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
     cwd: repoRoot, encoding: "utf8",
-    env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "authenticated",
+    env: { ...process.env, LIGHTSPEED_AUTH_MODE: "authenticated",
       LIGHTSPEED_PLATFORM_DEV_SEED: "false" },
   });
   assert.match(output, /development fixtures: false/);
@@ -160,22 +159,17 @@ test("readiness distinguishes a refused connection from an HTTP failure", { time
 });
 
 
-test("full profile routes Configurator through Platform and leaves connectors disabled", () => {
+test("full profile routes Configurator through Platform", () => {
   const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
-    cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "" },
+    cwd: repoRoot, encoding: "utf8", env: { ...process.env },
   });
   assert.match(output, /^process: configurator ->/m);
-  assert.doesNotMatch(output, /^process: connectors ->/m);
-  assert.match(output, /^configurator upstream: http:\/\/127\.0\.0\.1:3000\/api\/v1$/m);
-  assert.throws(() => execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
-    cwd: repoRoot, encoding: "utf8", stdio: "pipe", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "telegram" },
-  }), /Channel connectors are disabled/);
 });
 
 for (const profile of ["runtime", "full"]) {
   test(`${profile} preflights and waits for private HTTP API, public callbacks, and environment routes separately`, () => {
     const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
-      cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080", LIGHTSPEED_PUBLIC_BIND: "127.0.0.1:28082", LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: "127.0.0.1:28083" },
+      cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080", LIGHTSPEED_PUBLIC_BIND: "127.0.0.1:28082", LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: "127.0.0.1:28083" },
     });
     assert.match(output, /^ready: runtime gateway -> http:\/\/127\.0\.0\.1:28080\/health$/m);
     assert.match(output, /^ready: runtime public -> http:\/\/127\.0\.0\.1:28082\/health$/m);

@@ -19,11 +19,6 @@ from ._workflow_manifest import WORKFLOW_CONTRACT_MANIFEST
 from .workflow_types import EmissionEnvelope, PromiseResolution, WorkflowToolInvocation
 
 __all__ = [
-    "CHANNEL_CONNECTOR_ACTIVITIES",
-    "CHANNEL_CONVERSATION_WORKFLOW_KIND",
-    "CHANNEL_DELIVERY_RECEIPT_SIGNAL",
-    "CHANNEL_INBOUND_SIGNAL",
-    "CHANNEL_STATE_QUERY",
     "DELIVER_EMISSION_SIGNAL",
     "REPLY_COMPLETION_KEY",
     "WORKFLOW_CONTRACT_MANIFEST",
@@ -33,7 +28,6 @@ __all__ = [
     "WORKFLOW_TOOL_RECIPE_FORMAT_V1",
     "WORKFLOW_TOOL_RECOVERY_QUERY",
     "SessionWorkflowId",
-    "connector_task_queue",
     "environment_job_workflow_id",
     "invocation_cancellation_emission_id",
     "parse_emission_envelope",
@@ -56,12 +50,6 @@ WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX: str = (
 )
 REPLY_COMPLETION_KEY: str = WORKFLOW_CONTRACT_MANIFEST["workflowTools"]["replyCompletionKey"]
 
-CHANNEL_CONNECTOR_ACTIVITIES: dict[str, str] = WORKFLOW_CONTRACT_MANIFEST["channels"]["connectorActivities"]
-"""Activity names a connector host registers on its account task queues."""
-CHANNEL_CONVERSATION_WORKFLOW_KIND: str = WORKFLOW_CONTRACT_MANIFEST["channels"]["workflowKind"]
-CHANNEL_INBOUND_SIGNAL: str = WORKFLOW_CONTRACT_MANIFEST["channels"]["inboundSignal"]
-CHANNEL_STATE_QUERY: str = WORKFLOW_CONTRACT_MANIFEST["channels"]["stateQuery"]
-CHANNEL_DELIVERY_RECEIPT_SIGNAL: str = WORKFLOW_CONTRACT_MANIFEST["channels"]["deliveryReceiptSignal"]
 
 WORKFLOW_CONTRACT_VECTORS: dict[str, Any] = WORKFLOW_CONTRACT_MANIFEST["vectors"]
 """Known-answer vectors emitted by Rust and shared by every generated consumer."""
@@ -188,23 +176,6 @@ def environment_job_workflow_id(universe_id: str, environment_id: str, job_group
     _require_non_empty(environment_id, "environment_id")
     _require_non_empty(job_group_id, "job_group_id")
     return f"{_normalize_universe_id(universe_id)}/envjob-{environment_id}-{job_group_id}"
-
-
-def connector_task_queue(universe_id: str, provider: str, account_id: str) -> str:
-    """The task queue of the connector host serving one channel account.
-
-    It is `lightspeed-connector-{provider}-{24 hex}`, the hex being SHA-256
-    over the length-prefixed domain, hyphenated lowercase universe ID,
-    provider, and account ID. The core routes connector activities here, and
-    the host polls it.
-    """
-    _require_non_empty(provider, "provider")
-    _require_non_empty(account_id, "account_id")
-    digest = _framed_sha256([
-        WORKFLOW_CONTRACT_MANIFEST["channels"]["domains"]["connectorTaskQueue"].encode(),
-        _normalize_universe_id(universe_id).encode(), provider.encode(), account_id.encode(),
-    ])
-    return f"lightspeed-connector-{provider}-{digest[:24]}"
 
 
 def split_workflow_id(workflow_id: str) -> SessionWorkflowId | None:

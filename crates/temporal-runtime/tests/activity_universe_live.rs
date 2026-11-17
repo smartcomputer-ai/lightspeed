@@ -4,18 +4,14 @@ mod support;
 
 use std::{sync::Arc, time::Duration};
 
-use harness::{BlobRef, storage::BlobStore};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
-    worker::{ChannelWorkerActivities, WorkerActivities, worker_runtime},
+    worker::{WorkerActivities, worker_runtime},
 };
 use temporal_workflow::{
     EnvironmentJobCancelActivityRequest, SubagentLivenessActivityRequest, TemporalConnectionConfig,
-    WorkflowActivities,
-    channels::{ChannelActivities, ChatPutJsonBlobRequest},
-    connect_temporal,
+    WorkflowActivities, connect_temporal,
 };
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::protos::temporal::api::failure::v1::failure::FailureInfo;
@@ -29,7 +25,6 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProbeArgs {
     universe: Uuid,
-    marker: Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,8 +37,6 @@ pub struct Refusal {
 pub struct ProbeResult {
     environment: Option<Refusal>,
     subagent: Option<Refusal>,
-    channel: Option<Refusal>,
-    blob_ref: Option<String>,
 }
 
 fn refusal(error: ActivityExecutionError) -> Refusal {
@@ -110,25 +103,9 @@ impl ActivityUniverseProbe {
             .await
             .err()
             .map(refusal);
-        let (channel, blob_ref) = match ctx
-            .execute_local_activity(
-                ChannelActivities::put_json_blob,
-                ChatPutJsonBlobRequest {
-                    universe_id: args.universe,
-                    value: args.marker,
-                },
-                options(),
-            )
-            .await
-        {
-            Ok(result) => (None, Some(result.blob_ref)),
-            Err(error) => (Some(refusal(error)), None),
-        };
         Ok(ProbeResult {
             environment,
             subagent,
-            channel,
-            blob_ref,
         })
     }
 }
@@ -158,7 +135,6 @@ async fn activity_payloads_cannot_change_the_originating_universe() -> anyhow::R
         WorkerOptions::new(queue.clone())
             .register_workflow::<ActivityUniverseProbe>()?
             .register_activities(WorkerActivities::with_runtime(universes.clone()))
-            .register_activities(ChannelWorkerActivities::with_runtime(universes.clone()))
             .build(),
     )?;
     let shutdown = worker.shutdown_handle();
@@ -166,7 +142,6 @@ async fn activity_payloads_cannot_change_the_originating_universe() -> anyhow::R
     tokio::pin!(worker_future);
 
     let client_future = async {
-        let marker = json!({"activityOriginProbe": Uuid::new_v4().to_string()});
         let long_id = temporal_workflow::compose_environment_job_workflow_id(
             origin,
             &"e".repeat(128),
@@ -197,14 +172,12 @@ async fn activity_payloads_cannot_change_the_originating_universe() -> anyhow::R
             ),
             (long_id, origin, None),
         ];
-        let mut own_blob = None;
         for (workflow_id, requested, expected) in cases {
             let handle = client
                 .start_workflow(
                     ActivityUniverseProbe::run,
                     ProbeArgs {
                         universe: requested,
-                        marker: marker.clone(),
                     },
                     WorkflowStartOptions::new(queue.clone(), workflow_id)
                         .execution_timeout(Duration::from_secs(45))
@@ -215,7 +188,6 @@ async fn activity_payloads_cannot_change_the_originating_universe() -> anyhow::R
             for (adapter, failure) in [
                 ("environment job", result.environment),
                 ("subagent", result.subagent),
-                ("channel", result.channel),
             ] {
                 match expected {
                     Some(kind) => {
@@ -226,23 +198,7 @@ async fn activity_payloads_cannot_change_the_originating_universe() -> anyhow::R
                     None => assert!(failure.is_none(), "{adapter}: {failure:?}"),
                 }
             }
-            if expected.is_none() {
-                own_blob = result.blob_ref;
-            } else {
-                assert!(result.blob_ref.is_none());
-            }
         }
-        let blob = BlobRef::parse(own_blob.expect("same-universe write succeeds"))?;
-        let own = universes.state_for(origin).await?;
-        assert_eq!(
-            serde_json::from_slice::<Value>(&own.store.read_bytes(&blob).await?)?,
-            marker
-        );
-        let other = universes.state_for(foreign).await?;
-        assert!(matches!(
-            other.store.read_bytes(&blob).await,
-            Err(harness::storage::BlobStoreError::NotFound { .. })
-        ));
         anyhow::Ok(())
     };
     tokio::pin!(client_future);

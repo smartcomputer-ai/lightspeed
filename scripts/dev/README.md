@@ -26,7 +26,7 @@ development override table and the separate production component variables.
 - Temporal UI on `http://localhost:8233`
 
 The local Temporal namespace is registered with the search attributes
-`LightspeedUniverseId`, `LightspeedChannelProvider`, `LightspeedChannelAccountId`,
+`LightspeedUniverseId`,
 `LightspeedBotTriggerId`, and `LightspeedBotId`. No workflow attaches them at present.
 
 ## Unified supervisor
@@ -120,12 +120,6 @@ so Rust compilation must finish first. Platform creates its first local admin
 from the configured email and password when its own user table is empty. The
 supervisor logs this dependency wait and fails startup after 60 seconds if the
 runtime never becomes ready. `--plan` also shows startup dependencies.
-
-The launcher does not start connector hosts; `LIGHTSPEED_CHANNELS_CONNECTORS`
-must be empty. Standalone connector hosts are trusted infrastructure components
-with their own configured runtime token and Temporal access. Runtime tokens
-have full authority and are never passed to agents. Bots and Channels core
-remain runtime components.
 
 The runtime uses three separate listeners: private HTTP API at `127.0.0.1:18080`,
 public callbacks/webhooks at `127.0.0.1:18082`, and environment routes at
@@ -274,7 +268,7 @@ cargo run -p temporal-runtime
 With no flags, the `lightspeed-runtime` binary runs every role — the HTTP API
 `gateway`, the `environment-gateway` (worker environment routes, the public
 daemon registration routes, and the environment reconcilers), plus the
-`sessions`, `bots`, and `channels` Temporal workers, each on its own task
+`sessions`, `bots`, and `code` Temporal workers, each on its own task
 queue — in one process. Each worker runs its workflows and activities together.
 For split-role runs, select roles per shell; keep the `environment-gateway`
 role on exactly one process and point the others at it
@@ -282,7 +276,7 @@ through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` (locally `http://127.0.0.1:18083`):
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-runtime -- --roles sessions,bots,channels
+cargo run -p temporal-runtime -- --roles sessions,bots,code
 ```
 
 ```bash

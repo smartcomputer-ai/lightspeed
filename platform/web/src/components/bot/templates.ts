@@ -4,7 +4,6 @@
 export type TemplateTrigger =
   | { kind: "schedule"; name: string; cron: string; timezone: string; summary: string }
   | { kind: "webhook"; name: string; preset: "github" | null; perKey: boolean; filter?: string }
-  | { kind: "chat"; name: string }
   | { kind: "bot"; name: string };
 
 export interface BotTemplate {
@@ -82,11 +81,11 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     id: "chat-assistant",
     name: "Chat assistant",
     suggestedName: "Assistant",
-    description: "Answers people on a messaging account, one conversation per person.",
+    description: "Answers questions when someone starts a conversation.",
     brief:
-      "You are the team's assistant on chat. Answer directly and briefly, ask when something is ambiguous, and remember what each person told you earlier in the conversation. Never share one conversation's details in another.",
+      "You are the team's assistant. Answer directly and briefly, ask when something is ambiguous, and remember what each person told you earlier in the conversation. Never share one conversation's details in another.",
     features: { web: { fetch: {}, search: {} } },
-    triggers: [{ kind: "chat", name: "chat" }],
+    triggers: [],
     runsPerDay: null,
     selfConfig: false,
     emit: false,

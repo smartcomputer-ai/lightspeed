@@ -1,8 +1,8 @@
 # Tenant isolation and data protection
 
 A universe separates its Lightspeed records from other universes in the same
-deployment. Sessions, profiles, workspaces, bots, credentials, channel
-accounts, and environment records belong to a universe. An organization
+deployment. Sessions, profiles, workspaces, bots, credentials, and
+environment records belong to a universe. An organization
 groups universes for administration and access.
 
 For example, Acorn and Cedar can each have a workspace named

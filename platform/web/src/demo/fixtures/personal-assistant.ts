@@ -17,7 +17,6 @@ import {
   GPT,
   HOUR_MS,
   INTRODUCTION_PROMPT,
-  MESSAGE_TOOLS,
   MINUTE_MS,
   NOW,
   OPUS,
@@ -33,11 +32,8 @@ import {
   botEmit,
   botSession,
   botState,
-  channelAccount,
-  channelPairing,
-  chatMessage,
-  chatSent,
-  chatTrigger,
+  inboundMessage,
+  archivedReply,
   clockLabel,
   eventLog,
   hex,
@@ -47,7 +43,6 @@ import {
   mcpCall,
   mcpServer,
   member,
-  messageSend,
   modelDiscovery,
   modelOption,
   modelProvider,
@@ -73,7 +68,6 @@ import {
   type ScriptedEvent,
   mcpDisplay,
 } from "./builders";
-import { TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
 import { PRESENTATION_FILES } from "./personal-assistant-presentations";
 
 export const PERSONAL_ASSISTANT_UNIVERSE_ID = "33333333-3333-4333-8333-333333333333";
@@ -99,18 +93,18 @@ const GRANT = {
   anthropic: "grant-anthropic-key",
 } as const;
 const BOT = { assistant: "assistant", research: "research", metrics: "metrics" } as const;
-const TELEGRAM_SOURCE = "telegram:ada_assistant_bot";
-const WHATSAPP_SOURCE = "whatsapp:+4917612345678";
+const ASSISTANT_THREAD_SOURCE = "demo:assistant";
+const TRAVEL_THREAD_SOURCE = "demo:travel";
 const WORKSPACE_MCP_URL = "https://workspace.mcp.google.example";
 const STRIPE_WEBHOOK_TOKEN = "c7e2a94f10b64d3e8f5a2c1b9d0e7f36";
 
-/// The assistant's threads: the Telegram one is keyed `ada`, the same key
+/// The assistant's main work thread is keyed `ada`, the same key
 /// the schedule and inbox triggers route with, so the brief, the heartbeat,
 /// the prep notes, and the research receipts all land where Ada reads them.
 const SESSION = {
   assistantMain: `bot:v1:${BOT.assistant}`,
-  telegram: `bot:v1:${BOT.assistant}:k-ada`,
-  whatsapp: `bot:v1:${BOT.assistant}:k-whatsapp-dm-ada-demo`,
+  assistantThread: `bot:v1:${BOT.assistant}:k-ada`,
+  travelThread: `bot:v1:${BOT.assistant}:k-travel`,
   researchMain: `bot:v1:${BOT.research}`,
   researchPricing: `bot:v1:${BOT.research}:e-${hex("research:pricing", 8)}`,
   researchNudge: `bot:v1:${BOT.research}:e-${hex("research:nudge", 8)}`,
@@ -122,20 +116,18 @@ const SESSION = {
   hiring: "session-pa-hiring-pipeline",
 } as const;
 
-const TELEGRAM: Conversation = {
-  sessionId: SESSION.telegram,
-  label: "telegram dm · Ada Demo",
-  provider: "telegram",
-  source: TELEGRAM_SOURCE,
+const ASSISTANT_THREAD: Conversation = {
+  sessionId: SESSION.assistantThread,
+  label: "Assistant requests",
+  source: ASSISTANT_THREAD_SOURCE,
   chatId: "88213",
   scope: "direct",
 };
-const WHATSAPP: Conversation = {
-  sessionId: SESSION.whatsapp,
-  label: "whatsapp dm · Ada Demo",
-  provider: "whatsapp",
-  source: WHATSAPP_SOURCE,
-  chatId: "4915209876543@s.whatsapp.net",
+const TRAVEL_THREAD: Conversation = {
+  sessionId: SESSION.travelThread,
+  label: "Travel planning",
+  source: TRAVEL_THREAD_SOURCE,
+  chatId: "travel",
   scope: "direct",
 };
 
@@ -245,8 +237,7 @@ This workspace is the assistant's memory. It is mounted read-write at /memory in
 ## What wakes it
 | Trigger | When | What it does |
 | --- | --- | --- |
-| \`telegram\`, \`whatsapp\` | a message from Ada's paired phone | replies in that thread with \`message_send\`; one thread per chat, kept forever |
-| \`morning-brief\` | weekdays 07:00 | calendar, inbox highlights, prep needed, travel → the Telegram thread and /briefs |
+| \`morning-brief\` | weekdays 07:00 | calendar, inbox highlights, prep needed, travel → the assistant thread and /briefs |
 | \`heartbeat\` | every 30 min, 08:00–22:00 weekdays | reads the checklist below and usually decides there is nothing worth saying |
 | \`evening-wrap\` | weekdays 17:30 | what got done, what carried over, tomorrow's first meeting |
 | \`friday-review\` | Fridays 16:00 | the week: commitments kept and slipped, people to follow up, next week's shape |
@@ -299,7 +290,7 @@ Ada Demo — founder and CEO of Lumen, B2B workflow software, ~40 people, HQ Mun
 - Runway 19 months at current burn (finance memo Aug 20).
 
 ## Assistant setup
-- Reached on Telegram and WhatsApp from Ada's phone only; the Telegram thread is where briefs and prep notes go.
+- Use the assistant thread for briefs and prep notes.
 - Mac mini at home runs scripts and a headless browser for anything without an API (hotels, trains, the summit site).
 `;
 
@@ -513,7 +504,7 @@ Runs on every \`calendar-poll\` event and whenever Ada asks to prep a meeting.
 5. If a document is expected (a deck, a cut, a memo): where it is and whether it is done.
 
 ## Send it
-Six lines on the phone, \`message_send\` in the Telegram thread. Then mark the calendar event prepped (\`calendar.update_event\` with the private extended property \`prepped=true\`) so the poll does not deliver it again, and add a \`[x]\` line to today's log.
+Six lines on the phone, \`message_send\` in the assistant thread. Then mark the calendar event prepped (\`calendar.update_event\` with the private extended property \`prepped=true\`) so the poll does not deliver it again, and add a \`[x]\` line to today's log.
 `;
 
 const SKILL_TRAVEL = `---
@@ -1313,7 +1304,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
   const record = bot(universe, {
     botId: BOT.assistant,
     displayName: "Ada's Assistant",
-    description: "Ada's always-on assistant on Telegram and WhatsApp: briefs, inbox triage with drafts for approval, meeting prep, calendar, travel, its own memory; asks research and metrics for what it cannot do itself.",
+    description: "Ada's always-on assistant: briefs, inbox triage with drafts for approval, meeting prep, calendar, travel, its own memory; asks research and metrics for what it cannot do itself.",
     profileId: PROFILE.assistant,
     brief: ASSISTANT_BRIEF,
     runsPerDay: 150,
@@ -1326,38 +1317,6 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
 
   const toAda = { route: { policy: "perKey" as const, key: "ada" }, deliver: { whenBusy: "queue" as const }, sessionCloseAfterMs: 0 };
   const triggers = new Map([
-    [
-      "telegram",
-      chatTrigger(
-        BOT.assistant,
-        "telegram",
-        {
-          accountId: TELEGRAM_ADA_ACCOUNT_ID,
-          matchScope: "direct",
-          activation: null,
-          access: { turn: "anyone" },
-          pairingCode: "ADA-7Q2K",
-          priority: 10,
-        },
-        { createdAtMs: ago(41 * DAY_MS), updatedAtMs: ago(33 * DAY_MS), deliver: { whenBusy: "queue" } },
-      ),
-    ],
-    [
-      "whatsapp",
-      chatTrigger(
-        BOT.assistant,
-        "whatsapp",
-        {
-          accountId: WHATSAPP_ADA_ACCOUNT_ID,
-          matchScope: "direct",
-          activation: null,
-          access: { turn: "anyone" },
-          pairingCode: "ADA-WA-3M8P",
-          priority: 20,
-        },
-        { createdAtMs: ago(26 * DAY_MS), updatedAtMs: ago(25 * DAY_MS), deliver: { whenBusy: "queue" } },
-      ),
-    ],
     [
       "heartbeat",
       scheduleTrigger(
@@ -1436,7 +1395,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
   ]);
 
   // The numbered log, oldest first: last Monday's numbers, a billing alert,
-  // the Berlin trip on WhatsApp, yesterday's wrap, then today from 07:00.
+  // the Berlin trip, yesterday's wrap, then today from 07:00.
   const log = eventLog(store, BOT.assistant);
   const fromBot = (sender: string, kind: string, summary: string, atMs: number, detail: string, data: unknown, resolvedAfterMs = 60_000): ScriptedEvent =>
     log.add({
@@ -1445,7 +1404,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       at: atMs,
       summary,
       eventId: `bot:${sender}:${hex(`${kind}:${summary}`, 24)}`,
-      session: TELEGRAM,
+      session: ASSISTANT_THREAD,
       sender,
       hops: 1,
       outcome: "handled",
@@ -1460,7 +1419,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       at: atMs,
       summary,
       eventId: `schedule:${name}:${atIso(atMs)}`,
-      session: TELEGRAM,
+      session: ASSISTANT_THREAD,
       outcome,
       detail,
       resolvedAfterMs,
@@ -1468,18 +1427,18 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     });
 
   const e1 = fromBot(BOT.metrics, "metrics.weekly", METRICS_WEEKLY_SUMMARY, at(MONDAY_DAYS_AGO, 7, 31), `Relayed the six numbers to Ada (#2); MEMORY.md company facts updated`, METRICS_WEEKLY_DATA);
-  const e2 = chatSent(log, TELEGRAM, DIGEST_TEXT, at(MONDAY_DAYS_AGO, 7, 33), null);
+  const e2 = archivedReply(log, ASSISTANT_THREAD, DIGEST_TEXT, at(MONDAY_DAYS_AGO, 7, 33), null);
   const e3 = fromBot(BOT.metrics, "billing.alert", BILLING_ALERT_SUMMARY, at(2, 9, 12), "Told Ada (#4): Dana's card, finance already on it in #customer-acme since 08:50; nothing for Ada unless the last attempt fails", BILLING_ALERT_DATA);
-  const e4 = chatSent(log, TELEGRAM, BILLING_TEXT, at(2, 9, 13), null);
-  const e5 = chatMessage(log, WHATSAPP, "whatsapp", "Ada Demo", "Berlin, 15–16 Sep, near the venue. Train not plane. Two options please.", at(2, 12, 40), "handled", "Two options from trains.py and the hotel search on the Mac mini: A Hotel Luc €189 with breakfast, B Wilde Aparthotel €164; same train both ways");
-  const e6 = chatSent(log, WHATSAPP, OPTIONS_TEXT, at(2, 12, 43), e5.envelope.seq ?? 0);
-  const e7 = chatMessage(log, WHATSAPP, "whatsapp", "Ada Demo", "A. Book it.", at(2, 12, 51), "handled", "Booked A: train DB-7K3QP2 and Hotel Luc LUC-48213, €367; two calendar events; MEMORY.md updated");
-  const e8 = chatSent(log, WHATSAPP, BOOKED_TEXT, at(2, 12, 53), e7.envelope.seq ?? 0);
+  const e4 = archivedReply(log, ASSISTANT_THREAD, BILLING_TEXT, at(2, 9, 13), null);
+  const e5 = inboundMessage(log, TRAVEL_THREAD, "Ada Demo", "Berlin, 15–16 Sep, near the venue. Train not plane. Two options please.", at(2, 12, 40), "handled", "Two options from trains.py and the hotel search on the Mac mini: A Hotel Luc €189 with breakfast, B Wilde Aparthotel €164; same train both ways");
+  const e6 = archivedReply(log, TRAVEL_THREAD, OPTIONS_TEXT, at(2, 12, 43), e5.envelope.seq ?? 0);
+  const e7 = inboundMessage(log, TRAVEL_THREAD, "Ada Demo", "A. Book it.", at(2, 12, 51), "handled", "Booked A: train DB-7K3QP2 and Hotel Luc LUC-48213, €367; two calendar events; MEMORY.md updated");
+  const e8 = archivedReply(log, TRAVEL_THREAD, BOOKED_TEXT, at(2, 12, 53), e7.envelope.seq ?? 0);
   const e9 = schedule("heartbeat", HEARTBEAT_SUMMARY, at(1, 14, 30), "ignored", "Nothing new since 14:00; 1:1 Priya in progress; next prep due 15:20 (Acme call)", 12_000);
   const e10 = schedule("evening-wrap", EVENING_SUMMARY, at(1, 17, 30), "handled", `Wrap sent (#11): 3 done, 2 carried; Kestrel at 48 h without a reply → nudge to draft in the morning; tomorrow's first meeting ${clockLabel(CAL.standup)} standup`, 70_000);
-  const e11 = chatSent(log, TELEGRAM, WRAP_TEXT, at(1, 17, 31), null);
+  const e11 = archivedReply(log, ASSISTANT_THREAD, WRAP_TEXT, at(1, 17, 31), null);
   const e12 = schedule("morning-brief", MORNING_SUMMARY, t(7, 0), "handled", `Brief sent (#13); Kestrel nudge drafted, not sent; /briefs/${TODAY}-morning.md and today's log written`, 95_000);
-  const e13 = chatSent(log, TELEGRAM, MORNING_TEXT, t(7, 2), null);
+  const e13 = archivedReply(log, ASSISTANT_THREAD, MORNING_TEXT, t(7, 2), null);
   const e14 = schedule("heartbeat", HEARTBEAT_SUMMARY, t(8, 30), "ignored", `Brief went out at ${hm(7, 2)}; nothing past its time; Northlight prep due ${hm(9, 50)}`, 11_000);
   const e15 = log.add({
     kind: "calendar.upcoming",
@@ -1487,15 +1446,15 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     at: t(9, 50),
     summary: `Investor sync — Northlight Ventures starts in 40 min (${clockLabel(CAL.northlight)}–${clockLabel(CAL.northlight + 45 * MINUTE_MS)}): Elena Marsh, Sam Okoro, Ada Demo · Google Meet`,
     eventId: "poll:calendar-poll:evt_northlight_sync",
-    session: TELEGRAM,
+    session: ASSISTANT_THREAD,
     outcome: "handled",
     detail: "Prep sent (#16) from people/investors.md and the last Northlight thread; event marked prepped",
     resolvedAfterMs: 55_000,
     data: { id: "evt_northlight_sync", summary: "Investor sync — Northlight Ventures", start: atIso(CAL.northlight), end: atIso(CAL.northlight + 45 * MINUTE_MS), attendees: ["elena@northlight.example", "sam@northlight.example", "ada@lumen.example"], startsInMinutes: 40, prepped: false, hangoutLink: "https://meet.google.example/nlv-sync" },
   });
-  const e16 = chatSent(log, TELEGRAM, PREP_TEXT, t(9, 51), null);
-  const e17 = chatMessage(log, TELEGRAM, "telegram", "Ada Demo", "Move my 2pm with Priya to tomorrow, same slot. And get me competitor pricing for the Series A deck by lunch — Beacon and Orbit at least.", t(10, 6), "handled", `Priya's 1:1 moved to tomorrow ${clockLabel(CAL.priya)} (internal, no yes needed; invite updated); research asked for the pricing (#${SEQ.researchRequest} there), receipt requested`);
-  const e18 = chatSent(log, TELEGRAM, RESCHEDULE_TEXT, t(10, 8), e17.envelope.seq ?? 0);
+  const e16 = archivedReply(log, ASSISTANT_THREAD, PREP_TEXT, t(9, 51), null);
+  const e17 = inboundMessage(log, ASSISTANT_THREAD, "Ada Demo", "Move my 2pm with Priya to tomorrow, same slot. And get me competitor pricing for the Series A deck by lunch — Beacon and Orbit at least.", t(10, 6), "handled", `Priya's 1:1 moved to tomorrow ${clockLabel(CAL.priya)} (internal, no yes needed; invite updated); research asked for the pricing (#${SEQ.researchRequest} there), receipt requested`);
+  const e18 = archivedReply(log, ASSISTANT_THREAD, RESCHEDULE_TEXT, t(10, 8), e17.envelope.seq ?? 0);
   const e19 = schedule("heartbeat", HEARTBEAT_SUMMARY, t(11, 0), "handled", `Research #${SEQ.researchRequest} pending 53 min with no receipt: nudged (#${SEQ.researchNudge} there). Nothing for Ada.`, 14_000);
   const e20 = receipt(log, {
     from: BOT.research,
@@ -1504,33 +1463,33 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     summary: "Wrote /memory/research/competitor-pricing.md: Lumen vs Beacon Analytics vs Orbit Insights — tiers, usage pricing, discounts, last price change; two gaps named",
     at: t(11, 9),
     hops: 2,
-    session: TELEGRAM,
+    session: ASSISTANT_THREAD,
     outcome: "handled",
     detail: "Read the file; sent Ada the three-line reading (#21); today's log updated",
   });
-  const e21 = chatSent(log, TELEGRAM, RESEARCH_TEXT, t(11, 10), null);
+  const e21 = archivedReply(log, ASSISTANT_THREAD, RESEARCH_TEXT, t(11, 10), null);
   const e22 = log.add({
     kind: "mail.important",
     source: "poll:inbox-poll",
     at: t(11, 17),
     summary: `Elena Marsh <elena@northlight.example> · Re: today's sync — follow-ups · "${ELENA_SNIPPET.slice(0, 118)}…"`,
     eventId: `poll:inbox-poll:${ELENA_MAIL_ID}`,
-    session: TELEGRAM,
+    session: ASSISTANT_THREAD,
     outcome: "handled",
     detail: "Needs reply: drafted the reply with the cohort cut attached and three references from people/investors.md; asked Ada to say send it (#23)",
     resolvedAfterMs: 75_000,
     data: { id: ELENA_MAIL_ID, threadId: ELENA_THREAD_ID, from: "Elena Marsh <elena@northlight.example>", to: "ada@lumen.example", subject: "Re: today's sync — follow-ups", snippet: ELENA_SNIPPET, labels: ["IMPORTANT", "INBOX", "UNREAD"], fromSelf: false, receivedAt: atIso(t(11, 16)) },
   });
-  const e23 = chatSent(log, TELEGRAM, TRIAGE_TEXT, t(11, 18), null);
-  const e24 = chatMessage(log, TELEGRAM, "telegram", "Ada Demo", "send it", t(11, 24), "handled", "Sent the draft to Elena (gmail.send); commitments.md row done; investors.md and today's log updated");
-  const e25 = chatSent(log, TELEGRAM, SENT_TEXT, t(11, 25), e24.envelope.seq ?? 0);
-  const e26 = chatMessage(log, TELEGRAM, "telegram", "Ada Demo", "what did I promise Priya this week?", t(13, 40), "handled", "Three rows from commitments.md (offer decision Sep 3, rota review done, Kestrel CTO intro Sep 5) plus the moved 1:1; the rota check confirmed in Slack; file cited");
-  const e27 = chatSent(log, TELEGRAM, PROMISE_TEXT, t(13, 41), e26.envelope.seq ?? 0);
+  const e23 = archivedReply(log, ASSISTANT_THREAD, TRIAGE_TEXT, t(11, 18), null);
+  const e24 = inboundMessage(log, ASSISTANT_THREAD, "Ada Demo", "send it", t(11, 24), "handled", "Sent the draft to Elena (gmail.send); commitments.md row done; investors.md and today's log updated");
+  const e25 = archivedReply(log, ASSISTANT_THREAD, SENT_TEXT, t(11, 25), e24.envelope.seq ?? 0);
+  const e26 = inboundMessage(log, ASSISTANT_THREAD, "Ada Demo", "what did I promise Priya this week?", t(13, 40), "handled", "Three rows from commitments.md (offer decision Sep 3, rota review done, Kestrel CTO intro Sep 5) plus the moved 1:1; the rota check confirmed in Slack; file cited");
+  const e27 = archivedReply(log, ASSISTANT_THREAD, PROMISE_TEXT, t(13, 41), e26.envelope.seq ?? 0);
   const e28 = schedule("heartbeat", HEARTBEAT_SUMMARY, t(14, 30), "ignored", `Nothing past its time; Elena's reply went ${hm(11, 25)}; research landed; next prep ${hm(15, 20)} (candidate debrief)`, 13_000);
 
-  // Sessions: the main one, the Telegram thread (keyed `ada`, where the
-  // schedules land too), and the WhatsApp thread.
-  const threadTools = [...BOT_TOOLS, ...SELF_CONFIG_TOOLS, EMIT_TOOL, ...MESSAGE_TOOLS];
+  // Sessions: the main one, the assistant thread (keyed `ada`, where schedules land),
+  // and the travel thread.
+  const threadTools = [...BOT_TOOLS, ...SELF_CONFIG_TOOLS, EMIT_TOOL];
   const mainSession = controlledSession(store, universe, {
     id: SESSION.assistantMain,
     botId: BOT.assistant,
@@ -1546,39 +1505,39 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     steps: [
       {
         tools: [vfsReadFile("/memory/README.md", MEMORY_README)],
-        text: "I am Ada's assistant. I wake on her Telegram and WhatsApp messages (one thread each, kept), on a 30-minute heartbeat during the day where I check the list in /memory/README.md and usually say nothing, on the morning brief, the evening wrap, and the Friday review, and on two polls — important unread mail and meetings starting within 40 minutes — plus whatever research and metrics send me. I read and write my memory under /memory, follow the playbooks under /skills, use Gmail and Calendar and Slack, and run scripts on the Mac mini at home. I draft mail and never send it without \"send it\"; I move internal meetings on my own and ask for anything with an outsider.\n\nTwo things to confirm: the WhatsApp number is not paired yet, and preferences.md has no quiet-hours line — I will assume 23:00–08:00 until you say otherwise.",
+        text: "I am Ada's assistant. I wake on her requests, on a 30-minute heartbeat during the day where I check the list in /memory/README.md and usually say nothing, on the morning brief, the evening wrap, and the Friday review, and on two polls — important unread mail and meetings starting within 40 minutes — plus whatever research and metrics send me. I read and write my memory under /memory, follow the playbooks under /skills, use Gmail and Calendar and Slack, and run scripts on the Mac mini at home. I draft mail and never send it without \"send it\"; I move internal meetings on my own and ask for anything with an outsider.\n\nPreferences.md has no quiet-hours line. I will assume 23:00–08:00 until you say otherwise.",
       },
     ],
   });
 
-  const telegram = controlledSession(store, universe, {
-    id: SESSION.telegram,
+  const assistantThread = controlledSession(store, universe, {
+    id: SESSION.assistantThread,
     botId: BOT.assistant,
-    displayName: TELEGRAM.label,
+    displayName: ASSISTANT_THREAD.label,
     profile: ASSISTANT_PROFILE,
     tools: threadTools,
     createdAtMs: ago(33 * DAY_MS),
     environmentId: ENV_MAC_MINI,
   });
-  telegram.view.config = {
-    ...telegram.view.config,
+  assistantThread.view.config = {
+    ...assistantThread.view.config,
     model: { ...OPUS, model: "claude-opus-5-5" },
     context: {
       inputLimitTokens: 128_000, compaction: { mode: "providerTriggered", compactThresholdTokens: 50_000 },
     },
   };
-  refreshDemoCompactionView(telegram);
-  const whatsapp = controlledSession(store, universe, {
-    id: SESSION.whatsapp,
+  refreshDemoCompactionView(assistantThread);
+  const travelThread = controlledSession(store, universe, {
+    id: SESSION.travelThread,
     botId: BOT.assistant,
-    displayName: WHATSAPP.label,
+    displayName: TRAVEL_THREAD.label,
     profile: ASSISTANT_PROFILE,
     tools: threadTools,
     createdAtMs: ago(25 * DAY_MS),
     environmentId: ENV_MAC_MINI,
   });
 
-  e1.envelope.runId = appendScriptedRun(store, telegram, {
+  e1.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: at(MONDAY_DAYS_AGO, 7, 31),
     user: e1.prompt,
     steps: [
@@ -1587,12 +1546,12 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         tools: [vfsReadFile("/memory/MEMORY.md", MEMORY_BEFORE_DIGEST), vfsWriteFile("/memory/MEMORY.md", MEMORY_CURRENT, "MRR, churn, digest date")],
       },
       {
-        tools: [messageSend(TELEGRAM, DIGEST_TEXT, null, e2.envelope.seq ?? 0)],
+
         text: `Relayed the week ${MONDAY_WEEK} numbers to Ada (#${e2.envelope.seq}); MEMORY.md company facts now say €412k and 1.1%. Nothing to act on.`,
       },
     ],
   }).id;
-  e3.envelope.runId = appendScriptedRun(store, telegram, {
+  e3.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: at(2, 9, 12),
     user: e3.prompt,
     steps: [
@@ -1604,13 +1563,13 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(TELEGRAM, BILLING_TEXT, null, e4.envelope.seq ?? 0)],
+
         text: `Told Ada (#${e4.envelope.seq}): finance has had it since 08:50, a new card is coming, the last retry is ${BILLING_RETRY_DATE}. Not quiet hours, and it is the largest customer, so it was worth a message; nothing for her to do.`,
       },
     ],
   }).id;
 
-  e5.envelope.runId = appendScriptedRun(store, whatsapp, {
+  e5.envelope.runId = appendScriptedRun(store, travelThread, {
     at: at(2, 12, 40),
     user: e5.prompt,
     steps: [
@@ -1625,12 +1584,12 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(WHATSAPP, OPTIONS_TEXT, e5.envelope.seq ?? 0, e6.envelope.seq ?? 0)],
+
         text: `Two options sent (#${e6.envelope.seq}): the same ICE both ways, Hotel Luc with breakfast at €189 or the Wilde Aparthotel at €164. Nothing booked until she picks.`,
       },
     ],
   }).id;
-  e7.envelope.runId = appendScriptedRun(store, whatsapp, {
+  e7.envelope.runId = appendScriptedRun(store, travelThread, {
     at: at(2, 12, 51),
     user: e7.prompt,
     steps: [
@@ -1644,18 +1603,18 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(WHATSAPP, BOOKED_TEXT, e7.envelope.seq ?? 0, e8.envelope.seq ?? 0)],
+
         text: `Booked A (#${e8.envelope.seq}): DB-7K3QP2 and LUC-48213, €367 on the company card. Two calendar events; MEMORY.md has the trip line.`,
       },
     ],
   }).id;
 
-  e9.envelope.runId = appendScriptedRun(store, telegram, {
+  e9.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: at(1, 14, 30),
     user: e9.prompt,
     steps: [{ text: "Checklist: nothing past its time in today's log, no sent mail past 48 h yet (Kestrel reaches 48 h tonight), the 1:1 with Priya is in progress, the next prep is due 15:20. Nothing to say." }],
   }).id;
-  e10.envelope.runId = appendScriptedRun(store, telegram, {
+  e10.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: at(1, 17, 30),
     user: e10.prompt,
     steps: [
@@ -1671,14 +1630,14 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         tools: [
           vfsWriteFile(`/briefs/${YESTERDAY}-evening.md`, BRIEF_EVENING, "wrap"),
           vfsWriteFile(`/memory/daily/${YESTERDAY}.md`, DAILY_YESTERDAY, "closed: wrap sent, Kestrel carried"),
-          messageSend(TELEGRAM, WRAP_TEXT, null, e11.envelope.seq ?? 0),
+
         ],
         text: `Wrap sent (#${e11.envelope.seq}): three done, two carried. Tom Adeyemi is at 48 h without a reply, so the morning brief gets a drafted nudge — not sent, per investors.md. Tomorrow's first meeting is the ${clockLabel(CAL.standup)} standup; the Northlight sync at ${clockLabel(CAL.northlight)} is the one needing prep.`,
       },
     ],
   }).id;
 
-  e12.envelope.runId = appendScriptedRun(store, telegram, {
+  e12.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(7, 0),
     user: e12.prompt,
     steps: [
@@ -1701,17 +1660,17 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(TELEGRAM, MORNING_TEXT, null, e13.envelope.seq ?? 0)],
+
         text: `Brief sent (#${e13.envelope.seq}). Four meetings, one needing prep at ${hm(9, 50)}; one FYI mail; the Kestrel nudge is drafted and waiting on Ada. /briefs/${TODAY}-morning.md written and today's log opened.`,
       },
     ],
   }).id;
-  e14.envelope.runId = appendScriptedRun(store, telegram, {
+  e14.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(8, 30),
     user: e14.prompt,
     steps: [{ text: `Checklist: nothing past its time, the brief went out at ${hm(7, 2)}, Kestrel's nudge is already with Ada, the Northlight prep is due ${hm(9, 50)} and calendar-poll will deliver it. Nothing to say.` }],
   }).id;
-  e15.envelope.runId = appendScriptedRun(store, telegram, {
+  e15.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(9, 50),
     user: e15.prompt,
     steps: [
@@ -1726,7 +1685,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       },
       {
         tools: [
-          messageSend(TELEGRAM, PREP_TEXT, null, e16.envelope.seq ?? 0),
+
           mcpCall("calendar.update_event", { calendarId: "primary", eventId: "evt_northlight_sync", extendedProperties: { private: { prepped: "true" } } }, { id: "evt_northlight_sync", updated: true }),
           vfsWriteFile(`/memory/daily/${TODAY}.md`, DAILY_TODAY_OPEN.replace(`- [ ] ${clockLabel(CAL.northlight)} Investor sync — Northlight Ventures: prep due ${hm(9, 50)}.\n`, `- [x] ${hm(9, 51)} prep sent: Investor sync — Northlight Ventures ${clockLabel(CAL.northlight)} (attendees, open asks, one question).\n`), "prep sent"),
         ],
@@ -1734,7 +1693,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       },
     ],
   }).id;
-  e17.envelope.runId = appendScriptedRun(store, telegram, {
+  e17.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(10, 6),
     user: e17.prompt,
     steps: [
@@ -1763,12 +1722,12 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(TELEGRAM, RESCHEDULE_TEXT, e17.envelope.seq ?? 0, e18.envelope.seq ?? 0)],
+
         text: `Moved the 1:1 to tomorrow ${clockLabel(CAL.priya)} — internal, so no yes needed; Priya's invite is updated. Research has the pricing (their #${SEQ.researchRequest}, receipt requested, due ${hm(12, 0)}). Told Ada both (#${e18.envelope.seq}), with Marco's "four this month" note.`,
       },
     ],
   }).id;
-  e19.envelope.runId = appendScriptedRun(store, telegram, {
+  e19.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(11, 0),
     user: e19.prompt,
     steps: [
@@ -1782,7 +1741,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       },
     ],
   }).id;
-  e20.envelope.runId = appendScriptedRun(store, telegram, {
+  e20.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(11, 9),
     user: e20.prompt,
     steps: [
@@ -1792,21 +1751,21 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       },
       {
         tools: [
-          messageSend(TELEGRAM, RESEARCH_TEXT, null, e21.envelope.seq ?? 0),
+
           vfsWriteFile(`/memory/daily/${TODAY}.md`, DAILY_TODAY_MIDDAY.replace(`- [ ] ${hm(10, 8)} Ada: competitor pricing for the Series A deck by lunch → research #${SEQ.researchRequest}.\n`, `- [x] ${hm(10, 8)} Ada: competitor pricing for the Series A deck by lunch → research #${SEQ.researchRequest}; nudged ${hm(11, 0)}; landed ${hm(11, 9)} → research/competitor-pricing.md.\n`), "research landed"),
         ],
         text: `Pricing landed before lunch; sent Ada the reading and the two gaps (#${e21.envelope.seq}). Log updated.`,
       },
     ],
   }).id;
-  e22.envelope.runId = appendScriptedRun(store, telegram, {
+  e22.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(11, 17),
     user: e22.prompt,
     steps: [
       {
         compaction: {
           mode: "providerTriggered",
-          summary: "Ada's long-lived Telegram thread: MRR €412k and churn 1.1%; Acme is the largest customer and finance is replacing its card. Priya's internal 1:1 moved to tomorrow at the same time. Competitor pricing for the Series A deck has landed before lunch. Elena's cohort retention cut and three cleared references are promised today. Draft replies require Ada's explicit 'send it' before sending. Current task: triage Elena's follow-up, draft with the existing commitments, and ask for approval.",
+          summary: "Ada's long-lived assistant thread: MRR €412k and churn 1.1%; Acme is the largest customer and finance is replacing its card. Priya's internal 1:1 moved to tomorrow at the same time. Competitor pricing for the Series A deck has landed before lunch. Elena's cohort retention cut and three cleared references are promised today. Draft replies require Ada's explicit 'send it' before sending. Current task: triage Elena's follow-up, draft with the existing commitments, and ask for approval.",
         },
         thinking: "Important mail from Elena, right after the sync. Playbook: read the whole thread, the person's file, and commitments — the cohort cut and the references are already promised for today, so this is Needs reply with everything in hand.",
         tools: [
@@ -1819,13 +1778,13 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
       {
         tools: [
           mcpCall("gmail.create_draft", { threadId: ELENA_THREAD_ID, to: "elena@northlight.example", cc: "sam@northlight.example", subject: "Re: today's sync — follow-ups", body: ELENA_DRAFT, attachments: [{ driveFileId: "1xKq9dR2cohort", name: "cohort-retention-2025.csv" }] }, { draftId: ELENA_DRAFT_ID, threadId: ELENA_THREAD_ID, attachments: 1 }),
-          messageSend(TELEGRAM, TRIAGE_TEXT, null, e23.envelope.seq ?? 0),
+
         ],
         text: `Needs reply, drafted (${ELENA_DRAFT_ID}): the cut attached from the data room, the three cleared references from people/investors.md, five lines in Ada's voice. Asked Ada for "send it" (#${e23.envelope.seq}); nothing is sent.`,
       },
     ],
   }).id;
-  e24.envelope.runId = appendScriptedRun(store, telegram, {
+  e24.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(11, 24),
     user: e24.prompt,
     steps: [
@@ -1839,12 +1798,12 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(TELEGRAM, SENT_TEXT, e24.envelope.seq ?? 0, e25.envelope.seq ?? 0)],
+
         text: `Sent to Elena with the attachment (#${e25.envelope.seq}). commitments.md row marked done at ${hm(11, 25)}; investors.md has today's sync; the Kestrel nudge is still the one draft waiting.`,
       },
     ],
   }).id;
-  e26.envelope.runId = appendScriptedRun(store, telegram, {
+  e26.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(13, 40),
     user: e26.prompt,
     steps: [
@@ -1856,12 +1815,12 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
-        tools: [messageSend(TELEGRAM, PROMISE_TEXT, e26.envelope.seq ?? 0, e27.envelope.seq ?? 0)],
+
         text: `Three commitments to Priya this week from commitments.md — the offer decision (Sep 3), the rota review (done yesterday 16:10, confirmed in #eng-leads), the Kestrel CTO intro (Sep 5) — plus the moved 1:1 (#${e27.envelope.seq}).`,
       },
     ],
   }).id;
-  e28.envelope.runId = appendScriptedRun(store, telegram, {
+  e28.envelope.runId = appendScriptedRun(store, assistantThread, {
     at: t(14, 30),
     user: e28.prompt,
     steps: [
@@ -1874,7 +1833,7 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
 
   const state = botState({
     bot: record,
-    sessions: [botSession(mainSession, "main"), botSession(telegram, "keyed"), botSession(whatsapp, "keyed")],
+    sessions: [botSession(mainSession, "main"), botSession(assistantThread, "keyed"), botSession(travelThread, "keyed")],
     recentEvents: [
       recent(e28.envelope, { inputTokens: 21_340, cachedInputTokens: 20_910 }),
       recent(e26.envelope, { inputTokens: 21_120, cachedInputTokens: 20_400 }),
@@ -2624,45 +2583,6 @@ const responder: DemoResponder = (input, context) => {
 // Seed
 // ---------------------------------------------------------------------------
 
-/// Ada's channel accounts and the pairing rows binding her two direct
-/// conversations to the assistant's chat triggers.
-function seedChannels(universe: UniverseState): void {
-  channelAccount(universe, {
-    accountId: TELEGRAM_ADA_ACCOUNT_ID,
-    provider: "telegram",
-    providerAccountId: "ada_assistant_bot",
-    displayName: "Ada's assistant (Telegram)",
-    credentialGrantId: "grant-telegram-bot-token",
-    createdAtMs: Date.parse("2026-07-25T18:30:00.000Z"),
-    updatedAtMs: Date.parse("2026-08-20T07:00:00.000Z"),
-  });
-  channelAccount(universe, {
-    accountId: WHATSAPP_ADA_ACCOUNT_ID,
-    provider: "whatsapp",
-    providerAccountId: "+4917612345678",
-    displayName: "Ada's assistant (WhatsApp)",
-    settings: { printQr: false },
-    createdAtMs: Date.parse("2026-08-02T09:15:00.000Z"),
-    updatedAtMs: Date.parse("2026-08-24T19:40:00.000Z"),
-  });
-  channelPairing(universe, {
-    accountId: TELEGRAM_ADA_ACCOUNT_ID,
-    botId: BOT.assistant,
-    triggerId: "telegram",
-    chatId: TELEGRAM.chatId,
-    pairedVia: "code",
-    pairedAtMs: ago(33 * DAY_MS),
-  });
-  channelPairing(universe, {
-    accountId: WHATSAPP_ADA_ACCOUNT_ID,
-    botId: BOT.assistant,
-    triggerId: "whatsapp",
-    chatId: WHATSAPP.chatId,
-    pairedVia: "code",
-    pairedAtMs: ago(25 * DAY_MS),
-  });
-}
-
 export function seedPersonalAssistant(store: DemoStore): void {
   const universe = store.addUniverse({
     id: PERSONAL_ASSISTANT_UNIVERSE_ID,
@@ -2674,15 +2594,14 @@ export function seedPersonalAssistant(store: DemoStore): void {
     role: "owner",
     createdAt: agoIso(5 * 7 * DAY_MS),
     responder,
-    // Bots and channels are off in a new universe; this one is built on them.
-    features: { bots: true, channels: true },
+    // Bots are enabled in this demo universe.
+    features: { bots: true },
   });
   seedMembers(store, universe);
   seedProfiles(universe);
   seedWorkspaces(store, universe);
   seedEnvironments(universe);
   seedIntegrations(universe);
-  seedChannels(universe);
   seedAssistant(store, universe);
   seedResearch(store, universe);
   seedMetrics(store, universe);

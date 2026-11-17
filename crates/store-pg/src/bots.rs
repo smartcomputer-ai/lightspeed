@@ -42,7 +42,6 @@ const EVENT_COLUMN_NAMES: &[&str] = &[
     "document_ref",
     "prompt_ref",
     "session_json",
-    "media_json",
     "sender_bot_id",
     "hops",
     "in_reply_to_json",
@@ -1007,14 +1006,14 @@ impl BotEventStore for PgStore {
             INSERT INTO bot_events (
                 universe_id, bot_id, event_id, seq,
                 trigger_id, kind, summary, occurred_at_ms, received_at_ms, document_ref,
-                prompt_ref, session_json, media_json,
+                prompt_ref, session_json,
                 sender_bot_id, hops, in_reply_to_json,
                 receiver_json,
                 outcome, outcome_detail, run_id, resolved_at_ms
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                $18, $19, $20, $21
+                $18, $19, $20
             )
             ON CONFLICT (universe_id, bot_id, event_id) DO NOTHING
             RETURNING {columns}
@@ -1040,7 +1039,6 @@ impl BotEventStore for PgStore {
                         .map(|session| json_value("serialize routed session", session))
                         .transpose()?,
                 )
-                .bind(json_value("serialize event media", &record.media)?)
                 .bind(record.sender_bot_id.as_ref().map(BotId::as_str))
                 .bind(i32::try_from(record.hops).map_err(|_| {
                     BotError::invalid(format!("hops {} exceeds i32::MAX", record.hops))
@@ -1069,20 +1067,6 @@ impl BotEventStore for PgStore {
         if let Some(row) = row {
             let mut refs = std::collections::BTreeSet::from([record.document_ref.clone()]);
             refs.extend(record.prompt_ref.iter().cloned());
-            refs.extend(record.media.iter().map(|media| media.blob_ref.clone()));
-            refs.extend(
-                record
-                    .media
-                    .iter()
-                    .filter_map(|media| media.text_ref.clone()),
-            );
-            refs.extend(
-                record
-                    .receiver
-                    .as_ref()
-                    .and_then(|receiver| receiver.tools_ref())
-                    .map(str::to_owned),
-            );
             let digests = refs
                 .iter()
                 .map(|value| {
@@ -1391,7 +1375,6 @@ fn event_from_row(row: &sqlx::postgres::PgRow, prefix: &str) -> Result<BotEventR
         document_ref: column(row, &name("document_ref"))?,
         prompt_ref: column(row, &name("prompt_ref"))?,
         session: optional_json_column(row, &name("session_json"))?,
-        media: json_column(row, &name("media_json"))?,
         sender_bot_id: sender_bot_id.map(parse_bot_id).transpose()?,
         hops: u32::try_from(hops).map_err(|_| store_message("hops is negative"))?,
         in_reply_to: optional_json_column(row, &name("in_reply_to_json"))?,

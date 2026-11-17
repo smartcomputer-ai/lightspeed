@@ -288,12 +288,11 @@ describe("feature switches", () => {
   const featureMethods = (prefix: string) =>
     (Object.keys(METHOD_ACTIONS) as (typeof OPERATIONS)[number][]).filter((method) => method.startsWith(prefix));
 
-  it("refuse every bot and channel method, for an admin too, in a universe that stored no switch", async () => {
+  it("refuse every bot method, for an admin too, in a universe that stored no switch", async () => {
     const calls = core();
     expect(featureMethods("bots/").length).toBeGreaterThan(0);
-    expect(featureMethods("channels/").length).toBeGreaterThan(0);
     for (const client of [as("owner"), within({}), within(null)]) {
-      for (const method of [...featureMethods("bots/"), ...featureMethods("channels/")]) {
+      for (const method of featureMethods("bots/")) {
         const error = await refusal(client.call(method, {} as never));
         expect(error, method).toBeInstanceOf(GateRefusal);
         expect((error as GateRefusal).status, method).toBe(403);
@@ -306,28 +305,12 @@ describe("feature switches", () => {
     core();
     const bots = await refusal(within({}).call("bots/list", {}));
     expect((bots as GateRefusal).message).toBe("Bots are turned off in this universe");
-    const channels = await refusal(within({ bots: true }).call("channels/accounts/list", {} as never));
-    expect((channels as GateRefusal).status).toBe(403);
-    expect((channels as GateRefusal).message).toBe("Channels are turned off in this universe");
   });
 
-  it("let bot methods through with Bots on, and keep channel methods refused until Channels is on", async () => {
+  it("let bot methods through with Bots on", async () => {
     const calls = core();
     await within({ bots: true }).call("bots/list", {});
-    expect(await refusal(within({ bots: true }).call("channels/accounts/list", {} as never))).toBeInstanceOf(GateRefusal);
-    await within({ bots: true, channels: true }).call("channels/accounts/list", {} as never);
-    await within({ bots: true, channels: true }).call("bots/list", {});
-    expect(calls.map((call) => call.method)).toEqual(["bots/list", "channels/accounts/list", "bots/list"]);
-  });
-
-  it("refuse channel methods while Bots are off, whatever Channels' own switch says", async () => {
-    const calls = core();
-    for (const features of [{ channels: true }, { bots: false, channels: true }]) {
-      const error = await refusal(within(features).call("channels/accounts/list", {} as never));
-      expect((error as GateRefusal).message).toBe("Channels are turned off in this universe");
-      expect(await refusal(within(features).call("bots/list", {}))).toBeInstanceOf(GateRefusal);
-    }
-    expect(calls).toHaveLength(0);
+    expect(calls.map((call) => call.method)).toEqual(["bots/list"]);
   });
 
   it("treat stored switches it cannot read as nothing stored", async () => {
@@ -340,7 +323,7 @@ describe("feature switches", () => {
 
   it("still hold a member to the method's role once the feature is on", async () => {
     const calls = core();
-    const error = await refusal(within({ bots: true, channels: true }, "viewer").call("bots/create", {} as never));
+    const error = await refusal(within({ bots: true }, "viewer").call("bots/create", {} as never));
     expect((error as GateRefusal).message).toBe("universe permission required: createBot");
     await within({ bots: true }, "viewer").call("bots/list", {});
     expect(calls.map((call) => call.method)).toEqual(["bots/list"]);
@@ -356,7 +339,7 @@ describe("feature switches", () => {
 
 describe("trigger secrets", () => {
   const within = (role: UniverseRole) =>
-    universeClient(env, { ...universe, features: { bots: true, channels: true } }, { actorId: "alice", actions: universeActions([role]) });
+    universeClient(env, { ...universe, features: { bots: true } }, { actorId: "alice", actions: universeActions([role]) });
   const target = { botId: "triage", triggerId: "github" };
 
   it("let every member read a trigger and only operators read its secrets", async () => {

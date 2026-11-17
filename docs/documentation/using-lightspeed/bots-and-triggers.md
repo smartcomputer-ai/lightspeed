@@ -2,7 +2,7 @@
 
 A bot gives an agent an ongoing job and a way to receive work. It combines a
 brief, a session profile, triggers, and a controller that routes admitted
-events into conversations. A schedule, webhook, or connected chat can supply
+events into conversations. A schedule, webhook, poll, or another bot can supply
 the next task without someone opening a session and typing it.
 
 The bot's **Main** conversation handles work routed to its main session.
@@ -20,9 +20,8 @@ as well as the gateway and session workers;
 the local full stack includes it.
 
 Bots are a feature each universe switches on. A new universe starts with
-**Bots** and **Channels** off: a universe Owner turns them on under
-the universe's **Settings → General → Features**, and Channels need Bots. While a switch is
-off, the Platform hides the feature's pages and refuses its requests from
+**Bots** off. An Owner can enable it in **Settings → General → Features**.
+While the switch is off, the Platform hides bot pages and refuses its requests from
 every member, Owners included. The switch governs what people do through the
 Platform. It does not stop a bot that is already running, and a caller holding
 a runtime token retains full authority. Pause or
@@ -46,11 +45,9 @@ close bots before switching the feature off if they should stop.
    `release-reviewer`. The wizard otherwise creates a profile for the bot.
 5. Leave **Other bots** disabled. Under **Guardrails**, set a daily run limit
    such as `20` and turn off **Can change its own brief and triggers** for this
-   fixed setup. Blank bots enable that permission by default. A bot that lists
-   its triggers never sees their ingest URLs or pairing codes. It is told one
-   only once, in the result of the call that creates the webhook or the pairing
-   code, and only in its Main conversation: a conversation routed per chat,
-   key or event is never told. Operators read the values on the trigger row.
+   fixed setup. Blank bots enable that permission by default. A bot receives
+   the ingest URL for a webhook it creates once, in Main. Operators can
+   read the URL on the trigger row.
 6. Choose **Create bot** and wait for Main to become ready. The web app asks
    the new bot to introduce itself when its conversation is ready.
 
@@ -79,20 +76,10 @@ bot and control work in its conversations; Operators and Owners can configure
 it, manage triggers, replay events, reset conversations, and close or delete
 the bot.
 
-A trigger has two values that let an outsider reach the bot: a webhook's ingest
-URL, whose token admits events, and a chat trigger's pairing code, which
-connects a conversation. Neither is part of a trigger as members read or list
-it. Operators and Owners read them on the trigger row, which asks for them
-through a separate bot-management method (`bots/triggers/secrets/read`), and
-creating or replacing a trigger answers with them. Viewers and Contributors
-see that a trigger exists and how it is configured, not these values.
-
-There is one exception. A bot that may change its own triggers is told the
-ingest URL or pairing code of a trigger it creates, once, in its Main
-conversation. That tool result stays in the conversation, and every member can
-read a bot's conversations. Create webhook and paired chat triggers yourself,
-or turn off **Can change its own brief and triggers**, when members below
-Operator must not learn these values.
+A webhook trigger’s ingest URL is available through the trigger row to
+Operators and Owners. A bot that can manage its own triggers receives the
+ingest URL once in Main when it creates a webhook. Anyone who can read that
+session can read the tool result.
 
 The bot executes for the universe. Removing its creator's membership prevents
 that person's subsequent Platform requests but does not stop the bot or work
@@ -220,8 +207,7 @@ starting a new conversation.
 CEL filters can inspect `event`, `data`, and `headers`. A false result or
 filter error refuses admission; the refused event is not stored as ordinary
 bot activity. Test expressions with `bots/filters/test` before depending on
-them. Chat triggers have their own conversation-based routing, described in
-[Chat channels](chat-channels.md).
+them.
 
 ## Read outcomes and replay work
 
@@ -246,8 +232,7 @@ the original routing. It can repeat external effects. This action is distinct
 from deterministic workflow replay used internally to recover state.
 
 Starting a run is retried on its own. A delivery the runtime cannot act on at all, such
-as a file it cannot read or a request it refuses, ends `runFailed` straight away, and a
-chat gets the failure reply. One that hits a temporary failure goes back to the queue with a
+as a file it cannot read or a request it refuses, ends `runFailed` straight away. A delivery that hits a temporary failure goes back to the queue with a
 backoff of up to 5 minutes, for about 20 minutes in all, and then ends `runFailed`. A
 start held behind a compaction can still land after that. A delivery waiting on a busy
 session has no such limit: it looks again every few seconds until the session is free.
@@ -256,9 +241,7 @@ session has no such limit: it looks again every few seconds until the session is
 
 **Pause** stops schedule and poll production and pauses event delivery.
 Already accepted external or manual events can wait for the bot to resume.
-Pausing does not cancel an active run. A paired chat stays assigned to its
-paused bot, but new messages are not buffered for later delivery or routed to
-another bot.
+An active run continues when the bot is paused.
 
 The daily run limit includes bot runs and their sub-agent descendants. Work
 held by the limit waits for the next UTC day. Flood protection can also pause
@@ -308,6 +291,5 @@ templates' idle policies.
 | Events pile up behind one conversation | A session stuck running holds its conversation. Inspect it, and force close it to let the bot move on. |
 | Conversation context disappeared | The session died or was closed, and the bot continued in a new one. The bot's status names the old session. |
 
-To give the bot a messaging account, continue with
-[Chat channels](chat-channels.md). To delegate parts of its work or coordinate
+To delegate parts of its work or coordinate
 with another bot, read [Sub-agents and federation](subagents-and-federation.md).

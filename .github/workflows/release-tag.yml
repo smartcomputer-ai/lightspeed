@@ -59,7 +59,6 @@ jobs:
       runtime: ${{ steps.runtime.outputs.digest }}
       configurator: ${{ steps.configurator.outputs.digest }}
       platform: ${{ steps.platform.outputs.digest }}
-      platform_workers: ${{ steps.platform_workers.outputs.digest }}
     services:
       postgres:
         image: postgres:17-bookworm@sha256:84560e3b9c6874893fc4e2854f5dc3e7c1a37bc9d1dfd7a8c641310ae22ba5ad
@@ -177,26 +176,11 @@ jobs:
           tags: ghcr.io/${{ github.repository }}/platform:${{ needs.identity.outputs.staging_tag }}
           provenance: mode=max
           sbom: true
-      - name: Build and publish Platform workers image to staging
-        id: platform_workers
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: release/platform-workers.Dockerfile
-          platforms: linux/amd64
-          push: true
-          build-args: |
-            LIGHTSPEED_RELEASE_VERSION=${{ needs.identity.outputs.version }}
-            LIGHTSPEED_GIT_SHA=${{ needs.identity.outputs.sha }}
-          tags: ghcr.io/${{ github.repository }}/platform-workers:${{ needs.identity.outputs.staging_tag }}
-          provenance: mode=max
-          sbom: true
       - name: Verify the staged runtime images
         env:
           RUNTIME_IMAGE: ghcr.io/${{ github.repository }}/runtime@${{ steps.runtime.outputs.digest }}
           CONFIGURATOR_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ steps.configurator.outputs.digest }}
           PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
-          PLATFORM_WORKERS_IMAGE: ghcr.io/${{ github.repository }}/platform-workers@${{ steps.platform_workers.outputs.digest }}
           PLATFORM_DATABASE_URL: postgres://lightspeed:lightspeed@127.0.0.1:55432/lightspeed
           EXPECTED_SHA: ${{ needs.identity.outputs.sha }}
         run: |
@@ -290,7 +274,6 @@ jobs:
           LIGHTSPEED_RUNTIME_IMAGE: ghcr.io/${{ github.repository }}/runtime@${{ needs.linux.outputs.runtime }}
           LIGHTSPEED_CONFIGURATOR_MCP_IMAGE: ghcr.io/${{ github.repository }}/configurator-mcp@${{ needs.linux.outputs.configurator }}
           LIGHTSPEED_PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ needs.linux.outputs.platform }}
-          LIGHTSPEED_PLATFORM_WORKERS_IMAGE: ghcr.io/${{ github.repository }}/platform-workers@${{ needs.linux.outputs.platform_workers }}
           LIGHTSPEED_RELEASE_BUILD_IMAGE: ghcr.io/${{ github.repository }}/build-env@${{ needs.linux.outputs.build_environment }}
           LIGHTSPEED_RELEASE_CHANNEL: release
           LIGHTSPEED_ENVD_PUBLIC_URL_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.identity.outputs.tag }}

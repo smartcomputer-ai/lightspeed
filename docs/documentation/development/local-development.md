@@ -171,9 +171,7 @@ access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
 
 The full and platform profiles start Configurator against Platform. An
 Organization Admin can install it from a universe template, which gives it a
-restricted service-user credential. To test chat channels, start the
-[connector host](../integrating-and-extending/channel-connectors.md)
-separately.
+restricted service-user credential.
 
 The runtime starts three HTTP listeners in the full and runtime profiles:
 

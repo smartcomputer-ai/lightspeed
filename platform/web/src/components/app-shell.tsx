@@ -5,7 +5,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ReducedMotionOnIcon, ChannelIcon, EnvironmentProviderIcon, MemberIcon, SignInIcon, SettingsIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
+import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ReducedMotionOnIcon, EnvironmentProviderIcon, MemberIcon, SignInIcon, SettingsIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -57,7 +57,6 @@ function shellMode(pathname: string): ShellMode {
 const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string; action: DeploymentAction }> = [
   { to: "/admin/platform/organizations", icon: UserIcon, label: "All Organizations", action: "administerOrganizations" },
   { to: "/admin/platform/users", icon: UserAdminIcon, label: "Users", action: "manageUsers" },
-  { to: "/admin/platform/channels", icon: ChannelIcon, label: "Channels", action: "configureDeployment" },
   { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log", action: "readAudit" },
   { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", action: "configureDeployment" },
   { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes", action: "manageUnclaimedUniverses" },

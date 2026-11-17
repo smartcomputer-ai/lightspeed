@@ -1520,8 +1520,8 @@ async fn run_context_append_live_client(
     })
     .await?;
 
-    let first_text = "[telegram:group Engineering] Alice (12:01): the deploy looks stuck";
-    let second_text = "[telegram:group Engineering] Bob (12:02): restarting the worker now";
+    let first_text = "[Engineering] Alice (12:01): the deploy looks stuck";
+    let second_text = "[Engineering] Bob (12:02): restarting the worker now";
     let uploaded = api
         .put_blobs(api::BlobPutParams {
             blobs: vec![api::BlobPutItem {
@@ -1649,7 +1649,7 @@ async fn run_context_append_live_client(
                 item: InputItem::Text {
                     provenance_ref: None,
                     origin: None,
-                    text: "[telegram:group Engineering] Bob (12:02): edited message".to_owned(),
+                    text: "[Engineering] Bob (12:02): edited message".to_owned(),
                 },
             }],
         })

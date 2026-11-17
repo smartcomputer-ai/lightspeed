@@ -61,7 +61,7 @@ function fixture(t) {
     env[`LIGHTSPEED_ARTIFACT_URL_${name}`] = `oci://${registry}/${name.toLowerCase()}-bundle@${digest}`;
   }
   env.LIGHTSPEED_BINARY_URL_ENVD_X86_64_PC_WINDOWS_MSVC = `oci://${registry}/envd-x86_64-pc-windows-msvc-bundle@${digest}`;
-  for (const name of ['RUNTIME', 'CONFIGURATOR_MCP', 'PLATFORM', 'PLATFORM_WORKERS']) {
+  for (const name of ['RUNTIME', 'CONFIGURATOR_MCP', 'PLATFORM']) {
     env[`LIGHTSPEED_${name}_IMAGE`] = `${registry}/${name.toLowerCase().replaceAll('_', '-')}@${digest}`;
   }
   const create = () => execFileSync(process.execPath,

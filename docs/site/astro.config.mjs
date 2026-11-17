@@ -55,7 +55,6 @@ export default defineConfig({
           { slug: 'using-lightspeed/code-mode' },
           { slug: 'using-lightspeed/bots-and-triggers' },
           { slug: 'using-lightspeed/subagents-and-federation' },
-          { slug: 'using-lightspeed/chat-channels' },
         ] },
         { label: 'Organizations and access', items: [
           { slug: 'access-and-security/overview' },
@@ -94,7 +93,6 @@ export default defineConfig({
           { slug: 'integrating-and-extending/workflow-tools' },
           { slug: 'integrating-and-extending/custom-tools-and-model-providers' },
           { slug: 'integrating-and-extending/environment-providers' },
-          { slug: 'integrating-and-extending/channel-connectors' },
         ] },
         { label: 'How it works', collapsed: true, items: [
           { slug: 'how-it-works/architecture' },

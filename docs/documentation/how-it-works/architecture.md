@@ -138,9 +138,6 @@ filesystem store.
 
 A bot adds continuing behavior around the session loop. It receives events,
 applies routing and admission policy, and creates or drives sessions for work.
-A channel conversation handles a chat's pairing, inbound messages, and
-outbound delivery. Neither responsibility has to become another branch inside
-the deterministic session harness.
 
 Controllers instead communicate through workflow starts and signals.
 Workflow-backed tools let a session ask another workflow to do work and receive
@@ -148,8 +145,8 @@ its result through an admitted protocol. Sub-agents use the same separation:
 a delegation workflow owns a child session's creation, result, and cleanup,
 while the parent sees a tool operation and its outcome.
 
-That arrangement is why a session can remain a general agent harness as bots,
-channels, and integrations evolve. The
+That arrangement is why a session can remain a general agent harness as bots and
+integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
@@ -200,14 +197,12 @@ separating them lets the deployment give different work different capacity.
 | `gateway` | Public API admission and reads, OAuth callbacks, and bot webhooks. |
 | `sessions` | Session, sub-agent, and environment-job workflows and their activities, plus session and blob maintenance. |
 | `bots` | Bot controllers, trigger workflows, and related activities. |
-| `channels` | Conversation workflows and core channel activities. |
+| `code` | Code Mode workflows and JavaScript execution activities. |
 | `environment-gateway` | Live outbound daemon connections, worker routes, and the reconciliation that creates and closes provisioned environments. |
 
-The session, bot, and channel roles poll their own task queues. Cross-subsystem
+The session, bot, and code roles poll their own task queues. Cross-subsystem
 work uses workflow starts and signals rather than relying on one role executing
-another role's activities. Connector hosts provide the provider-specific chat
-transport and activity workers; they have no database access or authority to
-choose which bot owns a conversation.
+another role's activities.
 
 Environment gateways share a PostgreSQL registry of leased process identities
 and daemon connection ownership. Sockets stay local to each process. The

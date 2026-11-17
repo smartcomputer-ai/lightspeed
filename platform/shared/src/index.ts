@@ -102,22 +102,14 @@ function defineFeatures<const Features extends Record<string, FeatureDefinition<
 /// Parts of the product a universe admin can switch on or off. A feature that
 /// is off is hidden in the web app and its runtime methods are refused for
 /// every member (`FEATURE_METHOD_PREFIXES`). The switch governs what members
-/// do through the Platform: what already runs in the runtime (a bot answering
-/// on its channels) keeps running, and callers holding a runtime key are not
-/// affected. Features that let agents act on their own start switched off.
+/// do through the Platform: bots already running in the runtime keep running. Features that let agents act on their own start switched off.
 /// Add a feature here and every surface can ask for it by key.
 export const FEATURES = defineFeatures({
   bots: {
     label: "Bots",
-    description: "Agents that run on their own: they react to events, schedules and chats.",
+    description: "Agents that run on their own: they react to events and schedules.",
     default: false,
     requires: [],
-  },
-  channels: {
-    label: "Channels",
-    description: "Chat accounts, such as Telegram, that bots talk through.",
-    default: false,
-    requires: ["bots"],
   },
 });
 export type FeatureKey = keyof typeof FEATURES;
@@ -168,7 +160,6 @@ export function mergeFeatureOverrides(stored: unknown, changes: FeatureOverrides
 /// name. A member's call to one is refused while the feature is off.
 export const FEATURE_METHOD_PREFIXES: Record<FeatureKey, readonly string[]> = {
   bots: ["bots/"],
-  channels: ["channels/"],
 };
 
 /// The feature a runtime method belongs to, if any.

@@ -123,7 +123,7 @@ mod tests {
             "session-1",
             "tool-execution-1",
             "envjob-dev-build",
-            "chat-telegram-abc",
+            "botfire-ops-check",
         ] {
             let workflow_id = format!("{origin}/{suffix}");
             require_workflow_universe(Some(&workflow_id), origin).expect("same universe");

@@ -16,7 +16,7 @@ for (const alias of ["docs", "doc", "documentation"]) {
     test(`documentation plan: ./dev.sh ${[...prefix, alias].join(" ")}`, () => {
       const result = spawnSync("./dev.sh", [...prefix, alias, "--plan"], {
         cwd: root,
-        env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+        env: { ...process.env, LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
         encoding: "utf8",
       });
       assert.equal(result.status, 0, result.stderr);
@@ -34,7 +34,7 @@ for (const alias of ["docs", "doc", "documentation"]) {
 test("invalid configuration gets a summary, with launcher stack traces only on request", () => {
   for (const debug of [false, true]) {
     const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "docs", "--plan", ...(debug ? ["--debug"] : [])], {
-      cwd: root, encoding: "utf8", env: { ...process.env, PORT: "invalid", LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+      cwd: root, encoding: "utf8", env: { ...process.env, PORT: "invalid", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
     });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Failed while configuring the docs profile/);
@@ -66,7 +66,7 @@ for (const bindVariable of ["LIGHTSPEED_GATEWAY_BIND", "LIGHTSPEED_PUBLIC_BIND",
     t.after(() => server.close());
     const port = server.address().port;
     const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
-      cwd: directory, encoding: "utf8", env: { ...process.env, ...await availableListenerEnv(), [bindVariable]: `127.0.0.1:${port}`, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+      cwd: directory, encoding: "utf8", env: { ...process.env, ...await availableListenerEnv(), [bindVariable]: `127.0.0.1:${port}`, LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
     });
     assert.equal(result.status, 1);
     assert.match(result.stderr, new RegExp(`Port ${port} .*already in use`));
@@ -159,7 +159,7 @@ esac
     const listenerEnv = await availableListenerEnv();
     const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "runtime", "--no-envd"], {
       cwd: directory, encoding: "utf8", timeout: 5_000,
-      env: { ...process.env, PATH: `${directory}/bin:${process.env.PATH}`, ...listenerEnv, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
+      env: { ...process.env, PATH: `${directory}/bin:${process.env.PATH}`, ...listenerEnv, LIGHTSPEED_AUTH_MODE: "single", LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001" },
     });
     assert.equal(result.status, 1, result.stderr);
     assert.equal(result.stderr.split("dev.sh: Failed").length - 1, 1);

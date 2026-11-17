@@ -9,7 +9,6 @@ import type { DemoStore } from "./store";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { botRoutes, hookRoutes } from "./routes/bots";
-import { channelRoutes } from "./routes/channels";
 import { environmentRoutes } from "./routes/environments";
 import { mcpRoutes } from "./routes/mcp";
 import { platformRoutes } from "./routes/platform";
@@ -82,7 +81,6 @@ export function createDemoRouter(store: DemoStore): Hono {
     mcpRoutes,
     secretRoutes,
     botRoutes,
-    channelRoutes,
   ]) {
     api.route("/universes", routes(store));
   }

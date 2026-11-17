@@ -234,12 +234,10 @@ operation without adding organization ownership.
 | bots/sessions | `rotateBotSession` |
 | bots/triggers | `putBotTrigger`, `readBotTrigger`, `listBotTriggers`, `readBotTriggerSecrets`, `deleteBotTrigger` |
 | bots/filters | `testBotFilter` |
-| channels | `createChannelAccount`, `putChannelAccount`, `readChannelAccount`, `listChannelAccounts`, `deleteChannelAccount`, `admitChannelInbound`, `listChannelPairings`, `deleteChannelPairing`, `readChannelConversation` |
 | deployment/universes | `listDeletedUniverses`, `createUniverse`, `listUniverses`, `readUniverse`, `putUniverseConfiguration`, `putUniverseExpiry`, `putUniverseHandle`, `deleteUniverse` |
 | deployment/sessions | `listDeletedSessions`, `purgeSession` |
 | deployment/environment-provider-bindings | `listDeploymentEnvironmentProviderBindings` |
 | deployment/environment-providers | `putEnvironmentProvider`, `listEnvironmentProviders`, `readEnvironmentProvider`, `deleteEnvironmentProvider`, `putUniverseEnvironmentProviderBinding`, `deleteUniverseEnvironmentProviderBinding` |
-| deployment/channels | `listDeploymentChannelAccounts` |
 | universe | `watch` |
 | session/events | `readEvents` |
 

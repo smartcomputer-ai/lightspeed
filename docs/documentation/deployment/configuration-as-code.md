@@ -286,5 +286,5 @@ daemon processes. See [Run registered daemons](../environments/registered-daemon
 
 Shared organization and universe documents cover configuration and access
 policy. Manage personal organizations, deployment settings, provider
-registration, bots, channel accounts, workspaces, and session retention
+registration, bots, workspaces, and session retention
 through their own tools or APIs.

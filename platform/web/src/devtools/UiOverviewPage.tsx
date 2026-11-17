@@ -1031,7 +1031,7 @@ function MetaDetailsSection() {
       <Specimen title="In a toolbar" note="Real meta items: click one to open its details" className="block">
         <MetaDetailsInToolbarExample />
       </Specimen>
-      <Specimen title="Every usage" note="Session resources, sub-agents, a workspace file's content and a bot's channels, drawn open" className="block">
+      <Specimen title="Every usage" note="Session resources, sub-agents, and a workspace file's content, drawn open" className="block">
         <MetaDetailsUsagesExample />
       </Specimen>
       <Specimen title="A long list" note="MetaDetailsList scrolls past its height; load more keeps the popover open" className="block">
@@ -1426,11 +1426,9 @@ function NavigationSection() {
         <Tabs defaultValue="general" orientation="vertical" className="flex-row">
           <TabsList>
             <TabsTrigger value="general">General</TabsTrigger>
-            <TabsTrigger value="channels">Channels</TabsTrigger>
             <TabsTrigger value="templates">Templates</TabsTrigger>
           </TabsList>
           <TabsContent value="general" className="px-4 text-muted-foreground">General settings.</TabsContent>
-          <TabsContent value="channels" className="px-4 text-muted-foreground">Channel settings.</TabsContent>
           <TabsContent value="templates" className="px-4 text-muted-foreground">Templates.</TabsContent>
         </Tabs>
       </Specimen>
@@ -2185,8 +2183,6 @@ const STEP_EXAMPLES: Array<{ group: string; entity: string; verb: string; target
   { group: "bot", entity: "Bot emit", verb: "Emit", target: "to implementer" },
   { group: "bot", entity: "Bot emit to self", verb: "Emit", target: "to self", icon: Icons.EmitToSelfIcon },
   { group: "bot", entity: "Bot brief", verb: "Update brief", target: "Release planner" },
-  { group: "message", entity: "Channel send", verb: "Send", target: "#releases" },
-  { group: "message", entity: "Channel skip", verb: "Skip", target: "no reply needed" },
   { group: "other", entity: "Other tool", verb: "Run", target: "custom_tool" },
 ];
 
@@ -2214,7 +2210,6 @@ const RESOURCE_ENTITIES: PlainEntity[] = [
 const TRIGGER_ENTITIES: PlainEntity[] = [
   { entity: "Schedule", icon: Icons.ScheduleIcon, source: "bot/triggers.tsx" },
   { entity: "Webhook", icon: Icons.WebhookIcon, source: "bot/triggers.tsx" },
-  { entity: "Chat account", icon: Icons.ChatTriggerIcon, source: "bot/triggers.tsx" },
   { entity: "Other bots", icon: Icons.InboxIcon, source: "bot/triggers.tsx" },
   { entity: "Check a URL", icon: Icons.PollIcon, source: "bot/triggers.tsx" },
   { entity: "Run a command", icon: Icons.CommandIcon, source: "bot/triggers.tsx" },

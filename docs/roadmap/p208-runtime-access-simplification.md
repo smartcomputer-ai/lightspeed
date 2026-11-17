@@ -262,14 +262,12 @@ Network rules can close RPC to everything but the door and trusted components.
 
 A runtime token is never given to an agent or stored where one can read it.
 
-### Channel connectors are switched off
+### Channel removal
 
-The connector host is the separate process that bridges chat providers,
-today Telegram and WhatsApp, to the runtime. It calls the runtime with an
-API key of its own. Channels are being removed for now, so the connector
-host is not moved to the new tokens: it is switched off. The development
-launcher no longer starts it, and it is given no runtime token. Its removal,
-with the rest of channels, is separate work.
+The channel worker, provider connector host, chat triggers, and channel APIs
+have been removed. The greenfield schema baseline omits channel accounts and
+pairings, and releases ship only the runtime, Platform, and Configurator
+images. A future messaging bridge can integrate at an external boundary.
 
 ## Clients
 
@@ -377,8 +375,7 @@ Decided, 2026-11-16:
   to stay compatible.
 - **The key model is removed first and the door built after,** on one
   branch.
-- **Channel connectors are switched off** in this work. Channels are being
-  removed for now.
+- **Channels have been removed** from the runtime, Platform, and release artifacts.
 - **The credentials the runtime holds for calling others stay in the
   runtime,** and `auth/*` is renamed to `credentials/*`.
 

@@ -6,13 +6,12 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FeatureGate } from "./feature-gate";
 import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
-import { TriggerKindPicker } from "@/components/bot/triggers";
 
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   admin: true,
   loading: false,
-  features: { bots: true, channels: true } as Record<string, boolean>,
+  features: { bots: true } as Record<string, boolean>,
 }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/permissions", async (original) => ({
@@ -38,7 +37,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.admin = true;
   mocks.loading = false;
-  mocks.features = { bots: true, channels: true };
+  mocks.features = { bots: true };
   mocks.api.mockReset().mockResolvedValue({});
   container = document.createElement("div");
   document.body.append(container);
@@ -67,7 +66,7 @@ it("shows neither the page nor the note until the universe has loaded", async ()
 });
 
 it("tells an admin where a switched-off feature is turned on", async () => {
-  mocks.features = { bots: false, channels: false };
+  mocks.features = { bots: false };
   await render(<FeatureGate feature="bots"><p>Bot list</p></FeatureGate>);
   expect(container.textContent).toContain("Bots are turned off in this universe");
   expect(container.textContent).not.toContain("Bot list");
@@ -76,30 +75,19 @@ it("tells an admin where a switched-off feature is turned on", async () => {
 
 it("tells a member an admin can turn it on", async () => {
   mocks.admin = false;
-  mocks.features = { bots: true, channels: false };
-  await render(<FeatureGate feature="channels"><p>Accounts</p></FeatureGate>);
-  expect(container.textContent).toContain("Channels are turned off in this universe");
+  mocks.features = { bots: false };
+  await render(<FeatureGate feature="bots"><p>Bot list</p></FeatureGate>);
+  expect(container.textContent).toContain("Bots are turned off in this universe");
   expect(container.textContent).toContain("A universe Owner can turn them on.");
   expect(container.querySelector("a")).toBeNull();
 });
 
-it("switches a feature from General settings, and holds a feature whose requirement is off", async () => {
-  mocks.features = { bots: false, channels: false };
+it("switches a feature from General settings", async () => {
+  mocks.features = { bots: false };
   await render(<UniverseGeneralSettingsPage />);
   // Each switch keeps a hidden checkbox under its id, beside the switch itself.
-  expect(container.querySelector<HTMLInputElement>("#feature-channels")!.disabled).toBe(true);
   expect(container.querySelector<HTMLInputElement>("#feature-bots")!.disabled).toBe(false);
   const [bots] = [...container.querySelectorAll<HTMLElement>('[role="switch"]')];
-  expect(container.textContent).toContain("Needs Bots.");
   await act(async () => bots!.click());
   expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/universe", { features: { bots: true } });
-});
-
-it("offers chat accounts as a bot trigger only while channels are on", async () => {
-  await render(<TriggerKindPicker env={{ kind: "none" }} onPick={() => undefined} />);
-  expect(container.textContent).toContain("Chat account");
-  mocks.features = { bots: true, channels: false };
-  await render(<TriggerKindPicker env={{ kind: "none" }} onPick={() => undefined} />);
-  expect(container.textContent).not.toContain("Chat account");
-  expect(container.textContent).toContain("Schedule");
 });

@@ -189,7 +189,7 @@ the token can do, so your application must check each user's access itself.
 You can use named helpers or operation IDs:
 
 - **Named helpers** cover every runtime operation, including deployment administration,
-  credentials, bots, channels, environments and binary transfers.
+  credentials, bots, environments and binary transfers.
 - **`client.platform` helpers** such as `list_organizations()` and `read_organization({"organizationId": id})` cover native Platform operations.
 - **`client.call(operation, params)`** reaches runtime and native Platform operations with generated parameter and result types. Empty parameters can be omitted when the operation has no required fields.
 
@@ -242,8 +242,7 @@ treat differently from an absent field, so pass it only when you mean it.
 | Transcriptions | `start_transcription`, `read_transcription`, `cancel_transcription` |
 | Blobs | `put_blobs`, `has_blobs`, `read_blob_bytes`, `upload_blob` |
 | Credentials | `import_credential_grant`, `lease_credential_grant`, `read_credential_grant`, `list_credential_grants`, `put_credential_grant`, `revoke_credential_grant`, `create_credential_client`, `read_credential_client`, `list_credential_clients`, `delete_credential_client`, `start_credential_flow`, `read_credential_flow`, `create_credential_provider`, `put_credential_provider`, `read_credential_provider`, `list_credential_providers`, `delete_credential_provider`, `list_github_installations`, `grant_github_installation` |
-| Channels | `create_channel_account`, `put_channel_account`, `read_channel_account`, `list_channel_accounts`, `delete_channel_account`, `admit_channel_inbound`, `list_channel_pairings`, `delete_channel_pairing`, `read_channel_conversation` |
-| Deployment | `list_deleted_universes`, `list_deleted_sessions`, `purge_session`, `list_deployment_environment_provider_bindings`, `create_universe`, `list_universes`, `read_universe`, `put_universe_configuration`, `put_universe_expiry`, `put_universe_handle`, `delete_universe`, `put_environment_provider`, `list_environment_providers`, `read_environment_provider`, `delete_environment_provider`, `put_universe_environment_provider_binding`, `delete_universe_environment_provider_binding`, `list_deployment_channel_accounts` |
+| Deployment | `list_deleted_universes`, `list_deleted_sessions`, `purge_session`, `list_deployment_environment_provider_bindings`, `create_universe`, `list_universes`, `read_universe`, `put_universe_configuration`, `put_universe_expiry`, `put_universe_handle`, `delete_universe`, `put_environment_provider`, `list_environment_providers`, `read_environment_provider`, `delete_environment_provider`, `put_universe_environment_provider_binding`, `delete_universe_environment_provider_binding` |
 | Universe | `watch` |
 
 | Native Platform area | `client.platform` helpers |

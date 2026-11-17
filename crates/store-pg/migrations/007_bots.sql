@@ -14,7 +14,7 @@
 --   columns the operator never writes.
 -- - Event rows keep `trigger_id` without a foreign key: a trigger may be
 --   deleted while its history stays readable.
--- - Trigger secrets (webhook URL token, pairing code) are capability
+-- - Trigger secrets (webhook URL token) are capability
 --   tokens Lightspeed mints for the trigger, not credentials it holds;
 --   they sit beside the document in `secrets_json` and are shown only to
 --   managing principals. Credentials proper (HMAC secrets, poll auth) are
@@ -125,7 +125,7 @@ CREATE TABLE bot_triggers (
     -- Schedule ids.
     trigger_id text NOT NULL,
     -- Copy of document_json->>'kind' (CHECK-enforced) so listing by kind is
-    -- indexed: schedule | webhook | poll | bot (the inbox) | chat.
+    -- indexed: schedule | webhook | poll | bot (the inbox).
     kind text NOT NULL,
 
     -- ── The operator's document ────────────────────────────────────────────
@@ -133,16 +133,14 @@ CREATE TABLE bot_triggers (
     revision bigint NOT NULL,
     -- BotTriggerDocument: the kind-tagged spec (schedule {cron|atMs,
     -- timezone, summary} / webhook {verification, preset} / poll {source,
-    -- intervalMs, items, cursor} / bot {from} / chat {accountId, matchScope,
-    -- activation, access, pairing, priority}) plus the cross-kind policy:
+    -- intervalMs, items, cursor} / bot {from}) plus the cross-kind policy:
     -- filter (CEL), route (bot | perKey | perEvent), coalesce, deliver,
     -- sessionTtlMs, enabled.
     document_json jsonb NOT NULL,
 
     -- ── Runtime-owned ──────────────────────────────────────────────────────
     -- Server-minted capability tokens: {webhookToken} for webhook triggers
-    -- (the URL path token), {pairingCode} for chat triggers with pairing:
-    -- code. Kept out of the document so it round-trips verbatim; shown only
+    -- (the URL path token). Kept outside the document and shown only
     -- to managing principals.
     secrets_json jsonb NOT NULL DEFAULT '{}',
     -- Why the runtime disabled the trigger (breaker | pollFailed |
@@ -170,7 +168,7 @@ CREATE TABLE bot_triggers (
     CONSTRAINT bot_triggers_trigger_id_format
         CHECK (trigger_id ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
     CONSTRAINT bot_triggers_kind_known
-        CHECK (kind IN ('schedule', 'webhook', 'poll', 'bot', 'chat')),
+        CHECK (kind IN ('schedule', 'webhook', 'poll', 'bot')),
     CONSTRAINT bot_triggers_kind_matches_document
         CHECK (document_json->>'kind' = kind),
     CONSTRAINT bot_triggers_revision_positive
@@ -210,17 +208,17 @@ CREATE UNIQUE INDEX bot_triggers_inbox_unique_idx
     WHERE kind = 'bot';
 
 COMMENT ON TABLE bot_triggers IS
-    'Triggers of a bot (schedule, webhook, poll, inbox, chat): the revisioned document, server-minted secrets, and runtime incidents.';
+    'Triggers of a bot (schedule, webhook, poll, inbox): the revisioned document, server-minted secrets, and runtime incidents.';
 COMMENT ON COLUMN bot_triggers.trigger_id IS
     'Authored trigger id, unique per bot.';
 COMMENT ON COLUMN bot_triggers.kind IS
-    'Trigger kind copied from the document spec for indexed listing; schedule|webhook|poll|bot|chat.';
+    'Trigger kind copied from the document spec for indexed listing; schedule|webhook|poll|bot.';
 COMMENT ON COLUMN bot_triggers.revision IS
     'Document revision, bumped by every put and runtime disable.';
 COMMENT ON COLUMN bot_triggers.document_json IS
     'Serialized BotTriggerDocument: the kind-specific spec plus filter, route, coalesce, deliver, sessionTtlMs, enabled.';
 COMMENT ON COLUMN bot_triggers.secrets_json IS
-    'Server-minted capability tokens (webhookToken, pairingCode); shown only to managing principals.';
+    'Server-minted capability tokens (webhookToken); shown only to managing principals.';
 COMMENT ON COLUMN bot_triggers.disabled_reason IS
     'Why the runtime disabled the trigger (breaker|pollFailed|oneShot|operator|botClosed); cleared when a put enables it again.';
 COMMENT ON COLUMN bot_triggers.disabled_at_ms IS
@@ -244,7 +242,7 @@ COMMENT ON COLUMN bot_triggers.updated_at_ms IS
 -- once at admission with everything the controller needs to deliver it,
 -- and touched once more when the delivery finishes (the outcome group).
 -- Filter misses are never stored. The source of an event is `trigger_id`
--- (a webhook, schedule, poll, or chat trigger) or `sender_bot_id` (a bot);
+-- (a webhook, schedule, or poll trigger) or `sender_bot_id` (a bot);
 -- the full envelope, including the source's own data and headers, is the
 -- CAS document at `document_ref`.
 
@@ -264,7 +262,7 @@ CREATE TABLE bot_events (
     -- NULL for an operator admit.
     trigger_id text,
     -- Event kind as authored by the source (github.push, schedule.fire,
-    -- chat.message, bot.reply).
+    -- bot.reply).
     kind text NOT NULL,
     -- One-line human summary rendered in the log and the roster.
     summary text NOT NULL,
@@ -284,9 +282,6 @@ CREATE TABLE bot_events (
     -- RoutedSession {sessionId, label, ttl} chosen by the trigger's route;
     -- NULL means the bot's main session.
     session_json jsonb,
-    -- Prepared BotEventMedia attachments appended to the run input; bytes
-    -- live in the CAS.
-    media_json jsonb NOT NULL DEFAULT '[]',
 
     -- ── Federation ─────────────────────────────────────────────────────────
     -- Sending bot for bot-originated events (self and addressed emits,
@@ -300,13 +295,7 @@ CREATE TABLE bot_events (
     in_reply_to_json jsonb,
 
     -- ── Receiver ───────────────────────────────────────────────────────────
-    -- Private: who admitted the event and hears back when the delivery
-    -- finishes. EventReceiver tagged by kind — `workflow` (a chat
-    -- conversation: workflowId, workflowKind, the receipt token, and the
-    -- toolsRef of the receiver-bound tools the routed session is created
-    -- with) or `bot` (the asking bot of a `bot_emit { reply: true }` and
-    -- its logical session, sent a bot.reply receipt). NULL when nobody
-    -- listens.
+    -- Private reply route for the bot that requested a bot.reply receipt.
     receiver_json jsonb,
 
     -- ── Outcome, written once when the delivery finishes ───────────────────
@@ -344,8 +333,6 @@ CREATE TABLE bot_events (
         CHECK (prompt_ref IS NULL OR prompt_ref ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT bot_events_session_object
         CHECK (session_json IS NULL OR jsonb_typeof(session_json) = 'object'),
-    CONSTRAINT bot_events_media_array
-        CHECK (jsonb_typeof(media_json) = 'array'),
     CONSTRAINT bot_events_sender_bot_id_format
         CHECK (sender_bot_id IS NULL OR sender_bot_id ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
     CONSTRAINT bot_events_hops_nonnegative
@@ -397,7 +384,7 @@ COMMENT ON COLUMN bot_events.seq IS
 COMMENT ON COLUMN bot_events.trigger_id IS
     'Admitting trigger; no foreign key so history outlives the trigger. NULL for an operator admit.';
 COMMENT ON COLUMN bot_events.kind IS
-    'Event kind as authored by the source (e.g. github.push, schedule.fire, chat.message, bot.reply).';
+    'Event kind as authored by the source (e.g. github.push, schedule.fire, bot.reply).';
 COMMENT ON COLUMN bot_events.summary IS
     'One-line human summary rendered in the log and the roster.';
 COMMENT ON COLUMN bot_events.occurred_at_ms IS
@@ -410,8 +397,6 @@ COMMENT ON COLUMN bot_events.prompt_ref IS
     'CAS ref of the model-facing rendering delivered to sessions; NULL only for archived rows.';
 COMMENT ON COLUMN bot_events.session_json IS
     'RoutedSession the event was admitted to (session id, label, ttl); NULL means the main session.';
-COMMENT ON COLUMN bot_events.media_json IS
-    'Prepared BotEventMedia attachments appended to the run input; bytes live in the CAS.';
 COMMENT ON COLUMN bot_events.sender_bot_id IS
     'Sending bot for bot-originated events (self or addressed); counted against the sender rate cap.';
 COMMENT ON COLUMN bot_events.hops IS
@@ -419,7 +404,7 @@ COMMENT ON COLUMN bot_events.hops IS
 COMMENT ON COLUMN bot_events.in_reply_to_json IS
     'Public BotEventReplyRef correlation of a receipt: the asked event #N at the answering bot.';
 -- Derived by the bot store in the same transaction as event insertion.
--- Covers documents, prompts, media, and receiver tool declarations.
+-- Covers documents and prompts.
 CREATE TABLE cas_bot_event_roots (
     universe_id uuid NOT NULL,
     bot_id text NOT NULL,

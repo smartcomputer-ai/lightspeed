@@ -1,12 +1,8 @@
 /// Platform-wide fixtures: users beside the demo admin, operator-registered
-/// environment providers, channel accounts, and connector health.
+/// environment providers.
 import type { DemoStore, DemoUser } from "../store";
 
 export const INCUS_PROVIDER_ID = "incus-eu-1";
-export const TELEGRAM_ACCOUNT_ID = "chan-telegram-northwind";
-export const WHATSAPP_ACCOUNT_ID = "chan-whatsapp-northwind";
-export const TELEGRAM_ADA_ACCOUNT_ID = "chan-telegram-ada";
-export const WHATSAPP_ADA_ACCOUNT_ID = "chan-whatsapp-ada";
 
 const OTHER_USERS: DemoUser[] = [
   {
@@ -58,76 +54,4 @@ export function seedPlatform(store: DemoStore): void {
     createdAtMs: Date.parse("2026-06-05T12:00:00.000Z"),
     updatedAtMs: Date.parse("2026-08-10T09:00:00.000Z"),
   });
-
-  // Channel accounts are universe resources; each use-case fixture
-  // seeds its own under these shared ids. Connector health stays
-  // deployment-wide.
-  const changedAtMs = Date.now() - 42 * 60_000;
-  store.channelsStatus = {
-    connectors: [
-      {
-        url: "http://channels-telegram.internal:9101/health",
-        reachable: true,
-        httpStatus: 200,
-        health: {
-          version: 1,
-          provider: "telegram",
-          accountId: "northwind_support_bot",
-          state: "ready",
-          ingressConnected: true,
-          activityWorkerReady: true,
-          reconnectAttempts: 0,
-          changedAtMs,
-        },
-      },
-      {
-        url: "http://channels-whatsapp.internal:9102/health",
-        reachable: true,
-        httpStatus: 200,
-        health: {
-          version: 1,
-          provider: "whatsapp",
-          accountId: "+4915112345678",
-          state: "disconnected",
-          ingressConnected: false,
-          activityWorkerReady: true,
-          reconnectAttempts: 3,
-          detail: "waiting for the phone to come back online",
-          lastError: "websocket closed (1006)",
-          lastErrorAtMs: changedAtMs,
-          changedAtMs,
-        },
-      },
-      {
-        url: "http://channels-telegram-ada.internal:9103/health",
-        reachable: true,
-        httpStatus: 200,
-        health: {
-          version: 1,
-          provider: "telegram",
-          accountId: "ada_assistant_bot",
-          state: "ready",
-          ingressConnected: true,
-          activityWorkerReady: true,
-          reconnectAttempts: 0,
-          changedAtMs: Date.now() - 9 * 3_600_000,
-        },
-      },
-      {
-        url: "http://channels-whatsapp-ada.internal:9104/health",
-        reachable: true,
-        httpStatus: 200,
-        health: {
-          version: 1,
-          provider: "whatsapp",
-          accountId: "+4917612345678",
-          state: "ready",
-          ingressConnected: true,
-          activityWorkerReady: true,
-          reconnectAttempts: 1,
-          changedAtMs: Date.now() - 5 * 3_600_000,
-        },
-      },
-    ],
-  };
 }

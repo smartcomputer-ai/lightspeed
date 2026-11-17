@@ -67,7 +67,6 @@ const expectedImages = [
   "runtime",
   "configuratorMcp",
   "platform",
-  "platformWorkers",
 ];
 if (JSON.stringify(Object.keys(value.images ?? {}).sort()) !== JSON.stringify(expectedImages.sort())) {
   fail("images must contain the complete runtime artifact set");

@@ -596,9 +596,9 @@ export interface BlobContent {
   bytesBase64: string;
 }
 
-/// Bot and channel wire types come from the generated core API client: the
+/// Bot wire types come from the generated core API client: the
 /// platform routes are passthroughs, so the browser reads the
-/// core response shapes verbatim. Only the connector health report — a
+/// core response shapes verbatim.
 /// platform-owned surface — keeps a local shape.
 export type {
   BotActiveDeliverySnapshot,
@@ -614,7 +614,6 @@ export type {
   BotEventDocument,
   BotEventInput,
   BotEventListResponse,
-  BotEventMedia,
   BotEventOutcome,
   BotEventReadResponse,
   BotEventReplyRef,
@@ -642,24 +641,7 @@ export type {
   BotTriggerView,
   BotView,
   BotWhenBusy,
-  ChannelAccountInput,
-  ChannelAccountListResponse,
-  ChannelAccountReadResponse,
-  ChannelAccountSettings,
-  ChannelAccountView,
-  ChannelPairedVia,
-  ChannelPairingListResponse,
-  ChannelPairingView,
-  ChannelProvider,
-  ChatAccess,
-  ChatActivation,
-  ChatGroupActivation,
-  ChatPairing,
-  ChatScope,
-  ChatTurnAccess,
   LlmUsageView,
-  DeploymentChannelAccountListResponse,
-  DeploymentChannelAccountView,
   PollCursorSpec,
   PollCursorState,
   PollHttpAuth,
@@ -678,65 +660,8 @@ import type { BotView } from "@lightspeed-ai/sdk";
 export interface BotTriggerSecrets {
   /// Webhook triggers: the ingest path including its URL token.
   ingestPath?: string | null;
-  /// Chat triggers with `pairing: code`: the code a conversation sends once.
-  pairingCode?: string | null;
 }
 
 export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
   return bot.displayName ?? bot.botId;
-}
-
-/// Connector host health, aggregated by the platform backend from each
-/// connector's /healthz (`GET /api/ui/status/channels`). Platform-owned;
-/// unrelated to the core channel account records.
-export interface ChannelConnectorHealth {
-  version: 1;
-  universeId?: string;
-  provider: string;
-  accountId: string;
-  state: "starting" | "ready" | "disconnected" | "failed" | "stopping" | "stopped";
-  ingressConnected: boolean;
-  activityWorkerReady: boolean;
-  reconnectAttempts: number;
-  detail?: string;
-  lastError?: string;
-  lastErrorAtMs?: number;
-  changedAtMs: number;
-}
-
-export interface ChannelConnectorHostHealth {
-  version: 1;
-  state: "starting" | "ready" | "degraded" | "stopping" | "stopped";
-  startedAtMs: number;
-  discovery: {
-    passes: number;
-    lastSuccessAtMs?: number;
-    lastError?: string;
-    lastErrorAtMs?: number;
-  };
-  accounts: ChannelConnectorHealth[];
-}
-
-export interface ChannelConnectorStatus {
-  url: string;
-  reachable: boolean;
-  httpStatus: number | null;
-  health?: ChannelConnectorHostHealth | ChannelConnectorHealth;
-  error?: string;
-}
-
-export interface ChannelsStatus {
-  connectors: ChannelConnectorStatus[];
-}
-
-export interface UniverseChannelStatus {
-  accounts: ChannelConnectorHealth[];
-}
-
-export function connectorAccountHealth(
-  status: ChannelConnectorStatus,
-): ChannelConnectorHealth[] {
-  const health = status.health;
-  if (!health) return [];
-  return "accounts" in health ? health.accounts : [health];
 }

@@ -1,7 +1,6 @@
 //! Real PostgreSQL, object-store and Temporal teardown, including restartable steps.
 use api::{AgentApiErrorKind, AgentApiService, DeploymentApiService, UniverseDeletionState};
 use bots::{BotStore, BotTriggerStore};
-use channels::ChannelAccountStore;
 use credentials::{CredentialGrantStore, SecretStore};
 use environments::EnvironmentStore;
 use futures_util::TryStreamExt;
@@ -376,20 +375,6 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
     store.put_bot_trigger(&bot, bots::BotTriggerWrite { trigger_id: trigger.clone(), document: serde_json::from_value(serde_json::json!({"kind":"schedule","cron":"@hourly","timezone":"UTC","summary":"tick","enabled":true}))?, secrets: Default::default(), cursor: None }, None, 1).await?;
     state.api.reconcile_bot_schedules_once().await?;
     store
-        .create_channel_account(
-            api::ChannelAccountId::new("telegram"),
-            api::ChannelAccountDocument {
-                provider: api::ChannelProvider::new("telegram"),
-                provider_account_id: id.to_string(),
-                display_name: "test".into(),
-                credential_grant_id: None,
-                settings: Default::default(),
-                enabled: true,
-            },
-            1,
-        )
-        .await?;
-    store
         .create_external_environment(environments::CreateExternalEnvironment {
             request_id: environments::EnvironmentProvisionRequestId::new("external-request"),
             environment_id: environments::EnvironmentId::new("external"),
@@ -404,7 +389,6 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
     for (name, workflow_type) in [
         ("open", "AgentSessionWorkflow"),
         ("bot-scheduled", "BotControllerWorkflow"),
-        ("chat-telegram-test", "ChannelConversationWorkflow"),
         ("envjob-external-group", "EnvironmentJobWorkflow"),
         ("wtx:sha256:subagent", "SubagentExecutionWorkflow"),
         ("wtx:sha256:code", "CodeExecutionWorkflow"),
@@ -532,7 +516,6 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
     let record = gone.deleted_universe.expect("gone carries resource record");
     assert_eq!(record.summary["contained"]["sessions"], 3);
     assert_eq!(record.summary["contained"]["bots"], 1);
-    assert_eq!(record.summary["contained"]["channelAccounts"], 1);
     assert!(record.summary["contained"].get("apiKeys").is_none());
     assert_eq!(record.summary["contained"]["workspaces"], 1);
     assert_eq!(record.summary["contained"]["profiles"], 1);

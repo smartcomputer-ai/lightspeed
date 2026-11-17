@@ -15,7 +15,7 @@ vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")
 
 const universe = (handle: string, overrides: Record<string, unknown> = {}) => ({
   id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, status: "active",
-  createdAt: "2026-01-01T00:00:00Z", role: "viewer", actions: [...universeActions(["viewer"])], features: { bots: true, channels: true }, ...overrides,
+  createdAt: "2026-01-01T00:00:00Z", role: "viewer", actions: [...universeActions(["viewer"])], features: { bots: true }, ...overrides,
 });
 
 let root: Root;
@@ -66,7 +66,7 @@ it("falls back to the first active membership when the last universe is gone or 
   mocks.api.mockResolvedValue([
     universe("archived", { status: "archived" }),
     universe("browsed", { role: null }),
-    universe("member", { features: { bots: false, channels: false } }),
+    universe("member", { features: { bots: false } }),
   ]);
   localStorage.setItem("lightspeed:last-universe", "browsed");
   await show(true);

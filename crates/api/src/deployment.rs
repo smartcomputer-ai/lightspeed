@@ -37,7 +37,6 @@ pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT: &str =
     "deployment/environment-providers/bindings/put";
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE: &str =
     "deployment/environment-providers/bindings/delete";
-pub const METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST: &str = "deployment/channels/accounts/list";
 
 pub const METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST: &str = "deployment/sessions/deleted/list";
 pub const METHOD_DEPLOYMENT_SESSIONS_PURGE: &str = "deployment/sessions/purge";
@@ -430,33 +429,6 @@ pub struct DeploymentProviderBindingDeleteResponse {
     pub binding: EnvironmentProviderBindingView,
 }
 
-/// One channel account of any universe, for the connector host's discovery
-/// pass.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentChannelAccountView {
-    pub universe_id: String,
-    #[serde(flatten)]
-    pub account: ChannelAccountView,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentChannelAccountListParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<ChannelProvider>,
-    /// Include disabled accounts; by default only enabled ones are listed.
-    #[serde(default)]
-    pub include_disabled: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentChannelAccountListResponse {
-    #[serde(default)]
-    pub accounts: Vec<DeploymentChannelAccountView>,
-}
-
 #[async_trait]
 pub trait DeploymentApiService: Send + Sync {
     async fn list_deleted_universes(
@@ -581,13 +553,6 @@ pub trait DeploymentApiService: Send + Sync {
             "environment provider bindings are unavailable",
         ))
     }
-
-    async fn list_deployment_channel_accounts(
-        &self,
-        _params: DeploymentChannelAccountListParams,
-    ) -> Result<DeploymentChannelAccountListResponse, AgentApiError> {
-        Err(AgentApiError::internal("channel accounts are unavailable"))
-    }
 }
 
 macro_rules! deployment_api_methods {
@@ -688,9 +653,6 @@ macro_rules! for_each_deployment_operation {
     $crate::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding($crate::DeploymentProviderBindingDeleteParams) -> $crate::DeploymentProviderBindingDeleteResponse =>
         ["Delete an environment provider binding", "Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again."], access: $crate::MethodAccess::Deployment,
         http: (DELETE, "/api/v1/universes/{universe}/deployment-provider-bindings/{providerId}", [("universe", "universe"), ("providerId", "providerId")], [], Json, Ok),
-    $crate::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts($crate::DeploymentChannelAccountListParams) -> $crate::DeploymentChannelAccountListResponse =>
-        ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: $crate::MethodAccess::Deployment,
-        http: (GET, "/api/v1/deployment/channels/accounts", [], ["includeDisabled", "provider"], Json, Ok),
         }
     };
 }

@@ -527,7 +527,6 @@ async fn begin_universe_deletion_locked(
                         'registered', (SELECT count(*) FROM environments WHERE universe_id = u.universe_id AND source_kind = 'registered'),
                         'external', (SELECT count(*) FROM environments WHERE universe_id = u.universe_id AND source_kind = 'external')),
                     'mcpServers', (SELECT count(*) FROM mcp_servers WHERE universe_id = u.universe_id),
-                    'channelAccounts', (SELECT count(*) FROM channel_accounts WHERE universe_id = u.universe_id),
                     'blobBytes', COALESCE((SELECT sum(byte_len) FROM cas_blobs WHERE universe_id = u.universe_id), 0),
                     'lastActivityAtMs', (SELECT max(updated_at_ms) FROM sessions WHERE universe_id = u.universe_id)),
                 'removed', jsonb_build_object('workflowsTerminated', 0, 'schedulesDeleted', 0,

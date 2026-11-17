@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AddIcon, BackIcon, ChatTriggerIcon, CollapseIcon, CommandIcon, CopiedIcon, CopyIcon, DeleteIcon, ExpandIcon, InboxIcon, PauseIcon, PollIcon, ResumeIcon, RotateSecretIcon, ScheduleIcon, SendIcon, WebhookIcon } from "@/icons";
+import { AddIcon, BackIcon, CollapseIcon, CommandIcon, CopiedIcon, CopyIcon, DeleteIcon, ExpandIcon, InboxIcon, PauseIcon, PollIcon, ResumeIcon, ScheduleIcon, SendIcon, WebhookIcon } from "@/icons";
 import {
   api,
   botLabel,
@@ -11,12 +11,6 @@ import {
   type BotTriggerRoute,
   type BotTriggerSecrets,
   type BotTriggerView,
-  type ChannelAccountListResponse,
-  type ChannelAccountView,
-  type ChatAccess,
-  type ChatActivation,
-  type ChatPairing,
-  type ChatScope,
   type PollCursorSpec,
   type PollCursorState,
   type WebhookVerification,
@@ -50,7 +44,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { CronBuilder } from "./cron-builder";
 import { deliverySentence, deliveryShapeOf, describeCron, triggerSummary } from "./trigger-summary";
-import { useFeature } from "@/lib/universes";
 
 export const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -58,7 +51,6 @@ type ScheduleTrigger = BotTriggerView & { kind: "schedule" };
 type WebhookTrigger = BotTriggerView & { kind: "webhook" };
 type PollTrigger = BotTriggerView & { kind: "poll" };
 type InboxTrigger = BotTriggerView & { kind: "bot" };
-type ChatTrigger = BotTriggerView & { kind: "chat" };
 
 /// Temporal Schedules take classic 5-field crontab (minute hour day month
 /// weekday) or an @-macro. Catch Quartz-style pastes (seconds field, `?`)
@@ -76,20 +68,6 @@ export function cronProblem(value: string): string | null {
 
 export type TriggerKind = BotTriggerView["kind"];
 
-/// The universe's channel accounts, for the chat trigger picker and for
-/// naming accounts on saved triggers (the trigger carries only the id).
-/// With channels off the list is refused, so it is not asked for: a saved
-/// chat trigger then shows its account by id.
-export function useChannelAccounts(universeId: string, enabled = true) {
-  const channelsOn = useFeature("channels");
-  return useQuery({
-    queryKey: ["channel-accounts", universeId],
-    queryFn: () =>
-      api<ChannelAccountListResponse>("GET", `/api/ui/universes/${universeId}/channel-accounts`),
-    enabled: enabled && channelsOn,
-  });
-}
-
 /// A poll trigger's flattened document carries the dedupe spec under
 /// `cursor`; the advancing runtime state is the separate `cursorState`.
 function pollSpecCursor(trigger: PollTrigger): PollCursorSpec | null {
@@ -101,7 +79,7 @@ export function pollStateCursor(trigger: PollTrigger): PollCursorState | null {
 }
 
 /// The core replaces trigger documents whole (PUT with an expected
-/// revision), so partial edits — a pause, a rotated pairing code — start
+/// revision), so partial edits start
 /// from the stored view.
 export function triggerInputOf(trigger: BotTriggerView): BotTriggerInput {
   const shared = {
@@ -141,17 +119,6 @@ export function triggerInputOf(trigger: BotTriggerView): BotTriggerInput {
       };
     case "bot":
       return { ...shared, kind: "bot", from: trigger.from ?? null };
-    case "chat":
-      return {
-        ...shared,
-        kind: "chat",
-        accountId: trigger.accountId,
-        matchScope: trigger.matchScope ?? null,
-        activation: trigger.activation ?? {},
-        access: trigger.access ?? {},
-        pairing: trigger.pairing ?? "code",
-        priority: trigger.priority ?? 100,
-      };
   }
 }
 
@@ -307,7 +274,6 @@ export function TriggerKindIcon({
   const classes = cn("size-3.5 shrink-0 text-muted-foreground", className);
   if (kind === "schedule") return <ScheduleIcon className={classes} />;
   if (kind === "bot") return <InboxIcon className={classes} />;
-  if (kind === "chat") return <ChatTriggerIcon className={classes} />;
   if (kind === "poll") return exec ? <CommandIcon className={classes} /> : <PollIcon className={classes} />;
   return <WebhookIcon className={classes} />;
 }
@@ -434,7 +400,6 @@ export function TriggerFormCard({
             />
           ) : (
             <TriggerKindFields
-              universeId={universeId}
               kind={kind}
               forms={forms}
               patch={patch}
@@ -466,7 +431,6 @@ function triggerFormsFromView(trigger: BotTriggerView): TriggerForms {
     webhook: trigger.kind === "webhook" ? webhookFormFromTrigger(trigger) : defaultWebhookForm,
     poll: trigger.kind === "poll" ? pollFormFromTrigger(trigger) : defaultPollForm,
     inbox: trigger.kind === "bot" ? inboxFormFromTrigger(trigger) : defaultInboxForm(),
-    chat: trigger.kind === "chat" ? chatFormFromTrigger(trigger) : defaultChatForm,
   };
 }
 
@@ -484,7 +448,6 @@ function triggerUpdateBody(trigger: BotTriggerView, forms: TriggerForms, deliver
   }
   if (trigger.kind === "poll") return { ...base, kind: "poll", ...pollPayload(forms.poll) };
   if (trigger.kind === "bot") return { ...base, kind: "bot", ...inboxPayload(forms.inbox) };
-  if (trigger.kind === "chat") return { ...base, kind: "chat", ...chatPayload(forms.chat) } as BotTriggerInput;
   return { ...base, kind: "webhook", ...webhookPayload(forms.webhook) };
 }
 
@@ -555,7 +518,7 @@ export function SavedTriggerFormCard({
     onError: (err) => setError(err.message),
   });
   const summary = summaryOverride ?? (deliveryOnly ? "How messages reach this bot" : triggerSummary(trigger));
-  const secondarySummary = secondarySummaryOverride ?? (deliveryOnly ? deliverySentence(deliveryShapeOf(trigger)) : deliverySentence(deliveryShapeOf(trigger), trigger.kind === "chat"));
+  const secondarySummary = secondarySummaryOverride ?? deliverySentence(deliveryShapeOf(trigger));
 
   return (
     <TriggerFormCard
@@ -581,7 +544,6 @@ export function SavedTriggerFormCard({
         <DeliveryFieldsBody
           form={forms.inbox}
           setForm={(next) => patch("inbox", next)}
-          chat={trigger.kind === "chat"}
         />
       ) : undefined}
       idPrefix={`edit-trigger-${trigger.triggerId}`}
@@ -633,8 +595,6 @@ export function triggerDraftSummary(kind: TriggerKind, forms: TriggerForms): str
           ? `Runs ${forms.poll.argvText.trim().split(/\n/)[0]} ${every}`
           : "Run a command — enter it";
     }
-    case "chat":
-      return forms.chat.channelAccountId ? "Messages on the chosen account" : "Chat — pick an account";
     case "bot":
       return forms.inbox.fromMode === "any"
         ? "Messages from any bot"
@@ -688,12 +648,10 @@ export function ingestUrl(ingestPath: string): string {
 }
 
 /**
- * A trigger's ingest path or pairing code. The trigger list never carries
- * them, so they are asked for one trigger at a time and only on behalf of
- * someone who may manage the bot (anyone else is refused). Keyed by revision:
- * replacing a trigger, which is how a pairing code is rotated, reads again.
+ * A webhook's ingest path is available to people who may manage the bot.
+ * The query is keyed by revision so replacing the trigger reads it again.
  * Keyed by creation time too: a trigger deleted and created again under the
- * same name starts over at revision 1 with a new URL token or code, and must
+ * same name starts over at revision 1 with a new URL token, and must
  * not be shown what its predecessor held.
  */
 export function triggerSecretsQuery(
@@ -723,30 +681,6 @@ function routeLabel(route: BotTriggerRoute | null | undefined): string {
   if (route == null || route.policy === "bot") return "main session";
   if (route.policy === "perEvent") return "session per event";
   return route.key ? `session per key: ${route.key}` : "session per key";
-}
-
-/** Chat triggers never route to the main session: the default key is the conversation. */
-function chatRouteLabel(route: BotTriggerRoute | null | undefined): string {
-  if (route?.policy === "perEvent") return "session per message";
-  return route?.policy === "perKey" && route.key ? `session per key: ${route.key}` : "session per conversation";
-}
-
-function sessionClosePolicyLabel(closeAfterMs: number | null | undefined): string {
-  if (closeAfterMs == null) return "inherits the bot's idle-close policy";
-  if (closeAfterMs === 0) return "sessions kept forever";
-  return `idle sessions close after ${Math.round(closeAfterMs / 3_600_000)}h`;
-}
-
-/** Unambiguous alphanumerics (no 0/O, 1/l/I), the same alphabet the server mints with. */
-export const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-
-export function mintPairingCode(length = 12): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  let code = "";
-  for (const byte of bytes) {
-    code += PAIRING_ALPHABET[byte % PAIRING_ALPHABET.length];
-  }
-  return code;
 }
 
 /** The bot profile's environment intent, as it affects exec pollers. */
@@ -814,8 +748,6 @@ export function TriggersSection({
     queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
     enabled: manage,
   });
-  const accounts = useChannelAccounts(universeId);
-  const accountList = accounts.data?.accounts ?? [];
   const invalidate = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["bot-triggers", universeId, botId] }),
     queryClient.invalidateQueries({ queryKey: ["bots"] }),
@@ -874,7 +806,7 @@ export function TriggersSection({
       )}
       {visibleTriggers.length === 0 && (
         <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-          Nothing wakes this bot yet{manage ? " — add a schedule, a webhook, or a chat account. You can always message it from Chat." : "."}
+          Nothing wakes this bot yet{manage ? " — add a schedule, a webhook, or a poll. You can always message it from Chat." : "."}
         </p>
       )}
       {triggers.error && <p className="text-xs text-destructive">{triggers.error.message}</p>}
@@ -885,8 +817,8 @@ export function TriggersSection({
         <p className="text-xs text-muted-foreground">Sample sent — it shows up under Activity in a moment.</p>
       )}
       {visibleTriggers.map((trigger) => {
-        const summary = triggerSummary(trigger, accountList);
-        const delivery = deliverySentence(deliveryShapeOf(trigger), trigger.kind === "chat");
+        const summary = triggerSummary(trigger);
+        const delivery = deliverySentence(deliveryShapeOf(trigger));
         const enabled = trigger.enabled ?? true;
         const editedTrigger = editing?.triggerId === trigger.triggerId ? editing : trigger;
         const open = editing?.triggerId === trigger.triggerId;
@@ -972,8 +904,6 @@ export function TriggersSection({
                 <PollRowDetail trigger={trigger} />
               ) : trigger.kind === "bot" ? (
                 <InboxRowDetail trigger={trigger} />
-              ) : trigger.kind === "chat" ? (
-                <ChatRowDetail universeId={universeId} botId={botId} trigger={trigger} manage={manage} accounts={accountList} />
               ) : (
                 <WebhookRowDetail universeId={universeId} botId={botId} trigger={trigger} manage={manage} />
               )}
@@ -1307,382 +1237,6 @@ export interface DeliveryFormState {
   closeHours: string;
 }
 
-export interface ChatFormState extends DeliveryFormState {
-  channelAccountId: string;
-  scope: "any" | "direct" | "group";
-  groupActivation: "mention" | "always";
-  /** Comma- or newline-separated. */
-  prefixesText: string;
-  mentionNamesText: string;
-  /** Who may take a turn: anyone in a paired conversation, or listed handles. */
-  accessTurn: "anyone" | "listed";
-  /** Comma- or newline-separated handles, when accessTurn is "listed". */
-  allowedText: string;
-  /** Handles allowed to issue control commands; blank denies everyone. */
-  controllersText: string;
-  requirePairing: boolean;
-  priority: string;
-}
-
-function ChatRowDetail({
-  universeId,
-  botId,
-  trigger,
-  manage,
-  accounts,
-}: {
-  universeId: string;
-  botId: string;
-  trigger: ChatTrigger;
-  manage: boolean;
-  accounts: ChannelAccountView[];
-}) {
-  const queryClient = useQueryClient();
-  const [copied, setCopied] = useState(false);
-  const paired = (trigger.pairing ?? "code") === "code";
-  const secrets = useQuery({ ...triggerSecretsQuery(universeId, botId, trigger), enabled: manage && paired });
-  const pairingCode = secrets.data?.pairingCode ?? null;
-  // Rotating is the one edit that names a code; every other edit leaves it
-  // out and the stored code stays.
-  const rotate = useMutation({
-    mutationFn: () =>
-      api("PUT", `/api/ui/universes/${universeId}/bots/${botId}/triggers/${trigger.triggerId}`, {
-        trigger: { ...triggerInputOf(trigger), pairing: "code", pairingCode: mintPairingCode() },
-        expectedRevision: trigger.revision,
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bot-triggers", universeId, botId] }),
-  });
-  const account = accounts.find((entry) => entry.accountId === trigger.accountId);
-  const scope =
-    trigger.matchScope === "direct" ? "direct chats" : trigger.matchScope === "group" ? "groups" : "direct chats and groups";
-  return (
-    <>
-      <p className="mt-1 text-muted-foreground wrap-anywhere">
-        {account ? (
-          <>
-            {account.provider} · {account.displayName}
-          </>
-        ) : (
-          <span className="text-destructive">account missing</span>
-        )}{" "}
-        · {scope}
-        {trigger.matchScope !== "direct" &&
-          ` · groups: ${trigger.activation?.group === "always" ? "every message" : "on mention"}`}
-        {" → "}
-        {chatRouteLabel(trigger.route)} · {sessionClosePolicyLabel(trigger.sessionCloseAfterMs)}
-        {trigger.coalesce &&
-          ` · batches ≤${trigger.coalesce.maxCount} over ${trigger.coalesce.debounceMs / 1000}s`}
-        {trigger.deliver && trigger.deliver.whenBusy !== "queue" && ` · busy: ${trigger.deliver.whenBusy}`}
-      </p>
-      {!paired ? (
-        <p className="mt-1 text-muted-foreground">Open: any conversation on the account connects without pairing.</p>
-      ) : manage && pairingCode ? (
-        <div className="mt-1 flex min-w-0 max-w-full items-center gap-1 overflow-hidden">
-          <span className="shrink-0 text-muted-foreground">Pairing code</span>
-          <code className="min-w-0 truncate font-medium" title={pairingCode}>
-            {pairingCode}
-          </code>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Copy pairing code"
-            onClick={() => {
-              void navigator.clipboard.writeText(pairingCode).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1_500);
-              });
-            }}
-          >
-            {copied ? <CopiedIcon /> : <CopyIcon />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Rotate pairing code"
-            title="Mint a fresh pairing code; conversations already paired stay connected"
-            disabled={rotate.isPending}
-            onClick={() => rotate.mutate()}
-          >
-            <RotateSecretIcon />
-          </Button>
-          {rotate.error && <span className="text-destructive">{rotate.error.message}</span>}
-        </div>
-      ) : manage && secrets.error ? (
-        <p className="mt-1 text-destructive">Could not read the pairing code: {secrets.error.message}</p>
-      ) : manage ? (
-        <p className="mt-1 text-muted-foreground">Pairing code required.</p>
-      ) : (
-        <p className="mt-1 text-muted-foreground">
-          Pairing code required — shown to people who manage this bot.
-        </p>
-      )}
-      {trigger.filter && (
-        <p className="mt-1 line-clamp-2 text-muted-foreground wrap-anywhere">
-          filter: <code>{trigger.filter}</code>
-        </p>
-      )}
-    </>
-  );
-}
-
-function splitList(text: string): string[] {
-  return [...new Set(text.split(/[,\n]/).map((entry) => entry.trim()).filter((entry) => entry.length > 0))];
-}
-
-function chatFormFromTrigger(trigger: ChatTrigger): ChatFormState {
-  return {
-    ...deliveryFormFromTrigger(trigger),
-    channelAccountId: trigger.accountId,
-    scope: trigger.matchScope ?? "any",
-    groupActivation: trigger.activation?.group ?? "mention",
-    prefixesText: (trigger.activation?.triggerPrefixes ?? []).join(", "),
-    mentionNamesText: (trigger.activation?.mentionNames ?? []).join(", "),
-    accessTurn: trigger.access?.turn ?? "anyone",
-    allowedText: (trigger.access?.allowed ?? []).join(", "),
-    controllersText: (trigger.access?.controllers ?? []).join(", "),
-    requirePairing: (trigger.pairing ?? "code") === "code",
-    priority: trigger.priority != null ? String(trigger.priority) : "",
-  };
-}
-
-/**
- * The chat-kind fields for create or update. The pairing code is never
- * among them: the server mints one when pairing is required and none is
- * stored, and keeps the stored one across every other edit.
- */
-export function chatSpecPayload(form: Omit<ChatFormState, keyof DeliveryFormState>): {
-  accountId: string;
-  matchScope: ChatScope | null;
-  activation: ChatActivation;
-  access: ChatAccess;
-  pairing: ChatPairing;
-  priority?: number;
-} {
-  const prefixes = splitList(form.prefixesText);
-  const mentionNames = splitList(form.mentionNamesText);
-  const allowed = splitList(form.allowedText);
-  const controllers = splitList(form.controllersText);
-  return {
-    accountId: form.channelAccountId.trim(),
-    matchScope: form.scope === "any" ? null : form.scope,
-    activation: {
-      group: form.groupActivation,
-      ...(prefixes.length > 0 ? { triggerPrefixes: prefixes } : {}),
-      ...(mentionNames.length > 0 ? { mentionNames } : {}),
-    },
-    access: {
-      turn: form.accessTurn,
-      ...(allowed.length > 0 ? { allowed } : {}),
-      ...(controllers.length > 0 ? { controllers } : {}),
-    },
-    pairing: form.requirePairing ? "code" : "open",
-    ...(form.priority.trim() ? { priority: Math.round(Number(form.priority)) } : {}),
-  };
-}
-
-export function chatPayload(form: ChatFormState) {
-  return { ...chatSpecPayload(form), ...deliveryPayload(form) };
-}
-
-export function chatFormProblem(form: ChatFormState): string | null {
-  if (!form.channelAccountId.trim()) return "Choose the messaging account this bot answers on.";
-  if (splitList(form.prefixesText).some((prefix) => prefix.length > 40)) {
-    return "Trigger prefixes are at most 40 characters.";
-  }
-  if (splitList(form.mentionNamesText).some((name) => name.length > 60)) {
-    return "Mention names are at most 60 characters.";
-  }
-  if (form.accessTurn === "listed" && splitList(form.allowedText).length === 0) {
-    return "List who may take a turn, or allow anyone in the conversation.";
-  }
-  if (form.priority.trim()) {
-    const priority = Number(form.priority);
-    if (!Number.isInteger(priority) || priority < 0 || priority > 1000) {
-      return "Priority is a whole number from 0 to 1000.";
-    }
-  }
-  return deliveryFormProblem(form);
-}
-
-export function ChatFields({
-  universeId,
-  form,
-  setForm,
-}: {
-  universeId: string;
-  form: ChatFormState;
-  setForm: (next: ChatFormState) => void;
-}) {
-  const accounts = useChannelAccounts(universeId);
-  const accountList = accounts.data?.accounts ?? [];
-  const accountLabel = (id: string) => {
-    const account = accountList.find((candidate) => candidate.accountId === id);
-    return account ? `${account.provider} · ${account.displayName}` : id;
-  };
-  return (
-    <>
-      <Field>
-        <FieldLabel htmlFor="chat-account">Messaging account</FieldLabel>
-        <Select
-          value={form.channelAccountId}
-          onValueChange={(value) => setForm({ ...form, channelAccountId: (value as string | null) ?? "" })}
-        >
-          <SelectTrigger id="chat-account" className="w-full">
-            <SelectValue placeholder="Select an account">
-              {(value: string) => (value ? accountLabel(value) : "Select an account")}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {accountList.map((account) => (
-              <SelectItem key={account.accountId} value={account.accountId} disabled={account.enabled === false}>
-                {account.provider} · {account.displayName}
-                {account.enabled === false && " (disabled)"}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <FieldDescription>
-          {accounts.error
-            ? accounts.error.message
-            : accounts.data && accountList.length === 0
-              ? "No messaging accounts are connected in this universe; an owner adds them under Channels."
-              : "A Telegram or WhatsApp account registered in this universe."}
-        </FieldDescription>
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field>
-          <FieldLabel>Conversations</FieldLabel>
-          <Select
-            value={form.scope}
-            onValueChange={(value) => value && setForm({ ...form, scope: value as ChatFormState["scope"] })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="any">Direct chats and groups</SelectItem>
-              <SelectItem value="direct">Direct chats only</SelectItem>
-              <SelectItem value="group">Groups only</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        {form.scope !== "direct" && (
-          <Field>
-            <FieldLabel>In groups, respond</FieldLabel>
-            <Select
-              value={form.groupActivation}
-              onValueChange={(value) =>
-                value && setForm({ ...form, groupActivation: value as ChatFormState["groupActivation"] })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="mention">When mentioned or prefixed</SelectItem>
-                <SelectItem value="always">To every message</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-        )}
-      </div>
-      {form.scope !== "direct" && (
-        <div className="grid grid-cols-2 gap-3">
-          <Field>
-            <FieldLabel htmlFor="chat-prefixes">Trigger prefixes</FieldLabel>
-            <Input
-              id="chat-prefixes"
-              value={form.prefixesText}
-              onChange={(event) => setForm({ ...form, prefixesText: event.target.value })}
-              placeholder="/ask, /lightspeed"
-              className="font-mono"
-            />
-            <FieldDescription>Comma-separated; a message starting with one always activates the bot.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="chat-mention-names">Mention names</FieldLabel>
-            <Input
-              id="chat-mention-names"
-              value={form.mentionNamesText}
-              onChange={(event) => setForm({ ...form, mentionNamesText: event.target.value })}
-              placeholder="@mybot"
-            />
-            <FieldDescription>Extra names stripped from a mention before the text reaches the bot.</FieldDescription>
-          </Field>
-        </div>
-      )}
-      <div className="grid grid-cols-2 gap-3">
-        <Field>
-          <FieldLabel>Who may talk to the bot</FieldLabel>
-          <Select
-            value={form.accessTurn}
-            onValueChange={(value) => value && setForm({ ...form, accessTurn: value as ChatFormState["accessTurn"] })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="anyone">Anyone in a paired conversation</SelectItem>
-              <SelectItem value="listed">Listed handles only</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="chat-controllers">Control commands</FieldLabel>
-          <Input
-            id="chat-controllers"
-            value={form.controllersText}
-            onChange={(event) => setForm({ ...form, controllersText: event.target.value })}
-            placeholder="@lukas"
-          />
-          <FieldDescription>Handles allowed to issue /activation and /status; blank denies everyone.</FieldDescription>
-        </Field>
-      </div>
-      {form.accessTurn === "listed" && (
-        <Field>
-          <FieldLabel htmlFor="chat-allowed">Allowed handles</FieldLabel>
-          <Input
-            id="chat-allowed"
-            value={form.allowedText}
-            onChange={(event) => setForm({ ...form, allowedText: event.target.value })}
-            placeholder="@lukas, @teammate"
-          />
-          <FieldDescription>Comma-separated; only these handles may take a turn.</FieldDescription>
-        </Field>
-      )}
-      <div className="grid grid-cols-[1fr_8rem] gap-3">
-        <Label className="gap-2 font-normal">
-          <Checkbox
-            checked={form.requirePairing}
-            onCheckedChange={(checked) => setForm({ ...form, requirePairing: checked === true })}
-          />
-          <span>
-            Require a pairing code
-            <span className="block text-xs text-muted-foreground">
-              A conversation connects once someone sends the code; the code is shown on the trigger
-              to people who manage this bot. Off: any conversation on the account connects.
-            </span>
-          </span>
-        </Label>
-        <Field>
-          <FieldLabel htmlFor="chat-priority">Priority</FieldLabel>
-          <Input
-            id="chat-priority"
-            type="number"
-            min={0}
-            max={1000}
-            value={form.priority}
-            onChange={(event) => setForm({ ...form, priority: event.target.value })}
-            placeholder="100"
-          />
-          <FieldDescription>Lower wins when several chat triggers match.</FieldDescription>
-        </Field>
-      </div>
-      <DeliveryFields form={form} setForm={setForm} chat />
-    </>
-  );
-}
-
 export interface WebhookFormState extends DeliveryFormState {
   scheme: "token" | "hmac-sha256";
   grantId: string;
@@ -1718,27 +1272,6 @@ export const defaultDeliveryForm: DeliveryFormState = {
   maxCount: "",
   closeMode: "inherit",
   closeHours: "",
-};
-
-/// Chat defaults mirror the server's: a session per conversation kept
-/// forever, batched over a short quiet period, pairing required.
-export const defaultChatForm: ChatFormState = {
-  ...defaultDeliveryForm,
-  routePolicy: "perKey",
-  debounceSeconds: "0.4",
-  maxWaitSeconds: "1.5",
-  maxCount: "8",
-  closeMode: "forever",
-  channelAccountId: "",
-  scope: "any",
-  groupActivation: "mention",
-  prefixesText: "",
-  mentionNamesText: "",
-  accessTurn: "anyone",
-  allowedText: "",
-  controllersText: "",
-  requirePairing: true,
-  priority: "",
 };
 
 function deliveryFormFromTrigger(trigger: BotTriggerView): DeliveryFormState {
@@ -2035,20 +1568,17 @@ export function WebhookFields({
 export function DeliveryFields<T extends DeliveryFormState>({
   form,
   setForm,
-  chat = false,
 }: {
   form: T;
   setForm: (next: T) => void;
-  /** Chat triggers route per conversation; the main session is not an option. */
-  chat?: boolean;
 }) {
   return (
     <SettingsDisclosure
-      summary={deliverySentence(form, chat)}
+      summary={deliverySentence(form)}
       action="Customize delivery"
       forceOpen={deliveryFormProblem(form) !== null}
     >
-      <DeliveryFieldsBody form={form} setForm={setForm} chat={chat} />
+      <DeliveryFieldsBody form={form} setForm={setForm} />
     </SettingsDisclosure>
   );
 }
@@ -2056,11 +1586,9 @@ export function DeliveryFields<T extends DeliveryFormState>({
 function DeliveryFieldsBody<T extends DeliveryFormState>({
   form,
   setForm,
-  chat = false,
 }: {
   form: T;
   setForm: (next: T) => void;
-  chat?: boolean;
 }) {
 
   return (
@@ -2075,18 +1603,9 @@ function DeliveryFieldsBody<T extends DeliveryFormState>({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {chat ? (
-              <>
-                <SelectItem value="perKey">One session per conversation</SelectItem>
-                <SelectItem value="perEvent">One session per message</SelectItem>
-              </>
-            ) : (
-              <>
-                <SelectItem value="bot">Deliver to the main session</SelectItem>
-                <SelectItem value="perKey">One session per key</SelectItem>
-                <SelectItem value="perEvent">One session per event</SelectItem>
-              </>
-            )}
+            <SelectItem value="bot">Deliver to the main session</SelectItem>
+            <SelectItem value="perKey">One session per key</SelectItem>
+            <SelectItem value="perEvent">One session per event</SelectItem>
           </SelectContent>
         </Select>
       </Field>
@@ -2097,13 +1616,11 @@ function DeliveryFieldsBody<T extends DeliveryFormState>({
             id="webhook-route-key"
             value={form.routeKey}
             onChange={(event) => setForm({ ...form, routeKey: event.target.value })}
-            placeholder={chat ? "data.conversation.key" : "data.issue.number"}
+            placeholder="data.issue.number"
             className="font-mono"
           />
           <FieldDescription>
-            {chat
-              ? "CEL over event, data, and headers. Defaults to the conversation (account, chat, and thread)."
-              : "CEL over event, data, and headers. GitHub triggers default to the PR or issue number."}
+            CEL over event, data, and headers. GitHub triggers default to the PR or issue number.
           </FieldDescription>
         </Field>
       )}
@@ -2394,7 +1911,6 @@ export interface TriggerForms {
   webhook: WebhookFormState;
   poll: PollFormState;
   inbox: InboxFormState;
-  chat: ChatFormState;
 }
 
 export function defaultTriggerForms(): TriggerForms {
@@ -2403,7 +1919,6 @@ export function defaultTriggerForms(): TriggerForms {
     webhook: defaultWebhookForm,
     poll: defaultPollForm,
     inbox: defaultInboxForm(),
-    chat: defaultChatForm,
   };
 }
 
@@ -2417,8 +1932,6 @@ export function triggerFormProblem(kind: TriggerKind, forms: TriggerForms, env?:
       return pollFormProblem(forms.poll, env);
     case "bot":
       return inboxFormProblem(forms.inbox);
-    case "chat":
-      return chatFormProblem(forms.chat);
   }
 }
 
@@ -2433,21 +1946,17 @@ export function triggerCreateBody(kind: TriggerKind, triggerId: string, forms: T
       return { triggerId, kind, ...pollPayload(forms.poll) };
     case "bot":
       return { triggerId, kind, ...inboxPayload(forms.inbox) };
-    case "chat":
-      return { triggerId, kind, ...chatPayload(forms.chat) };
   }
 }
 
 /** The per-kind essentials; the delivery disclosure is inside each kind's fields. */
 export function TriggerKindFields({
-  universeId,
   kind,
   forms,
   patch,
   botId,
   bots,
 }: {
-  universeId: string;
   kind: TriggerKind;
   forms: TriggerForms;
   patch: <K extends keyof TriggerForms>(key: K, next: TriggerForms[K]) => void;
@@ -2463,8 +1972,6 @@ export function TriggerKindFields({
       return (
         <InboxFields currentBotId={botId} bots={bots} form={forms.inbox} setForm={(next) => patch("inbox", next)} />
       );
-    case "chat":
-      return <ChatFields universeId={universeId} form={forms.chat} setForm={(next) => patch("chat", next)} />;
     case "webhook":
       return <WebhookFields form={forms.webhook} setForm={(next) => patch("webhook", next)} />;
   }
@@ -2482,8 +1989,6 @@ export function TriggerKindPicker({
   className?: string;
   exclude?: TriggerKind[];
 }) {
-  // Chat accounts are the channels feature; with it off they are not offered.
-  const channelsOn = useFeature("channels");
   return (
     <div className={cn("grid content-start gap-3 sm:grid-cols-2", className)}>
       <TriggerKindChoice
@@ -2498,14 +2003,6 @@ export function TriggerKindPicker({
         description="When something happens elsewhere: GitHub, an alerting tool, your own systems."
         onClick={() => onPick("webhook")}
       />
-      {channelsOn && !exclude.includes("chat") && (
-        <TriggerKindChoice
-          icon={<ChatTriggerIcon className="size-5" />}
-          title="Chat account"
-          description="Messages from people on Telegram or WhatsApp; each conversation becomes a thread."
-          onClick={() => onPick("chat")}
-        />
-      )}
       {!exclude.includes("bot") && (
         <TriggerKindChoice
           icon={<InboxIcon className="size-5" />}

@@ -167,18 +167,6 @@ pub const METHOD_BOTS_EVENTS_LIST: &str = "bots/events/list";
 pub const METHOD_BOTS_EVENTS_READ: &str = "bots/events/read";
 pub const METHOD_BOTS_FILTERS_TEST: &str = "bots/filters/test";
 
-// ── Universe: channels ──────────────────────────────────────────────────────
-
-pub const METHOD_CHANNELS_ACCOUNTS_CREATE: &str = "channels/accounts/create";
-pub const METHOD_CHANNELS_ACCOUNTS_PUT: &str = "channels/accounts/put";
-pub const METHOD_CHANNELS_ACCOUNTS_READ: &str = "channels/accounts/read";
-pub const METHOD_CHANNELS_ACCOUNTS_LIST: &str = "channels/accounts/list";
-pub const METHOD_CHANNELS_ACCOUNTS_DELETE: &str = "channels/accounts/delete";
-pub const METHOD_CHANNELS_INBOUND_ADMIT: &str = "channels/inbound/admit";
-pub const METHOD_CHANNELS_PAIRINGS_LIST: &str = "channels/pairings/list";
-pub const METHOD_CHANNELS_PAIRINGS_DELETE: &str = "channels/pairings/delete";
-pub const METHOD_CHANNELS_CONVERSATIONS_READ: &str = "channels/conversations/read";
-
 // ── Notifications ───────────────────────────────────────────────────────────
 
 // ── Transcriptions ───────────────────────────────────────────────────────────

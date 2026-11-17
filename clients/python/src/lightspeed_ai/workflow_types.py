@@ -68,65 +68,6 @@ the runtime records them without resolving caller permissions.
 """
 
 
-BotId: TypeAlias = str
-
-
-BotTriggerId: TypeAlias = str
-
-
-ChannelAccountId: TypeAlias = str
-
-
-class ChannelDeliveryOperationEdit(TypedDict):
-    """
-    What a connector executes: provider message ids and their direction.
-    """
-
-    messageId: str
-    text: str
-    type: Literal['edit']
-
-
-class ChannelDeliveryOperationReact(TypedDict):
-    """
-    What a connector executes: provider message ids and their direction.
-    """
-
-    emoji: str
-    fromMe: bool
-    """
-    Whether the reacted-to message is the bot's own.
-    """
-    messageId: str
-    type: Literal['react']
-
-
-ChannelMediaKind: TypeAlias = Literal['image', 'audio', 'document']
-
-
-ChannelProvider: TypeAlias = str
-
-
-class ChannelRoute(TypedDict):
-    """
-    Where a delivery goes: one account's chat, optionally a thread.
-    """
-
-    accountId: ChannelAccountId
-    chatId: str
-    provider: ChannelProvider
-    threadId: NotRequired[str | None]
-
-
-ChatGroupActivation: TypeAlias = Literal['mention', 'always']
-
-
-ChatScope: TypeAlias = Literal['direct', 'group']
-
-
-ChatTurnAccess: TypeAlias = Literal['anyone', 'listed']
-
-
 class CloseCodeToolScopeRequest(TypedDict):
     """
     Close admission immediately and cancel admitted work. Closing a scope does
@@ -248,17 +189,6 @@ class ContentRef(TypedDict):
     provider_kind: NotRequired[str | None]
 
 
-class ConversationRef(TypedDict):
-    """
-    The conversation a message belongs to: one account's chat, optionally
-    a thread inside it.
-    """
-
-    accountId: ChannelAccountId
-    chatId: str
-    threadId: NotRequired[str | None]
-
-
 EmissionId: TypeAlias = str
 """
 Stable identity for one cross-workflow emission.
@@ -304,15 +234,6 @@ class InvokeCodeToolRequest(TypedDict):
     request_id: str
 
 
-class MaintainChannelTypingInput(TypedDict):
-    """
-    `maintain_channel_typing`: keep the provider's typing indicator up for
-    the conversation until the activity is cancelled.
-    """
-
-    route: ChannelRoute
-
-
 MediaKind: TypeAlias = Literal['image', 'document']
 """
 What a media entry is to the providers: an image block or a document block.
@@ -323,17 +244,6 @@ class ModelConfig(TypedDict):
     apiKind: str
     model: str
     providerId: str
-
-
-class PreparedMediaItem(TypedDict):
-    """
-    A prepared attachment: a CAS reference, never bytes.
-    """
-
-    blobRef: str
-    kind: ChannelMediaKind
-    mime: str
-    name: NotRequired[str | None]
 
 
 PromiseId: TypeAlias = str
@@ -389,15 +299,6 @@ How a promise reached a terminal state. Used by `ResolvePromise`
 admission; all transports (push notifications, poll results, timers,
 cancellation) converge on this one funnel.
 """
-
-
-class ReplyContext(TypedDict):
-    """
-    The message a send replies to, for providers that quote it themselves.
-    """
-
-    senderId: str
-    text: str
 
 
 RunStatus: TypeAlias = Literal[
@@ -488,82 +389,6 @@ class AttachmentFile(TypedDict):
     kind: Literal['file']
 
 
-class ChannelDeliveryOperationSend(TypedDict):
-    """
-    What a connector executes: provider message ids and their direction.
-    """
-
-    replyContext: NotRequired[ReplyContext | None]
-    replyTo: NotRequired[str | None]
-    text: str
-    type: Literal['send']
-
-
-ChannelDeliveryOperation: TypeAlias = (
-    ChannelDeliveryOperationSend
-    | ChannelDeliveryOperationEdit
-    | ChannelDeliveryOperationReact
-)
-"""
-What a connector executes: provider message ids and their direction.
-"""
-
-
-class ChannelDeliveryResult(TypedDict):
-    messageIds: list[str]
-    """
-    Every provider id the delivery produced (a chunked send has several;
-    the first is the anchor).
-    """
-    provider: ChannelProvider
-    version: int
-
-
-class ChannelInboundMedia(TypedDict):
-    """
-    A provider-owned attachment reference; never bytes. The connector
-    downloads it when the conversation workflow asks (`prepare_channel_media`).
-    """
-
-    byteSize: NotRequired[int | None]
-    fileId: str
-    """
-    Provider file handle (a Telegram file id, a sealed WhatsApp locator).
-    """
-    kind: ChannelMediaKind
-    mime: str
-    name: NotRequired[str | None]
-
-
-class ChatAccess(TypedDict):
-    """
-    Who may take a turn and who may issue control commands, by provider
-    handle (Telegram user id, WhatsApp JID). Handle allowlists on the
-    trigger replace any platform membership lookup.
-    """
-
-    allowed: NotRequired[list[str]]
-    """
-    Handles allowed to take a turn when `turn` is `listed`.
-    """
-    controllers: NotRequired[list[str]]
-    """
-    Handles allowed to issue `/activation` and `/status`; empty denies
-    control commands to everyone.
-    """
-    turn: NotRequired[ChatTurnAccess]
-
-
-class ChatActivation(TypedDict):
-    """
-    When the bot acts in a conversation.
-    """
-
-    group: NotRequired[ChatGroupActivation | None]
-    mentionNames: NotRequired[list[str]]
-    triggerPrefixes: NotRequired[list[str]]
-
-
 class CodeExecutionDescriptor(TypedDict):
     """
     Small, immutable input shared by code-execution orchestration and its runner.
@@ -620,34 +445,6 @@ class CodeToolRejection(TypedDict):
 
     kind: CodeToolRejectionKind
     message: str
-
-
-class ConversationStart(TypedDict):
-    """
-    Secret-free durable input of one conversation workflow: the chat trigger
-    it serves and the conversation it fronts. The workflow owns nothing on
-    the core side: the bot controller creates and controls the session; the
-    workflow is the source of the conversation's events and the receiver of
-    its `message_*` tools.
-    """
-
-    access: ChatAccess
-    accountId: ChannelAccountId
-    activation: ChatActivation
-    botId: BotId
-    connectorTaskQueue: str
-    """
-    Task queue of the connector host serving the account.
-    """
-    conversation: ConversationRef
-    label: str
-    """
-    Human label of the conversation (routed session label, display name).
-    """
-    provider: ChannelProvider
-    scope: ChatScope
-    triggerId: BotTriggerId
-    universeId: str
 
 
 class EmissionBodyRunTerminal(TypedDict):
@@ -741,21 +538,6 @@ class OpenCodeToolScopeRequest(TypedDict):
     parent_invocation_id: WorkflowToolInvocationId
 
 
-class PrepareChannelMediaInput(TypedDict):
-    """
-    `prepare_channel_media`: the connector downloads the provider file and
-    stores it in the universe's CAS.
-    """
-
-    media: ChannelInboundMedia
-    route: ChannelRoute
-    universeId: str
-
-
-class PrepareChannelMediaResult(TypedDict):
-    item: PreparedMediaItem
-
-
 class TranscriptionFailure(TypedDict):
     kind: TranscriptionFailureKind
     message: str
@@ -836,19 +618,6 @@ class AttachmentMedia(TypedDict):
 
 
 Attachment: TypeAlias = AttachmentMedia | AttachmentFile
-
-
-class ChannelDeliveryCommand(TypedDict):
-    """
-    One connector activity call. `idempotency_key` is the invocation id, or
-    `{invocation}:chunk:{i}/{n}` for a chunk of a split send.
-    """
-
-    idempotencyKey: str
-    invocationId: str
-    operation: ChannelDeliveryOperation
-    route: ChannelRoute
-    version: int
 
 
 class CodeExecutionSnapshot(TypedDict):
