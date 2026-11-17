@@ -54,6 +54,7 @@ function CreateApiKeyForm({ owner, close }: { owner: ManagedApiKeyOwner; close: 
   const [universeIds, setUniverseIds] = useState<string[]>([]);
   const [readOnly, setReadOnly] = useState(false);
   const [allowCreation, setAllowCreation] = useState(false);
+  const [allowKeys, setAllowKeys] = useState(false);
   const [operations, setOperations] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState<"yes" | "failed" | null>(null);
@@ -77,6 +78,7 @@ function CreateApiKeyForm({ owner, close }: { owner: ManagedApiKeyOwner; close: 
           ...(operations.trim() ? { operations: split(operations) } : {}),
           readOnly,
           allowUniverseCreation: allowCreation && !creationUnavailable,
+          ...(allowKeys && !creationUnavailable ? { allowServiceUserKeys: true } : {}),
         },
       });
       // Only this component's state holds the one-time secret; query and
@@ -174,6 +176,10 @@ function CreateApiKeyForm({ owner, close }: { owner: ManagedApiKeyOwner; close: 
           description={creationUnavailable ? "Not available for read-only keys or keys limited to existing universes."
             : owner.kind === "serviceUser" ? "Needs the service user's Creator or Admin role." : "Needs your Creator or Admin role in an allowed organization."}
           checked={allowCreation && !creationUnavailable} disabled={creationUnavailable} onChange={setAllowCreation} />
+        <SwitchRow id={`${id}-service-user-keys`} label="Allow declaring service-user keys"
+          description={creationUnavailable ? "Not available for read-only keys or keys limited to existing universes."
+            : "For a pipeline that declares service-user keys from a secret store. Needs the Organization Admin role; other key changes still need a person."}
+          checked={allowKeys && !creationUnavailable} disabled={creationUnavailable} onChange={setAllowKeys} />
         <SettingsDisclosure summary={operations.trim() ? `${split(operations).length} operations allowed` : "Every operation its roles allow"}
           action="Restrict operations" label="Restrict API operations">
           <Field>

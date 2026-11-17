@@ -262,6 +262,11 @@ enum ApiKeyCommand {
         read_only: bool,
         #[arg(long)]
         allow_universe_creation: Option<bool>,
+        /// Let the key declare service-user keys with supplied secrets, for
+        /// a pipeline that applies organization documents. Its principal must
+        /// be an Organization Admin; other key changes still need a person.
+        #[arg(long)]
+        allow_service_user_keys: bool,
         #[command(flatten)]
         output: SecretOutput,
     },
@@ -552,6 +557,7 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
             operations,
             read_only,
             allow_universe_creation,
+            allow_service_user_keys,
             output,
         } => {
             let mut restrictions = json!({});
@@ -569,6 +575,9 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
             }
             if let Some(value) = allow_universe_creation {
                 restrictions["allowUniverseCreation"] = json!(value);
+            }
+            if allow_service_user_keys {
+                restrictions["allowServiceUserKeys"] = json!(true);
             }
             params["name"] = json!(name);
             params["restrictions"] = restrictions;

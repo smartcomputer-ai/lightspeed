@@ -192,6 +192,11 @@ save it in your secret store. Refer to it with `secretFrom`. The key's
 authority. Omit `expiresAt` for a key that does not expire, where deployment
 policy permits it.
 
+Declaring a key needs a person's `lightspeed connect login` session, or a
+key created with `--allow-service-user-keys` by an Organization Admin of that
+organization. Any other key is reported as a conflict before anything is
+written, so an unattended pipeline uses such a key.
+
 Changing the secret in the store and applying replaces the key in place.
 Its ID stays the same and the old secret stops working immediately. Use a
 second key when consumers must switch without interruption. Exports omit key

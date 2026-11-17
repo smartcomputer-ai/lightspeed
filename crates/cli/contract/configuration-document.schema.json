@@ -1421,6 +1421,9 @@
                     "restrictions": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowServiceUserKeys": {
+                          "type": "boolean"
+                        },
                         "allowUniverseCreation": {
                           "type": "boolean"
                         },

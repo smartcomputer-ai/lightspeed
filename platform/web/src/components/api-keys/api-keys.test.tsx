@@ -115,6 +115,23 @@ it("refuses an empty universe selection and turns off universe creation for read
   expect(switches()[1]!.hasAttribute("data-disabled")).toBe(true);
 });
 
+it("lets a pipeline key declare service-user keys only when asked, and never when read only", async () => {
+  await show();
+  await click("New key");
+  await type("API key name", "Pipeline");
+  // The form's switches, in order: Read only, Allow creating universes, Allow declaring service-user keys.
+  const switches = () => [...document.body.querySelectorAll<HTMLElement>('[role="dialog"] [data-slot="switch"]')];
+  await act(async () => switches()[2]!.click());
+  await act(async () => switches()[0]!.click());
+  expect(switches()[2]!.hasAttribute("data-disabled")).toBe(true);
+  await act(async () => switches()[0]!.click());
+  await create();
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/credentials/create", {
+    name: "Pipeline",
+    restrictions: { organizationIds: ["team"], readOnly: false, allowUniverseCreation: false, allowServiceUserKeys: true },
+  }));
+});
+
 it("pins a service user's key to its organization without offering others", async () => {
   await show(robot);
   await click("New key");

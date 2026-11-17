@@ -117,6 +117,20 @@ fn stateful(state: &mut State, method: &str, path: &str, body: &Value) -> Option
                 "organizations",
                 _,
                 "service-users",
+                _,
+                "credentials",
+            ],
+        ) if body["name"] == "forbidden" => Some((
+            403,
+            json!({"type":"about:blank","title":"Forbidden","detail":"Declare service-user keys from a human session","status":403,"kind":"forbidden"}),
+        )),
+        (
+            "PUT",
+            [
+                "platform",
+                "organizations",
+                _,
+                "service-users",
                 service_user,
                 "credentials",
             ],
@@ -1021,4 +1035,92 @@ fn a_service_user_key_secret_is_generated_without_a_connection() {
     );
     let secret = String::from_utf8(output.stdout).unwrap();
     assert!(secret.trim().starts_with("lsa_") && secret.trim().len() >= 68);
+}
+
+#[test]
+fn a_connection_that_may_not_declare_keys_is_told_how_before_anything_is_written() {
+    let platform = Platform::with_platform_admin(true);
+    let documents = write_documents(
+        &platform,
+        &[(
+            "research.yaml",
+            "schemaVersion: 1
+kind: organization
+handle: research
+name: Research
+serviceUsers:
+  - name: deployer
+    role: creator
+",
+        )],
+    );
+    platform.success(&["config", "apply", "-f", &documents]);
+    let documents = write_documents(
+        &platform,
+        &[(
+            "research.yaml",
+            "schemaVersion: 1
+kind: organization
+handle: research
+name: Research
+serviceUsers:
+  - name: deployer
+    role: creator
+    keys:
+      - { name: forbidden, secretFrom: { env: DEPLOYER_KEY } }
+",
+        )],
+    );
+    let writes_before = platform
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _, _)| method != "GET")
+        .count();
+    let result = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+        .current_dir(platform.directory.path())
+        .args(["config", "apply", "-f", &documents])
+        .env(
+            "LIGHTSPEED_CONFIG_DIR",
+            platform.directory.path().join("config"),
+        )
+        .env("LIGHTSPEED_API_URL", &platform.endpoint)
+        .env("LIGHTSPEED_API_TOKEN", "lsk_fixture")
+        .env("DEPLOYER_KEY", format!("lsa_{}", "a".repeat(64)))
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let report = String::from_utf8_lossy(&result.stdout);
+    assert!(report.contains("--allow-service-user-keys"), "{report}");
+    let requests = platform.requests.lock().unwrap();
+    // Only the dry run was sent: nothing was written.
+    let writes: Vec<_> = requests
+        .iter()
+        .filter(|(method, _, _)| method != "GET")
+        .skip(writes_before)
+        .collect();
+    assert!(
+        writes.iter().all(|(_, _, body)| body["dryRun"] == true),
+        "{writes:?}"
+    );
+}
+
+#[test]
+fn a_pipeline_key_is_created_to_declare_service_user_keys_only_when_asked() {
+    let platform = Platform::start();
+    platform.success(&[
+        "platform",
+        "api-key",
+        "create",
+        "Pipeline",
+        "--allow-service-user-keys",
+        "--show-secret",
+    ]);
+    let requests = platform.requests.lock().unwrap();
+    let (_, _, body) = requests
+        .iter()
+        .find(|(method, path, _)| method == "POST" && path == "/api/v1/platform/credentials")
+        .unwrap();
+    assert_eq!(body["restrictions"]["allowServiceUserKeys"], true);
 }

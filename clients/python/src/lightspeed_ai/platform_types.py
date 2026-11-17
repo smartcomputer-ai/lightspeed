@@ -47,6 +47,10 @@ class Restrictions(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class PlatformConnectionDetails(TypedDict):
@@ -97,6 +101,10 @@ class Restrictions1(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential2(TypedDict):
@@ -124,6 +132,10 @@ class Restrictions2(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class PlatformCredentialsCreateParams(TypedDict):
@@ -141,6 +153,10 @@ class Restrictions3(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential3(TypedDict):
@@ -173,6 +189,10 @@ class Restrictions4(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential4(TypedDict):
@@ -213,6 +233,10 @@ class Restrictions5(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class OwnerUser(TypedDict):
@@ -263,6 +287,10 @@ class Restrictions6(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential6(TypedDict):
@@ -290,6 +318,10 @@ class Restrictions7(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class PlatformServiceUsersCredentialsCreateParams(TypedDict):
@@ -309,6 +341,10 @@ class Restrictions8(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential7(TypedDict):
@@ -343,6 +379,10 @@ class Restrictions9(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential8(TypedDict):
@@ -371,6 +411,10 @@ class Restrictions10(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class PlatformServiceUsersCredentialsPutParams(TypedDict):
@@ -401,6 +445,10 @@ class Restrictions11(TypedDict):
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
 
 
 class Credential9(TypedDict):

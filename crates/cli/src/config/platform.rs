@@ -398,7 +398,21 @@ pub(crate) async fn plan_organization(
                         params["organizationId"] = json!(organization_id);
                         params["serviceUserId"] = json!(service_user_id);
                         params["dryRun"] = json!(true);
-                        Some(call(target, "platform/service-users/credentials/put", params).await?)
+                        match target
+                            .api
+                            .call_platform("platform/service-users/credentials/put", params)
+                            .await
+                        {
+                            Ok(outcome) => Some(outcome),
+                            // Report it before anything is written, with the way out.
+                            Err(error) if error.kind == api::AgentApiErrorKind::Forbidden => {
+                                steps.push(Step::new(subject, "keys", id, Action::Conflict).with_message(format!(
+                                    "this connection may not declare keys ({error}); apply from `lightspeed connect login`, or with a key created with `--allow-service-user-keys` by an Organization Admin"
+                                )));
+                                continue;
+                            }
+                            Err(error) => bail!("platform/service-users/credentials/put: {error}"),
+                        }
                     }
                     _ => None,
                 };

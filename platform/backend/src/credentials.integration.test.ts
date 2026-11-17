@@ -228,3 +228,32 @@ it("declares a service user's key with a supplied secret, and reports and makes 
   // A secret serves one key.
   expect((await put({ name: "other", secret: rotated })).status).toBe(409);
 });
+
+it("lets only a key created to declare service-user keys declare them, within its restrictions", async () => {
+  const organizationId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Pipeline", slug: organizationId, createdAt: new Date() });
+  const [serviceUser] = await fixture.db.insert(schema.serviceUsers).values({ organizationId, name: "Deployer", role: "creator" }).returning();
+  const path = `/api/v1/platform/organizations/${organizationId}/service-users/${serviceUser!.id}/credentials`;
+  const keyWith = async (restrictions: Record<string, unknown>) =>
+    (await (await fixture.request("/api/v1/platform/credentials", { name: "Pipeline", restrictions }, cookie)).json() as { secret: string }).secret;
+  const putWith = (key: string, secret: string) => fixture.app.request(new Request(`${fixture.env.baseUrl}${path}`, {
+    method: "PUT", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ name: "ci", secret }),
+  }));
+  const declared = `lsa_${"d".repeat(64)}`;
+  // An ordinary key mints nothing.
+  expect((await putWith(await keyWith({}), declared)).status).toBe(403);
+  // Nor does a flagged key that is read-only or limited to another organization.
+  expect((await putWith(await keyWith({ allowServiceUserKeys: true, readOnly: true }), declared)).status).toBe(403);
+  expect((await putWith(await keyWith({ allowServiceUserKeys: true, organizationIds: ["elsewhere"] }), declared)).status).toBe(403);
+  const pipeline = await keyWith({ allowServiceUserKeys: true });
+  const response = await putWith(pipeline, declared);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ created: true });
+  expect((await admission(declared))?.auth).toMatchObject({ principal: { kind: "serviceUser", id: serviceUser!.id } });
+  // The flag declares keys only; other key management stays with people.
+  const listed = await fixture.app.request(new Request(`${fixture.env.baseUrl}${path}`, { headers: { authorization: `Bearer ${pipeline}` } }));
+  expect(listed.status).toBe(403);
+  const audits = await fixture.db.select().from(schema.identityAudit).where(eq(schema.identityAudit.action, "credential.put"));
+  expect(audits.some(audit => (audit.details as Record<string, unknown>).principalId === serviceUser!.id
+    && (audit.details as Record<string, unknown>).credentialKind === "personalKey")).toBe(true);
+});

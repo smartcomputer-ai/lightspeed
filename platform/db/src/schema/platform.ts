@@ -94,6 +94,8 @@ export interface CredentialRestrictions {
   operations?: string[];
   readOnly?: boolean;
   allowUniverseCreation?: boolean;
+  /** Declare service-user keys with supplied secrets; only a human creates keys otherwise. */
+  allowServiceUserKeys?: boolean;
 }
 
 /** Protected association; caller-controlled Better Auth metadata never selects identity. */

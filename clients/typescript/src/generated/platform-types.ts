@@ -39,6 +39,10 @@ export interface PlatformConnectionDetails {
     operations?: string[];
     readOnly?: boolean;
     allowUniverseCreation?: boolean;
+    /**
+     * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+     */
+    allowServiceUserKeys?: boolean;
   };
 }
 /**
@@ -116,6 +120,10 @@ export interface PlatformCredentialsListResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   }[];
 }
@@ -144,6 +152,10 @@ export interface PlatformCredentialsCreateParams {
     operations?: string[];
     readOnly?: boolean;
     allowUniverseCreation?: boolean;
+    /**
+     * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+     */
+    allowServiceUserKeys?: boolean;
   };
 }
 /**
@@ -178,6 +190,10 @@ export interface PlatformCredentialsCreateResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   };
   secret: string;
@@ -221,6 +237,10 @@ export interface PlatformCredentialsReplaceResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   };
   secret: string;
@@ -281,6 +301,10 @@ export interface PlatformOrganizationsCredentialsListResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
     owner:
       | {
@@ -337,6 +361,10 @@ export interface PlatformServiceUsersCredentialsListResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   }[];
 }
@@ -365,6 +393,10 @@ export interface PlatformServiceUsersCredentialsCreateParams {
     operations?: string[];
     readOnly?: boolean;
     allowUniverseCreation?: boolean;
+    /**
+     * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+     */
+    allowServiceUserKeys?: boolean;
   };
   organizationId: string;
   serviceUserId: string;
@@ -401,6 +433,10 @@ export interface PlatformServiceUsersCredentialsCreateResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   };
   secret: string;
@@ -446,6 +482,10 @@ export interface PlatformServiceUsersCredentialsReplaceResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   };
   secret: string;
@@ -482,6 +522,10 @@ export interface PlatformServiceUsersCredentialsPutParams {
     operations?: string[];
     readOnly?: boolean;
     allowUniverseCreation?: boolean;
+    /**
+     * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+     */
+    allowServiceUserKeys?: boolean;
   };
   /**
    * Report what would change without changing it.
@@ -525,6 +569,10 @@ export interface PlatformServiceUsersCredentialsPutResult {
       operations?: string[];
       readOnly?: boolean;
       allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
     };
   } | null;
   created: boolean;

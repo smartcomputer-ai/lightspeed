@@ -121,6 +121,10 @@
             },
             "allowUniverseCreation": {
               "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
             }
           },
           "additionalProperties": false
@@ -337,6 +341,10 @@
                   },
                   "allowUniverseCreation": {
                     "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -418,6 +426,10 @@
               "type": "boolean"
             },
             "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
               "type": "boolean"
             }
           },
@@ -506,6 +518,10 @@
                   "type": "boolean"
                 },
                 "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
                   "type": "boolean"
                 }
               },
@@ -625,6 +641,10 @@
                   "type": "boolean"
                 },
                 "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
                   "type": "boolean"
                 }
               },
@@ -772,6 +792,10 @@
                     "type": "boolean"
                   },
                   "allowUniverseCreation": {
+                    "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
                     "type": "boolean"
                   }
                 },
@@ -953,6 +977,10 @@
                   },
                   "allowUniverseCreation": {
                     "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -1034,6 +1062,10 @@
               "type": "boolean"
             },
             "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
               "type": "boolean"
             }
           },
@@ -1133,6 +1165,10 @@
                   "type": "boolean"
                 },
                 "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
                   "type": "boolean"
                 }
               },
@@ -1264,6 +1300,10 @@
                 },
                 "allowUniverseCreation": {
                   "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
                 }
               },
               "additionalProperties": false
@@ -1355,6 +1395,10 @@
               "type": "boolean"
             },
             "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
               "type": "boolean"
             }
           },
@@ -1461,6 +1505,10 @@
                       "type": "boolean"
                     },
                     "allowUniverseCreation": {
+                      "type": "boolean"
+                    },
+                    "allowServiceUserKeys": {
+                      "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
                       "type": "boolean"
                     }
                   },

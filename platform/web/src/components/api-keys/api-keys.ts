@@ -76,7 +76,7 @@ export function apiKeyExpiry(key: ApiKey): string {
 /// What a key may reach, in a few words. An empty selection is shown as
 /// such, never as unrestricted access.
 export function apiKeyAccessSummary(key: ApiKey, owner: ApiKeyOwner): string {
-  const { organizationIds, universeIds, readOnly, operations } = key.restrictions;
+  const { organizationIds, universeIds, readOnly, operations, allowServiceUserKeys } = key.restrictions;
   const parts: string[] = [];
   if (universeIds) parts.push(universeIds.length ? `${universeIds.length} ${universeIds.length === 1 ? "universe" : "universes"}` : "No universes");
   else if (owner.kind !== "serviceUser") {
@@ -84,5 +84,6 @@ export function apiKeyAccessSummary(key: ApiKey, owner: ApiKeyOwner): string {
   } else parts.push("Its organization");
   if (operations) parts.push(`${operations.length} ${operations.length === 1 ? "operation" : "operations"}`);
   if (readOnly) parts.push("read only");
+  if (allowServiceUserKeys) parts.push("declares keys");
   return parts.join(" · ");
 }

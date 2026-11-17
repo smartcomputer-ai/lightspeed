@@ -323,6 +323,7 @@ pub(crate) fn document_schema() -> Value {
                                     "operations": { "type": "array", "items": { "type": "string" } },
                                     "readOnly": { "type": "boolean" },
                                     "allowUniverseCreation": { "type": "boolean" },
+                                    "allowServiceUserKeys": { "type": "boolean" },
                                 },
                             },
                         },

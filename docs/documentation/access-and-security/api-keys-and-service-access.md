@@ -44,7 +44,13 @@ Open a key to see its restrictions, expiry, and latest use. An Organization
 Admin can review personal and service-user keys that can reach the organization
 under **Admin → organization → API keys**. They can revoke service-user keys.
 People manage their own personal keys. Credential management requires a human
-browser or CLI session.
+browser or CLI session, with one exception: a key created with **Allow
+declaring service-user keys** (`--allow-service-user-keys` in the CLI) may
+declare service-user keys with supplied secrets, for a pipeline that applies
+organization documents. Its principal must be an Organization Admin there, and
+it cannot be read only or limited to existing universes. It can do nothing
+else with keys. Use it only for that pipeline, since anyone holding it can
+create working keys for that organization's service users.
 
 Keys expire after 365 days by default. Select **No expiry** where the deployment
 allows it. For the deployment settings, see the [environment-variable

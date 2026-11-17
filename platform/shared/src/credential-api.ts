@@ -7,6 +7,7 @@ export const credentialRestrictionsSchema = z.object({
   operations: z.array(z.string().min(1).max(200)).max(1000).optional(),
   readOnly: z.boolean().optional(),
   allowUniverseCreation: z.boolean().optional(),
+  allowServiceUserKeys: z.boolean().optional().describe("Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys."),
 }).strict();
 export const credentialCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),

@@ -7,7 +7,7 @@ import { CREDENTIAL_OPERATIONS, ORGANIZATION_ROLES, credentialCreateSchema, cred
 import { defaultKeyHasher } from "@better-auth/api-key";
 import { z } from "zod";
 import type { ApiVariables, AppContext } from "./context.js";
-import { getAuth, requireCredentialManagement, type AuthContext } from "./auth-context.js";
+import { enforceRestrictions, getAuth, requireCredentialManagement, type AuthContext } from "./auth-context.js";
 import { declaredPrincipalRole, requireOrganizationAction } from "./organization-access.js";
 import { hasPlatformAdminRole } from "./context.js";
 import { PERSONAL_KEY_CONFIG, PERSONAL_KEY_PREFIX, SERVICE_USER_KEY_CONFIG, SERVICE_USER_KEY_PREFIX, apiKeyRowDefaults } from "./api-key-config.js";
@@ -136,7 +136,8 @@ async function putServiceUserCredential(ctx: AppContext, auth: AuthContext, owne
   if (current && (current.expiresAt?.getTime() ?? null) !== (expiresAt?.getTime() ?? null)) updated.push("expiresAt");
   const outcome = { created: !current, secretReplaced, updated };
   if (input.dryRun) return { credential: current ? metadata(current) : null, ...outcome };
-  const details = { principalKind: "serviceUser", principalId: owner.serviceUserId, credentialId: auth.credential.id };
+  // Which credential declared the key: a person's session, or a key created to declare keys.
+  const details = { principalKind: "serviceUser", principalId: owner.serviceUserId, credentialId: auth.credential.id, credentialKind: auth.credential.kind };
   const keyId = await ctx.db.transaction(async (tx) => {
     if (!current) {
       const id = crypto.randomUUID();
@@ -183,8 +184,21 @@ export async function createServiceUserCredential(ctx: AppContext, auth: AuthCon
 export async function revokeServiceUserCredential(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string, keyId: string) {
   return revokeCredential(ctx, auth, await serviceUserOwner(ctx, auth, organizationId, serviceUserId), keyId);
 }
-async function serviceUserOwner(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string): Promise<Owner> {
-  requireCredentialManagement(auth);
+/** Who may declare a service user's key with a supplied secret: a person's
+ * session, or a key created to declare them (`allowServiceUserKeys`), within
+ * its other restrictions. Every other key operation stays with people, so an
+ * ordinary key that leaks can mint nothing. */
+function requireKeyDeclaration(auth: AuthContext, organizationId: string) {
+  if (auth.principal.kind === "user" && ["session", "cliSession"].includes(auth.credential.kind)) return;
+  if (auth.credential.restrictions.allowServiceUserKeys !== true) {
+    throw new HTTPException(403, { message: "Declare service-user keys from a human session, or with a key created to declare them (allowServiceUserKeys)" });
+  }
+  enforceRestrictions(auth, { operation: "platform/service-users/credentials/put", organizationId, write: true });
+}
+
+async function serviceUserOwner(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string, declaring = false): Promise<Owner> {
+  if (declaring) requireKeyDeclaration(auth, organizationId);
+  else requireCredentialManagement(auth);
   await requireOrganizationAction(ctx, auth, organizationId, "manageServiceUsers");
   if (!z.string().uuid().safeParse(serviceUserId).success) throw new HTTPException(400, { message: "Invalid service user identifier" });
   const [app] = await ctx.db.select().from(schema.serviceUsers)
@@ -272,7 +286,7 @@ export function credentialRoutes(ctx: AppContext) {
     return c.json(await replaceCredential(ctx, auth, owner, c.req.param("keyId")!));
   },
   "platform/service-users/credentials/put": async c => {
-    const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);
+    const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!, true);
     let raw: unknown;
     try { raw = await c.req.json(); } catch { throw new HTTPException(400, { message: "Invalid JSON" }); }
     const parsed = credentialPutSchema.safeParse(raw);

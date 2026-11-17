@@ -32,7 +32,7 @@ function ApiKeyDetails({ owner, apiKey, onRevoked }: { owner: ApiKeyOwner; apiKe
     const universe = universes.data?.find((candidate) => candidate.lightspeedUniverseId === id);
     return universe ? `${universe.name} (${universe.handle})` : id;
   };
-  const { organizationIds, universeIds, operations, readOnly, allowUniverseCreation } = apiKey.restrictions;
+  const { organizationIds, universeIds, operations, readOnly, allowUniverseCreation, allowServiceUserKeys } = apiKey.restrictions;
   const list = (values: string[], name: (id: string) => string) => values.length ? values.map(name).join(", ") : "None";
   return (
     <>
@@ -45,6 +45,7 @@ function ApiKeyDetails({ owner, apiKey, onRevoked }: { owner: ApiKeyOwner; apiKe
         <ResourceDetail label="Universes">{universeIds ? list(universeIds, universeName) : "All it can access there"}</ResourceDetail>
         <ResourceDetail label="Access">{readOnly ? "Read only" : "Reads and changes its roles allow"}</ResourceDetail>
         <ResourceDetail label="Universe creation">{allowUniverseCreation ? "Allowed by its roles" : "Not allowed"}</ResourceDetail>
+        <ResourceDetail label="Service-user keys">{allowServiceUserKeys ? "May declare them, as an Organization Admin" : "Cannot create keys"}</ResourceDetail>
         {operations && <ResourceDetail label="Operations" mono>{operations.length ? operations.join(", ") : "None"}</ResourceDetail>}
         <ResourceDetail label="Expires">{apiKeyExpiry(apiKey)}</ResourceDetail>
         <ResourceDetail label="Created">{new Date(apiKey.createdAt).toLocaleString()}</ResourceDetail>
