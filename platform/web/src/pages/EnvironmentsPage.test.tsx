@@ -7,7 +7,7 @@ const { organizationActions, universeActions } = await vi.hoisted(() => import("
 import { ApiError, type Environment, type EnvironmentRegistrationKey, type EnvironmentTemplate } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { EnvironmentsPage } from "./EnvironmentsPage";
-import { waitForUi } from "@/test/wait-for-ui";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -95,16 +95,16 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-async function settle() {
-  for (let i = 0; i < 5; i++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+async function settle(options?: { pending?: boolean }) {
+  await settleQueries(client, options);
 }
-async function show() {
+async function show(options?: { pending?: boolean }) {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
       <EnvironmentsPage />
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
-  await settle();
+  await settle(options);
 }
 async function details(name: string) {
   const button = container.querySelector<HTMLButtonElement>(`button[aria-label="Details for ${name}"]`)!;
@@ -319,7 +319,7 @@ it("shows loading and inventory failure without a false empty state", async () =
   let reject!: (error: Error) => void;
   mocks.api.mockImplementation((method, path) => isEnvironmentList(path)
     ? new Promise((_, fail) => { reject = fail; }) : implementation(method, path));
-  await show();
+  await show({ pending: true });
   expect(container.textContent).toContain("Loading…");
   expect(container.textContent).not.toContain("No open environments");
   await act(async () => reject(new Error("Inventory unavailable")));
@@ -380,7 +380,7 @@ it("releases the daemon of a declared environment after confirmation", async () 
   expect(buttonLabels()).not.toContain("Release daemon");
 });
 
-it("keeps releasing a daemon with operators", async () => {
+it("does not offer releasing a daemon to a viewer", async () => {
   rows = [declaredWithDaemon];
   await show();
   await details("Declared box");
@@ -485,7 +485,8 @@ it("lists the providers this universe may use, and how", async () => {
     ]
     : implementation(method, path));
   await show();
-  await waitForUi(() => expect(container.textContent).toContain("2 available"));
+  await settle();
+  expect(container.textContent).toContain("2 available");
   const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Providers"))!;
   await act(async () => trigger.click());
   const table = container.querySelector('table[aria-label="Providers"]')!;

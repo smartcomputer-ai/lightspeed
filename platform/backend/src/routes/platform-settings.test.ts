@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { organizationFixture } from "../../test/organization-fixture.js";
-import { identityEnv, identityFixture } from "../../test/identity-fixture.js";
+import { identityEnv } from "../../test/identity-fixture.js";
 import { ensurePersonalOrganization } from "../personal-organizations.js";
 import { platformSettings } from "../platform-settings.js";
 
@@ -49,16 +49,17 @@ it("lets an organization follow the deployment default until it gets its own lim
 });
 
 it("creates personal organizations only while the setting allows it", async () => {
-  const personal = await identityFixture({ ...identityEnv, oidc: null });
-  try {
-    await personal.db.insert(schema.user).values({ id: "dana", name: "Dana", email: "dana@example.test", emailVerified: true });
-    await personal.db.insert(schema.platformSettings).values({ key: "personalOrganizations", value: false });
-    expect((await platformSettings(personal.db, identityEnv)).personalOrganizations).toBe(false);
-    await ensurePersonalOrganization(personal.db, identityEnv, "dana");
-    expect(await personal.db.select().from(schema.organization).where(eq(schema.organization.personalUserId, "dana"))).toEqual([]);
-    await personal.db.delete(schema.platformSettings);
-    await ensurePersonalOrganization(personal.db, identityEnv, "dana");
-    const [created] = await personal.db.select().from(schema.organization).where(eq(schema.organization.personalUserId, "dana"));
-    expect(created?.universeQuota).toBeNull();
-  } finally { await personal.postgres.close(); }
+  // The fixture's database, read with an environment that leaves the
+  // setting to the stored value.
+  const { db } = fixture;
+  const env = { ...identityEnv, personalOrganizations: undefined, devSeed: false };
+  await db.insert(schema.user).values({ id: "dana", name: "Dana", email: "dana@example.test", emailVerified: true });
+  await db.insert(schema.platformSettings).values({ key: "personalOrganizations", value: false });
+  expect((await platformSettings(db, env)).personalOrganizations).toBe(false);
+  await ensurePersonalOrganization(db, env, "dana");
+  expect(await db.select().from(schema.organization).where(eq(schema.organization.personalUserId, "dana"))).toEqual([]);
+  await db.delete(schema.platformSettings);
+  await ensurePersonalOrganization(db, env, "dana");
+  const [created] = await db.select().from(schema.organization).where(eq(schema.organization.personalUserId, "dana"));
+  expect(created?.universeQuota).toBeNull();
 });

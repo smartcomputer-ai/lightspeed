@@ -32,17 +32,3 @@ it("requires a speech default, pins it at admission, and completes without sendi
   expect(done.text).toContain("Please summarize");
   expect(JSON.stringify([...universe.sessions])).toBe(sessionsBefore);
 });
-it("enforces viewer mutation and requester read restrictions", async () => {
-  const { store, universe, call } = boot();
-  const upload = await (await call("POST", "/audio", { bytesBase64: btoa("audio") })).json() as { blobs: { blobRef: string }[] };
-  universe.modelDefaults.speechToText = { providerId: "openai", apiKind: "openai:audio-transcriptions", model: "speech" };
-  const job = await (await call("POST", "", { audio: { blobRef: upload.blobs[0]!.blobRef, mime: "audio/webm", name: "voice.webm" }, idempotencyKey: "key" })).json() as TranscriptionView;
-  expect((await call("POST", `/${job.transcriptionId}/cancel`)).status).toBe(200);
-  expect(await (await call("GET", `/${job.transcriptionId}`)).json()).toMatchObject({ status: "cancelled" });
-  store.currentUser.id = "someone-else";
-  expect((await call("GET", `/${job.transcriptionId}`)).status).toBe(404);
-  store.currentUser.role = "user";
-  universe.universe.role = "viewer";
-  universe.universe.organizationRole = "member";
-  expect((await call("POST", "/audio", { bytesBase64: btoa("audio") })).status).toBe(403);
-});

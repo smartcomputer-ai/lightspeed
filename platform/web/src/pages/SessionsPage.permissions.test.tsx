@@ -8,6 +8,7 @@ const { organizationActions, universeActions } = await vi.hoisted(() => import("
 import { SessionsPage } from "./SessionsPage";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import type { ModelDefaults } from "@/api";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "contributor" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -96,7 +97,7 @@ it("offers contributor bulk close only for their unshared sessions", async () =>
 async function openCreate() {
   await show();
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="New session"]')!.click());
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
   return document.body.querySelector<HTMLElement>('[role="dialog"]')!;
 }
 

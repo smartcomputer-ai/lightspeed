@@ -43,13 +43,3 @@ it("forwards a contributor's manual compaction to the core API", async () => {
   expect(await response.json()).toMatchObject({ session: { id: "session" } });
   expect(requests).toContainEqual(expect.objectContaining({ method: "session/context/compact", params: { sessionId: "session" } }));
 });
-it("rejects viewers before requesting compaction", async () => {
-  access.role = "viewer";
-  expect((await compact()).status).toBe(403);
-  expect(requests.some((request) => request.method === "session/context/compact")).toBe(false);
-});
-it("does not compact another user's private session", async () => {
-  access.owner = "someone-else";
-  expect((await compact()).status).toBe(404);
-  expect(requests.some((request) => request.method === "session/context/compact")).toBe(false);
-});

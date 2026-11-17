@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { ProfilesPage } from "./ProfilesPage";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -72,7 +73,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 async function settle() {
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 }
 const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]')!;
 const lines = () => [...dialog().querySelectorAll('[data-slot="settings-disclosure"] > p')].map((line) => line.textContent);

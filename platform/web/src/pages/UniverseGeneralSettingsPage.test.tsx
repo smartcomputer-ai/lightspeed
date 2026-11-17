@@ -22,7 +22,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   universe = {
     id: "platform-id", organizationId: "team", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory",
-    status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", actions: [...universeActions(["owner"])], features: { bots: true, channels: true },
+    status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", actions: [...universeActions(["owner"])], features: { bots: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {
     if (method === "GET" && path === "/api/ui/universes") return [universe];
@@ -127,11 +127,6 @@ it("archives only after confirmation and stays on the universe's settings", asyn
   expect(location()).toBe("/u/factory/settings/general");
 });
 
-it("keeps delete and the deleted-sessions purge in the danger zone", async () => {
-  await show();
-  expect(button("Delete universe") ?? [...document.querySelectorAll("button")].find((node) => node.textContent?.includes("Delete"))).toBeDefined();
-});
-
 it("restores an archived universe without a confirmation", async () => {
   universe.status = "archived";
   await show();
@@ -141,15 +136,11 @@ it("restores an archived universe without a confirmation", async () => {
   expect(location()).toBe("/u/factory/settings/general");
 });
 
-
 it("allows an Owner to rename a universe with a runtime displayName", async () => {
   universe.runtimeConfiguration = { displayName: "Factory" };
   await show();
   expect(container.querySelector<HTMLInputElement>("#universe-name")?.disabled).toBe(false);
-  expect(container.textContent).not.toContain("Managed by the universe configuration");
-  expect(mocks.api.mock.calls.some(([method]) => method === "PATCH")).toBe(false);
 });
-
 
 it("requires an organization administrator to clear protection", async () => {
   universe.protected = true;

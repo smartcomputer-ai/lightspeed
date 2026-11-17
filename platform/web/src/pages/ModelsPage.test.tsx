@@ -8,6 +8,7 @@ const { organizationActions, universeActions } = await vi.hoisted(() => import("
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { ModelsPage } from "./ModelsPage";
 import { ApiError, type ModelDefaults } from "@/api";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -74,7 +75,7 @@ async function show(path = "/") {
       <ModelsPage />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 }
 function button(label: string) {
   return [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label);
@@ -124,7 +125,7 @@ it("lets readers inspect model connection details and restores focus on dismissa
   const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Details for Anthropic"]')!;
   expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
   await act(async () => trigger.click());
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   const dialog = document.body.querySelector('[role="dialog"]')!;
   expect(dialog.textContent).toContain("Credential ID");
   expect(dialog.textContent).toContain("Updated");
@@ -132,13 +133,13 @@ it("lets readers inspect model connection details and restores focus on dismissa
   expect(button("Replace key")).toBeUndefined();
   expect(button("Remove key")).toBeUndefined();
   await act(async () => dialog.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   expect(document.activeElement).toBe(trigger);
 });
 
 async function click(label: string) {
   await act(async () => button(label)!.click());
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
 }
 async function enterModel(value: string) {
   const input = document.body.querySelector<HTMLInputElement>('input[placeholder="Model name"]')!;
@@ -220,7 +221,7 @@ it("offers default selection after adding a provider without changing it automat
   });
   const form = input.closest("form")!;
   await act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
   expect(button("Choose default model")).toBeDefined();
   expect(mocks.api.mock.calls.filter(([method]) => method === "PUT")).toHaveLength(0);
   await click("Choose default model");

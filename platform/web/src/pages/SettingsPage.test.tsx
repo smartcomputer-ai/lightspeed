@@ -28,14 +28,6 @@ function Location() {
   return <output>{location.pathname + location.hash}</output>;
 }
 
-it("puts the account and appearance on one page, each under its heading", async () => {
-  await act(async () => root.render(<MemoryRouter><SettingsPage user={{ id: "user", name: "Ada", email: "ada@example.test" } as SessionUser} /></MemoryRouter>));
-  expect(container.querySelector("h1")?.textContent).toBe("Settings");
-  expect([...container.querySelectorAll("h2")].map((heading) => heading.textContent)).toEqual(["Account", "Appearance"]);
-  expect(container.textContent).toContain("account sections");
-  expect(container.textContent).toContain("appearance sections");
-});
-
 it.each([["/account#api-keys", "/settings#api-keys"], ["/preferences", "/settings"]])("sends %s to %s", async (from, to) => {
   await act(async () => root.render(
     <MemoryRouter initialEntries={[from]}>

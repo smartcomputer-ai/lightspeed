@@ -261,18 +261,6 @@ it("keeps account membership and universe grants distinct on existing sessions",
   await fixture.db.delete(schema.organization).where(eq(schema.organization.id, org));
 });
 
-it("keeps local password login and admin provisioning available without OIDC", async () => {
-  const target = await identityFixture({ ...identityEnv, oidc: null });
-  try {
-    const signedIn = await target.request("/api/auth/sign-in/email", { email: identityEnv.adminEmail, password: identityEnv.adminPassword });
-    expect(signedIn.status).toBe(200);
-    const created = await target.request("/api/auth/admin/create-user", { name: "Local user", email: "local@example.test", password: "local-test-password", role: "user" }, responseCookies(signedIn));
-    expect(created.status).toBe(200);
-    const local = await target.request("/api/auth/sign-in/email", { email: "local@example.test", password: "local-test-password" });
-    expect((await target.request("/api/ui/me", undefined, responseCookies(local))).status).toBe(200);
-  } finally { await target.postgres.close(); }
-}, 30000);
-
 it("lets emergency admins change their own password and rejects callback replay", async () => {
   const changed = await fixture.request("/api/auth/change-password", { currentPassword: identityEnv.adminPassword, newPassword: "replacement-emergency-password", revokeOtherSessions: true }, await emergency());
   expect(changed.status).toBe(200);

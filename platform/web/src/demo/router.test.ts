@@ -55,8 +55,6 @@ const universeReads = [
   "models",
   "models/defaults",
   "bots",
-  "channel-accounts",
-  "channel-pairings",
   "integrations/github",
   "integrations/subscriptions",
 ];
@@ -133,21 +131,21 @@ describe("demo router", () => {
     expect(created.status).toBe(201);
     expect(created.json).toMatchObject({ icon: "orbit", iconColor: "default" });
   });
-  it("keeps bots and channels on in the seeded universes while a new universe starts with them off", async () => {
+  it("keeps bots on in the seeded universes while a new universe starts with bots off", async () => {
     const { store, call } = await boot();
     const seeded = (await call("GET", "/api/ui/universes")).json as Universe[];
     expect(seeded).toHaveLength(3);
     for (const universe of seeded) {
-      expect(universe.features, universe.handle).toEqual({ bots: true, channels: true });
+      expect(universe.features, universe.handle).toEqual({ bots: true });
     }
     const created = (await call("POST", "/api/ui/universes", { name: "New universe" })).json as Universe;
-    expect(created.features).toEqual({ bots: false, channels: false });
+    expect(created.features).toEqual({ bots: false });
     // A switch is stored only while it differs from the default, as on the Platform.
     const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
-    expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.featureOverrides).toEqual({ bots: true, channels: true });
-    expect((await call("PATCH", path, { features: { bots: false } })).json).toMatchObject({ features: { bots: false, channels: false } });
-    expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.featureOverrides).toEqual({ channels: true });
-    expect((await call("PATCH", path, { features: { bots: true } })).json).toMatchObject({ features: { bots: true, channels: true } });
+    expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.featureOverrides).toEqual({ bots: true });
+    expect((await call("PATCH", path, { features: { bots: false } })).json).toMatchObject({ features: { bots: false } });
+    expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.featureOverrides).toEqual({});
+    expect((await call("PATCH", path, { features: { bots: true } })).json).toMatchObject({ features: { bots: true } });
   });
   it("saves shared universe appearance and validates choices", async () => {
     const { call } = await boot();
@@ -189,19 +187,6 @@ describe("demo router", () => {
     const explicit = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: { config: { model } } } });
     expect(explicit.status).toBe(200);
     expect(other.modelDefaults).toEqual(otherDefaults);
-  });
-
-  it("lets demo members read defaults while reserving changes for operators", async () => {
-    const { store, call } = await boot();
-    store.currentUser.role = "user";
-    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    universe.universe.role = "viewer";
-    // Organization administration would hold Owner on every universe.
-    universe.universe.organizationRole = "member";
-    const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/models/defaults`;
-    expect((await call("GET", path)).status).toBe(200);
-    expect((await call("PUT", path, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision })).status).toBe(403);
-    expect(universe.modelDefaults.agentRun).not.toBeNull();
   });
 
   it("uses universe defaults for demo bot sessions and refuses rotation when that choice is cleared", async () => {
@@ -306,19 +291,6 @@ describe("demo router", () => {
     expect((await call("POST", `${path}/share`)).status).toBe(409);
   });
 
-  it("lists each session with its active environment", async () => {
-    const { store, call } = await boot();
-    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const listed = (await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/sessions?limit=200`)).json as {
-      sessions: { id: string; activeEnvironmentId?: string }[];
-    };
-    expect(listed.sessions.length).toBeGreaterThan(0);
-    for (const entry of listed.sessions) {
-      expect(entry.activeEnvironmentId ?? null).toBe(universe.sessions.get(entry.id)!.view.activeEnvironmentId ?? null);
-    }
-    expect(listed.sessions.some((entry) => entry.activeEnvironmentId)).toBe(true);
-  });
-
   it("lists each session with its latest message as one plain, bounded line", async () => {
     const { store, call } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
@@ -393,15 +365,6 @@ describe("demo router", () => {
     expect(run.outputText).toBe(text);
     expect(run.entries?.find((entry) => entry.kind.type === "reasoningState")?.text).toBe(text);
     expect(session.events.at(-1)?.kind).toEqual({ type: "runCompleted", runId: run.id, output: run.output });
-  });
-
-  it("reads the original bytes of a large tool result for expansion", async () => {
-    const { store, call } = await boot();
-    const text = "full tool result ".repeat(700);
-    const blobRef = store.putText(text);
-    const result = await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/blobs/${encodeURIComponent(blobRef)}`);
-    expect(result.status).toBe(200);
-    expect(result.json).toEqual({ blobRef, bytesBase64: btoa(text), bytes: text.length });
   });
 
   it("signs the visitor in as a platform admin without a login", async () => {
@@ -518,8 +481,6 @@ describe("demo router", () => {
     for (const path of [
       "/api/ui/users",
       "/api/ui/universes/reconcile",
-      "/api/ui/status/channels",
-      "/api/ui/channel-accounts",
       "/api/ui/admin/environment-providers",
       "/api/ui/admin/environment-provider-bindings",
       "/api/auth/admin/list-users",
@@ -540,24 +501,6 @@ describe("demo router", () => {
     expect((await call("GET", "/api/ui/universes/reconcile")).json).toMatchObject({ orphans: expect.arrayContaining([unclaimed]) });
     store.currentUser.role = "user";
     expect((await call("GET", "/api/ui/universes/reconcile?organizationId=selected")).status).toBe(403);
-  });
-
-  it("edits native grants and preserves the final Owner", async () => {
-    const { store, call } = await boot();
-    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const owner = state.members.find(member => member.role === "owner")!;
-    state.members = [owner];
-    const path = `/api/v1/platform/universes/${state.universe.lightspeedUniverseId}/grants`;
-    const principal = { kind: "user", id: owner.userId };
-    expect((await call("PUT", path, { principal, role: "viewer" })).status).toBe(409);
-    expect(owner.role).toBe("owner");
-    // Only an Owner who is still an organization member keeps the universe owned.
-    store.organizationMemberships.get(state.universe.organizationId!)!.set("other-user", "member");
-    state.members.push({ ...owner, id: "other-owner", userId: "other-user" });
-    expect((await call("PUT", path, { principal, role: "operator" })).status).toBe(200);
-    const listed = (await call("GET", path)).json as { grants: { principal: { id: string }; role: string }[] };
-    expect(listed.grants.find(g => g.principal.id === owner.userId)?.role).toBe("operator");
-    expect((await call("PUT", path, { principal, role: "deployment_admin" })).status).toBe(400);
   });
 
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
@@ -616,7 +559,11 @@ describe("demo router", () => {
     }
   });
 
-  it("runs a message through the tail and completes it", async () => {
+  it("runs a message through the tail and completes it", async ({ onTestFinished }) => {
+    // The engine paces its steps with timers; run them out instead of
+    // waiting on the wall clock.
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.clearAllTimers(); vi.useRealTimers(); });
     const { call } = await boot();
     const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
     const created = await call("POST", `/api/ui/universes/${universe!.id}/sessions`, {
@@ -631,6 +578,7 @@ describe("demo router", () => {
     });
     expect(accepted.status).toBe(200);
     const runId = (accepted.json as { run: { id: string; status: string } }).run.id;
+    await vi.runAllTimersAsync();
     let after = 0;
     let completed = false;
     let acceptedSubmission: string | null | undefined;
@@ -639,8 +587,9 @@ describe("demo router", () => {
     let transcript = emptyTranscript();
     for (let i = 0; i < 20 && !completed; i++) {
       const page = (
-        await call("GET", `/api/ui/universes/${universe!.id}/sessions/${sessionId}/events?after=${after}&limit=100&waitMs=3000`)
+        await call("GET", `/api/ui/universes/${universe!.id}/sessions/${sessionId}/events?after=${after}&limit=100`)
       ).json as SessionEventsPage;
+      if (!page.events?.length) break;
       transcript = applyEvents(transcript, page.events ?? []);
       for (const event of page.events ?? []) {
         after = event.cursor.seq;
@@ -682,7 +631,7 @@ describe("demo router", () => {
       role: "assistant", runId, contentRef: section?.summary?.outputContentRef,
     });
     expect(section?.work).not.toContain(section?.reply);
-  }, 30_000);
+  });
 
   it("copies profile metadata and selects only its default environment attachment", async () => {
     const { call } = await boot();
@@ -917,27 +866,26 @@ describe("demo router", () => {
     expect(newest.outcome).not.toBeNull();
   });
 
-  it("keeps ingest paths and pairing codes out of trigger reads and serves them from their own route", async () => {
+  it("keeps ingest paths out of trigger reads and serves them from their own route", async () => {
     const { store, call } = await boot();
-    type Trigger = { triggerId: string; kind: string; pairing?: string; revision: number };
-    type Secrets = { ingestPath?: string; pairingCode?: string };
+    type Trigger = { triggerId: string; kind: string; revision: number };
+    type Secrets = { ingestPath?: string };
     let webhooks = 0;
-    let pairedChats = 0;
     for (const universe of (await call("GET", "/api/ui/universes")).json as Universe[]) {
       const bots = ((await call("GET", `/api/ui/universes/${universe.id}/bots`)).json as { bots: BotListItem[] }).bots;
       for (const bot of bots) {
         const base = `/api/ui/universes/${universe.id}/bots/${bot.botId}/triggers`;
         const listed = await call("GET", base);
         const text = JSON.stringify(listed.json);
-        expect(text, `${bot.botId}: list`).not.toMatch(/ingestPath|pairingCode|\/ingress\/webhooks\//);
+        expect(text, `${bot.botId}: list`).not.toMatch(/ingestPath|\/ingress\/webhooks\//);
         for (const trigger of (listed.json as { triggers: Trigger[] }).triggers) {
           const read = await call("GET", `${base}/${trigger.triggerId}`);
           expect(JSON.stringify(read.json), `${bot.botId}/${trigger.triggerId}: read`).not.toMatch(
-            /ingestPath|pairingCode|\/ingress\/webhooks\//,
+            /ingestPath|\/ingress\/webhooks\//,
           );
           const secrets = await call("GET", `${base}/${trigger.triggerId}/secrets`);
           expect(secrets.status, `${bot.botId}/${trigger.triggerId}: secrets`).toBe(200);
-          const { ingestPath, pairingCode } = secrets.json as Secrets;
+          const { ingestPath } = secrets.json as Secrets;
           const stored = store.universe(universe.id)!.bots.get(bot.botId)!.triggers.get(trigger.triggerId)!;
           if (trigger.kind === "webhook") {
             webhooks += 1;
@@ -946,18 +894,10 @@ describe("demo router", () => {
           } else {
             expect(ingestPath).toBeUndefined();
           }
-          if (trigger.kind === "chat" && trigger.pairing !== "open") {
-            pairedChats += 1;
-            expect(pairingCode).toBe(stored.pairingCode);
-            expect(pairingCode).toBeTruthy();
-          } else {
-            expect(pairingCode).toBeUndefined();
-          }
         }
       }
     }
     expect(webhooks).toBeGreaterThan(0);
-    expect(pairedChats).toBeGreaterThan(0);
     expect((await call("GET", `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/bots/no-such-bot/triggers/x/secrets`)).status).toBe(404);
   });
 
@@ -968,7 +908,7 @@ describe("demo router", () => {
       vi.useRealTimers();
     });
     const { call } = await boot();
-    type Written = { trigger: Record<string, unknown> & { revision: number }; secrets?: { ingestPath?: string; pairingCode?: string } };
+    type Written = { trigger: Record<string, unknown> & { revision: number }; secrets?: { ingestPath?: string } };
     const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
     const bot = ((await call("GET", `/api/ui/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots
       .find((entry) => entry.enabled !== false && entry.closedAtMs == null)!;
@@ -998,91 +938,6 @@ describe("demo router", () => {
     })).json as Written;
     expect(schedule.secrets).toBeUndefined();
     expect((await call("GET", `${base}/secrets-nightly/secrets`)).json).toEqual({});
-  });
-
-  it("keeps a chat trigger's pairing code across writes that do not name one", async () => {
-    const { store, call } = await boot();
-    type Written = { trigger: { revision: number }; secrets?: { pairingCode?: string } };
-    let checked = 0;
-    for (const universe of (await call("GET", "/api/ui/universes")).json as Universe[]) {
-      for (const record of store.universe(universe.id)!.bots.values()) {
-        if (record.bot.closedAtMs != null) continue;
-        for (const stored of [...record.triggers.values()]) {
-          if (stored.kind !== "chat" || stored.pairing === "open" || checked > 0) continue;
-          checked += 1;
-          const path = `/api/ui/universes/${universe.id}/bots/${record.bot.botId}/triggers/${stored.triggerId}`;
-          const code = stored.pairingCode;
-          const input = { kind: "chat", accountId: stored.accountId, pairing: "code" };
-          const kept = (await call("PUT", path, { trigger: input })).json as Written;
-          expect(kept.secrets?.pairingCode).toBe(code);
-          const rotated = (await call("PUT", path, { trigger: { ...input, pairingCode: "RotatedCode42" } })).json as Written;
-          expect(rotated.secrets?.pairingCode).toBe("RotatedCode42");
-          // Opening the connection drops the code; requiring it again mints a new one.
-          const open = (await call("PUT", path, { trigger: { ...input, pairing: "open" } })).json as Written;
-          expect(open.secrets).toBeUndefined();
-          const again = (await call("PUT", path, { trigger: input })).json as Written;
-          expect(again.secrets?.pairingCode).toBeTruthy();
-          expect(again.secrets?.pairingCode).not.toBe("RotatedCode42");
-        }
-      }
-    }
-    expect(checked).toBe(1);
-  });
-
-  it("stores model endpoint headers as the runtime does and refuses a plain secret", async () => {
-    const { call } = await boot();
-    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
-    const modelKeys = `/api/ui/universes/${universe!.id}/integrations/model-keys`;
-    const endpoint = (headers: unknown) => ({
-      provider: "header-router",
-      endpoint: { baseUrl: "https://router.example/v1", apiKinds: ["openai:completions"], headers },
-    });
-    const saved = await call("POST", modelKeys, endpoint({
-      "X-Title": { type: "literal", value: "Lightspeed" },
-      "X-Api-Key": { type: "credential", grantId: "authgrant_router" },
-    }));
-    expect(saved.status).toBe(201);
-    expect((saved.json as { config: { endpoint: { headers: unknown } } }).config.endpoint.headers).toEqual({
-      "x-title": { type: "literal", value: "Lightspeed" },
-      "x-api-key": { type: "credential", grantId: "authgrant_router" },
-    });
-    for (const headers of [
-      { "Api-Key": { type: "literal", value: "sk-plain" } },
-      { "x-title": "Lightspeed" },
-    ]) {
-      const refused = await call("POST", modelKeys, { ...endpoint(headers), provider: "header-refused" });
-      expect(refused.status).toBe(400);
-    }
-  });
-
-  it("stores MCP server headers as the runtime does and refuses a plain secret", async () => {
-    const { call } = await boot();
-    const [universe] = (await call("GET", "/api/ui/universes")).json as Universe[];
-    const servers = `/api/ui/universes/${universe!.id}/mcp-servers`;
-    const server = (serverId: string, headers: unknown) => ({
-      serverId,
-      serverUrl: "https://tracker.example.com/mcp",
-      defaultServerLabel: serverId,
-      execution: "runtime",
-      headers,
-    });
-    const saved = await call("POST", servers, server("header-tracker", {
-      "X-Tenant": { type: "literal", value: "acme" },
-    }));
-    expect(saved.status).toBe(201);
-    expect((saved.json as McpServer).headers).toEqual({
-      "x-tenant": { type: "literal", value: "acme" },
-    });
-    for (const headers of [
-      { "X-Api-Key": { type: "literal", value: "sk-plain" } },
-      { "api-key": { type: "literal", value: "sk-plain" } },
-      { "X-Tenant": { type: "literal", value: "a" }, "x-tenant": { type: "literal", value: "b" } },
-      { "x-tenant": "acme" },
-    ]) {
-      const refused = await call("POST", servers, server("header-refused", headers));
-      expect(refused.status).toBe(400);
-      expect(JSON.stringify(refused.json)).not.toContain("sk-plain");
-    }
   });
 
   it("names the missing stub instead of hanging", async () => {

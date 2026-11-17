@@ -10,6 +10,7 @@ import { PermissionIdentityProvider } from "@/lib/permissions";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { AppShell, shellTitleTrail } from "./app-shell";
 import { documentTitle } from "@/lib/document-title";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -46,7 +47,7 @@ afterEach(async () => {
 });
 
 /// The sidebar as label → nav items, with the unlabelled first group as "".
-async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
+async function sidebarFor(role: string, features = { bots: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
     if (path === "/api/v1/platform/organizations") {
@@ -68,7 +69,7 @@ async function sidebarFor(role: string, features = { bots: true, channels: true 
       </MemoryRouter>
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   const groups = [...container.querySelectorAll('[data-sidebar="group"]')];
   return Object.fromEntries(groups.map((group) => [
     group.querySelector('[data-sidebar="group-label"]')?.textContent ?? "",
@@ -83,11 +84,10 @@ it.each(["viewer", "contributor"])("shows a %s the work, the setup and readable 
   });
 });
 
-it("adds credentials and channels for an Operator", async () => {
+it("adds credentials for an Operator", async () => {
   expect(await sidebarFor("operator")).toEqual({
     "": WORK,
     Setup: [...SETUP, "Credentials"],
-    Settings: ["Channels"],
   });
 });
 
@@ -95,23 +95,12 @@ it("gives an Owner the universe's own settings and members in its menu", async (
   expect(await sidebarFor("owner")).toEqual({
     "": WORK,
     Setup: [...SETUP, "Credentials"],
-    Settings: ["General", "Members", "Channels"],
-  });
-});
-
-it("keeps settings and members out of an Operator's menu", async () => {
-  expect(await sidebarFor("operator")).toMatchObject({ Settings: ["Channels"] });
-});
-
-it("leaves switched-off channels out of the menu", async () => {
-  expect(await sidebarFor("owner", { bots: true, channels: false })).toMatchObject({
-    "": WORK,
     Settings: ["General", "Members"],
   });
 });
 
-it("leaves bots, and the channels they need, out of the menu", async () => {
-  expect(await sidebarFor("owner", { bots: false, channels: false })).toMatchObject({
+it("leaves bots out of the menu", async () => {
+  expect(await sidebarFor("owner", { bots: false })).toMatchObject({
     "": ["Sessions", "Workspaces"],
     Settings: ["General", "Members"],
   });
@@ -148,7 +137,7 @@ it("links each page at its flat route", async () => {
     "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
     "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
     "/u/test/credentials",
-    "/u/test/settings/general", "/u/test/settings/members", "/u/test/settings/channels",
+    "/u/test/settings/general", "/u/test/settings/members",
   ]);
 });
 
@@ -170,7 +159,7 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
       </MemoryRouter>
     </PermissionIdentityProvider></UserPreferencesProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   const sidebar = () => container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
   expect(sidebar().dataset.state).toBe("collapsed");
   expect(sidebar().dataset.collapsible).toBe("icon");
@@ -181,7 +170,7 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
 });
 
 it("offers Audit log in Platform admin navigation", async () => {
-  const groups = await sidebarFor("owner", { bots: true, channels: true }, true);
+  const groups = await sidebarFor("owner", { bots: true }, true);
   expect(groups["Platform"]).toContain("Audit log");
   expect(container.querySelector('[data-sidebar="separator"]')).not.toBeNull();
   expect(container.querySelector('a[href="/admin/platform/audit"]')?.getAttribute("aria-current")).toBe("page");

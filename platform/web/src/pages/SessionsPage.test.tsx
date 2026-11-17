@@ -440,7 +440,7 @@ async function navigateAway() {
   await act(async () => root.render(null));
 }
 
-describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pathway) => {
+describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer drafts", (pathway) => {
   it("persists exact drafts across navigation and isolates sessions and universes", async () => {
     await show(pathway);
     await type("  unfinished\nmessage 🦀  ");
@@ -462,6 +462,12 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     await show(pathway, "another-universe", "session");
     expect(input().value).toBe("other universe draft");
   });
+});
+
+// A bot view renders the same session detail; only where its draft is kept
+// depends on the view, so the rest runs once.
+describe("composer", () => {
+  const pathway: Pathway = "session";
 
   it("shows compaction request failures inside the transcript", async () => {
     mocks.compactions = [{ status: "error", error: new Error("No compactable context") }];

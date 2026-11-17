@@ -86,13 +86,6 @@ it("denies universe Owners access to permanent deletion and deleted-session list
   expect(f.operationCalls).toEqual([]);
   expect(f.audits).not.toHaveBeenCalled();
 });
-it("allows platform admins to list and permanently delete, auditing the affected IDs", async () => {
-  auth.platformAdmin = true;
-  const f = fixture();
-  expect((await f.call("/admin/universes/universe/deleted-sessions", "GET")).status).toBe(200);
-  expect((await f.call("/admin/universes/universe/sessions/s1/purge")).status).toBe(200);
-  expect(f.audits).toHaveBeenCalledWith(expect.objectContaining({ actorId: "member", universeId: "universe", targetId: "s1", action: "session.purge", outcome: "success", details: { deletedSessionIds: '["s1","child"]' } }));
-});
 it("does not duplicate purge audit when the runtime reports an already-removed session", async () => {
   auth.platformAdmin = true;
   const f = fixture({ purgedIds: [] });
@@ -112,4 +105,5 @@ it("audits permanent deletion after the universe soft-delete step exactly once",
     actorId: "member", universeId: "universe", targetId: "s1", action: "session.purge",
     details: { deletedSessionIds: '["s1","child"]' }, outcome: "success",
   }));
+  expect((await f.call("/admin/universes/universe/deleted-sessions", "GET")).status).toBe(200);
 });

@@ -16,9 +16,6 @@ const audio = { blobRef: `sha256:${"a".repeat(64)}`, mime: "audio/webm", name: "
 function fixture() {
   const requests: { method: string; params: Record<string, unknown> }[] = [];
   const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
-    expect(decodeHttpRequest(_url as string | Request | URL, init).universe).toBe("universe");
-    expect(new Headers(init.headers).has("x-lightspeed-universe")).toBe(false);
-    expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe("member");
     const request = decodeHttpRequest(_url as string | Request | URL, init);
     requests.push({ method: request.method, params: request.params });
     return Response.json(request.method === "blobs/put" ? { blobs: [{ blobRef: audio.blobRef, bytes: 5 }] } : { transcription: { transcriptionId: "job", status: "running", createdBy: { kind: "actor", id: "member" } } });

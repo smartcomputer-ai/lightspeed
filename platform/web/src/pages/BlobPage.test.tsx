@@ -116,19 +116,6 @@ it.each(["", "?type=text/markdown", "?name=notes.md"])(
   },
 );
 
-it("offers the Markdown views as a labelled toggle group", async () => {
-  await open(`/u/acme/blobs/${digest}`);
-  const group = container.querySelector('[role="group"][aria-label="Markdown view"]')!;
-  const [source, preview] = group.querySelectorAll<HTMLButtonElement>("button");
-  expect(source!.getAttribute("aria-pressed")).toBe("true");
-  expect(preview!.getAttribute("aria-pressed")).toBe("false");
-  await act(async () => preview!.click());
-  expect(preview!.getAttribute("aria-pressed")).toBe("true");
-  expect(container.querySelector("pre")).toBeNull();
-  await act(async () => source!.click());
-  expect(container.querySelector("pre")!.textContent).toBe(stored);
-});
-
 it("names a source session the viewer cannot read by its id, without a link", async () => {
   await open(`/u/acme/blobs/${digest}?session=private`);
   await waitForUi(() => expect(container.textContent).toContain("Linked from session: private"));

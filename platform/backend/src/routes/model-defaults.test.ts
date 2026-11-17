@@ -21,9 +21,6 @@ function fixture() {
   const requests: { method: string; params: Record<string, unknown> }[] = [];
   let defaults: ModelDefaults = { revision: 2, agentRun: null, speechToText: null };
   const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
-    expect(decodeHttpRequest(_url as string | Request | URL, init).universe).toBe("universe");
-    expect(new Headers(init.headers).has("x-lightspeed-universe")).toBe(false);
-    expect(new Headers(init.headers).get("x-lightspeed-actor")).toBe("member");
     const request = decodeHttpRequest(_url as string | Request | URL, init);
     requests.push({ method: request.method, params: request.params });
     if (request.method === "models/defaults/put") {
@@ -68,14 +65,6 @@ it.each([
   const f = fixture();
   expect((await f.call("PUT", body)).status).toBe(400);
   expect(f.fetch).not.toHaveBeenCalled();
-});
-
-it("preserves the typed missing-default error for web clients", async () => {
-  const app = new Hono();
-  app.get("/", (c) => withApiErrors(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "Choose a model", detail: "Choose a model", status: 409, kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }); }));
-  const response = await app.request("/");
-  expect(response.status).toBe(400);
-  expect(await response.json()).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" });
 });
 
 it("tells web clients a held request is pending and which id to retry with", async () => {

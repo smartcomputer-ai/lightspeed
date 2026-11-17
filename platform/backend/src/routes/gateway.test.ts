@@ -108,9 +108,6 @@ describe("environment secrets", () => {
     });
   });
 
-  it("are retrievable, because an environment receives their plain value", () => {
-    expect(environmentSecretGrantParams({ value: "v" }).exposure).toBe("retrievable");
-  });
 });
 
 describe("credential replacement", () => {

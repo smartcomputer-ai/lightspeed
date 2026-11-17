@@ -8,9 +8,10 @@ const { organizationActions, universeActions } = await vi.hoisted(() => import("
 import type { UniverseAction } from "@lightspeed-ai/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { SettingsIndexRedirect, settingsIndexPath } from "./universe-nav";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
-const ALL_ON = vi.hoisted(() => ({ bots: true, channels: true }));
+const ALL_ON = vi.hoisted(() => ({ bots: true }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
@@ -26,7 +27,7 @@ const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
 const DESTINATIONS: [string, string][] = [
   ["viewer", "/u/test/bots"],
   ["contributor", "/u/test/bots"],
-  ["operator", "/u/test/settings/channels"],
+  ["operator", "/u/test/bots"],
   ["owner", "/u/test/settings/general"],
 ];
 
@@ -43,10 +44,10 @@ it("treats a universe that names no feature states as having every feature off",
 
 it("lands on the universe home when no settings page is on, sessions when bots are off", () => {
   const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
-  expect(settingsIndexPath({ handle: "test", features: { bots: true, channels: false } }, operator))
+  expect(settingsIndexPath({ handle: "test", features: { bots: true } }, operator))
     .toBe("/u/test/bots");
   const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
-  expect(settingsIndexPath({ handle: "test", features: { bots: false, channels: false } }, viewer))
+  expect(settingsIndexPath({ handle: "test", features: { bots: false } }, viewer))
     .toBe("/u/test/sessions");
 });
 
@@ -85,6 +86,6 @@ it.each(DESTINATIONS)("redirects a %s from /settings to %s", async (role, path) 
       </MemoryRouter>
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   expect(container.querySelector('[data-testid="location"]')?.textContent).toBe(path);
 });

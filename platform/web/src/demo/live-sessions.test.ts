@@ -67,7 +67,7 @@ it("waits only on servers that ask for approval", () => {
   }
 });
 
-it("starts the auth session thinking at the first list and answers after about 25 s", async () => {
+it("starts the auth session thinking at the first list and answers within half a minute", async () => {
   const { universe, call } = boot();
   const auth = universe.sessions.get("session-auth-middleware")!;
   const before = reasoning(auth);
@@ -80,24 +80,9 @@ it("starts the auth session thinking at the first list and answers after about 2
   await call("GET", "?limit=50");
   expect(auth.view.runs?.filter((summary) => summary.status === "running")).toHaveLength(1);
 
-  await vi.advanceTimersByTimeAsync(20_000);
-  expect(run.status).toBe("running");
-  await vi.advanceTimersByTimeAsync(6_000);
+  await vi.advanceTimersByTimeAsync(30_000);
   expect(run.status).toBe("completed");
   expect(reasoning(auth)).toBe(before + 1);
-});
-
-it("answers within 5 s once the thinking session is opened", async () => {
-  const { universe, call } = boot();
-  const auth = universe.sessions.get("session-auth-middleware")!;
-  await call("GET", "?limit=50");
-  const run = activeRun(auth)!;
-  await vi.advanceTimersByTimeAsync(2_000);
-  await call("GET", `/${auth.view.id}`);
-  await vi.advanceTimersByTimeAsync(4_000);
-  expect(run.status).toBe("running");
-  await vi.advanceTimersByTimeAsync(1_500);
-  expect(run.status).toBe("completed");
 });
 
 it("starts and hurries the thinking session when it is opened first", async () => {

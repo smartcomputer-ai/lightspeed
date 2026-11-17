@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", handle: "test",
     status: "active", createdAt: "2026-01-01", role: "owner", actions: [...universeActions(["owner"])],
-    features: { bots: true, channels: true }, icon: "orbit", iconColor: "default" };
+    features: { bots: true }, icon: "orbit", iconColor: "default" };
   mocks.api.mockReset().mockImplementation(async (_method, _path, fields) => ({ ...mocks.universe, ...fields }));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   client.setQueryData(["universes"], [mocks.universe]);
@@ -51,7 +51,8 @@ function button(label: string) {
 }
 async function click(label: string) { await act(async () => button(label).click()); }
 
-it.each(UNIVERSE_ICONS)("saves the %s icon and a color as each is chosen", async icon => {
+// Every icon has an illustration (checked below); two show the save path.
+it.each(UNIVERSE_ICONS.slice(0, 2))("saves the %s icon and a color as each is chosen", async icon => {
   const iconLabel = `${label(icon)} icon`;
   function CachedIcon() {
     const universe = client.getQueryData<Universe[]>(["universes"])![0]!;

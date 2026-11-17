@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -82,7 +83,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 async function settle() {
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 }
 async function show() {
   await act(async () => root.render(

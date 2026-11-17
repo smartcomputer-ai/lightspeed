@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { DeleteSessionDialog } from "./delete-session-dialog";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), deleted: vi.fn(), cancel: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -25,7 +26,7 @@ afterEach(async () => {
   client.clear(); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals();
 });
 async function settle() {
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
 }
 async function show(platformAdmin: boolean) {
   await act(async () => root.render(<QueryClientProvider client={client}>

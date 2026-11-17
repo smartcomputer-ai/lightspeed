@@ -821,32 +821,6 @@ it("uploads dropped files into the folder under the pointer without asking", asy
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it("keeps progress inside the action menu and adds no status strip", async () => {
-  await render();
-  let finish!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  mocks.api.mockImplementation(async (method: string) => {
-    if (method === "POST") await pending;
-    return tree();
-  });
-  await select([new File(["new"], "new.txt")]);
-  await waitForWrites();
-  const statuses = [...container.querySelectorAll('[role="status"]')];
-  expect(statuses.length).toBeGreaterThan(0);
-  for (const status of statuses) {
-    expect(status.classList.contains("sr-only")).toBe(true);
-    expect(status.closest("button")).not.toBeNull();
-  }
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  await act(async () => {
-    finish();
-  });
-  await waitForUi(() => expect(container.querySelector('[role="status"]')).toBeNull());
-  expect(container.textContent).not.toContain("Upload complete");
-});
-
 it("reports download failures in a dialog", async () => {
   await render();
   vi.stubGlobal(

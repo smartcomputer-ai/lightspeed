@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { selectOption } from "@/test/select-option";
 import { AdminAuditPage } from "./AdminAuditPage";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), listUsers: vi.fn() }));
 vi.mock("@/api", () => ({ api: mocks.api }));
@@ -33,7 +34,7 @@ async function show() {
   await settle();
 }
 async function settle() {
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 }
 it("loads audit events directly and resolves users while preserving deleted targets", async () => {
   await show();
@@ -91,11 +92,16 @@ it("prevents advancing with a stale cursor while the next page loads", async () 
   mocks.api.mockClear().mockResolvedValueOnce({ ...first, nextCursor: "access" })
     .mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
   await show();
-  await click("Next");
+  // The second page stays in flight until the test resolves it.
+  const clickWhileLoading = async (name: string) => {
+    await act(async () => button(name).click());
+    await settleQueries(client, { pending: true });
+  };
+  await clickWhileLoading("Next");
   expect(container.textContent).toContain("removed-session");
   expect(button("Next").disabled).toBe(true);
   expect(button("Previous").disabled).toBe(true);
-  await click("Next");
+  await clickWhileLoading("Next");
   expect(mocks.api).toHaveBeenCalledTimes(2);
   await act(async () => resolve({ events: [olderEvent], nextCursor: null }));
   await settle();

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionView } from "@/api";
 import { SessionSettingsDialog } from "./session-settings-sheet";
+import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), configure: false }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -37,7 +38,7 @@ async function show() {
   await act(async () => root.render(<QueryClientProvider client={client}>
     <SessionSettingsDialog universeId="universe" sessionId="session" session={session} runActive={false} open onOpenChange={() => {}} />
   </QueryClientProvider>));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  await waitForUi(() => expect(client.isFetching()).toBe(0));
   return document.body.querySelector<HTMLElement>('[role="dialog"]')!;
 }
 it("shows configuration and instructions without edit or apply controls to readers", async () => {

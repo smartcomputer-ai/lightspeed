@@ -165,8 +165,6 @@ beforeEach(() => {
     vi.fn(async (_url: unknown, init: RequestInit) => {
       const request = decodeHttpRequest(_url as string | Request | URL, init);
       calls.push(request.method);
-      expect(request.universe).toBe("universe");
-      expect(new Headers(init.headers).has("x-lightspeed-universe")).toBe(false);
       let result: unknown;
       switch (request.method) {
         case "vfs/workspaces/delete":

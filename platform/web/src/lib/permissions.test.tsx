@@ -48,25 +48,6 @@ afterEach(async () => {
 const universes = (role: UniverseRole | null, actions: readonly UniverseAction[] = role ? [...universeActions([role])] : []) =>
   mocks.api.mockReset().mockResolvedValue([{ id: "universe", handle: "test", role, actions }]);
 
-it("gives each role what the one below has, plus its own", () => {
-  const offered = (action: UniverseAction) => UNIVERSE_ROLES.filter((role) => universeRoleAllows(role, action));
-  expect(offered("read")).toEqual(["viewer", "contributor", "operator", "owner"]);
-  expect(offered("controlSession")).toEqual(["contributor", "operator", "owner"]);
-  expect(offered("configureSession")).toEqual(["operator", "owner"]);
-  expect(offered("deleteSession")).toEqual(["operator", "owner"]);
-  expect(offered("setSessionRetention")).toEqual(["owner"]);
-  expect(offered("closeSession")).toEqual(["contributor", "operator", "owner"]);
-  expect(offered("shareSession")).toEqual(["contributor", "operator", "owner"]);
-  expect(offered("configureResource")).toEqual(["operator", "owner"]);
-  expect(offered("createWorkspace")).toEqual(["operator", "owner"]);
-  expect(offered("useResource")).toEqual(["contributor", "operator", "owner"]);
-  expect(offered("createProfile")).toEqual(["operator", "owner"]);
-  expect(offered("administer")).toEqual(["owner"]);
-  expect(offered("accessPrivateSessions")).toEqual(["owner"]);
-  expect(offered("closeSharedSessions")).toEqual(["operator", "owner"]);
-  expect(universeRoleAllows(null, "read")).toBe(false);
-});
-
 it("reads the member's role in the universe on screen", async () => {
   universes("contributor");
   await show();

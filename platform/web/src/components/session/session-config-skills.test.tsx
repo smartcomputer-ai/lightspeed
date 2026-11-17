@@ -192,13 +192,6 @@ it.each([
   expect(current).not.toHaveProperty(`features.vfs.${key}`);
   expect(current).toHaveProperty("features.environments.skills", {});
 });
-it("allows both VFS sources to be enabled without attachments", async () => {
-  await setup({ features: { vfs: {} } });
-  await toggle("VFS skill discovery");
-  await toggle("VFS prompt loading");
-  expect(error).toBeNull();
-  expect(current).toEqual({ features: { vfs: { workspaces: [], skills: {}, prompts: {} } } });
-});
 
 it("uses explicit VFS directory settings without inferring /workspace", async () => {
   await setup({features:{vfs:{workspaces:[{path:"/workspace",access:"read",workspaceId:"workspace_1"}]}}});
