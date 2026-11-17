@@ -49,15 +49,13 @@ vi.mock("@/lib/platform-api", () => ({
         {
           id: "personal",
           name: "Jane's organization",
-          kind: "personal",
-          enabled: true,
+          personal: true,
           role: "member",
         },
         {
           id: "team",
           name: "Research",
-          kind: "shared",
-          enabled: true,
+          personal: false,
           role: "member",
         },
       ],

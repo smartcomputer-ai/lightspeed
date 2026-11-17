@@ -259,9 +259,6 @@ describe("demo router", () => {
     expect((await call("POST", "/api/ui/universes/adopt", { ...input, organizationId: "missing" })).status).toBe(404);
     expect((await call("POST", "/api/ui/universes/adopt", input)).status).toBe(400);
     await call("PUT", `/api/v1/platform/organizations/${organizationId}/members/${owner.id}`, { role: "member" });
-    await call("PATCH", `/api/v1/platform/organizations/${organizationId}`, { enabled: false });
-    expect((await call("POST", "/api/ui/universes/adopt", input)).status).toBe(404);
-    await call("PATCH", `/api/v1/platform/organizations/${organizationId}`, { enabled: true });
     const adopted = await call("POST", "/api/ui/universes/adopt", input);
     expect(adopted.status).toBe(201);
     expect(adopted.json).toMatchObject({ organizationId, name: "Chosen name", handle: "adopt-me", protected: true, lightspeedUniverseId: runtime.universeId });

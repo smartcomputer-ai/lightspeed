@@ -71,13 +71,7 @@ export function AdminApiKeysPage() {
           This organization is unavailable or you do not administer it.
         </p>
       )}
-      {organization && !organization.enabled && (
-        <p>
-          This organization is suspended. Restore its access before managing
-          service user keys.
-        </p>
-      )}
-      {organization?.enabled && (
+      {organization && (
         <OrganizationKeys
           key={organization.id}
           organizationId={organization.id}

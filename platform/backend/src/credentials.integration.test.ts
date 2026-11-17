@@ -58,9 +58,6 @@ it("binds organization keys to service users without giving their creator member
   await fixture.db.update(schema.serviceUsers).set({ enabled: false }).where(eq(schema.serviceUsers.id, serviceUser!.id));
   expect(await admission(created.secret)).toBeNull();
   await fixture.db.update(schema.serviceUsers).set({ enabled: true }).where(eq(schema.serviceUsers.id, serviceUser!.id));
-  await fixture.db.update(schema.organization).set({ enabled: false }).where(eq(schema.organization.id, organizationId));
-  expect(await admission(created.secret)).toBeNull();
-  await fixture.db.update(schema.organization).set({ enabled: true }).where(eq(schema.organization.id, organizationId));
   await fixture.db.delete(schema.credentialBindings).where(eq(schema.credentialBindings.keyId, created.credential.id));
   expect(await admission(created.secret)).toBeNull();
 });

@@ -82,7 +82,7 @@ export async function listAccessibleUniverses(ctx: AppContext, auth: AuthContext
 /** Explicit grants can name only active principals in the containing organization. */
 export async function requireOrganizationPrincipal(ctx: AppContext, organizationId: string, principal: PrincipalRef) {
   const [organization] = await ctx.db.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).limit(1);
-  if (!organization?.enabled) throw new GateRefusal(404, "organization not found");
+  if (!organization) throw new GateRefusal(404, "organization not found");
   if (principal.kind === "serviceUser") {
     const [serviceUser] = await ctx.db.select().from(schema.serviceUsers).where(and(eq(schema.serviceUsers.id, principal.id), eq(schema.serviceUsers.organizationId, organizationId))).limit(1);
     if (!serviceUser?.enabled) throw new GateRefusal(400, "service user must be enabled in the containing organization");
@@ -120,7 +120,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
   if (!prior) await requireAvailableCachedHandle(ctx, handle);
   const row = await ctx.db.transaction(async tx => {
     const [lockedOrganization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
-    if (!lockedOrganization?.enabled) throw new GateRefusal(404, "organization not found");
+    if (!lockedOrganization) throw new GateRefusal(404, "organization not found");
     if (lockedOrganization.requireProtected && input.protected === false) throw new GateRefusal(403, "organization policy requires deletion protection");
     const reservationProtected = input.protected ?? (lockedOrganization.requireProtected || lockedOrganization.defaultProtected);
     if (reservationProtected && input.expiresAtMs != null) throw new GateRefusal(409, "protected universes cannot expire");
@@ -142,7 +142,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
   });
   return ctx.db.transaction(async tx => {
     const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
-    if (!organization?.enabled) throw new GateRefusal(404, "organization not found");
+    if (!organization) throw new GateRefusal(404, "organization not found");
     const [reservation] = await tx.select().from(schema.universes).where(eq(schema.universes.id, row.id)).for("update");
     if (!reservation) throw new GateRefusal(409, "creation reservation no longer exists");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
@@ -183,7 +183,7 @@ export async function adoptManagedUniverse(ctx: AppContext, auth: AuthContext, o
   await requireAvailableCachedHandle(ctx, runtime.handle);
     const row = await ctx.db.transaction(async tx => {
     const [locked] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
-    if (!locked?.enabled) throw new GateRefusal(404, "organization not found");
+    if (!locked) throw new GateRefusal(404, "organization not found");
     const [allocation] = await tx.select({ total: count() }).from(schema.universes).where(eq(schema.universes.organizationId, organizationId));
     if ((allocation?.total ?? 0) >= locked.universeQuota) throw new GateRefusal(409, "organization universe quota reached");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
@@ -204,7 +204,7 @@ export async function updateUniverseLifecycle(ctx: AppContext, access: UniverseA
     await tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.id, access.universe.id)).for("update");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     const currentAccess = await universeForPrincipal(scopedContext, access.auth, access.universe.id);
-    if (!organization?.enabled || !currentAccess) throw new GateRefusal(404, "universe not found");
+    if (!organization || !currentAccess) throw new GateRefusal(404, "universe not found");
     if (currentAccess.role !== "owner") throw new GateRefusal(403, "universe Owner required");
     if (input.protected === false && (currentAccess.organizationRole !== "admin" || organization.requireProtected)) throw new GateRefusal(403, organization.requireProtected ? "organization policy requires deletion protection" : "only an organization admin can clear deletion protection");
     const client = deploymentClient(ctx.env);
@@ -229,7 +229,7 @@ export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAcc
     await tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.id, access.universe.id)).for("update");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     const current = await universeForPrincipal(scopedContext, access.auth, access.universe.id, true);
-    if (!current || !organization?.enabled) throw new GateRefusal(404, "universe not found");
+    if (!current || !organization) throw new GateRefusal(404, "universe not found");
     if (current.role !== "owner") throw new GateRefusal(403, "universe Owner required");
     const client = deploymentClient(ctx.env);
     if (current.universe.status === "provisioning") {

@@ -17,7 +17,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.api.mockImplementation(async (_method, path) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", enabled: true, role: "member" }] };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", role: "member" }] };
     if (path === "/api/ui/universes") return [{ id: "owned", organizationId: "team", name: "Owned universe", handle: "owned", status: "active", role: "owner" }, { id: "readable", organizationId: "team", handle: "readable", status: "active", role: "viewer" }];
     throw new Error(`Unexpected request: ${path}`);
   });

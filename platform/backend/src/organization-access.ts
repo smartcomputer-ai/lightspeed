@@ -30,7 +30,7 @@ export function resourceScopeAllowed(auth: AuthContext, organizationId: string, 
     && (!universeId || !limits.universeIds || limits.universeIds.includes(universeId));
 }
 
-export async function organizationForPrincipal(ctx: AppContext, auth: AuthContext, organizationId: string, allowDisabled = false) {
+export async function organizationForPrincipal(ctx: AppContext, auth: AuthContext, organizationId: string) {
   if (!resourceScopeAllowed(auth, organizationId)) return null;
   if (auth.credential.restrictions.universeIds) {
     if (!auth.credential.restrictions.universeIds.length) return null;
@@ -38,7 +38,7 @@ export async function organizationForPrincipal(ctx: AppContext, auth: AuthContex
     if (!scoped) return null;
   }
   const [organization] = await ctx.db.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).limit(1);
-  if (!organization || (!organization.enabled && !(allowDisabled && auth.principal.platformAdmin))) return null;
+  if (!organization) return null;
   if (auth.principal.platformAdmin) return { organization, role: "admin" as OrganizationRole };
   if (auth.principal.kind === "serviceUser") {
     const [serviceUser] = await ctx.db.select().from(schema.serviceUsers).where(and(eq(schema.serviceUsers.id, auth.principal.id), eq(schema.serviceUsers.organizationId, organizationId))).limit(1);
@@ -51,7 +51,7 @@ export async function organizationForPrincipal(ctx: AppContext, auth: AuthContex
 }
 
 export async function requireOrganizationAdmin(ctx: AppContext, auth: AuthContext, organizationId: string) {
-  const access = await organizationForPrincipal(ctx, auth, organizationId, true);
+  const access = await organizationForPrincipal(ctx, auth, organizationId);
   if (!access) throw new HTTPException(404, { message: "organization not found" });
   if (access.role !== "admin") throw new HTTPException(403, { message: "organization admin required" });
   return access;
@@ -63,7 +63,7 @@ export function declaredUniverseRole(policy: Policy<UniverseRole>, identity: Ide
 
 /** Resolve organization inventory with a bounded query count, including declarations.
  * Directory policies are evaluated locally; no query is issued per organization. */
-export async function listOrganizationsForPrincipal(ctx: AppContext, auth: AuthContext, allowDisabled = false) {
+export async function listOrganizationsForPrincipal(ctx: AppContext, auth: AuthContext) {
   const organizations = await ctx.db.select().from(schema.organization);
   const memberships = auth.principal.kind === "user" && !auth.principal.platformAdmin
     ? await ctx.db.select().from(schema.member).where(eq(schema.member.userId, auth.principal.id)) : [];
@@ -72,7 +72,7 @@ export async function listOrganizationsForPrincipal(ctx: AppContext, auth: AuthC
   const limitedUniverses = auth.credential.restrictions.universeIds;
   const scopedOrganizations = limitedUniverses ? new Set((limitedUniverses.length ? await ctx.db.select({ organizationId: schema.universes.organizationId }).from(schema.universes).where(inArray(schema.universes.lightspeedUniverseId, limitedUniverses)) : []).map(universe => universe.organizationId)) : null;
   return organizations.flatMap(organization => {
-    if (!resourceScopeAllowed(auth, organization.id) || (scopedOrganizations && !scopedOrganizations.has(organization.id)) || (!organization.enabled && !(allowDisabled && auth.principal.platformAdmin))) return [];
+    if (!resourceScopeAllowed(auth, organization.id) || (scopedOrganizations && !scopedOrganizations.has(organization.id))) return [];
     let role: OrganizationRole | undefined;
     if (auth.principal.platformAdmin) role = "admin";
     else if (auth.principal.kind === "serviceUser") role = serviceUser?.enabled && serviceUser.organizationId === organization.id ? serviceUser.role : undefined;

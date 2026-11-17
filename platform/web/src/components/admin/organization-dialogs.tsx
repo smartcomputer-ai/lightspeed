@@ -102,14 +102,13 @@ export function CreateOrganizationDialog({
       platformApi("platform/organizations/create", {
         name: name.trim(),
         slug,
-        kind: "shared",
       }),
     onSuccess: (result) => saved(result.organization.id),
   });
   return (
     <OrganizationDialog
       title="New organization"
-      description="Create a shared organization for a team or business unit. You become its first Organization Admin."
+      description="Create an organization for a team or business unit. You become its first Organization Admin."
       close={close}
     >
       <form

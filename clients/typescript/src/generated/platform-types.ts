@@ -316,10 +316,10 @@ export interface PlatformOrganizationsListResult {
     id: string;
     name: string;
     slug: string;
-    kind: "personal" | "shared" | "development";
-    enabled: boolean;
+    personal: boolean;
     role: ("member" | "creator" | "admin") | null;
     universeQuota: number;
+    universeCount?: number;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {
@@ -357,7 +357,6 @@ export interface PlatformOrganizationsListResult {
 export interface PlatformOrganizationsCreateParams {
   name: string;
   slug: string;
-  kind?: "shared" | "development";
   initialAdminUserId?: string;
   universeQuota?: number;
   defaultProtected?: boolean;
@@ -372,10 +371,10 @@ export interface PlatformOrganizationsCreateResult {
     id: string;
     name: string;
     slug: string;
-    kind: "personal" | "shared" | "development";
-    enabled: boolean;
+    personal: boolean;
     role: ("member" | "creator" | "admin") | null;
     universeQuota: number;
+    universeCount?: number;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {
@@ -421,10 +420,10 @@ export interface PlatformOrganizationsReadResult {
     id: string;
     name: string;
     slug: string;
-    kind: "personal" | "shared" | "development";
-    enabled: boolean;
+    personal: boolean;
     role: ("member" | "creator" | "admin") | null;
     universeQuota: number;
+    universeCount?: number;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {
@@ -460,7 +459,6 @@ export interface PlatformOrganizationsReadResult {
  */
 export interface PlatformOrganizationsUpdateParams {
   name?: string;
-  enabled?: boolean;
   universeQuota?: number;
   defaultProtected?: boolean;
   requireProtected?: boolean;
@@ -499,10 +497,10 @@ export interface PlatformOrganizationsUpdateResult {
     id: string;
     name: string;
     slug: string;
-    kind: "personal" | "shared" | "development";
-    enabled: boolean;
+    personal: boolean;
     role: ("member" | "creator" | "admin") | null;
     universeQuota: number;
+    universeCount?: number;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {

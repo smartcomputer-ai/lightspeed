@@ -111,7 +111,7 @@ export function UniverseSwitcher({
   const canCreate =
     admin ||
     organizations.data?.organizations.some(
-      (a) => a.enabled && (a.role === "admin" || a.role === "creator"),
+      (a) => a.role === "admin" || a.role === "creator",
     );
   const iconRef = useRef<HTMLSpanElement>(null);
   const organizationName = (id?: string) => {
@@ -328,7 +328,6 @@ export function NewUniverseDialog({
   const eligible = (organizations.data?.organizations ?? []).filter(
     (a) =>
       (!fixedOrganizationId || a.id === fixedOrganizationId) &&
-      a.enabled &&
       (a.role === "admin" || a.role === "creator"),
   );
   const [selectedOrganization, setSelectedOrganization] = useState(

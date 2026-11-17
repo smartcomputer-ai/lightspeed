@@ -6,10 +6,10 @@ import { useUniverses } from "@/lib/universes";
 export const organizationAdminPath = (id: string) =>
   `/admin/organizations/${encodeURIComponent(id)}`;
 export const organizationLabel = (
-  organization: { name: string; kind?: string },
+  organization: { name: string; personal?: boolean },
   distinguishPersonal = false,
 ) =>
-  organization.kind === "personal"
+  organization.personal
     ? distinguishPersonal
       ? `Personal · ${organization.name}`
       : "Personal"
@@ -24,13 +24,12 @@ export function useAdminAccess() {
   const manageable = (organizations.data?.organizations ?? []).filter(
     (organization) =>
       platform ||
-      (organization.enabled &&
-        (organization.role === "admin" ||
-          universes.data?.some(
-            (universe) =>
-              universe.organizationId === organization.id &&
-              universe.role === "owner",
-          ))),
+      organization.role === "admin" ||
+      universes.data?.some(
+        (universe) =>
+          universe.organizationId === organization.id &&
+          universe.role === "owner",
+      ),
   );
   const selected = manageable.find(
     (organization) => organization.id === organizationId,

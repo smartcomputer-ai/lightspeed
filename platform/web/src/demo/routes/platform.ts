@@ -62,7 +62,7 @@ export function platformRoutes(store: DemoStore): Hono {
     if (!parsed.success) return badRequest(c, "Invalid universe adoption");
     const { organizationId, lightspeedUniverseId: engineId, name, initialOwner } = parsed.data;
     const organization = store.organizations.get(organizationId);
-    if (!organization?.enabled) return notFound(c, "Organization not found");
+    if (!organization) return notFound(c, "Organization not found");
     const ownerUser = store.users.get(initialOwner.id);
     const ownerServiceUser = store.serviceUsers.get(initialOwner.id);
     if (initialOwner.kind === "user"

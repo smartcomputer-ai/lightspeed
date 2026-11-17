@@ -46,7 +46,7 @@ afterEach(async () => {
 async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", name: "Team", enabled: true, role: organizationRole ?? "member" }], canCreate: false };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", name: "Team", role: organizationRole ?? "member" }], canCreate: false };
     if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: mocks.role, features }];
     throw new Error(`Unexpected request: ${path}`);
   });

@@ -68,7 +68,7 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
     const [row] = await ctx.db.select({ serviceUser: schema.serviceUsers, organization: schema.organization }).from(schema.serviceUsers)
       .innerJoin(schema.organization, eq(schema.organization.id, schema.serviceUsers.organizationId))
       .where(eq(schema.serviceUsers.id, binding.serviceUserId));
-    if (!row?.serviceUser.enabled || !row.organization.enabled || row.organization.id !== key.referenceId) return null;
+    if (!row?.serviceUser.enabled || row.organization.id !== key.referenceId) return null;
     return { auth: {
       principal: { kind: "serviceUser", id: row.serviceUser.id, serviceUser: row.serviceUser, organizationId: row.organization.id, platformAdmin: false },
       credential: { kind: "serviceUserKey", id: key.id, restrictions: limits.data }, actorId: `serviceUser:${row.serviceUser.id}`,

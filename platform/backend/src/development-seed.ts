@@ -6,7 +6,7 @@ import type { ServerEnv } from "./env.js";
 import { deploymentClient } from "./runtime-client.js";
 
 const testUniverseId = "6c696768-7473-4065-8064-000000000010";
-const developmentOrganizationId = "6c696768-7473-4065-8064-000000000014";
+export const developmentOrganizationId = "6c696768-7473-4065-8064-000000000014";
 const testUsers = [
   { role: "operator", name: "Operator", id: "6c696768-7473-4065-8064-000000000011" },
   { role: "contributor", name: "Contributor", id: "6c696768-7473-4065-8064-000000000012" },
@@ -20,7 +20,7 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
   const [admin] = await db.select().from(schema.user).where(eq(schema.user.email, env.adminEmail)).limit(1);
   if (!admin) throw new Error("development seeding requires an existing bootstrap admin login");
   const [organization] = await db.select().from(schema.organization).where(eq(schema.organization.id, developmentOrganizationId)).limit(1);
-  if (!organization) await db.insert(schema.organization).values({ id: developmentOrganizationId, name: "Development", slug: "development", kind: "development", enabled: true, defaultProtected: false, requireProtected: false, universeQuota: env.sharedOrganizationUniverseQuota ?? 100, createdAt: new Date() });
+  if (!organization) await db.insert(schema.organization).values({ id: developmentOrganizationId, name: "Development", slug: "development", defaultProtected: false, requireProtected: false, universeQuota: env.sharedOrganizationUniverseQuota ?? 100, createdAt: new Date() });
   const client = deploymentClient(env);
   const created = await client.call("deployment/universes/create", { universeId: testUniverseId, handle: "test" });
   const [prior] = await db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, testUniverseId)).limit(1);

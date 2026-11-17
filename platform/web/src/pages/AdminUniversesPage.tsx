@@ -38,7 +38,6 @@ export function AdminUniversesPage() {
   const organizations = useOrganizations();
   const canCreate = organizations.data?.organizations.some(
     (organization) =>
-      organization.enabled &&
       organization.id === organizationId &&
       (organization.role === "admin" || organization.role === "creator"),
   );

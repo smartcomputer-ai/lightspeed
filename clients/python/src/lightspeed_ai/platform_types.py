@@ -272,10 +272,10 @@ class Organization1(TypedDict):
     id: str
     name: str
     slug: str
-    kind: Literal['personal', 'shared', 'development']
-    enabled: bool
+    personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     universeQuota: int
+    universeCount: NotRequired[int]
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy]
@@ -290,7 +290,6 @@ class PlatformOrganizationsListResult(TypedDict):
 class PlatformOrganizationsCreateParams(TypedDict):
     name: str
     slug: str
-    kind: NotRequired[Literal['shared', 'development']]
     initialAdminUserId: NotRequired[str]
     universeQuota: NotRequired[int]
     defaultProtected: NotRequired[bool]
@@ -317,10 +316,10 @@ class Organization2(TypedDict):
     id: str
     name: str
     slug: str
-    kind: Literal['personal', 'shared', 'development']
-    enabled: bool
+    personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     universeQuota: int
+    universeCount: NotRequired[int]
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy1]
@@ -355,10 +354,10 @@ class Organization3(TypedDict):
     id: str
     name: str
     slug: str
-    kind: Literal['personal', 'shared', 'development']
-    enabled: bool
+    personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     universeQuota: int
+    universeCount: NotRequired[int]
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy2]
@@ -387,7 +386,6 @@ class MembershipPolicy3(TypedDict):
 
 class PlatformOrganizationsUpdateParams(TypedDict):
     name: NotRequired[str]
-    enabled: NotRequired[bool]
     universeQuota: NotRequired[int]
     defaultProtected: NotRequired[bool]
     requireProtected: NotRequired[bool]
@@ -415,10 +413,10 @@ class Organization4(TypedDict):
     id: str
     name: str
     slug: str
-    kind: Literal['personal', 'shared', 'development']
-    enabled: bool
+    personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     universeQuota: int
+    universeCount: NotRequired[int]
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy4]

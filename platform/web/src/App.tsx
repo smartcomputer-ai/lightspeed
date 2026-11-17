@@ -1,6 +1,7 @@
 import { AdminGate, AdminIndexRedirect } from "@/components/admin/admin-gate";
 import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
 import { OrganizationsPage } from "@/pages/OrganizationsPage";
+import { PlatformOrganizationsPage } from "@/pages/PlatformOrganizationsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { lazy, Suspense, useEffect } from "react";
@@ -181,7 +182,7 @@ export function App() {
             <Route path="admin/organizations/:organizationId/api-keys" element={<AdminApiKeysPage />} />
           </Route>
           <Route element={<AdminGate scope="platform" />}>
-            <Route path="admin/platform/organizations" element={<OrganizationsPage />} />
+            <Route path="admin/platform/organizations" element={<PlatformOrganizationsPage />} />
             <Route path="admin/platform/unclaimed-universes" element={<UnclaimedUniversesPage />} />
             <Route path="admin/platform/audit" element={<AdminAuditPage />} />
             <Route path="admin/platform/users" element={<AdminUsersPage currentUser={user} />} />

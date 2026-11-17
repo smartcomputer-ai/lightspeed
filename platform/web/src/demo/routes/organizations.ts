@@ -9,21 +9,22 @@ export function organizationRoutes(store: DemoStore) {
   const app = new Hono();
   const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
   if (!organizations.has("demo-organization")) {
-    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", kind: "development", enabled: true, role: "admin", universeQuota: 100, defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
+    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", universeQuota: 100, defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
     memberships.set("demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"])));
   }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
   app.use("/organizations/:organizationId/*", async (c, next) => { if (!organizations.has(c.req.param("organizationId")!)) return c.json({ error: "Organization not found" }, 404); await next(); });
-  app.get("/organizations", c => c.json({ organizations: [...organizations.values()], canCreate: store.currentUser.role === "admin" }));
+  const view = (organization: Organization): Organization => ({ ...organization, universeCount: [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length });
+  app.get("/organizations", c => c.json({ organizations: [...organizations.values()].map(view), canCreate: store.currentUser.role === "admin" }));
   app.post("/organizations", async c => {
     const parsed = organizationCreateSchema.safeParse(await c.req.json()); if (!parsed.success) return c.json({ error: "Invalid organization" }, 400);
     if ([...organizations.values()].some(a => a.slug === parsed.data.slug)) return c.json({ error: "Organization handle already exists" }, 409);
     const { initialAdminUserId = store.currentUser.id, ...input } = parsed.data;
     if (!store.users.has(initialAdminUserId)) return c.json({ error: "User not found" }, 404);
-    const organization: Organization = { ...input, id: crypto.randomUUID(), enabled: true, role: "admin", universeQuota: input.universeQuota ?? 100, defaultProtected: input.defaultProtected ?? input.kind !== "development", requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
+    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", universeQuota: input.universeQuota ?? 100, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
     organizations.set(organization.id, organization); memberships.set(organization.id, new Map([[initialAdminUserId, "admin"]])); return c.json({ organization }, 201);
   });
-  app.get("/organizations/:organizationId", c => { const organization = organizations.get(c.req.param("organizationId")); return organization ? c.json({ organization }) : c.json({ error: "Organization not found" }, 404); });
+  app.get("/organizations/:organizationId", c => { const organization = organizations.get(c.req.param("organizationId")); return organization ? c.json({ organization: view(organization) }) : c.json({ error: "Organization not found" }, 404); });
   app.get("/organizations/:organizationId/members", c => c.json({ members: [...(memberships.get(c.req.param("organizationId")) ?? [])].flatMap(([userId, role]) => { const u = store.users.get(userId); return u ? [{ id: userId, userId, name: u.name, email: u.email, role, createdAt: organizations.get(c.req.param("organizationId"))!.createdAt }] : []; }) }));
   app.put("/organizations/:organizationId/members/:userId", async c => {
     const parsed = organizationMemberPutSchema.safeParse({ ...await c.req.json(), userId: c.req.param("userId") }); if (!parsed.success) return c.json({ error: "Invalid member" }, 400);
@@ -51,7 +52,7 @@ export function organizationRoutes(store: DemoStore) {
   app.patch("/organizations/:organizationId", async c => {
     const organization = organizations.get(c.req.param("organizationId")); if (!organization) return c.json({ error: "Organization not found" }, 404);
     const parsed = organizationUpdateSchema.safeParse(await c.req.json()); if (!parsed.success) return c.json({ error: "Invalid organization" }, 400);
-    Object.assign(organization, parsed.data); return c.json({ organization });
+    Object.assign(organization, parsed.data); return c.json({ organization: view(organization) });
   });
   app.post("/organizations/:organizationId/universes", async c => {
     const organization = organizations.get(c.req.param("organizationId"))!;

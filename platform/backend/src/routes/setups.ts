@@ -58,10 +58,10 @@ export function setupRoutes(ctx: AppContext) {
     await requireOrganizationAdmin(ctx, auth, access.organization.id);
     if (!ctx.env.configuratorMcpUrl) return c.json({ error: "Configurator endpoint is not configured" }, 503);
     const installation = await ctx.db.transaction(async tx => {
-      // Shared organization lock serializes installation reservation with suspension
-      // and service user mutations. Secrets never enter installation state.
+      // Shared organization lock serializes installation reservation with service
+      // user mutations. Secrets never enter installation state.
       const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
-      if (!organization?.enabled) throw new HTTPException(403, { message: "Organization is disabled" });
+      if (!organization) throw new HTTPException(404, { message: "Organization not found" });
       const [existing] = await tx.select().from(schema.universeSetupInstallations).where(and(
         eq(schema.universeSetupInstallations.universeId, access.universe.id), eq(schema.universeSetupInstallations.setupId, SETUP_ID)));
       if (existing?.status === "installing" && Date.now() - existing.updatedAt.getTime() < 300_000) throw new HTTPException(409, { message: "Installation is already running" });
@@ -96,8 +96,8 @@ export function setupRoutes(ctx: AppContext) {
         await ctx.db.transaction(async tx => {
           const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
           const [current] = await tx.select().from(schema.universeSetupInstallations).where(eq(schema.universeSetupInstallations.id, installation.id)).for("update");
-          if (!organization?.enabled || current?.state.serviceUserId !== installation.state.serviceUserId) throw new HTTPException(409, { message: "Installation was superseded or organization disabled" });
-          // Serialize the final external write with retries and organization suspension.
+          if (!organization || current?.state.serviceUserId !== installation.state.serviceUserId) throw new HTTPException(409, { message: "Installation was superseded" });
+          // Serialize the final external write with retries and service user mutations.
           // The timeout bounds how long the organization row can remain locked.
           await client.call("mcp/servers/put", { server: { serverId: "configurator", defaultServerLabel: "configurator",
             displayName: "Configurator", serverUrl: ctx.env.configuratorMcpUrl!,

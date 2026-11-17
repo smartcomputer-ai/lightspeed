@@ -164,7 +164,6 @@ function ApiKeysContent({
         : platformApi("platform/credentials/list", {}),
   });
   const organizationChoices = (organizations.data?.organizations ?? [])
-    .filter((organization) => organization.enabled)
     .map((organization) => ({
       id: organization.id,
       name: organization.name,

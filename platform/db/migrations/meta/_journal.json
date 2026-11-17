@@ -71,6 +71,13 @@
       "when": 1794902182619,
       "tag": "0009_organization_identity_data",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794911875916,
+      "tag": "0010_simplify_organization",
+      "breakpoints": true
     }
   ]
 }

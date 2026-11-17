@@ -19,8 +19,6 @@ export const deviceCodeFields = {
 } as const;
 
 export const organizationFields = {
-  kind: { type: "string", required: false, defaultValue: "shared", input: false },
-  enabled: { type: "boolean", required: false, defaultValue: true, input: false },
   personalUserId: { type: "string", required: false, input: false },
   universeQuota: { type: "number", required: false, defaultValue: 100, input: false },
   defaultProtected: { type: "boolean", required: false, defaultValue: true, input: false },

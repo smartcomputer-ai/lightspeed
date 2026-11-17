@@ -158,7 +158,7 @@ export function AdoptDialog({
   const [selectedOrganization, setSelectedOrganization] = useState("");
   const organizationId =
     selectedOrganization ||
-    organizations.data?.organizations.find((a) => a.enabled)?.id ||
+    organizations.data?.organizations[0]?.id ||
     "";
   const members = useQuery({
     queryKey: ["organization-members", organizationId],
@@ -223,9 +223,7 @@ export function AdoptDialog({
             >
               <SelectTrigger id="adopt-organization"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {organizations.data?.organizations
-                  .filter((a) => a.enabled)
-                  .map((a) => (
+                {organizations.data?.organizations.map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.name}
                     </SelectItem>

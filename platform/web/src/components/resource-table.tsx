@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { LoadingIcon, RowLinkIcon } from "@/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,30 @@ export function ResourceRow({ name, onOpen, children }: {
       <TableActionsCell>
         <Button ref={triggerRef} variant="ghost" size="icon-sm" className="text-muted-foreground"
           aria-label={`Details for ${name}`} aria-haspopup="dialog">
+          <RowLinkIcon aria-hidden="true" className="size-4" />
+        </Button>
+      </TableActionsCell>
+    </TableRow>
+  );
+}
+
+/// A row that opens its own page rather than a details dialog. The trailing
+/// chevron is the real link (keyboard, middle-click, copy address); the rest
+/// of the row forwards a plain click to it.
+export function ResourceLinkRow({ name, to, children }: {
+  name: string;
+  to: string;
+  children: ReactNode;
+}) {
+  const navigate = useNavigate();
+  return (
+    <TableRow className="cursor-action focus-within:bg-muted/50" onClick={(event) => {
+      if (!(event.target as HTMLElement).closest("a, button")) navigate(to);
+    }}>
+      {children}
+      <TableActionsCell>
+        <Button nativeButton={false} variant="ghost" size="icon-sm" className="text-muted-foreground"
+          aria-label={`Open ${name}`} render={<Link to={to} />}>
           <RowLinkIcon aria-hidden="true" className="size-4" />
         </Button>
       </TableActionsCell>

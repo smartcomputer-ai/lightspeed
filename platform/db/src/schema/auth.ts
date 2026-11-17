@@ -122,8 +122,6 @@ export const organization = pgTable(
     logo: text("logo"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     metadata: text("metadata"),
-    kind: text("kind", { enum: ["personal", "shared", "development"] }).default("shared").notNull(),
-    enabled: boolean("enabled").default(true).notNull(),
     personalUserId: text("personal_user_id").unique().references(() => user.id, { onDelete: "set null" }),
     universeQuota: integer("universe_quota").default(100).notNull(),
     defaultProtected: boolean("default_protected").default(true).notNull(),

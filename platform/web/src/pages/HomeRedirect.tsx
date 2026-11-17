@@ -12,7 +12,7 @@ import { lastUniverse, memberships, universeHome, useUniverses } from "@/lib/uni
 export function HomeRedirect({ admin }: { admin: boolean }) {
   const universes = useUniverses();
   const organizations = useOrganizations();
-  const canCreate = admin || organizations.data?.organizations.some(a => a.enabled && (a.role === "admin" || a.role === "creator"));
+  const canCreate = admin || organizations.data?.organizations.some(a => a.role === "admin" || a.role === "creator");
   const [createOpen, setCreateOpen] = useState(false);
 
   if (universes.isLoading) {

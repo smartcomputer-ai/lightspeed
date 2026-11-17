@@ -900,15 +900,7 @@
                 "type": "string",
                 "minLength": 1
               },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "personal",
-                  "shared",
-                  "development"
-                ]
-              },
-              "enabled": {
+              "personal": {
                 "type": "boolean"
               },
               "role": {
@@ -927,6 +919,11 @@
                 ]
               },
               "universeQuota": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "universeCount": {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
@@ -1042,8 +1039,7 @@
               "id",
               "name",
               "slug",
-              "kind",
-              "enabled",
+              "personal",
               "role",
               "universeQuota",
               "defaultProtected",
@@ -1074,14 +1070,6 @@
         "slug": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
-        },
-        "kind": {
-          "default": "shared",
-          "type": "string",
-          "enum": [
-            "shared",
-            "development"
-          ]
         },
         "initialAdminUserId": {
           "type": "string",
@@ -1124,15 +1112,7 @@
               "type": "string",
               "minLength": 1
             },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "personal",
-                "shared",
-                "development"
-              ]
-            },
-            "enabled": {
+            "personal": {
               "type": "boolean"
             },
             "role": {
@@ -1151,6 +1131,11 @@
               ]
             },
             "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "universeCount": {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
@@ -1266,8 +1251,7 @@
             "id",
             "name",
             "slug",
-            "kind",
-            "enabled",
+            "personal",
             "role",
             "universeQuota",
             "defaultProtected",
@@ -1314,15 +1298,7 @@
               "type": "string",
               "minLength": 1
             },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "personal",
-                "shared",
-                "development"
-              ]
-            },
-            "enabled": {
+            "personal": {
               "type": "boolean"
             },
             "role": {
@@ -1341,6 +1317,11 @@
               ]
             },
             "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "universeCount": {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
@@ -1456,8 +1437,7 @@
             "id",
             "name",
             "slug",
-            "kind",
-            "enabled",
+            "personal",
             "role",
             "universeQuota",
             "defaultProtected",
@@ -1479,9 +1459,6 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 120
-        },
-        "enabled": {
-          "type": "boolean"
         },
         "universeQuota": {
           "type": "integer",
@@ -1618,15 +1595,7 @@
               "type": "string",
               "minLength": 1
             },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "personal",
-                "shared",
-                "development"
-              ]
-            },
-            "enabled": {
+            "personal": {
               "type": "boolean"
             },
             "role": {
@@ -1645,6 +1614,11 @@
               ]
             },
             "universeQuota": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "universeCount": {
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
@@ -1760,8 +1734,7 @@
             "id",
             "name",
             "slug",
-            "kind",
-            "enabled",
+            "personal",
             "role",
             "universeQuota",
             "defaultProtected",

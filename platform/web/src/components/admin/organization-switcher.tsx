@@ -74,7 +74,6 @@ export function OrganizationSwitcher() {
                   }
                 >
                   {organizationLabel(organization, access.platform)}
-                  {!organization.enabled ? " (suspended)" : ""}
                 </DropdownMenuItem>
               ))}
               {access.canCreate && (

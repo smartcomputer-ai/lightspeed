@@ -22,9 +22,8 @@ vi.mock("@/lib/platform-api", () => ({
   useOrganizations: () => ({
     data: {
       organizations: [
-        { id: "team", name: "Research", enabled: true, role: mocks.role },
-        { id: "other", name: "Operations", enabled: true, role: "member" },
-        { id: "suspended", name: "Suspended", enabled: false, role: "admin" },
+        { id: "team", name: "Research", role: mocks.role },
+        { id: "other", name: "Operations", role: "member" },
       ],
     },
   }),
@@ -214,12 +213,6 @@ it("does not substitute another service user for an unavailable deep link", asyn
     "platform/service-users/credentials/list",
     expect.anything(),
   );
-});
-
-it("shows suspended organizations without making directory requests that require active access", async () => {
-  await show("/admin/organizations/suspended/api-keys");
-  expect(document.body.textContent).toContain("This organization is suspended");
-  expect(mocks.api).not.toHaveBeenCalled();
 });
 
 it("links an empty organization key inventory to its service-user page", async () => {

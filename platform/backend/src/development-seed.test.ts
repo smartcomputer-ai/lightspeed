@@ -24,7 +24,7 @@ it("does nothing unless development seeding is explicitly enabled", async () => 
 });
 it("creates one shared development organization, Creator memberships and separate universe grants", async () => {
   await seedDevelopment(fixture.db, fixture.env);
-  expect(await fixture.db.select().from(schema.organization)).toMatchObject([{ kind: "development", slug: "development", defaultProtected: false }]);
+  expect(await fixture.db.select().from(schema.organization)).toMatchObject([{ slug: "development", personalUserId: null, defaultProtected: false }]);
   const memberships = await fixture.db.select().from(schema.member);
   expect(memberships.map(member => member.role).sort()).toEqual(["admin", "creator", "creator", "creator"]);
   expect((await fixture.db.select().from(schema.universeGrants)).map(grant => grant.role).sort()).toEqual(["contributor", "operator", "owner", "viewer"]);

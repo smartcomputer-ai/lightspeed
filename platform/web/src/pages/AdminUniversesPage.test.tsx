@@ -43,7 +43,7 @@ beforeEach(() => {
     orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "organization", name: "Team", enabled: true, role: "admin" }] };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "organization", name: "Team", role: "admin" }] };
     if (path === "/api/v1/platform/organizations/organization/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "GET" && path === "/api/ui/universes") return universes;
     if (method === "GET" && path.startsWith("/api/ui/universes/reconcile")) {

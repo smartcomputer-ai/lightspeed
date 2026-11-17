@@ -28,18 +28,17 @@ vi.mock("@/lib/platform-api", () => ({
                 {
                   id: "team",
                   name: "Team",
-                  kind: "shared",
-                  enabled: true,
+                  personal: false,
                   role: mocks.role,
                   universeQuota: 100,
+                  universeCount: 3,
                   defaultProtected: true,
                   requireProtected: false,
                 },
                 {
                   id: "other",
                   name: "Other Team",
-                  kind: "shared",
-                  enabled: true,
+                  personal: false,
                   role: mocks.role,
                   universeQuota: 200,
                   defaultProtected: false,
@@ -89,13 +88,13 @@ afterEach(async () => {
   container.remove();
   vi.unstubAllGlobals();
 });
-async function show(path = "/admin/platform/organizations", platformAdmin = false) {
+async function show(path: string, platformAdmin = false) {
   await act(async () =>
     root.render(
       <MemoryRouter initialEntries={[path]}>
         <QueryClientProvider client={client}>
           <PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}>
-            <Routes><Route path="/admin/platform/organizations" element={<OrganizationsPage />} /><Route path="/admin/organizations/:organizationId/people" element={<OrganizationsPage section="people" />} /><Route path="/admin/organizations/:organizationId/service-users" element={<OrganizationsPage section="service-users" />} /><Route path="/admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} /></Routes>
+            <Routes><Route path="/admin/organizations/:organizationId/people" element={<OrganizationsPage section="people" />} /><Route path="/admin/organizations/:organizationId/service-users" element={<OrganizationsPage section="service-users" />} /><Route path="/admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} /></Routes>
           </PermissionIdentityProvider>
         </QueryClientProvider>
       </MemoryRouter>,
@@ -116,21 +115,6 @@ async function type(selector: string, value: string) {
   });
 }
 const submit = () => act(async () => dialog().querySelector<HTMLFormElement>("form")!.requestSubmit());
-
-it("excludes ordinary memberships from organization administration and does not fetch their directories", async () => {
-  await show();
-  expect(container.textContent).toContain("You do not administer any organizations");
-  expect(container.querySelector("table")).toBeNull();
-  expect(mocks.api).not.toHaveBeenCalled();
-});
-
-it("lists manageable organizations without silently selecting one", async () => {
-  mocks.role = "admin";
-  await show();
-  expect(container.querySelector('a[href="/admin/organizations/team/universes"]')?.textContent).toBe("Team");
-  expect(container.querySelector('a[href="/admin/organizations/other/universes"]')?.textContent).toBe("Other Team");
-  expect(mocks.api).not.toHaveBeenCalled();
-});
 
 it("lets a Platform Admin open an organization without a direct membership", async () => {
   await show("/admin/organizations/team/people", true);
@@ -173,15 +157,6 @@ it("creates a service user through a scrollable dialog in the explicitly selecte
     }),
   );
   await waitForUi(() => expect(dialog()).toBeNull());
-});
-
-it("offers a new organization dialog when self-service is permitted, even without existing admin memberships", async () => {
-  mocks.canCreate = true;
-  await show();
-  await click("New organization");
-  expect(dialog().textContent).toContain("You become its first Organization Admin");
-  expect(dialog().querySelector('[aria-label="New organization name"]')).not.toBeNull();
-  expect(dialog().className).toContain("overflow-y-auto");
 });
 
 it("adds organization membership only after the add dialog is submitted", async () => {
@@ -274,21 +249,8 @@ it("keeps an unsuccessful add operation in its dialog with the entered values", 
   expect(dialog().querySelector<HTMLInputElement>("#organization-member-id")!.value).toBe("unknown-user");
 });
 
-it("distinguishes loading from having no organizations to administer", async () => {
-  mocks.loading = true;
-  await show();
-  expect(container.textContent).not.toContain("You do not administer any organizations");
-  mocks.loading = false;
-  mocks.empty = true;
-  await show();
-  expect(container.textContent).toContain("You do not administer any organizations");
-});
-
-it("suspends an organization from the Platform inventory only after confirmation", async () => {
-  await show("/admin/platform/organizations", true);
-  await click("Suspend");
-  expect(mocks.api).not.toHaveBeenCalled();
-  expect(dialog().className).toContain("overflow-y-auto");
-  await submit();
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", enabled: false }));
+it("shows universe usage in organization settings", async () => {
+  mocks.role = "admin";
+  await show("/admin/organizations/team/settings");
+  expect(container.textContent).toContain("Universes: 3 of 100");
 });

@@ -12,8 +12,8 @@ vi.mock("@/lib/platform-api", () => ({
   useOrganizations: () => ({
     data: {
       organizations: [
-        { id: "team", enabled: true, name: "Research" },
-        { id: "other", enabled: true, name: "Operations" },
+        { id: "team", name: "Research" },
+        { id: "other", name: "Operations" },
       ],
     },
   }),
