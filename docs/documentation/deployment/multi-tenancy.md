@@ -21,9 +21,13 @@ For sign-in and membership, see [People and roles](../access-and-security/people
 
 ## Create a universe
 
-Creators and Organization Admins create universes using **New universe**, selecting
-an organization and an initial Owner. Platform Admins can provision for any organization
-with an explicit initial Owner. Creation observes the organization quota and
+Creators and Organization Admins create universes using **New universe**. It asks
+for a name; the organization is a choice only for someone who can create in several,
+and the creator becomes the Owner; others are made Owners afterwards under the
+universe's **Settings → Members**. **Change** next to the address sets a different
+handle. Platform Admins can provision for any organization; outside their own
+organizations they choose a member as the Owner. The API's `initialOwner` names
+another Owner at creation, for automation. Creation observes the organization quota and
 protection policy. Owners grant existing organization members access on the universe's **Settings → Members**.
 Creating a runtime universe directly through the API or server CLI creates
 only the runtime record; use **Adopt** to connect it to the Platform. Adoption

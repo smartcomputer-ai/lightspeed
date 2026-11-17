@@ -100,7 +100,7 @@ Select a universe from the switcher. The development launcher creates a
 sessions, credentials, profiles, and workspaces.
 
 If the app shows **No universes yet**, sign in as a Platform administrator,
-choose **New universe**, enter `Getting started`, and choose **Create**.
+choose **New universe**, enter `Getting started`, and choose **Create universe**.
 
 ## Configure a model
 

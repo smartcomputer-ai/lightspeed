@@ -1,38 +1,15 @@
 import { organizationAllows, useDeploymentPermissions } from "@/lib/permissions";
 import { organizationLabel } from "@/lib/admin-access";
-import { platformApi, useOrganizations } from "@/lib/platform-api";
-import {
-  effectiveFeatures,
-  UNIVERSE_HANDLE_MAX_LENGTH,
-  universeHandleFromName,
-  universeHandleSchema,
-} from "@lightspeed-ai/platform-shared";
-import {
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type RefObject,
-} from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDialogWarp } from "@/lib/dialog-warp";
+import { useOrganizations } from "@/lib/platform-api";
+import { useRef, useState, type RefObject } from "react";
 import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
+import { NewUniverseDialog } from "@/components/new-universe-dialog";
 import { Starscape } from "@/components/starscape/starscape";
 import { useIsDark } from "@/lib/theme";
 import { SETTINGS, useSetting } from "@/lib/settings";
-import { api, type Universe } from "@/api";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import type { Universe } from "@/api";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,7 +19,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   SidebarMenu,
@@ -94,6 +70,9 @@ export function HeaderStarscape({
   );
 }
 
+/// The switcher offers search only past this many universes.
+const SEARCH_THRESHOLD = 10;
+
 /// All accessible active universes, grouped by their organization.
 export function UniverseSwitcher({
   active,
@@ -106,10 +85,15 @@ export function UniverseSwitcher({
   const [createOpen, setCreateOpen] = useState(false);
   const mine = memberships(universes.data);
   const [search, setSearch] = useState("");
+  // A short list is quicker to scan than to search.
+  const searchable = mine.length > SEARCH_THRESHOLD;
   const organizations = useOrganizations();
-  const canCreate = organizations.data?.organizations.some((organization) =>
+  // Shown to anyone who creates universes somewhere; enabled while one of
+  // those organizations is under its universe limit.
+  const creates = organizations.data?.organizations.some((organization) =>
     organizationAllows(organization, "createUniverse"),
   );
+  const canCreate = organizations.data?.organizations.some((organization) => organization.canCreateUniverse);
   const iconRef = useRef<HTMLSpanElement>(null);
   const organizationName = (id?: string) => {
     const organization = organizations.data?.organizations.find(
@@ -122,8 +106,9 @@ export function UniverseSwitcher({
   const visible = mine.filter((universe) =>
     `${universe.name} ${organizationName(universe.organizationId)}`
       .toLowerCase()
-      .includes(search.toLowerCase()),
+      .includes(searchable ? search.toLowerCase() : ""),
   );
+  const severalOrganizations = new Set(mine.map((universe) => universe.organizationId)).size > 1;
   const groups = [
     ...new Set(visible.map((universe) => universe.organizationId)),
   ].sort((a, b) => organizationName(a).localeCompare(organizationName(b)));
@@ -156,20 +141,25 @@ export function UniverseSwitcher({
               className="max-h-[75dvh] min-w-56 overflow-y-auto"
               align="start"
             >
-              <div className="p-2">
-                <Input
-                  aria-label="Search universes"
-                  placeholder="Search universes…"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  onKeyDown={(event) => event.stopPropagation()}
-                />
-              </div>
+              {searchable && (
+                <div className="p-2">
+                  <Input
+                    aria-label="Search universes"
+                    placeholder="Search universes…"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  />
+                </div>
+              )}
               {groups.map((organizationId) => (
                 <DropdownMenuGroup key={organizationId ?? "unassigned"}>
-                  <DropdownMenuLabel>
-                    {organizationName(organizationId)}
-                  </DropdownMenuLabel>
+                  {/* One organization needs no heading. */}
+                  {severalOrganizations && (
+                    <DropdownMenuLabel>
+                      {organizationName(organizationId)}
+                    </DropdownMenuLabel>
+                  )}
                   {visible
                     .filter(
                       (universe) => universe.organizationId === organizationId,
@@ -194,15 +184,18 @@ export function UniverseSwitcher({
               ))}
               {!visible.length && (
                 <DropdownMenuItem disabled>
-                  {search ? "No matching universes" : "No universes yet"}
+                  {searchable && search ? "No matching universes" : "No universes yet"}
                 </DropdownMenuItem>
               )}
-              {canCreate && (
+              {creates && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setCreateOpen(true)}>
+                  <DropdownMenuItem disabled={!canCreate} onClick={() => setCreateOpen(true)}>
                     <AddIcon />
-                    New universe
+                    <span className="grid">
+                      New universe
+                      {!canCreate && <span className="text-xs text-muted-foreground">Universe limit reached</span>}
+                    </span>
                   </DropdownMenuItem>
                 </>
               )}
@@ -306,236 +299,3 @@ export function UniverseSwitcherPreview({
 
 /// The sidebar's width, which the preview takes as the header does.
 const SWITCHER_PREVIEW_WIDTH = "16rem";
-
-export function NewUniverseDialog({
-  organizationId: fixedOrganizationId,
-  defaultOrganizationId,
-  open,
-  onOpenChange,
-}: {
-  organizationId?: string;
-  defaultOrganizationId?: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const queryClient = useQueryClient();
-  const distinguishPersonal = useDeploymentPermissions().can("administerOrganizations");
-  const navigate = useNavigate();
-  const organizations = useOrganizations();
-  const eligible = (organizations.data?.organizations ?? []).filter(
-    (a) =>
-      (!fixedOrganizationId || a.id === fixedOrganizationId) &&
-      organizationAllows(a, "createUniverse"),
-  );
-  const [selectedOrganization, setSelectedOrganization] = useState(
-    defaultOrganizationId ?? "",
-  );
-  const defaultDestination =
-    eligible.find(
-      (a) => a.id === (fixedOrganizationId ?? defaultOrganizationId),
-    )?.id ??
-    eligible[0]?.id ??
-    "";
-  useEffect(() => {
-    if (open) setSelectedOrganization(defaultDestination);
-  }, [open, defaultDestination]);
-  const organization =
-    eligible.find((a) => a.id === selectedOrganization) ?? eligible[0];
-  const organizationId = organization?.id ?? "";
-  const mayAppointOwner = organizationAllows(organization, "administerUniverses");
-  const owners = useQuery({
-    queryKey: ["organization-members", organizationId],
-    enabled: open && !!organizationId && mayAppointOwner,
-    queryFn: () =>
-      platformApi("platform/organizations/members/list", { organizationId }),
-  });
-  const me = useQuery({
-    queryKey: ["creation-identity"],
-    enabled: open,
-    queryFn: () => api<{ user: { id: string } }>("GET", "/api/ui/me"),
-  });
-  const [ownerId, setOwnerId] = useState("");
-  const initialOwnerId = mayAppointOwner
-    ? owners.data?.members.some((m) => m.userId === ownerId)
-      ? ownerId
-      : (owners.data?.members.find((m) => m.userId === me.data?.user.id)
-          ?.userId ??
-        owners.data?.members[0]?.userId ??
-        "")
-    : (me.data?.user.id ?? "");
-  const universeId = useRef(crypto.randomUUID());
-  const [name, setName] = useState("");
-  const [handle, setHandle] = useState("");
-  const [handleEdited, setHandleEdited] = useState(false);
-  const dialogWarp = useDialogWarp(open);
-
-  const create = useMutation({
-    mutationFn: async (input: { name: string; handle: string }) =>
-      (
-        await platformApi("platform/universes/create", {
-          ...input,
-          organizationId,
-          universeId: universeId.current,
-          initialOwner: { kind: "user", id: initialOwnerId },
-        })
-      ).universe,
-    onSuccess: async (created) => {
-      await queryClient.invalidateQueries({ queryKey: ["universes"] });
-      // Once the warp has played out: close, and open the new universe.
-      dialogWarp.afterWarp(() => {
-        onOpenChange(false);
-        universeId.current = crypto.randomUUID();
-        setName("");
-        setHandle("");
-        setHandleEdited(false);
-        navigate(
-          universeHome({
-            handle: created.handle,
-            features: effectiveFeatures(created.features),
-          }),
-        );
-      });
-    },
-    // Called off: the dialog comes back with the error.
-    onError: () => dialogWarp.cancel(),
-  });
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (
-      !organizationId ||
-      !initialOwnerId ||
-      !name.trim() ||
-      create.isPending ||
-      !universeHandleSchema.safeParse(handle.trim()).success
-    )
-      return;
-    // Creating sends the dialog off to warp meanwhile.
-    dialogWarp.start();
-    create.mutate({ name: name.trim(), handle: handle.trim() });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-h-[min(92dvh,800px)] overflow-y-auto"
-        starscape
-        warp={dialogWarp.warp}
-      >
-        <DialogHeader>
-          <DialogTitle>New universe</DialogTitle>
-          <DialogDescription>
-            Universes start blank — connect chats and configure them afterwards.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit} className="grid gap-4">
-          <Field>
-            <FieldLabel htmlFor="universe-organization">
-              Organization
-            </FieldLabel>
-            <Select
-              disabled={!!fixedOrganizationId}
-              value={organizationId}
-              onValueChange={(value) => value !== null && setSelectedOrganization(value)}
-              required
-            >
-              <SelectTrigger id="universe-organization"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {eligible.map((organization) => (
-                  <SelectItem key={organization.id} value={organization.id}>
-                    {organizationLabel(organization, distinguishPersonal)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          {mayAppointOwner ? (
-            <Field>
-              <FieldLabel htmlFor="universe-owner">Initial Owner</FieldLabel>
-              <Select
-                value={initialOwnerId}
-                onValueChange={(value) => value !== null && setOwnerId(value)}
-                required
-              >
-                <SelectTrigger id="universe-owner"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {owners.data?.members.map((m) => (
-                    <SelectItem key={m.userId} value={m.userId}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              You will be the initial Owner.
-            </p>
-          )}
-          {me.error && <p role="alert">{me.error.message}</p>}
-          {owners.error && <p role="alert">{owners.error.message}</p>}
-          {organizations.error && (
-            <p role="alert">{organizations.error.message}</p>
-          )}
-          <Field>
-            <FieldLabel htmlFor="new-universe-name">Name</FieldLabel>
-            <Input
-              id="new-universe-name"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                if (!handleEdited)
-                  setHandle(universeHandleFromName(e.target.value));
-              }}
-              placeholder="My Universe"
-              autoFocus
-              required
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="new-universe-handle">Handle</FieldLabel>
-            <Input
-              id="new-universe-handle"
-              value={handle}
-              required
-              maxLength={UNIVERSE_HANDLE_MAX_LENGTH}
-              onChange={(e) => {
-                setHandle(e.target.value);
-                setHandleEdited(true);
-              }}
-              placeholder="my-universe"
-            />
-            <p className="text-sm text-muted-foreground">
-              Unique in this deployment and used in URLs. Lowercase letters,
-              digits and hyphens.
-            </p>
-          </Field>
-          {create.error && (
-            <p className="text-sm text-destructive">{create.error.message}</p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={
-                create.isPending ||
-                !organizationId ||
-                !initialOwnerId ||
-                !name.trim() ||
-                !universeHandleSchema.safeParse(handle.trim()).success
-              }
-            >
-              {create.isPending ? "Creating…" : "Create"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}

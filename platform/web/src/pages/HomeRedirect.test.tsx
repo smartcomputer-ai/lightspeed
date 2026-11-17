@@ -76,7 +76,7 @@ it("falls back to the first active membership when the last universe is gone or 
 
 it("offers an admin a first universe when there is none", async () => {
   mocks.api.mockResolvedValue([universe("browsed", { role: null })]);
-  client.setQueryData(["organizations"], { organizations: [{ id: "team", name: "Team", role: "admin", actions: [...organizationActions(["admin"])] }] });
+  client.setQueryData(["organizations"], { organizations: [{ id: "team", name: "Team", role: "admin", actions: [...organizationActions(["admin"])], canCreateUniverse: true }] });
   await show(true);
   await waitForUi(() => expect(container.textContent).toContain("No universes yet"));
   expect(container.textContent).toContain("Create your first universe");
@@ -84,6 +84,14 @@ it("offers an admin a first universe when there is none", async () => {
   const create = [...container.querySelectorAll("button")].find((node) => node.textContent?.includes("New universe"))!;
   await act(async () => create.click());
   await waitForUi(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New universe"));
+});
+
+it("tells a creator whose organizations are full why there is no create action", async () => {
+  mocks.api.mockResolvedValue([]);
+  client.setQueryData(["organizations"], { organizations: [{ id: "team", name: "Team", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: false }] });
+  await show(true);
+  await waitForUi(() => expect(container.textContent).toContain("reached their universe limit"));
+  expect([...container.querySelectorAll("button")].some((node) => node.textContent?.includes("New universe"))).toBe(false);
 });
 
 it("tells a member who to ask, without a create action", async () => {

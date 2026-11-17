@@ -409,6 +409,10 @@ class Organization1(TypedDict):
     """
     Whether the organization has its own universe limit, or follows the deployment default for its kind.
     """
+    canCreateUniverse: bool
+    """
+    Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
+    """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
     """
@@ -485,6 +489,10 @@ class Organization2(TypedDict):
     """
     Whether the organization has its own universe limit, or follows the deployment default for its kind.
     """
+    canCreateUniverse: bool
+    """
+    Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
+    """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
     """
@@ -548,6 +556,10 @@ class Organization3(TypedDict):
     universeQuotaSource: Literal['organization', 'deployment']
     """
     Whether the organization has its own universe limit, or follows the deployment default for its kind.
+    """
+    canCreateUniverse: bool
+    """
+    Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
     """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
@@ -639,6 +651,10 @@ class Organization4(TypedDict):
     universeQuotaSource: Literal['organization', 'deployment']
     """
     Whether the organization has its own universe limit, or follows the deployment default for its kind.
+    """
+    canCreateUniverse: bool
+    """
+    Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
     """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None

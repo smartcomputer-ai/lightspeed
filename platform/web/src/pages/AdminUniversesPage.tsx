@@ -12,7 +12,7 @@ import {
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { TableCell } from "@/components/ui/table";
-import { NewUniverseDialog } from "@/components/universe-switcher";
+import { NewUniverseDialog } from "@/components/new-universe-dialog";
 import { UniverseIcon } from "@/components/universe-icon";
 import { EmptyState, LoadingNote, PageHeader } from "@/components/page";
 import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
@@ -42,9 +42,9 @@ export function AdminUniversesPage() {
   const runtimeRepair = useDeploymentPermissions().can("manageUnclaimedUniverses");
   const { organizationId } = useParams();
   const organizations = useOrganizations();
-  const canCreate = organizations.data?.organizations.some(
-    (organization) => organization.id === organizationId && organizationAllows(organization, "createUniverse"),
-  );
+  const organization = organizations.data?.organizations.find((candidate) => candidate.id === organizationId);
+  const creates = !!organization && organizationAllows(organization, "createUniverse");
+  const canCreate = !!organization?.canCreateUniverse;
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -74,9 +74,11 @@ export function AdminUniversesPage() {
     <>
       <PageHeader
         title="Universes"
-        description="Universes you administer in this organization, including archived ones and deletions in progress."
-        actions={canCreate && (
-          <Button onClick={() => setCreateOpen(true)}>
+        description={creates && !canCreate
+          ? `Universes you administer in this organization. It has reached its limit of ${organization!.universeQuota} universes.`
+          : "Universes you administer in this organization, including archived ones and deletions in progress."}
+        actions={creates && (
+          <Button disabled={!canCreate} onClick={() => setCreateOpen(true)}>
             <AddIcon data-icon="inline-start" />
             New universe
           </Button>

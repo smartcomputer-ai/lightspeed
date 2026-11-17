@@ -15,7 +15,7 @@ import { activeGrantIds, adoptManagedUniverse, createManagedUniverse, requireOrg
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 /** Usage and policy are administration details: only a caller who may manage the organization's policy sees them. */
-function organizationView(organization: typeof schema.organization.$inferSelect, access: Pick<OrganizationAccess, "role" | "actions">, universeCount: number, settings: PlatformSettings) { return { id: organization.id, name: organization.name, slug: organization.slug, personal: organization.personalUserId !== null, role: access.role, actions: [...access.actions], universeQuota: effectiveUniverseQuota(organization, settings), universeQuotaSource: organization.universeQuota === null ? "deployment" as const : "organization" as const, baseUniverseRole: organization.baseUniverseRole, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(access.actions.has("managePolicy") ? { universeCount, membershipPolicy: organization.membershipPolicy } : {}) }; }
+function organizationView(organization: typeof schema.organization.$inferSelect, access: Pick<OrganizationAccess, "role" | "actions">, universeCount: number, settings: PlatformSettings) { return { id: organization.id, name: organization.name, slug: organization.slug, personal: organization.personalUserId !== null, role: access.role, actions: [...access.actions], universeQuota: effectiveUniverseQuota(organization, settings), universeQuotaSource: organization.universeQuota === null ? "deployment" as const : "organization" as const, canCreateUniverse: access.actions.has("createUniverse") && universeCount < effectiveUniverseQuota(organization, settings), baseUniverseRole: organization.baseUniverseRole, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(access.actions.has("managePolicy") ? { universeCount, membershipPolicy: organization.membershipPolicy } : {}) }; }
 /** The same allocation the universe quota is enforced against: every row, including provisioning and deleting universes. */
 async function universeCounts(db: AppContext["db"], organizationIds: string[]) {
   if (!organizationIds.length) return new Map<string, number>();
@@ -23,6 +23,8 @@ async function universeCounts(db: AppContext["db"], organizationIds: string[]) {
     .where(inArray(schema.universes.organizationId, organizationIds)).groupBy(schema.universes.organizationId);
   return new Map(rows.map(row => [row.organizationId, row.total]));
 }
+/** Usage is counted for those who see it (policy managers) and those it limits (creators). */
+function countsUniverses(access: Pick<OrganizationAccess, "actions">) { return access.actions.has("managePolicy") || access.actions.has("createUniverse"); }
 async function universeCount(db: AppContext["db"], organizationId: string) { return (await universeCounts(db, [organizationId])).get(organizationId) ?? 0; }
 function serviceUserView(serviceUser: typeof schema.serviceUsers.$inferSelect) { return { id: serviceUser.id, organizationId: serviceUser.organizationId, name: serviceUser.name, enabled: serviceUser.enabled, role: serviceUser.role, createdAt: serviceUser.createdAt }; }
 
@@ -84,7 +86,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const limits = auth.credential.restrictions;
       const canCreate = deploymentAllows(auth, "createOrganization")
         && !limits.readOnly && !limits.organizationIds && !limits.universeIds && (!limits.operations || limits.operations.includes("platform/organizations/create"));
-      const counts = await universeCounts(ctx.db, accessible.filter(access => access.actions.has("managePolicy")).map(access => access.organization.id));
+      const counts = await universeCounts(ctx.db, accessible.filter(access => countsUniverses(access)).map(access => access.organization.id));
       const named = await withOwnerNames(ctx.db, accessible.map(access => access.organization));
       const settings = await platformSettings(ctx.db, ctx.env);
       return { organizations: accessible.map((access, index) => organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0, settings)), canCreate };
@@ -111,7 +113,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     case "platform/organizations/read": {
       const access = await organizationForPrincipal(ctx, auth, organizationId); if (!access) throw new GateRefusal(404, "organization not found");
       const [named] = await withOwnerNames(ctx.db, [access.organization]);
-      return { organization: organizationView(named!, access, access.actions.has("managePolicy") ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)) };
+      return { organization: organizationView(named!, access, countsUniverses(access) ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)) };
     }
     case "platform/organizations/update": {
       const access = await requireOrganizationAction(ctx, auth, organizationId, "managePolicy");

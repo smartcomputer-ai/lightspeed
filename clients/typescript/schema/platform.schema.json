@@ -1363,6 +1363,10 @@
                 ],
                 "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
               },
+              "canCreateUniverse": {
+                "type": "boolean",
+                "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+              },
               "universeCount": {
                 "type": "integer",
                 "minimum": 0,
@@ -1501,6 +1505,7 @@
               "actions",
               "universeQuota",
               "universeQuotaSource",
+              "canCreateUniverse",
               "baseUniverseRole",
               "defaultProtected",
               "requireProtected",
@@ -1643,6 +1648,10 @@
               ],
               "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
             },
+            "canCreateUniverse": {
+              "type": "boolean",
+              "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+            },
             "universeCount": {
               "type": "integer",
               "minimum": 0,
@@ -1781,6 +1790,7 @@
             "actions",
             "universeQuota",
             "universeQuotaSource",
+            "canCreateUniverse",
             "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
@@ -1873,6 +1883,10 @@
               ],
               "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
             },
+            "canCreateUniverse": {
+              "type": "boolean",
+              "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+            },
             "universeCount": {
               "type": "integer",
               "minimum": 0,
@@ -2011,6 +2025,7 @@
             "actions",
             "universeQuota",
             "universeQuotaSource",
+            "canCreateUniverse",
             "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
@@ -2238,6 +2253,10 @@
               ],
               "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
             },
+            "canCreateUniverse": {
+              "type": "boolean",
+              "description": "Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit."
+            },
             "universeCount": {
               "type": "integer",
               "minimum": 0,
@@ -2376,6 +2395,7 @@
             "actions",
             "universeQuota",
             "universeQuotaSource",
+            "canCreateUniverse",
             "baseUniverseRole",
             "defaultProtected",
             "requireProtected",

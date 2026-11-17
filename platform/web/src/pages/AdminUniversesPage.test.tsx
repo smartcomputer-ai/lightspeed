@@ -240,3 +240,14 @@ it("shows an Owner only the universes they administer, without deployment contro
   expect(location()).toBeUndefined();
   expect(dialog().querySelector('a[href="/u/zeta/settings/members"]')).not.toBeNull();
 });
+
+it("disables New universe and says why once the organization reaches its limit", async () => {
+  const original = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method: string, path: string, ...rest: unknown[]) => path === "/api/v1/platform/organizations"
+    ? { organizations: [{ id: "team", name: "Team", role: "admin", actions: [...organizationActions(["admin"])], universeQuota: 3, canCreateUniverse: false }] }
+    : original(method, path, ...rest));
+  await show();
+  await waitForUi(() => expect(buttonIn(container, "New universe")).toBeDefined());
+  expect(buttonIn(container, "New universe")!.disabled).toBe(true);
+  expect(container.textContent).toContain("It has reached its limit of 3 universes.");
+});

@@ -6,7 +6,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { NewUniverseDialog } from "./universe-switcher";
+import { NewUniverseDialog } from "./new-universe-dialog";
 import { AdoptDialog } from "@/pages/UnclaimedUniversesPage";
 import { HandleCard } from "@/pages/UniverseGeneralSettingsPage";
 import type { Universe } from "@/api";
@@ -24,7 +24,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "account", name: "Personal", role: "creator", actions: [...organizationActions(["creator"])] }] };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "account", name: "Personal", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: true }] };
     if (path === "/api/ui/me") return { user: { id: "user" } };
     if (path === "/api/v1/platform/organizations/account/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "POST" && path === "/api/v1/platform/organizations/account/universes") return { universe: { handle: "chosen", features: {} } };
@@ -67,16 +67,54 @@ it("accepts the handles the runtime accepts and suggests only those", () => {
     expect(universeHandleSchema.safeParse(universeHandleFromName(name)).success, name).toBe(true);
   }
 });
-it("submits a requested handle independently from the display name", async () => {
+const customize = () => act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Change the address"]')!.click());
+
+it("asks only for a name, naming the one organization and the address the name gives", async () => {
   await render(<NewUniverseDialog open onOpenChange={() => {}} />);
-  await vi.waitFor(() => expect(container.textContent).toContain("Personal"));
+  await vi.waitFor(() => expect(container.textContent).toContain("In Personal."));
+  expect(container.querySelector("#universe-organization")).toBeNull();
+  expect(container.querySelector("#new-universe-handle")).toBeNull();
+  expect(container.querySelector("#universe-owner")).toBeNull();
   await input("new-universe-name", "Display Name");
+  expect(container.textContent).toContain("/u/display-name");
+  await submit();
+  // The caller owns what it creates, so no owner is sent and no members are read.
+  expect(api).toHaveBeenCalledWith("POST", "/api/v1/platform/organizations/account/universes", { name: "Display Name", handle: "display-name", universeId: expect.any(String) });
+  expect(api.mock.calls.some(([, path]) => path.endsWith("/members"))).toBe(false);
+});
+it("submits a customized handle independently from the display name", async () => {
+  await render(<NewUniverseDialog open onOpenChange={() => {}} />);
+  await vi.waitFor(() => expect(container.textContent).toContain("In Personal."));
+  await input("new-universe-name", "Display Name");
+  await customize();
   expect(container.querySelector<HTMLInputElement>("#new-universe-handle")!.value).toBe("display-name");
   await input("new-universe-handle", "chosen");
   await input("new-universe-name", "Different Name");
+  expect(container.textContent).toContain("/u/chosen");
   await submit();
-  expect(api).toHaveBeenCalledWith("POST", "/api/v1/platform/organizations/account/universes", { name: "Different Name", handle: "chosen", universeId: expect.any(String), initialOwner: { kind: "user", id: "user" } });
-  expect(api.mock.calls.some(([, path]) => path.endsWith("/members"))).toBe(false);
+  expect(api).toHaveBeenCalledWith("POST", "/api/v1/platform/organizations/account/universes", { name: "Different Name", handle: "chosen", universeId: expect.any(String) });
+});
+it("keeps an invalid handle in view and refuses to create with it", async () => {
+  await render(<NewUniverseDialog open onOpenChange={() => {}} />);
+  await vi.waitFor(() => expect(container.textContent).toContain("In Personal."));
+  await input("new-universe-name", "Research");
+  await customize();
+  await input("new-universe-handle", "Not Valid");
+  expect(container.querySelector<HTMLButtonElement>('button[aria-label="Change the address"]')!.disabled).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+});
+it("asks a Platform Admin outside the organization to choose its owner", async () => {
+  api.mockImplementation(async (method: string, path: string) => {
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "account", name: "Team", role: null, actions: [...organizationActions(["admin"])], canCreateUniverse: true }] };
+    if (path === "/api/v1/platform/organizations/account/members") return { members: [{ userId: "dana", name: "Dana" }] };
+    if (method === "POST") return { universe: { handle: "research", features: {} } };
+    throw new Error(`Unexpected request: ${method} ${path}`);
+  });
+  await render(<NewUniverseDialog open onOpenChange={() => {}} />);
+  await vi.waitFor(() => expect(container.querySelector("#universe-owner")).not.toBeNull());
+  expect(container.textContent).toContain("You are not a member of Team, so a member must own it.");
+  await input("new-universe-name", "Research");
+  expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
 });
 it("adopts under the runtime handle, which the dialog shows but cannot change", async () => {
   const orphan = { universeId: "id", handle: "runtime-handle", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
@@ -93,7 +131,8 @@ it("adopts under the runtime handle, which the dialog shows but cannot change", 
 it("suggests a valid handle for a name that ends on a separator at the length limit", async () => {
   await render(<NewUniverseDialog open onOpenChange={() => {}} />);
   await input("new-universe-name", `${"a".repeat(59)} b`);
-  expect(container.querySelector<HTMLInputElement>("#new-universe-handle")!.value).toBe("a".repeat(59));
+  expect(container.textContent).toContain(`/u/${"a".repeat(59)}`);
+  expect(container.textContent).not.toContain(`/u/${"a".repeat(59)}-`);
 });
 
 
@@ -113,20 +152,19 @@ it("uses the returned handle for the cached universe and navigates to its new UR
 it("fixes the creation destination in organization administration", async () => {
   const original = api.getMockImplementation()!;
   api.mockImplementation(async (...args) => args[1] === "/api/v1/platform/organizations" ? { organizations: [
-    { id: "first", name: "First", role: "creator", actions: [...organizationActions(["creator"])] },
-    { id: "destination", name: "Destination", role: "creator", actions: [...organizationActions(["creator"])] },
+    { id: "first", name: "First", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: true },
+    { id: "destination", name: "Destination", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: true },
   ] } : original(...args));
   await render(<NewUniverseDialog organizationId="destination" open onOpenChange={() => {}} />);
-  await vi.waitFor(() => expect(container.querySelector<HTMLButtonElement>("#universe-organization")?.querySelector('[data-slot="select-value"]')?.textContent).toBe("Destination"));
-  const select = container.querySelector<HTMLButtonElement>("#universe-organization")!;
-  expect(select.disabled).toBe(true);
+  await vi.waitFor(() => expect(container.textContent).toContain("In Destination."));
+  expect(container.querySelector("#universe-organization")).toBeNull();
 });
 
 it("refreshes the current working organization's creation default on each opening", async () => {
   const original = api.getMockImplementation()!;
   api.mockImplementation(async (...args) => args[1] === "/api/v1/platform/organizations" ? { organizations: [
-    { id: "first", name: "First", role: "creator", actions: [...organizationActions(["creator"])] },
-    { id: "second", name: "Second", role: "creator", actions: [...organizationActions(["creator"])] },
+    { id: "first", name: "First", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: true },
+    { id: "second", name: "Second", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: true },
   ] } : original(...args));
   await render(<NewUniverseDialog open defaultOrganizationId="first" onOpenChange={() => {}} />);
   const destination = () => container.querySelector<HTMLButtonElement>("#universe-organization")!;
@@ -135,3 +173,14 @@ it("refreshes the current working organization's creation default on each openin
   await render(<NewUniverseDialog open defaultOrganizationId="second" onOpenChange={() => {}} />);
   await vi.waitFor(() => expect(destination().querySelector('[data-slot="select-value"]')?.textContent).toBe("Second"));
 });
+
+it("offers no organization that has reached its universe limit", async () => {
+  const original = api.getMockImplementation()!;
+  api.mockImplementation(async (...args) => args[1] === "/api/v1/platform/organizations" ? { organizations: [
+    { id: "full", name: "Full", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: false },
+    { id: "open", name: "Open", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: true },
+  ] } : original(...args));
+  await render(<NewUniverseDialog open defaultOrganizationId="full" onOpenChange={() => {}} />);
+  await vi.waitFor(() => expect(container.textContent).toContain("In Open."));
+});
+

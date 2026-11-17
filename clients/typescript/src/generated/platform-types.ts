@@ -477,6 +477,10 @@ export interface PlatformOrganizationsListResult {
      * Whether the organization has its own universe limit, or follows the deployment default for its kind.
      */
     universeQuotaSource: "organization" | "deployment";
+    /**
+     * Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
+     */
+    canCreateUniverse: boolean;
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
@@ -554,6 +558,10 @@ export interface PlatformOrganizationsCreateResult {
      * Whether the organization has its own universe limit, or follows the deployment default for its kind.
      */
     universeQuotaSource: "organization" | "deployment";
+    /**
+     * Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
+     */
+    canCreateUniverse: boolean;
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
@@ -621,6 +629,10 @@ export interface PlatformOrganizationsReadResult {
      * Whether the organization has its own universe limit, or follows the deployment default for its kind.
      */
     universeQuotaSource: "organization" | "deployment";
+    /**
+     * Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
+     */
+    canCreateUniverse: boolean;
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
@@ -720,6 +732,10 @@ export interface PlatformOrganizationsUpdateResult {
      * Whether the organization has its own universe limit, or follows the deployment default for its kind.
      */
     universeQuotaSource: "organization" | "deployment";
+    /**
+     * Whether the caller may create a universe here now: it holds createUniverse and the organization is under its universe limit.
+     */
+    canCreateUniverse: boolean;
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.

@@ -10,7 +10,7 @@ export function organizationRoutes(store: DemoStore) {
   const app = new Hono();
   const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
   if (!organizations.has("demo-organization")) {
-    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, universeQuotaSource: "deployment", baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
+    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, universeQuotaSource: "deployment", canCreateUniverse: true, baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
     memberships.set("demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"])));
   }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
@@ -18,7 +18,11 @@ export function organizationRoutes(store: DemoStore) {
   // An organization without its own limit follows the deployment default for its kind.
   const setting = (key: PlatformSettingKey) => store.platformSettings.get(key) ?? PLATFORM_SETTINGS[key].defaultValue;
   const quota = (organization: Organization) => demoUniverseQuota(store, organization);
-  const view = (organization: Organization): Organization => ({ ...organization, universeQuota: quota(organization), actions: [...demoOrganizationActions(store, organization.role)], universeCount: [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length });
+  const view = (organization: Organization): Organization => {
+    const actions = [...demoOrganizationActions(store, organization.role)];
+    const universeCount = [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length;
+    return { ...organization, universeQuota: quota(organization), actions, universeCount, canCreateUniverse: actions.includes("createUniverse") && universeCount < quota(organization) };
+  };
   app.get("/settings", c => {
     if (!demoDeploymentAllows(store, "configureDeployment")) return c.json({ error: "deployment permission required: configureDeployment" }, 403);
     return c.json({ settings: (Object.keys(PLATFORM_SETTINGS) as PlatformSettingKey[]).map(settingView) });
@@ -39,7 +43,7 @@ export function organizationRoutes(store: DemoStore) {
     if ([...organizations.values()].some(a => a.slug === parsed.data.slug)) return c.json({ error: "Organization handle already exists" }, 409);
     const { initialAdminUserId = store.currentUser.id, ...input } = parsed.data;
     if (!store.users.has(initialAdminUserId)) return c.json({ error: "User not found" }, 404);
-    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", actions: [], universeQuota: input.universeQuota ?? 0, universeQuotaSource: input.universeQuota == null ? "deployment" : "organization", baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
+    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", actions: [], universeQuota: input.universeQuota ?? 0, universeQuotaSource: input.universeQuota == null ? "deployment" : "organization", canCreateUniverse: true, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
     organizations.set(organization.id, organization); memberships.set(organization.id, new Map([[initialAdminUserId, "admin"]])); return c.json({ organization: view(organization) }, 201);
   });
   app.get("/organizations/:organizationId", c => { const organization = organizations.get(c.req.param("organizationId")); return organization ? c.json({ organization: view(organization) }) : c.json({ error: "Organization not found" }, 404); });

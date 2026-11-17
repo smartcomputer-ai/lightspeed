@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof organizationFixture>>;
 beforeEach(async () => { fixture = await organizationFixture(); }, 30000);
 afterEach(async () => { await fixture?.postgres.close(); });
 
-type Listed = { organizations: Array<{ id: string; name: string; role: string; actions: string[]; personal: boolean; universeCount?: number; universeQuota: number }> };
+type Listed = { organizations: Array<{ id: string; name: string; role: string; actions: string[]; personal: boolean; universeCount?: number; universeQuota: number; canCreateUniverse?: boolean }> };
 const list = async () => (await (await fixture.request("/organizations")).json()) as Listed;
 
 it("counts each organization's universes against its quota in one inventory read", async () => {
@@ -91,4 +91,17 @@ it("tells each caller what it may do in each organization", async () => {
   await fixture.asUser("creator");
   const [organization] = (await list()).organizations;
   expect(organization).toMatchObject({ id: "organization-a", role: "creator", actions: ["createUniverse"] });
+});
+
+it("tells a Creator whether the organization has room for another universe", async () => {
+  await fixture.asUser("creator");
+  const read = async () => ((await (await fixture.request("/organizations/organization-a")).json()) as { organization: Record<string, unknown> }).organization;
+  // The Creator is limited by usage it is not shown.
+  expect(await read()).toMatchObject({ canCreateUniverse: true });
+  expect(await read()).not.toHaveProperty("universeCount");
+  await fixture.db.insert(schema.universes).values({ organizationId: "organization-a", name: "Second", handle: "second", lightspeedUniverseId: "33333333-3333-4333-8333-333333333333", createdBy: "creator", runtimeConfiguration: { protected: false } });
+  expect(await read()).toMatchObject({ canCreateUniverse: false });
+  expect((await list()).organizations.find(organization => organization.id === "organization-a")).toMatchObject({ canCreateUniverse: false });
+  await fixture.asUser("viewer");
+  expect(await read()).toMatchObject({ canCreateUniverse: false });
 });

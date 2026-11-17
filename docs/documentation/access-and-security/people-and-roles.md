@@ -119,7 +119,8 @@ A person's details show how they joined: added by an admin, or through the
 membership policy. Only a membership an admin added can be removed there. New shared members default to Member. Only Platform Admins create shared
 organizations. There is no email invitation or SCIM workflow yet.
 
-**New universe** selects an organization where the caller is a Creator or Admin.
+**New universe** creates in an organization where the caller is a Creator or Admin
+and that has room; with several, it asks which.
 Creating from an organization's Admin page fixes that destination. An
 organization may hold 25 universes if it is personal and 100 if it is shared.
 Platform Admins change these defaults under **Admin → Platform → Settings**,

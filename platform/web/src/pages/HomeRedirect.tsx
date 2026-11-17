@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AddIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
-import { NewUniverseDialog } from "@/components/universe-switcher";
+import { NewUniverseDialog } from "@/components/new-universe-dialog";
 import { CenteredNote } from "@/components/page";
 import { lastUniverse, memberships, universeHome, useUniverses } from "@/lib/universes";
 
@@ -13,7 +13,8 @@ import { lastUniverse, memberships, universeHome, useUniverses } from "@/lib/uni
 export function HomeRedirect() {
   const universes = useUniverses();
   const organizations = useOrganizations();
-  const canCreate = organizations.data?.organizations.some(organization => organizationAllows(organization, "createUniverse"));
+  const creates = organizations.data?.organizations.some(organization => organizationAllows(organization, "createUniverse"));
+  const canCreate = organizations.data?.organizations.some(organization => organization.canCreateUniverse);
   const [createOpen, setCreateOpen] = useState(false);
 
   if (universes.isLoading) {
@@ -37,7 +38,9 @@ export function HomeRedirect() {
         <p className="text-sm text-muted-foreground">
           {canCreate
             ? "Create your first universe to get started."
-            : "You have not been added to a universe yet. Ask an organization admin or universe owner to add you."}
+            : creates
+              ? "Your organizations have reached their universe limit. Ask a Platform Admin to raise it."
+              : "You have not been added to a universe yet. Ask an organization admin or universe owner to add you."}
         </p>
         {canCreate && (
           <div>
