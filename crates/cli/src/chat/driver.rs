@@ -1883,7 +1883,6 @@ fn tool_display_from_api(display: &api::ToolCallDisplayView) -> ChatToolCallDisp
             api::ToolCallDisplayGroup::Mcp => ChatToolDisplayGroup::Mcp,
             api::ToolCallDisplayGroup::Agent => ChatToolDisplayGroup::Agent,
             api::ToolCallDisplayGroup::Bot => ChatToolDisplayGroup::Bot,
-            api::ToolCallDisplayGroup::Message => ChatToolDisplayGroup::Message,
             api::ToolCallDisplayGroup::Other => ChatToolDisplayGroup::Other,
         },
         verb: display.verb.clone(),
@@ -1912,7 +1911,6 @@ fn tool_activity_summary(calls: &[ChatToolCallView]) -> Option<String> {
             ChatToolDisplayGroup::Mcp => "mcp",
             ChatToolDisplayGroup::Agent => "agents",
             ChatToolDisplayGroup::Bot => "bots",
-            ChatToolDisplayGroup::Message => "messages",
             ChatToolDisplayGroup::Other => "tools",
         }
         .into(),
