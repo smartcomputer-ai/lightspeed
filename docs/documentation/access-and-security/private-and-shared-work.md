@@ -58,7 +58,7 @@ creator. These checks apply on the server as well as in the UI.
 
 A creator downgraded to Viewer can still read their session but cannot control,
 share, or delete it. An Operator does not acquire another creator's private
-work by managing profiles or environments. Account Admins and Platform Admins act as Owner in
+work by managing profiles or environments. Organization Admins and Platform Admins act as Owner in
 every universe.
 
 Soft deletion requires closing the session first and hides it even from universe

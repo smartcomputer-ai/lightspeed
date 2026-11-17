@@ -33,8 +33,8 @@ export class GateRefusal extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
 }
 
-/// The admitted human or application actor and its effective universe role.
-/// Account and Platform administrators receive the Owner role here.
+/// The admitted human or service user actor and its effective universe role.
+/// Organization and Platform administrators receive the Owner role here.
 export interface UniverseCaller {
   actorId: string;
   role: UniverseRole;
@@ -128,7 +128,7 @@ export class UniverseClient extends LightspeedClient {
   }
 
   override async call<M extends ClientOperationId>(method: M, params: ClientOperationParams<M>, options: CallOptions = {}): Promise<ClientOperationResult<M>> {
-    if (method.startsWith("platform/")) throw new GateRefusal(403, "Platform operations require the native account authorization gate");
+    if (method.startsWith("platform/")) throw new GateRefusal(403, "Platform operations require the native organization authorization gate");
     const authorized = await this.authorizeOperation(method, params as unknown as Record<string, unknown>, options);
     return authorized.response !== undefined ? authorized.response as ClientOperationResult<M> : super.call(method, authorized.params as ClientOperationParams<M>, options);
   }

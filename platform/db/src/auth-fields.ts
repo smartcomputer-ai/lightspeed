@@ -18,7 +18,7 @@ export const deviceCodeFields = {
   approvalAccessVersion: { type: "number", required: false, input: false },
 } as const;
 
-export const accountOrganizationFields = {
+export const organizationFields = {
   kind: { type: "string", required: false, defaultValue: "shared", input: false },
   enabled: { type: "boolean", required: false, defaultValue: true, input: false },
   personalUserId: { type: "string", required: false, input: false },

@@ -8,7 +8,7 @@ import { workloadIdentityPoolConfig, type DatabaseWorkloadIdentity } from "./wor
 
 export { schema };
 export { databaseWorkloadIdentityFromEnv, type DatabaseWorkloadIdentity } from "./workload-identity.js";
-export { identityUserFields, identitySessionFields, accountOrganizationFields, deviceCodeFields } from "./auth-fields.js";
+export { identityUserFields, identitySessionFields, organizationFields, deviceCodeFields } from "./auth-fields.js";
 export type Db = NodePgDatabase<typeof schema>;
 
 export interface DbHandle {

@@ -64,8 +64,8 @@ describe("method roles", () => {
     const calls = core();
     const client = as("owner");
     for (const request of [
-      () => client.call("platform/accounts/list", {}),
-      () => client.platform.listAccounts(),
+      () => client.call("platform/organizations/list", {}),
+      () => client.platform.listOrganizations(),
     ]) {
       const error = await refusal(request());
       expect(error).toBeInstanceOf(GateRefusal);

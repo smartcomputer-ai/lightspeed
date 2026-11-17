@@ -20,7 +20,7 @@ run Node commands from there.
   remain in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
   universe-scoped Lightspeed API. The Platform setup and development process
-  use restricted Platform application keys, with the development process
+  use restricted Platform service-user keys, with the development process
   targeting the Platform shared API.
 - `scripts/` — product-identity check and the generated profile configuration
   reference.
@@ -145,23 +145,23 @@ changes apply on the next request; provider login preserves them. Configured
 runtime tokens and already admitted work remain independent: rotate operator
 credentials and cancel work separately when needed.
 
-**Accounts and roles.** Better Auth organizations represent accounts. An account
-contains many universes, members, and applications. Personal accounts are
-provisioned for admitted users by default; shared and development accounts use
-the same permission model. Account roles are Admin, Creator, and Member.
+**Organizations and roles.** Better Auth provides organization and membership records. An organization
+contains many universes, members, and service users. Personal organizations are
+provisioned for admitted users by default; shared and development organizations use
+the same permission model. Organization roles are Admin, Creator, and Member.
 Creators create universes and become Owners without gaining access to other
-universes. Account Admins administer every universe in their account.
+universes. Organization Admins administer every universe in their organization.
 
 Universe roles are Viewer, Contributor, Operator, and Owner. Multiple Owners
 are supported; ordinary grant changes cannot remove the last explicit Owner.
 Owners manage universe grants and may delete unprotected universes. Only
-Account Admins and Platform Admins can clear protection. The runtime enforces
+Organization Admins and Platform Admins can clear protection. The runtime enforces
 protection for every deletion path, including automatic expiry.
 
-Personal and application API keys use Better Auth's API Key plugin. A protected
+Personal and service-user API keys use Better Auth's API Key plugin. A protected
 server association binds each key to its principal. API admission intersects
-current roles with credential restrictions; application keys never become
-human sessions. Native account/application/grant/key routes share descriptors
+current roles with credential restrictions; service-user keys never become
+human sessions. Native organization/service-user/grant/key routes share descriptors
 in `shared/src/platform-api.ts`, exported to TypeScript and Python clients.
 The raw organization and API-key plugin management endpoints are not public.
 
@@ -218,7 +218,7 @@ API-key pages have been removed. Follow
 for configuration and rotation.
 
 The development launcher starts Configurator against Platform without runtime
-or database credentials. Account Admins install its universe-scoped application
+or database credentials. Organization Admins install its universe-scoped service user
 key, brokered by the runtime into a configuration-only MCP connection. The
 connector host remains disabled; it can run manually as a trusted runtime
 service with an explicit `LIGHTSPEED_CONNECTOR_API_TOKEN`.
@@ -372,7 +372,7 @@ is separate work. The release manifest records one digest for each image.
 ### Testing & Visual Tests
 
 With `./dev.sh full` running and the Rust CLI built, exercise real Platform
-authentication, runtime forwarding, key restrictions, account/application
+authentication, runtime forwarding, key restrictions, organization/service-user
 authority, CLI browser approval, and declarative universe creation:
 
 ```bash
@@ -387,11 +387,11 @@ LIGHTSPEED_PLATFORM_LIVE_RENEWAL_DATABASE_URL="$LIGHTSPEED_PLATFORM_DATABASE_URL
 ```
 
 These opt-in checks use the seeded admin and operator logins and create
-`live-*` accounts and universes in the development database. Set
+`live-*` organizations and universes in the development database. Set
 `LIGHTSPEED_PLATFORM_LIVE_PASSWORD` when the seed password differs from the
 development default. The first check saves dedicated CLI/API-key connections
 in the private directory; the second exercises both SDKs and revokes those
-credentials. Test accounts and universes remain available for inspection.
+credentials. Test organizations and universes remain available for inspection.
 The renewal database option ages only the dedicated CLI session so the SDK
 check can prove real session renewal and credential-file persistence.
 

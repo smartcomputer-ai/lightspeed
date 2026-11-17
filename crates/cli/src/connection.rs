@@ -73,7 +73,7 @@ pub struct SavedConnection {
     pub credential_kind: CredentialKind,
     pub server_kind: ServerKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
+    pub organization_id: Option<String>,
     #[serde(default)]
     pub allow_insecure_http: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,7 +101,7 @@ pub struct ResolvedConnection {
     pub owned_credential: bool,
     pub server_kind: Option<ServerKind>,
     pub principal: Option<PlatformPrincipal>,
-    pub account_id: Option<String>,
+    pub organization_id: Option<String>,
     pub allow_insecure_http: bool,
     /// The universe a runtime request addresses, as its UUID or its handle.
     /// A saved selection is always the UUID; a handle here was named for
@@ -114,8 +114,8 @@ impl ResolvedConnection {
     pub fn is_platform(&self) -> bool {
         self.server_kind == Some(ServerKind::Platform)
     }
-    pub fn selected_account(&self) -> Option<&str> {
-        self.account_id.as_deref()
+    pub fn selected_organization(&self) -> Option<&str> {
+        self.organization_id.as_deref()
     }
 
     /// Authentication is shared by runtime resources and native Platform operations.
@@ -436,8 +436,8 @@ pub(crate) fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<Reso
     {
         bail!("saved credential kind does not match the deployment kind");
     }
-    if saved.server_kind == ServerKind::Runtime && saved.account_id.is_some() {
-        bail!("a direct runtime connection cannot select a Platform account");
+    if saved.server_kind == ServerKind::Runtime && saved.organization_id.is_some() {
+        bail!("a direct runtime connection cannot select a Platform organization");
     }
     if saved
         .credential_file
@@ -452,7 +452,7 @@ pub(crate) fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<Reso
         credential_kind: saved.credential_kind,
         credential_file: saved.credential_file.clone(),
         owned_credential: saved.owned_credential,
-        account_id: saved.account_id.clone(),
+        organization_id: saved.organization_id.clone(),
         server_kind: Some(saved.server_kind),
         principal: None,
         allow_insecure_http: saved.allow_insecure_http,
@@ -494,8 +494,8 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
             } else {
                 CredentialKind::None
             };
-            if connection.account_id.is_some() {
-                bail!("a direct runtime connection cannot select a Platform account");
+            if connection.organization_id.is_some() {
+                bail!("a direct runtime connection cannot select a Platform organization");
             }
             ServerKind::Runtime
         }
@@ -516,7 +516,7 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
                 (CredentialKind::PlatformSession, _) => {
                     bail!("the approved credential is not a CLI login session")
                 }
-                (_, "personalKey" | "applicationKey") => {
+                (_, "personalKey" | "serviceUserKey") => {
                     connection.credential_kind = CredentialKind::PlatformApiKey
                 }
                 (_, "cliSession" | "session") => bail!(
@@ -531,10 +531,10 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
     if response.caller.single != connection.secret.is_none() {
         bail!("deployment authentication does not match the configured connection");
     }
-    // A deployment-wide suggestion cannot undo an explicit account selection:
-    // discovery does not identify the suggested universe's containing account.
+    // A deployment-wide suggestion cannot undo an explicit organization selection:
+    // discovery does not identify the suggested universe's containing organization.
     if connection.universe.is_none()
-        && (!connection.is_platform() || connection.account_id.is_none())
+        && (!connection.is_platform() || connection.organization_id.is_none())
     {
         connection.universe = response.default_universe;
     }
@@ -626,7 +626,7 @@ pub async fn resolve(
             ResolvedConnection {
                 name: selected.map(str::to_owned),
                 endpoint: saved_endpoint,
-                account_id: saved.account_id.clone(),
+                organization_id: saved.organization_id.clone(),
                 allow_insecure_http: saved.allow_insecure_http,
                 secret: None,
                 universe: saved.universe.clone(),
@@ -748,7 +748,7 @@ pub async fn handle(
     selected: Option<&str>,
     universe: Option<&str>,
     api_url: Option<&str>,
-    account: Option<&str>,
+    organization: Option<&str>,
 ) -> Result<()> {
     if let ConnectCommand::Login(args) = args.command {
         return crate::device_login::login(args, selected, api_url).await;
@@ -818,7 +818,7 @@ pub async fn handle(
                     server_kind: verified
                         .server_kind
                         .context("verified connection has no deployment kind")?,
-                    account_id: verified.account_id,
+                    organization_id: verified.organization_id,
                     allow_insecure_http,
                     credential_file: file,
                     owned_credential: owned,
@@ -861,7 +861,7 @@ pub async fn handle(
             }
         }
         ConnectCommand::List => {
-            let rows: Vec<_> = config.connections.iter().map(|(name, c)| serde_json::json!({"name": name, "endpoint": c.endpoint, "selected": config.selected.as_ref() == Some(name), "universe": c.universe, "accountId":c.account_id, "single": c.single, "serverKind":c.server_kind,"authentication":c.credential_kind})).collect();
+            let rows: Vec<_> = config.connections.iter().map(|(name, c)| serde_json::json!({"name": name, "endpoint": c.endpoint, "selected": config.selected.as_ref() == Some(name), "universe": c.universe, "organizationId":c.organization_id, "single": c.single, "serverKind":c.server_kind,"authentication":c.credential_kind})).collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
@@ -882,20 +882,20 @@ pub async fn handle(
         }
         ConnectCommand::Status => {
             let mut c = resolve(selected, api_url, universe).await?;
-            apply_account_override(&mut c, account, universe)?;
+            apply_organization_override(&mut c, organization, universe)?;
             let caller = c.caller.as_ref().unwrap();
             let status = universe_status(&c).await?;
-            let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "activeUniverse": status, "caller": caller,"serverKind":c.server_kind,"principal":c.principal,"authentication":c.credential_kind,"accountId":c.account_id});
+            let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "activeUniverse": status, "caller": caller,"serverKind":c.server_kind,"principal":c.principal,"authentication":c.credential_kind,"organizationId":c.organization_id});
             if json {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!(
-                    "Connection: {}\n  Deployment: {}\n  Server: {:?}\n  Authentication: {:?}\n  Account: {}",
+                    "Connection: {}\n  Deployment: {}\n  Server: {:?}\n  Authentication: {:?}\n  Organization: {}",
                     c.name.as_deref().unwrap_or("environment"),
                     c.endpoint,
                     c.server_kind.unwrap(),
                     c.credential_kind,
-                    c.account_id.as_deref().unwrap_or("none selected")
+                    c.organization_id.as_deref().unwrap_or("none selected")
                 );
                 if let Some(principal) = &c.principal {
                     println!(
@@ -990,34 +990,34 @@ pub fn select_universe(connection: &ResolvedConnection, id: String) -> Result<()
     Ok(())
 }
 
-/// An invocation account override never persists or reuses another account's universe.
-pub fn apply_account_override(
+/// An invocation organization override never persists or reuses another organization's universe.
+pub fn apply_organization_override(
     connection: &mut ResolvedConnection,
-    account: Option<&str>,
+    organization: Option<&str>,
     explicit_universe: Option<&str>,
 ) -> Result<()> {
-    let Some(account) = account else {
+    let Some(organization) = organization else {
         return Ok(());
     };
     if !connection.is_platform() {
-        bail!("--account requires a Platform deployment");
+        bail!("--organization requires a Platform deployment");
     }
-    if account.trim().is_empty() {
-        bail!("account must not be empty");
+    if organization.trim().is_empty() {
+        bail!("organization must not be empty");
     }
-    if connection.account_id.as_deref() != Some(account) {
+    if connection.organization_id.as_deref() != Some(organization) {
         connection.universe = explicit_universe.map(str::to_owned);
-        connection.account_id = Some(account.to_owned());
+        connection.organization_id = Some(organization.to_owned());
     }
     Ok(())
 }
 
-pub fn save_account(connection: &ResolvedConnection, account_id: &str) -> Result<()> {
+pub fn save_organization(connection: &ResolvedConnection, organization_id: &str) -> Result<()> {
     if !connection.is_platform() {
-        bail!("accounts require a Platform deployment");
+        bail!("organizations require a Platform deployment");
     }
     let name = connection.name.as_ref().context(
-        "save a connection before using `platform account use`; use --account for this invocation",
+        "save a connection before using `platform organization use`; use --organization for this invocation",
     )?;
     let dir = config_dir()?;
     let mut config = load_at(&dir)?;
@@ -1028,9 +1028,9 @@ pub fn save_account(connection: &ResolvedConnection, account_id: &str) -> Result
     if saved.endpoint != connection.endpoint {
         bail!("saved connection endpoint changed");
     }
-    if saved.account_id.as_deref() != Some(account_id) {
+    if saved.organization_id.as_deref() != Some(organization_id) {
         saved.universe = None;
-        saved.account_id = Some(account_id.to_owned());
+        saved.organization_id = Some(organization_id.to_owned());
     }
     save_at(&dir, &config)
 }
@@ -1104,7 +1104,7 @@ mod tests {
                     server_kind: ServerKind::Runtime,
                     credential_file: Some(file),
                     owned_credential: true,
-                    account_id: None,
+                    organization_id: None,
                     allow_insecure_http: false,
                     universe: None,
                 },
@@ -1139,7 +1139,7 @@ mod tests {
         for (field, value) in [
             ("credentialKind", serde_json::json!("runtimeToken")),
             ("serverKind", serde_json::json!("platform")),
-            ("accountId", serde_json::json!("account")),
+            ("organizationId", serde_json::json!("organization")),
             ("credentialFile", serde_json::json!("relative-token")),
         ] {
             let mut invalid = valid.clone();
@@ -1232,22 +1232,23 @@ mod tests {
     }
 
     #[test]
-    fn an_account_override_clears_only_the_previous_accounts_universe_selection() {
+    fn an_organization_override_clears_only_the_previous_organizations_universe_selection() {
         let mut connection = ResolvedConnection {
             server_kind: Some(ServerKind::Platform),
-            account_id: Some("first".into()),
+            organization_id: Some("first".into()),
             universe: Some("old-universe".into()),
             ..Default::default()
         };
-        apply_account_override(&mut connection, Some("first"), None).unwrap();
+        apply_organization_override(&mut connection, Some("first"), None).unwrap();
         assert_eq!(connection.universe.as_deref(), Some("old-universe"));
-        apply_account_override(&mut connection, Some("second"), None).unwrap();
-        assert_eq!(connection.account_id.as_deref(), Some("second"));
+        apply_organization_override(&mut connection, Some("second"), None).unwrap();
+        assert_eq!(connection.organization_id.as_deref(), Some("second"));
         assert!(connection.universe.is_none());
-        apply_account_override(&mut connection, Some("third"), Some("explicit-universe")).unwrap();
+        apply_organization_override(&mut connection, Some("third"), Some("explicit-universe"))
+            .unwrap();
         assert_eq!(connection.universe.as_deref(), Some("explicit-universe"));
         connection.server_kind = Some(ServerKind::Runtime);
-        assert!(apply_account_override(&mut connection, Some("team"), None).is_err());
+        assert!(apply_organization_override(&mut connection, Some("team"), None).is_err());
     }
 
     #[test]

@@ -1,15 +1,15 @@
 # Manage Lightspeed through Configurator MCP
 
 The Platform Configurator setup installs a configuration-only MCP connection.
-An Account Admin who owns the universe installs it from **Settings → Templates**.
-Platform creates an account application with an explicit Operator grant in that
+An Organization Admin who owns the universe installs it from **Settings → Templates**.
+Platform creates an organization service user with an explicit Operator grant in that
 universe and a restricted API key. The key permits only the reviewed
-configuration operations, cannot create universes, and cannot manage accounts,
+configuration operations, cannot create universes, and cannot manage organizations,
 credentials, or sessions.
 
 The runtime stores that key as a brokered credential and uses it for the
 `configurator` MCP server. Tool calls go from the runtime to Configurator, then
-to Platform's shared API. Platform checks the application and key on each
+to Platform's shared API. Platform checks the service user and key on each
 request before forwarding an admitted call to the runtime. The MCP connection
 also limits advertised tools to the configuration allowlist and requires
 approval. No human session is synthesized, and no runtime infrastructure token
@@ -17,8 +17,8 @@ is passed to Configurator or the agent.
 
 The installation creates an MCP connection, not a profile. Add that server to
 a profile or session configuration as appropriate. Reinstalling rotates the
-managed application credential, retaining the previous credential until the
-replacement is ready. A failed replacement keeps the working installation. Expired keys or disabled applications are
+managed service-user credential, retaining the previous credential until the
+replacement is ready. A failed replacement keeps the working installation. Expired keys or disabled service users are
 reported as unavailable and need reinstallation.
 
 For agents using other external MCP servers, see
@@ -122,7 +122,7 @@ stop authenticating after the runtime restarts with that configuration.
 
 | Symptom | What to check |
 | --- | --- |
-| The Platform setup is unavailable | Configure `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL`, install as an Account Admin, and check the application/key status. Reinstall to replace expired credentials. |
+| The Platform setup is unavailable | Configure `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL`, install as an Organization Admin, and check the service-user/key status. Reinstall to replace expired credentials. |
 | Health succeeds but tool discovery fails | Upstream reachability, matching authentication mode, and configured token. |
 | HTTP 403 before reaching the runtime | Request Host and Origin against the allowlists. |
 | A tool call lacks a universe | Send `x-lightspeed-universe` with the target universe. |

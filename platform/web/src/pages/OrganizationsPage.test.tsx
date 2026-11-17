@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { AccountsPage } from "./AccountsPage";
+import { OrganizationsPage } from "./OrganizationsPage";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { waitForUi } from "@/test/wait-for-ui";
 const mocks = vi.hoisted(() => ({
@@ -16,13 +16,13 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/platform-api", () => ({
   platformApi: mocks.api,
-  useAccounts: () => ({
+  useOrganizations: () => ({
     isLoading: mocks.loading,
     data: mocks.loading
       ? undefined
       : {
           canCreate: mocks.canCreate,
-          accounts: mocks.empty
+          organizations: mocks.empty
             ? []
             : [
                 {
@@ -72,8 +72,8 @@ beforeEach(() => {
     .mockImplementation(async (operation) =>
       operation.endsWith("members/list")
         ? { members: [] }
-        : operation.endsWith("applications/list")
-          ? { applications: [] }
+        : operation.endsWith("service-users/list")
+          ? { serviceUsers: [] }
           : {},
     );
   client = new QueryClient({
@@ -89,13 +89,13 @@ afterEach(async () => {
   container.remove();
   vi.unstubAllGlobals();
 });
-async function show(path = "/admin/accounts", platformAdmin = false) {
+async function show(path = "/admin/platform/organizations", platformAdmin = false) {
   await act(async () =>
     root.render(
       <MemoryRouter initialEntries={[path]}>
         <QueryClientProvider client={client}>
           <PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}>
-            <AccountsPage />
+            <Routes><Route path="/admin/platform/organizations" element={<OrganizationsPage />} /><Route path="/admin/organizations/:organizationId/people" element={<OrganizationsPage section="people" />} /><Route path="/admin/organizations/:organizationId/service-users" element={<OrganizationsPage section="service-users" />} /><Route path="/admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} /></Routes>
           </PermissionIdentityProvider>
         </QueryClientProvider>
       </MemoryRouter>,
@@ -117,52 +117,52 @@ async function type(selector: string, value: string) {
 }
 const submit = () => act(async () => dialog().querySelector<HTMLFormElement>("form")!.requestSubmit());
 
-it("excludes ordinary memberships from account administration and does not fetch their directories", async () => {
+it("excludes ordinary memberships from organization administration and does not fetch their directories", async () => {
   await show();
-  expect(container.textContent).toContain("You do not administer any accounts");
+  expect(container.textContent).toContain("You do not administer any organizations");
   expect(container.querySelector("table")).toBeNull();
   expect(mocks.api).not.toHaveBeenCalled();
 });
 
-it("lists manageable accounts without silently selecting one", async () => {
+it("lists manageable organizations without silently selecting one", async () => {
   mocks.role = "admin";
   await show();
-  expect(container.querySelector('a[href="/admin/accounts?account=team"]')?.textContent).toBe("Team");
-  expect(container.querySelector('a[href="/admin/accounts?account=other"]')?.textContent).toBe("Other Team");
+  expect(container.querySelector('a[href="/admin/organizations/team/settings"]')?.textContent).toBe("Team");
+  expect(container.querySelector('a[href="/admin/organizations/other/settings"]')?.textContent).toBe("Other Team");
   expect(mocks.api).not.toHaveBeenCalled();
 });
 
-it("lets a Platform Admin open an account without a direct membership", async () => {
-  await show("/admin/accounts?account=team", true);
+it("lets a Platform Admin open an organization without a direct membership", async () => {
+  await show("/admin/organizations/team/people", true);
   await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/accounts/members/list", {
-      accountId: "team",
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/members/list", {
+      organizationId: "team",
     }),
   );
   expect(button("Add member")).toBeDefined();
 });
 
 it.each(["missing", "team"])(
-  "refuses an unavailable or unauthorized explicit account: %s",
-  async (account) => {
-    await show(`/admin/accounts?account=${account}`);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("This account is unavailable");
+  "refuses an unavailable or unauthorized explicit organization: %s",
+  async (organization) => {
+    await show(`/admin/organizations/${organization}/people`);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("This organization is unavailable");
     expect(mocks.api).not.toHaveBeenCalled();
   },
 );
 
-it("creates an application through a scrollable dialog in the explicitly selected account", async () => {
+it("creates a service user through a scrollable dialog in the explicitly selected organization", async () => {
   mocks.role = "admin";
-  await show("/admin/accounts?account=other");
-  expect(container.querySelector('input[id="application-name"]')).toBeNull();
-  await click("New application");
+  await show("/admin/organizations/other/service-users");
+  expect(container.querySelector('input[id="serviceUser-name"]')).toBeNull();
+  await click("New service user");
   expect(dialog().className).toContain("overflow-y-auto");
   expect(dialog().className).toContain("92dvh");
-  await type("#application-name", "Build worker");
+  await type("#serviceUser-name", "Build worker");
   await submit();
   await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/accounts/applications/create", {
-      accountId: "other",
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/service-users/create", {
+      organizationId: "other",
       name: "Build worker",
       role: "member",
     }),
@@ -170,41 +170,41 @@ it("creates an application through a scrollable dialog in the explicitly selecte
   await waitForUi(() => expect(dialog()).toBeNull());
 });
 
-it("offers a new account dialog when self-service is permitted, even without existing admin memberships", async () => {
+it("offers a new organization dialog when self-service is permitted, even without existing admin memberships", async () => {
   mocks.canCreate = true;
   await show();
-  await click("New account");
-  expect(dialog().textContent).toContain("You become its first Account Admin");
-  expect(dialog().querySelector('[aria-label="New account name"]')).not.toBeNull();
+  await click("New organization");
+  expect(dialog().textContent).toContain("You become its first Organization Admin");
+  expect(dialog().querySelector('[aria-label="New organization name"]')).not.toBeNull();
   expect(dialog().className).toContain("overflow-y-auto");
 });
 
-it("adds account membership only after the add dialog is submitted", async () => {
+it("adds organization membership only after the add dialog is submitted", async () => {
   mocks.role = "admin";
-  await show("/admin/accounts?account=team");
+  await show("/admin/organizations/team/people");
   await click("Add member");
-  await type("#account-member-id", "new-user");
-  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/accounts/members/put")).toBe(
+  await type("#organization-member-id", "new-user");
+  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/members/put")).toBe(
     false,
   );
   await submit();
   await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/accounts/members/put", {
-      accountId: "team",
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/members/put", {
+      organizationId: "team",
       userId: "new-user",
       role: "member",
     }),
   );
 });
 
-it("links application keys to unified administration and confirms disabling an application in a dialog", async () => {
+it("links service user keys to unified administration and confirms disabling a service user in a dialog", async () => {
   mocks.role = "admin";
   mocks.api.mockImplementation(async (operation) =>
     operation.endsWith("members/list")
       ? { members: [] }
-      : operation.endsWith("applications/list")
+      : operation.endsWith("service-users/list")
         ? {
-            applications: [
+            serviceUsers: [
               {
                 id: "robot",
                 name: "Build robot",
@@ -215,23 +215,23 @@ it("links application keys to unified administration and confirms disabling an a
           }
         : {},
   );
-  await show("/admin/accounts?account=team");
+  await show("/admin/organizations/team/service-users");
   await waitForUi(() =>
     expect(container.querySelector('[aria-label="API keys for Build robot"]')).not.toBeNull(),
   );
   expect(container.querySelector('[aria-label="API keys for Build robot"]')?.getAttribute("href")).toBe(
-    "/admin/api-keys?account=team&application=robot",
+    "/admin/organizations/team/api-keys?serviceUser=robot",
   );
   await click("Disable Build robot");
   expect(dialog().textContent).toContain("All of its API keys will stop working");
   expect(
-    mocks.api.mock.calls.some(([operation]) => operation === "platform/accounts/applications/update"),
+    mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/service-users/update"),
   ).toBe(false);
   await submit();
   await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/accounts/applications/update", {
-      accountId: "team",
-      applicationId: "robot",
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/service-users/update", {
+      organizationId: "team",
+      serviceUserId: "robot",
       enabled: false,
     }),
   );
@@ -239,14 +239,14 @@ it("links application keys to unified administration and confirms disabling an a
 
 it("keeps policy changes as a draft until explicitly saved", async () => {
   mocks.role = "admin";
-  await show("/admin/accounts?account=team");
+  await show("/admin/organizations/team/settings");
   await click("Edit policy");
-  await type("#account-quota", "50");
-  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/accounts/update")).toBe(false);
+  await type("#organization-quota", "50");
+  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/update")).toBe(false);
   await submit();
   await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/accounts/update", {
-      accountId: "team",
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", {
+      organizationId: "team",
       universeQuota: 50,
       defaultProtected: true,
       requireProtected: false,
@@ -258,23 +258,32 @@ it("keeps an unsuccessful add operation in its dialog with the entered values", 
   mocks.role = "admin";
   mocks.api.mockImplementation(async (operation) => {
     if (operation.endsWith("members/list")) return { members: [] };
-    if (operation.endsWith("applications/list")) return { applications: [] };
+    if (operation.endsWith("service-users/list")) return { serviceUsers: [] };
     throw new Error("user not found");
   });
-  await show("/admin/accounts?account=team");
+  await show("/admin/organizations/team/people");
   await click("Add member");
-  await type("#account-member-id", "unknown-user");
+  await type("#organization-member-id", "unknown-user");
   await submit();
   await waitForUi(() => expect(dialog().querySelector('[role="alert"]')?.textContent).toBe("user not found"));
-  expect(dialog().querySelector<HTMLInputElement>("#account-member-id")!.value).toBe("unknown-user");
+  expect(dialog().querySelector<HTMLInputElement>("#organization-member-id")!.value).toBe("unknown-user");
 });
 
-it("distinguishes loading from having no accounts to administer", async () => {
+it("distinguishes loading from having no organizations to administer", async () => {
   mocks.loading = true;
   await show();
-  expect(container.textContent).not.toContain("You do not administer any accounts");
+  expect(container.textContent).not.toContain("You do not administer any organizations");
   mocks.loading = false;
   mocks.empty = true;
   await show();
-  expect(container.textContent).toContain("You do not administer any accounts");
+  expect(container.textContent).toContain("You do not administer any organizations");
+});
+
+it("suspends an organization from the Platform inventory only after confirmation", async () => {
+  await show("/admin/platform/organizations", true);
+  await click("Suspend");
+  expect(mocks.api).not.toHaveBeenCalled();
+  expect(dialog().className).toContain("overflow-y-auto");
+  await submit();
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", enabled: false }));
 });

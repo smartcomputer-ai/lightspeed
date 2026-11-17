@@ -13,7 +13,7 @@ export function SetupsPage({ admin }: { admin: boolean }) {
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
   if (!universe || !permissions.can("configureResource")) return <UniverseNotFound handle={handle} />;
-  const installable = permissions.can("manageAccess") && (admin || universe.accountRole === "admin");
+  const installable = permissions.can("manageAccess") && (admin || universe.organizationRole === "admin");
   return <SetupList universeId={universe.id} installable={installable} />;
 }
 
@@ -50,7 +50,7 @@ function SetupList({ universeId, installable }: { universeId: string; installabl
             {setup.error && <p className="text-sm text-destructive">{setup.error}</p>}
             {ready && setup.resources?.serverId && <p className="text-sm">MCP server: <code>{setup.resources.serverId}</code></p>}
             {!setup.available && <p className="text-sm text-muted-foreground">The deployment has not configured a Configurator endpoint.</p>}
-            {!installable && <p className="text-sm text-muted-foreground">An Account Admin installs and rotates this setup's application credential.</p>}
+            {!installable && <p className="text-sm text-muted-foreground">An Organization Admin installs and rotates this setup's service-user credential.</p>}
           </CardContent>
           <CardFooter>
             <Button disabled={!installable || !setup.available || pending} onClick={() => install.mutate(setup.id)}>

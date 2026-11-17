@@ -2,7 +2,7 @@
 
 Connect Lightspeed to one company OIDC provider so people sign in with their
 company account. The provider grants ordinary application access or Platform
-admin access. Account Admins and universe Owners then assign local universe
+admin access. Organization Admins and universe Owners then assign local universe
 memberships using the four roles described in [People and roles](people-and-roles.md).
 No directory group is needed for each universe.
 
@@ -145,11 +145,11 @@ expire at their original limit. Validate your provider's account-disable and
 entitlement-removal behavior, including existing company SSO cookies, before
 claiming an offboarding time bound. Directory propagation may add delay.
 
-Personal API keys use the same current company admission state, independently
+Your API keys use the same current company admission state, independently
 of browser-session expiry. Until a background directory source is configured,
 a company user must renew admission by signing in within the configured
-company window. Application keys represent account-owned applications and do
-not borrow their creator's human session. Local personal and application keys
+company window. Service-user keys represent organization-owned service users and do
+not borrow their creator's human session. Local personal and service-user keys
 have their own expiry and revocation lifecycle.
 
 There is no automatic deactivation for inactivity. Suspension and company
@@ -166,7 +166,7 @@ Before opening access, test the actual provider registration:
 1. Sign in with ordinary access, admin access alone, and neither entitlement.
    The first two succeed with the corresponding Platform role; the third is
    refused. An ordinary user starts without universe memberships.
-2. Add the ordinary user to a universe on **Admin → Universes → Access**, change their role, and
+2. Add the ordinary user to a universe on **Admin → organization → Universes → Access**, change their role, and
    sign in again. The local role applies on the next request and survives
    company sign-in.
 3. Verify internal sign-in and any supported external credentials/MFA flow.
@@ -203,5 +203,5 @@ without an application entitlement is still refused. An email already used by
 a local account must be resolved explicitly; email-based linking is disabled.
 
 If login succeeds but the expected universe does not appear, confirm the person
-belongs to its account under **Admin → Accounts**, then grant a role under **Admin → Universes → Access**. Sign-in admission alone does not grant access to shared universes. A local suspension must
+belongs to its organization under **Admin → organization → People**, then grant a role under **Admin → organization → Universes → Access**. Sign-in admission alone does not grant access to shared universes. A local suspension must
 be lifted by a Platform admin even after the provider restores access.

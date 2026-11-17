@@ -98,16 +98,16 @@ attached to every network request a tool makes.
 
 An external MCP server authorizes a call using the credentials configured for
 that connection. The requesting Platform user's role does not follow the call.
-The built-in Configurator setup uses an account application with a universe
+The built-in Configurator setup uses an organization service user with a universe
 Operator grant and a key restricted to configuration operations in that
-universe. Account Admins install it; the runtime brokers its secret into the
+universe. Organization Admins install it; the runtime brokers its secret into the
 MCP connection. Configurator sends the key to Platform for authorization.
 
 A runtime token reaches every method and every universe and can name any actor.
 Never give one to an agent, put one in its workspace or environment, or store
 one as the credential of an MCP connection it can use. Method families and
 universe selectors do not narrow that token's authority. The
-Configurator setup uses a restricted Platform application key. See
+Configurator setup uses a restricted Platform service-user key. See
 [Configurator MCP](../integrating-and-extending/configurator-mcp.md) for the
 service's current status.
 

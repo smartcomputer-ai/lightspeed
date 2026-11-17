@@ -116,7 +116,7 @@ class ImportedConnection:
     single: bool
     allow_insecure_http: bool
     universe: str | None
-    account_id: str | None
+    organization_id: str | None
 
     def _bound(self) -> bool:
         try:
@@ -229,19 +229,19 @@ class ImportedConnection:
             platform = discovery.get("platform")
             credential = platform.get("credential") if isinstance(platform, dict) else None
             principal = platform.get("principal") if isinstance(platform, dict) else None
-            if not isinstance(principal, dict) or principal.get("kind") not in ("user", "application") or not isinstance(principal.get("id"), str):
+            if not isinstance(principal, dict) or principal.get("kind") not in ("user", "serviceUser") or not isinstance(principal.get("id"), str):
                 raise ValueError("Platform discovery omitted its authenticated principal")
-            expected = {"cliSession"} if self.credential_kind == "platformSession" else {"personalKey", "applicationKey"}
+            expected = {"cliSession"} if self.credential_kind == "platformSession" else {"personalKey", "serviceUserKey"}
             if not isinstance(credential, dict) or credential.get("kind") not in expected or not isinstance(credential.get("id"), str):
                 raise ValueError("Platform credential kind does not match the saved connection")
-            expected_principal = "application" if credential["kind"] == "applicationKey" else "user"
+            expected_principal = "serviceUser" if credential["kind"] == "serviceUserKey" else "user"
             if principal.get("kind") != expected_principal:
                 raise ValueError("Platform credential and principal kinds do not agree")
         elif runtime != "runtime":
             raise ValueError("Unsupported deployment kind")
 
 
-def load_connection(name: str | None, config_dir: str | os.PathLike[str] | None, universe: str | None, account: str | None) -> ImportedConnection:
+def load_connection(name: str | None, config_dir: str | os.PathLike[str] | None, universe: str | None, organization: str | None) -> ImportedConnection:
     directory = _config_directory(config_dir)
     config = _read_config(directory)
     selected = name if name is not None else config.get("selected")
@@ -279,16 +279,16 @@ def load_connection(name: str | None, config_dir: str | os.PathLike[str] | None,
     path = Path(os.path.abspath(path_value)) if path_value is not None else None
     if single != (kind == "none") or single != (path is None):
         raise ValueError("Saved authentication mode and credential file do not agree")
-    account_id = _optional_string(account if account is not None else saved.get("accountId"), "accountId")
-    if account_id is not None and server != "platform":
-        raise ValueError("Accounts require a Platform deployment")
+    organization_id = _optional_string(organization if organization is not None else saved.get("organizationId"), "organizationId")
+    if organization_id is not None and server != "platform":
+        raise ValueError("Organizations require a Platform deployment")
     selection = _optional_string(universe if universe is not None else saved.get("universe"), "universe")
-    if account is not None and account != saved.get("accountId") and universe is None:
+    if organization is not None and organization != saved.get("organizationId") and universe is None:
         selection = None
     owned = saved.get("ownedCredential", False)
     if type(owned) is not bool:
         raise ValueError("Saved ownedCredential must be a boolean")
-    result = ImportedConnection(selected, endpoint, kind, server, path, owned, directory, single, allow_insecure, selection, account_id)
+    result = ImportedConnection(selected, endpoint, kind, server, path, owned, directory, single, allow_insecure, selection, organization_id)
     if kind == "platformSession" and owned and not result._owns_session_file():
         raise ValueError("Owned CLI session must live directly in this configuration's credentials directory")
     result.credential()  # Validate before sending any credential over the network.

@@ -84,21 +84,25 @@ impl Platform {
                 let (status, response) = match (method.as_str(), path.as_str()) {
                     (_, "/api/v1/connection") => (
                         200,
-                        json!({"runtime":"platform","contractRevision":"1","caller":{"single":false},"serverInfo":{"name":"Platform","version":"test"},"platform":{"principal":{"kind":"user","id":"creator","name":"Creator","platformAdmin":platform_admin},"credential":{"kind":"personalKey","id":"key-id"},"accounts":[],"restrictions":{}}}),
+                        json!({"runtime":"platform","contractRevision":"1","caller":{"single":false},"serverInfo":{"name":"Platform","version":"test"},"platform":{"principal":{"kind":"user","id":"creator","name":"Creator","platformAdmin":platform_admin},"credential":{"kind":"personalKey","id":"key-id"},"organizations":[],"restrictions":{}}}),
                     ),
-                    ("GET", "/api/v1/platform/accounts/account-a") => {
-                        (200, json!({"account":{"id":"account-a"}}))
+                    ("GET", "/api/v1/platform/organizations/organization-a") => {
+                        (200, json!({"organization":{"id":"organization-a"}}))
                     }
-                    ("GET", "/api/v1/platform/accounts") => {
-                        (200, json!({"accounts":[],"canCreate":true}))
+                    ("GET", "/api/v1/platform/organizations") => {
+                        (200, json!({"organizations":[],"canCreate":true}))
                     }
-                    ("PUT", "/api/v1/platform/accounts/account-a/members/user-b") => (
+                    ("PUT", "/api/v1/platform/organizations/organization-a/members/user-b") => (
                         200,
                         json!({"member":{"userId":"user-b","role":body["role"]}}),
                     ),
-                    ("POST", "/api/v1/platform/accounts/account-a/universes") => (
+                    ("POST", "/api/v1/platform/organizations/organization-a/service-users") => (
                         200,
-                        json!({"universe":{"lightspeedUniverseId":body["universeId"],"handle":body["handle"],"accountId":"account-a"}}),
+                        json!({"serviceUser":{"id":"worker","name":body["name"],"role":body["role"]}}),
+                    ),
+                    ("POST", "/api/v1/platform/organizations/organization-a/universes") => (
+                        200,
+                        json!({"universe":{"lightspeedUniverseId":body["universeId"],"handle":body["handle"],"organizationId":"organization-a"}}),
                     ),
                     ("GET", "/api/v1/universes/new-work") => (
                         404,
@@ -186,13 +190,13 @@ impl Drop for Platform {
 }
 
 #[test]
-fn account_members_use_native_routes_and_path_owned_identifiers() {
+fn organization_members_use_native_routes_and_path_owned_identifiers() {
     let platform = Platform::start();
     platform.success(&[
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
         "platform",
-        "account",
+        "organization",
         "member",
         "set-role",
         "user-b",
@@ -206,16 +210,40 @@ fn account_members_use_native_routes_and_path_owned_identifiers() {
         .unwrap();
     assert_eq!(
         request.1,
-        "/api/v1/platform/accounts/account-a/members/user-b"
+        "/api/v1/platform/organizations/organization-a/members/user-b"
     );
     assert_eq!(request.2, json!({"role":"creator"}));
 }
 #[test]
-fn platform_creation_uses_selected_account_and_explicit_owner() {
+fn service_user_creation_uses_the_selected_organization() {
     let platform = Platform::start();
     platform.success(&[
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
+        "platform",
+        "service-user",
+        "create",
+        "Automation",
+        "--role",
+        "creator",
+    ]);
+    let requests = platform.requests.lock().unwrap();
+    let request = requests
+        .iter()
+        .find(|(method, _, _)| method == "POST")
+        .unwrap();
+    assert_eq!(
+        request.1,
+        "/api/v1/platform/organizations/organization-a/service-users"
+    );
+    assert_eq!(request.2, json!({"name":"Automation","role":"creator"}));
+}
+#[test]
+fn platform_creation_uses_selected_organization_and_explicit_owner() {
+    let platform = Platform::start();
+    platform.success(&[
+        "--organization",
+        "organization-a",
         "universe",
         "create",
         "--handle",
@@ -232,7 +260,10 @@ fn platform_creation_uses_selected_account_and_explicit_owner() {
         .iter()
         .find(|(method, _, _)| method == "POST")
         .unwrap();
-    assert_eq!(request.1, "/api/v1/platform/accounts/account-a/universes");
+    assert_eq!(
+        request.1,
+        "/api/v1/platform/organizations/organization-a/universes"
+    );
     assert_eq!(
         request.2["initialOwner"],
         json!({"kind":"user","id":"creator"})
@@ -240,7 +271,7 @@ fn platform_creation_uses_selected_account_and_explicit_owner() {
     assert_eq!(request.2["metadata"], json!({"team":"blue"}));
     assert!(
         request.2.get("protected").is_none(),
-        "account default remains authoritative"
+        "organization default remains authoritative"
     );
 }
 #[test]
@@ -253,8 +284,8 @@ fn configuration_provisions_through_platform_with_default_protection() {
     )
     .unwrap();
     platform.success(&[
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
         "config",
         "apply",
         "--file",
@@ -265,7 +296,10 @@ fn configuration_provisions_through_platform_with_default_protection() {
         .iter()
         .find(|(method, _, _)| method == "POST")
         .unwrap();
-    assert_eq!(request.1, "/api/v1/platform/accounts/account-a/universes");
+    assert_eq!(
+        request.1,
+        "/api/v1/platform/organizations/organization-a/universes"
+    );
     assert_eq!(request.2["protected"], true);
 }
 #[test]
@@ -318,8 +352,8 @@ fn configuration_retry_keeps_an_explicit_provisioning_uuid() {
     .unwrap();
     let id = "22222222-2222-4222-8222-222222222222";
     let args = [
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
         "config",
         "apply",
         "--file",
@@ -358,8 +392,8 @@ fn configuration_binding_changes_fail_before_any_document_is_written() {
         std::fs::write(platform.directory.path().join(file), document.to_string()).unwrap();
     }
     let result = platform.run(&[
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
         "config",
         "apply",
         "-f",
@@ -390,8 +424,8 @@ fn configuration_creation_with_bindings_is_refused_before_provisioning() {
         json!({"schemaVersion":1,"kind":"universe","handle":"new-work","environmentProviders":[{"providerId":"incus","enabled":true}]}).to_string(),
     ).unwrap();
     let result = platform.run(&[
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
         "config",
         "apply",
         "-f",
@@ -466,8 +500,8 @@ fn creator_configuration_is_applied_by_creation_without_a_second_lifecycle_write
         json!({"schemaVersion":1,"kind":"universe","handle":"new-work","displayName":"New work","protected":false,"metadata":{"purpose":"automation"}}).to_string(),
     ).unwrap();
     platform.success(&[
-        "--account",
-        "account-a",
+        "--organization",
+        "organization-a",
         "config",
         "apply",
         "-f",
@@ -480,7 +514,10 @@ fn creator_configuration_is_applied_by_creation_without_a_second_lifecycle_write
         .collect();
     assert_eq!(writes.len(), 1);
     assert_eq!(writes[0].0, "POST");
-    assert_eq!(writes[0].1, "/api/v1/platform/accounts/account-a/universes");
+    assert_eq!(
+        writes[0].1,
+        "/api/v1/platform/organizations/organization-a/universes"
+    );
     assert_eq!(writes[0].2["name"], "New work");
     assert_eq!(writes[0].2["protected"], false);
     assert_eq!(writes[0].2["metadata"], json!({"purpose":"automation"}));

@@ -12,7 +12,7 @@ class PlatformApi(TypedDict):
 
 
 class Principal(TypedDict):
-    kind: Literal['user', 'application']
+    kind: Literal['user', 'serviceUser']
     id: str
     name: str
     platformAdmin: bool
@@ -22,17 +22,17 @@ class Principal(TypedDict):
 
 
 class Credential(TypedDict):
-    kind: Literal['session', 'cliSession', 'personalKey', 'applicationKey']
+    kind: Literal['session', 'cliSession', 'personalKey', 'serviceUserKey']
     id: str
 
 
-class Account(TypedDict):
+class Organization(TypedDict):
     id: str
     name: str
     role: Literal['member', 'creator', 'admin']
 
 
-AccountId: TypeAlias = str
+OrganizationId: TypeAlias = str
 
 
 UniverseId: TypeAlias = str
@@ -42,7 +42,7 @@ Operation: TypeAlias = str
 
 
 class Restrictions(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
@@ -52,7 +52,7 @@ class Restrictions(TypedDict):
 class PlatformConnectionDetails(TypedDict):
     principal: Principal
     credential: Credential
-    accounts: list[Account]
+    organizations: list[Organization]
     restrictions: Restrictions
 
 
@@ -61,7 +61,7 @@ class PlatformSessionReadParams(TypedDict):
 
 
 class Principal1(TypedDict):
-    kind: Literal['user', 'application']
+    kind: Literal['user', 'serviceUser']
     id: str
     name: str
     email: str | None
@@ -92,7 +92,7 @@ class PlatformCredentialsListParams(TypedDict):
 
 
 class Restrictions1(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
@@ -116,7 +116,7 @@ class PlatformCredentialsListResult(TypedDict):
 
 
 class Restrictions2(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
@@ -130,7 +130,7 @@ class PlatformCredentialsCreateParams(TypedDict):
 
 
 class Restrictions3(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
@@ -162,13 +162,13 @@ class PlatformCredentialsRevokeResult(TypedDict):
     revoked: Literal[True]
 
 
-class PlatformApplicationsCredentialsListParams(TypedDict):
-    accountId: str
-    applicationId: str
+class PlatformServiceUsersCredentialsListParams(TypedDict):
+    organizationId: str
+    serviceUserId: str
 
 
 class Restrictions4(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
@@ -187,28 +187,28 @@ class Credential4(TypedDict):
     restrictions: Restrictions4
 
 
-class PlatformApplicationsCredentialsListResult(TypedDict):
+class PlatformServiceUsersCredentialsListResult(TypedDict):
     credentials: list[Credential4]
 
 
 class Restrictions5(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
     allowUniverseCreation: NotRequired[bool]
 
 
-class PlatformApplicationsCredentialsCreateParams(TypedDict):
+class PlatformServiceUsersCredentialsCreateParams(TypedDict):
     name: str
     expiresInDays: NotRequired[int]
     restrictions: NotRequired[Restrictions5]
-    accountId: str
-    applicationId: str
+    organizationId: str
+    serviceUserId: str
 
 
 class Restrictions6(TypedDict):
-    accountIds: NotRequired[list[AccountId]]
+    organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
     readOnly: NotRequired[bool]
@@ -227,22 +227,22 @@ class Credential5(TypedDict):
     restrictions: Restrictions6
 
 
-class PlatformApplicationsCredentialsCreateResult(TypedDict):
+class PlatformServiceUsersCredentialsCreateResult(TypedDict):
     credential: Credential5
     secret: str
 
 
-class PlatformApplicationsCredentialsRevokeParams(TypedDict):
-    accountId: str
-    applicationId: str
+class PlatformServiceUsersCredentialsRevokeParams(TypedDict):
+    organizationId: str
+    serviceUserId: str
     keyId: str
 
 
-class PlatformApplicationsCredentialsRevokeResult(TypedDict):
+class PlatformServiceUsersCredentialsRevokeResult(TypedDict):
     revoked: Literal[True]
 
 
-class PlatformAccountsListParams(TypedDict):
+class PlatformOrganizationsListParams(TypedDict):
     pass
 
 
@@ -268,7 +268,7 @@ class MembershipPolicy(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account1(TypedDict):
+class Organization1(TypedDict):
     id: str
     name: str
     slug: str
@@ -282,12 +282,12 @@ class Account1(TypedDict):
     createdAt: str
 
 
-class PlatformAccountsListResult(TypedDict):
-    accounts: list[Account1]
+class PlatformOrganizationsListResult(TypedDict):
+    organizations: list[Organization1]
     canCreate: bool
 
 
-class PlatformAccountsCreateParams(TypedDict):
+class PlatformOrganizationsCreateParams(TypedDict):
     name: str
     slug: str
     kind: NotRequired[Literal['shared', 'development']]
@@ -313,7 +313,7 @@ class MembershipPolicy1(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account2(TypedDict):
+class Organization2(TypedDict):
     id: str
     name: str
     slug: str
@@ -327,12 +327,12 @@ class Account2(TypedDict):
     createdAt: str
 
 
-class PlatformAccountsCreateResult(TypedDict):
-    account: Account2
+class PlatformOrganizationsCreateResult(TypedDict):
+    organization: Organization2
 
 
-class PlatformAccountsReadParams(TypedDict):
-    accountId: str
+class PlatformOrganizationsReadParams(TypedDict):
+    organizationId: str
 
 
 class Members4(TypedDict):
@@ -351,7 +351,7 @@ class MembershipPolicy2(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account3(TypedDict):
+class Organization3(TypedDict):
     id: str
     name: str
     slug: str
@@ -365,8 +365,8 @@ class Account3(TypedDict):
     createdAt: str
 
 
-class PlatformAccountsReadResult(TypedDict):
-    account: Account3
+class PlatformOrganizationsReadResult(TypedDict):
+    organization: Organization3
 
 
 class Members6(TypedDict):
@@ -385,14 +385,14 @@ class MembershipPolicy3(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class PlatformAccountsUpdateParams(TypedDict):
+class PlatformOrganizationsUpdateParams(TypedDict):
     name: NotRequired[str]
     enabled: NotRequired[bool]
     universeQuota: NotRequired[int]
     defaultProtected: NotRequired[bool]
     requireProtected: NotRequired[bool]
     membershipPolicy: NotRequired[MembershipPolicy3]
-    accountId: str
+    organizationId: str
 
 
 class Members8(TypedDict):
@@ -411,7 +411,7 @@ class MembershipPolicy4(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
-class Account4(TypedDict):
+class Organization4(TypedDict):
     id: str
     name: str
     slug: str
@@ -425,12 +425,12 @@ class Account4(TypedDict):
     createdAt: str
 
 
-class PlatformAccountsUpdateResult(TypedDict):
-    account: Account4
+class PlatformOrganizationsUpdateResult(TypedDict):
+    organization: Organization4
 
 
-class PlatformAccountsMembersListParams(TypedDict):
-    accountId: str
+class PlatformOrganizationsMembersListParams(TypedDict):
+    organizationId: str
 
 
 class Member(TypedDict):
@@ -442,79 +442,79 @@ class Member(TypedDict):
     createdAt: str
 
 
-class PlatformAccountsMembersListResult(TypedDict):
+class PlatformOrganizationsMembersListResult(TypedDict):
     members: list[Member]
 
 
-class PlatformAccountsMembersPutParams(TypedDict):
+class PlatformOrganizationsMembersPutParams(TypedDict):
     userId: str
     role: NotRequired[Literal['member', 'creator', 'admin']]
-    accountId: str
+    organizationId: str
 
 
-class PlatformAccountsMembersPutResult(TypedDict):
+class PlatformOrganizationsMembersPutResult(TypedDict):
     member: Member
 
 
-class PlatformAccountsMembersDeleteParams(TypedDict):
-    accountId: str
+class PlatformOrganizationsMembersDeleteParams(TypedDict):
+    organizationId: str
     userId: str
 
 
-class PlatformAccountsMembersDeleteResult(TypedDict):
+class PlatformOrganizationsMembersDeleteResult(TypedDict):
     ok: Literal[True]
 
 
-class PlatformAccountsApplicationsListParams(TypedDict):
-    accountId: str
+class PlatformOrganizationsServiceUsersListParams(TypedDict):
+    organizationId: str
 
 
-class Application(TypedDict):
+class ServiceUser(TypedDict):
     id: str
-    accountId: str
+    organizationId: str
     name: str
     enabled: bool
     role: Literal['member', 'creator', 'admin']
     createdAt: str
 
 
-class PlatformAccountsApplicationsListResult(TypedDict):
-    applications: list[Application]
+class PlatformOrganizationsServiceUsersListResult(TypedDict):
+    serviceUsers: list[ServiceUser]
 
 
-class PlatformAccountsApplicationsCreateParams(TypedDict):
+class PlatformOrganizationsServiceUsersCreateParams(TypedDict):
     name: str
     role: NotRequired[Literal['member', 'creator', 'admin']]
-    accountId: str
+    organizationId: str
 
 
-class PlatformAccountsApplicationsCreateResult(TypedDict):
-    application: Application
+class PlatformOrganizationsServiceUsersCreateResult(TypedDict):
+    serviceUser: ServiceUser
 
 
-class PlatformAccountsApplicationsUpdateParams(TypedDict):
+class PlatformOrganizationsServiceUsersUpdateParams(TypedDict):
     name: NotRequired[str]
     enabled: NotRequired[bool]
     role: NotRequired[Literal['member', 'creator', 'admin']]
-    accountId: str
-    applicationId: str
+    organizationId: str
+    serviceUserId: str
 
 
-class PlatformAccountsApplicationsUpdateResult(TypedDict):
-    application: Application
+class PlatformOrganizationsServiceUsersUpdateResult(TypedDict):
+    serviceUser: ServiceUser
 
 
-class PlatformAccountsApplicationsDeleteParams(TypedDict):
-    accountId: str
-    applicationId: str
+class PlatformOrganizationsServiceUsersDeleteParams(TypedDict):
+    organizationId: str
+    serviceUserId: str
 
 
-class PlatformAccountsApplicationsDeleteResult(TypedDict):
+class PlatformOrganizationsServiceUsersDeleteResult(TypedDict):
     ok: Literal[True]
 
 
 class InitialOwner(TypedDict):
-    kind: Literal['user', 'application']
+    kind: Literal['user', 'serviceUser']
     id: str
 
 
@@ -522,17 +522,17 @@ class PlatformUniversesAdoptParams(TypedDict):
     lightspeedUniverseId: str
     name: str
     initialOwner: InitialOwner
-    accountId: str
+    organizationId: str
 
 
 class Universe(TypedDict):
     id: str
-    accountId: str
+    organizationId: str
     lightspeedUniverseId: str
     name: str
     handle: str
     role: Literal['viewer', 'contributor', 'operator', 'owner']
-    accountRole: Literal['member', 'creator', 'admin'] | None
+    organizationRole: Literal['member', 'creator', 'admin'] | None
     status: Literal['provisioning', 'active', 'archived', 'deleting']
     protected: bool
     expiresAtMs: float | None
@@ -557,7 +557,7 @@ class PlatformUniversesCreateParams(TypedDict):
     metadata: NotRequired[dict[str, str]]
     protected: NotRequired[bool]
     expiresAtMs: NotRequired[int | None]
-    accountId: str
+    organizationId: str
 
 
 class PlatformUniversesCreateResult(TypedDict):
@@ -582,7 +582,7 @@ class PlatformUniversesGrantsListParams(TypedDict):
 
 
 class Principal2(TypedDict):
-    kind: Literal['user', 'application']
+    kind: Literal['user', 'serviceUser']
     id: str
 
 

@@ -1,27 +1,27 @@
-# People, accounts, and roles
+# People, organizations, and roles
 
-A person signs in to the Platform. An **account** groups universes, people, and
-applications. Each universe belongs to exactly one account. Better Auth
-organizations store accounts; a Better Auth user remains a person, and its
-OAuth connection records are unrelated to these product accounts.
+A person signs in to the Platform. An **organization** groups universes, people, and
+service users. Each universe belongs to exactly one organization. Better Auth
+provides the organization and membership records. A Better Auth user remains
+a person; its OAuth connection records are unrelated to organizations.
 
-Accounts can be personal, shared, or development accounts. Personal accounts
+Organizations can be personal, shared, or development organizations. Personal organizations
 are provisioned for admitted users by default, including company users; a
-deployment can disable this. Shared accounts can represent a company or a
-business unit. Accounts are siblings, without nesting. Account Admins can see
-and administer all universes in their account, including private sessions.
+deployment can disable this. Shared organizations can represent a company or a
+business unit. Organizations are siblings, without nesting. Organization Admins can see
+and administer all universes in their organization, including private sessions.
 
-## Account and deployment roles
+## Organization and deployment roles
 
 | Role | Authority |
 | --- | --- |
-| **Platform Admin** | Rare deployment-wide administration, including all accounts and universes. |
-| **Account Admin** | Account policy, members, applications, and every universe in that account. |
-| **Creator** | Create universes within the account's quota and policy. Receives Owner on universes they create, without gaining access to other universes. |
-| **Member** | Access only to universes explicitly assigned to them or granted through account policy. |
+| **Platform Admin** | Rare deployment-wide administration, including all organizations and universes. |
+| **Organization Admin** | Organization policy, members, service users, and every universe in that organization. |
+| **Creator** | Create universes within the organization's quota and policy. Receives Owner on universes they create, without gaining access to other universes. |
+| **Member** | Access only to universes explicitly assigned to them or granted through organization policy. |
 
-Account membership is required for an ordinary user's universe grant to take
-effect. Losing account membership disables those grants; it does not destroy
+Organization membership is required for an ordinary user's universe grant to take
+effect. Losing organization membership disables those grants; it does not destroy
 universes. Removing Creator permission leaves existing Owner grants intact.
 `createdBy` is attribution, not continuing ownership or authority.
 
@@ -53,11 +53,11 @@ Platform Admins permanently purge soft-deleted session history.
 A universe can have multiple Owners. Creation establishes an explicit initial
 Owner. Ordinary grant changes cannot remove the last Owner; add another
 first. Suspension still takes effect immediately, even for a sole Owner, and
-Account Admins can restore access. Owners grant access to existing account
-members and applications. Account membership management requires an Account
+Organization Admins can restore access. Owners grant access to existing organization
+members and service users. Organization membership management requires an Organization
 Admin.
 
-## Provision people and accounts
+## Provision people and organizations
 
 Company sign-in admits users according to the configured provider claims.
 Users are identified by exact issuer and subject, never automatically linked
@@ -68,59 +68,76 @@ Without company sign-in, public signup is disabled. A Platform Admin creates
 users under **Admin → Users**. The first administrator comes from
 [the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
 Users manage their profile, sign-in settings, and personal keys under **Your profile**.
-The read-only **User ID** there can be shared with an account admin when joining
-an account. Platform Admins can also copy it from **Admin → Users → Edit user**.
+The read-only **User ID** there can be shared with an organization admin when joining
+an organization. Platform Admins can also copy it from **Admin → Users → Edit user**.
 Company-managed users change their identity and password with their
 company identity provider.
 
-Under **Admin → Accounts**, select a personal or shared account. Account Admins add
-existing users by user ID, assign Member, Creator, or Admin, and manage
-applications. New shared members default to Member. Shared account creation
-is restricted to Platform Admins by default; deployments can explicitly
-allow admitted users to create their own shared accounts. There is no email
-invitation or SCIM workflow yet.
+In **Admin**, choose an organization in the sidebar. Organization Admins manage
+**Universes**, **People**, **Service users**, **API keys**, and **Settings** there.
+People lists existing users: add them by user ID and assign Member, Creator, or
+Admin. New shared members default to Member. Shared organization creation is
+restricted to Platform Admins by default; deployments may allow admitted users
+to create their own. There is no email invitation or SCIM workflow yet.
 
-**New universe** selects an account where the caller is a Creator or Admin.
-The initial quotas are 25 universes for personal accounts and 100 for shared
-accounts, configurable by deployment and account policy. Shared universes are
-protected by default; personal and development universes are not. Account
+**New universe** selects an organization where the caller is a Creator or Admin.
+Creating from an organization's Admin page fixes that destination. The initial
+quotas are 25 universes for personal organizations and 100 for shared ones,
+configurable by deployment and organization policy. Shared universes are
+protected by default; personal and development universes are not. Organization
 policy may require protection. Handles remain unique across the deployment.
 
-Under **Admin → Universes → select universe → Access**, assign existing account users or applications
-one of the four universe roles. Membership changes apply on the next admitted
-request. Requests already admitted and work already running can continue;
-cancel that work separately if necessary.
+The working universe switcher groups accessible active universes by organization
+and supports search. A personal organization is labeled **Personal**. Switching
+directly between universes does not require first switching organizations.
+Organization membership alone does not make every universe visible: explicit
+grants, declared policy, or administrator authority still determine access.
 
-The **Admin** area sits above universes and shows only the administration
-available to the signed-in person. Account Admins see their administered
-accounts and universes; universe Owners see only their administered universes.
-Platform Admins see all accounts and universes, plus deployment-wide user,
-connector, audit, and provider controls. Personal API keys remain under
-**Your profile**. Account and universe access checks still run on the server.
+Under **Admin → organization → Universes → select universe → Access**, assign
+existing organization users or service users one of the four universe roles.
+Changes apply to the next admitted request. Requests already admitted and work
+already running can continue; cancel that work separately if necessary.
 
-Account and application creation, membership changes, and new key issuance use
-explicit add/edit dialogs. Opening a different account changes only that page's
-context; there is no implicit deployment-wide active account.
+The **Admin** area sits above working universes. Universe Owners can select the
+organization containing their universe but only administer their owned
+universes. They do not gain organization-wide People, Service users, API keys,
+or Settings pages. Organization Admins administer all universes in their
+organization. **Platform** is a separate sidebar section for organization
+inventory, sign-in users, deployment-wide universe operations, infrastructure,
+connectors, and audit. Its pages show **Platform administration** and are
+unaffected by the organization selector.
 
-## Applications and API keys
+Organization context is explicit in each Admin URL; it does not change another
+tab's context. Creation and membership changes use explicit add/edit dialogs
+with Save and Cancel. Dialogs remain scrollable on small screens. Organization
+and universe access checks still run on the server.
 
-Applications are account records with their own role and universe grants.
-They have no fake email address or human session. Account Admins create and
-manage them under **Admin → Accounts → select account → Applications**. Disabling an application blocks
-its keys without deleting its universes.
+## Service users and API keys
 
-A personal key represents the user; an application key represents the
-application. Every request intersects that principal's current authority with
-the key's allowed accounts, universe UUIDs, operations, and optional read-only
+Service users are nonhuman identities belonging to one organization, with their
+own organization role and universe grants. They have no fake email address or
+human session. Organization Admins manage them under **Admin → organization →
+Service users** and their credentials under **API keys**. Disabling a service
+user blocks its keys without deleting its universes.
+
+A user key represents the signed-in person; a service-user key represents the
+service user. User keys live under **Your profile → Your API keys**. The web form for a new user
+key defaults to one organization; selecting **All my accessible organizations**
+explicitly permits broader use. That choice still grants only the user's
+current permissions. Service-user keys always belong to their identity's one
+organization and may be narrowed further.
+
+Every request intersects that principal's current authority with the key's
+allowed organizations, universe UUIDs, operations, and optional read-only
 restriction. An existing-universe restriction does not permit creation.
-Credential management requires a browser session. See
+Credential management requires a human browser or CLI session. See
 [API keys and runtime tokens](api-keys-and-service-access.md).
 
 ## Protection and expiry
 
 A protected universe cannot be deleted, including by an administrator or an
-automatic expiry sweep. Owners can enable protection. Only an Account Admin
-or Platform Admin can clear it, and mandatory account policy must first be
+automatic expiry sweep. Owners can enable protection. Only an Organization Admin
+or Platform Admin can clear it, and mandatory organization policy must first be
 changed. Clearing protection and deleting are separate operations.
 
 An unprotected universe may have an expiry timestamp. Expiry and protection
@@ -130,7 +147,7 @@ deletion. Metadata is retained in the deletion record.
 
 Configuration documents protect newly created universes when protection is
 omitted; they preserve an existing universe's protection when omitted.
-Runtime configuration carries runtime settings and metadata only. Account
+Runtime configuration carries runtime settings and metadata only. Organization
 membership declarations and universe access policies belong to the Platform.
 
 ## Session expiry and suspension
@@ -140,7 +157,7 @@ limit by default. Company sign-in retains its bounded admission policy:
 eight hours by default, without sliding renewal. A directory refresh source
 has not yet been implemented, so company API keys also require current
 company admission. A recent browser session is not required for local
-personal or application keys.
+user or service-user keys.
 
 Suspension blocks subsequent requests and preserves resources and historical
 attribution. Session revocation signs out browser sessions; revoke keys

@@ -19,11 +19,11 @@ Each part answers a different question:
 
 | Part | What it establishes |
 | --- | --- |
-| Universe | Which team's resources a request addresses. Each universe belongs to one Platform account; an account can have many universes. |
-| Account and membership | A personal or shared group of universes, with Admin, Creator, or Member roles and separate universe grants. Better Auth organizations store accounts. |
+| Universe | Which team's resources a request addresses. Each universe belongs to one Platform organization; an organization can have many universes. |
+| Organization and membership | A personal or shared group of universes, with Admin, Creator, or Member roles and separate universe grants. Backed by Better Auth organizations. |
 | Role | Which operations a person may request: Viewer, Contributor, Operator, or Owner. |
 | Runtime token | Full deployment authority for a trusted component or operator. |
-| Actor | Who a trusted client says requested an operation. The Platform supplies the authenticated user or application's ID. |
+| Actor | Who a trusted client says requested an operation. The Platform supplies the authenticated user or service user's ID. |
 | Session visibility | Whether a session is private to its creator and universe Owners, or shared with the universe through the Platform. |
 
 An actor is attribution, not a role or an execution identity. Core stores the
@@ -56,7 +56,7 @@ an investigation they already started or a bot they created.
 
 Internal bot and delegation controllers have a separate, narrow set of rules
 for the sessions they manage. External tools use their configured credentials.
-Configurator setup uses a universe-scoped application key with a reviewed
+Configurator setup uses a universe-scoped service-user key with a reviewed
 configuration operation allowlist. [Agent and tool access](agent-and-tool-access.md) follows both paths
 and explains what each check protects.
 

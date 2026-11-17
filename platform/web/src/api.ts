@@ -94,8 +94,8 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
 }
 
 export interface Universe {
-  accountId?: string;
-  accountRole?: "admin" | "creator" | "member" | null;
+  organizationId?: string;
+  organizationRole?: "admin" | "creator" | "member" | null;
   protected?: boolean;
   expiresAtMs?: number | null;
   runtimeConfiguration?: Omit<import("@lightspeed-ai/sdk").DeploymentUniverseConfigurationPutParams, "universe">;

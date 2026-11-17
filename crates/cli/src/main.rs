@@ -38,9 +38,9 @@ struct Cli {
     /// Use a saved runtime or Platform connection for this invocation.
     #[arg(long, global = true)]
     connection: Option<String>,
-    /// Platform account for this invocation.
+    /// Platform organization for this invocation.
     #[arg(long, global = true)]
-    account: Option<String>,
+    organization: Option<String>,
     /// Universe UUID or handle for this invocation.
     #[arg(long, global = true)]
     universe: Option<String>,
@@ -53,7 +53,7 @@ enum Command {
     /// Manage saved runtime and Platform connections.
     #[command(visible_alias = "connections")]
     Connect(connection::ConnectArgs),
-    /// Manage Platform accounts, applications, and API keys.
+    /// Manage Platform organizations, service users, and API keys.
     Platform(platform_cli::PlatformArgs),
     /// Call a runtime or Platform operation using JSON parameters.
     Api(platform_cli::ApiArgs),
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
             cli.connection.as_deref(),
             cli.universe.as_deref(),
             cli.api_url.as_deref(),
-            cli.account.as_deref(),
+            cli.organization.as_deref(),
         )
         .await;
     }
@@ -133,9 +133,9 @@ async fn main() -> Result<()> {
         wait,
     )
     .await?;
-    connection::apply_account_override(
+    connection::apply_organization_override(
         &mut active,
-        cli.account.as_deref(),
+        cli.organization.as_deref(),
         cli.universe.as_deref(),
     )?;
     connection::ACTIVE
@@ -193,8 +193,8 @@ mod tests {
             "skills",
             "login",
             "logout",
-            "account",
-            "application",
+            "organization",
+            "service-user",
             "api-key",
             "access",
         ] {
@@ -203,8 +203,8 @@ mod tests {
         for path in [
             vec!["connect", "login"],
             vec!["connect", "logout"],
-            vec!["platform", "account", "show"],
-            vec!["platform", "application", "create"],
+            vec!["platform", "organization", "show"],
+            vec!["platform", "service-user", "create"],
             vec!["platform", "api-key", "create"],
             vec!["universe", "access", "put"],
             vec!["api"],

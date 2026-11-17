@@ -1,4 +1,5 @@
-import { useAdminAccess } from "@/lib/admin-access";
+import { OrganizationSwitcher } from "@/components/admin/organization-switcher";
+import { organizationAdminPath, useAdminAccess } from "@/lib/admin-access";
 import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
@@ -34,11 +35,8 @@ import { useDialogStarscapeWarmth } from "@/components/starscape/use-dialog-star
 import type { SessionUser } from "@/auth";
 import { rememberUniverse, useUniverses } from "@/lib/universes";
 
-/// The sidebar has four modes. Universe mode is the app's top level:
-/// switcher + universe nav. Admin, account and preferences are modes
-/// *above* the universe structure — the header becomes a deliberately
-/// generic "Back" (naming no universe) and the content is the mode's own
-/// menu, if it has one.
+/// Working universes and organization administration have explicit context switchers.
+/// Platform controls are a separate deployment-wide section inside Admin.
 type ShellMode = "universe" | "admin" | "account" | "preferences";
 
 const ADMIN_TITLE = "Admin";
@@ -58,14 +56,20 @@ function shellMode(pathname: string): ShellMode {
   return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
 }
 
-const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string; scope: "accounts" | "universes" | "keys" | "platform" }> = [
-  { to: "/admin/accounts", icon: UserIcon, label: "Accounts", scope: "accounts" },
-  { to: "/admin/universes", icon: UniversesIcon, label: "Universes", scope: "universes" },
-  { to: "/admin/api-keys", icon: SecurityIcon, label: "API keys", scope: "keys" },
-  { to: "/admin/users", icon: UserAdminIcon, label: "Users", scope: "platform" },
-  { to: "/admin/channels", icon: ChannelIcon, label: "Channels", scope: "platform" },
-  { to: "/admin/audit", icon: AuditLogIcon, label: "Audit log", scope: "platform" },
-  { to: "/admin/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", scope: "platform" },
+const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
+  { to: "/admin/platform/organizations", icon: UserIcon, label: "Organizations" },
+  { to: "/admin/platform/universes", icon: UniversesIcon, label: "Universe inventory" },
+  { to: "/admin/platform/users", icon: UserAdminIcon, label: "Users" },
+  { to: "/admin/platform/channels", icon: ChannelIcon, label: "Channels" },
+  { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log" },
+  { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
+];
+const ORGANIZATION_NAV = [
+  { path: "universes", icon: UniversesIcon, label: "Universes", administrator: false },
+  { path: "people", icon: UserIcon, label: "People", administrator: true },
+  { path: "service-users", icon: UserAdminIcon, label: "Service users", administrator: true },
+  { path: "api-keys", icon: SecurityIcon, label: "API keys", administrator: true },
+  { path: "settings", icon: SecurityIcon, label: "Settings", administrator: true },
 ];
 
 /// The part of the page title the route alone determines, most specific
@@ -74,10 +78,12 @@ const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string; scope: 
 export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
   const mode = shellMode(pathname);
   if (mode === "admin") {
-    const detail = matchPath("/admin/universes/:handle/:section", pathname);
+    const detail = matchPath("/admin/organizations/:organizationId/universes/:handle/:section", pathname);
     if (detail) return [detail.params.section === "access" ? "Access" : "Settings and lifecycle", universeName ?? detail.params.handle!, "Admin"];
-    const item = ADMIN_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
-    return item ? [item.label, ADMIN_TITLE] : [ADMIN_TITLE];
+    const item = PLATFORM_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
+    if (item) return [item.label, "Platform administration"];
+    const section = pathname.split("/")[4];
+    return [ORGANIZATION_NAV.find(item => item.path === section)?.label ?? ADMIN_TITLE, ADMIN_TITLE];
   }
   if (mode !== "universe") return [MODE_TITLE[mode]];
   const universe = matchPath("/u/:handle/*", pathname);
@@ -115,7 +121,7 @@ function NavItem({
   );
 }
 
-/// Header slot for admin/account modes: whole row navigates back to the
+/// Header slot for profile and preferences: whole row navigates back to the
 /// app (HomeRedirect resolves the last-visited universe or the empty
 /// state); the mode title marks where you are.
 function ModeHeader({ title }: { title: string }) {
@@ -142,7 +148,7 @@ const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label
   account: [
     { id: "profile", label: "Profile", icon: UserIcon },
     { id: "security", label: "Sign-in", icon: SecurityIcon },
-    { id: "api-keys", label: "Personal API keys", icon: SecurityIcon },
+    { id: "api-keys", label: "Your API keys", icon: SecurityIcon },
   ],
   preferences: [
     { id: "appearance", label: "Appearance", icon: AppearanceIcon },
@@ -158,10 +164,10 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
   const universes = useUniverses();
   const adminAccess = useAdminAccess();
   const match = useMatch("/u/:handle/*");
-  const adminMatch = useMatch("/admin/universes/:handle/*");
+  const adminMatch = useMatch("/admin/organizations/:organizationId/universes/:handle/*");
   const activeHandle = match?.params.handle ?? adminMatch?.params.handle;
   const active = activeHandle
-    ? universes.data?.find((u) => u.handle === activeHandle)
+    ? universes.data?.find((u) => u.handle === activeHandle && (!adminMatch || u.organizationId === adminMatch.params.organizationId))
     : undefined;
   const permissions = useActionPermissions(active?.id);
   const location = useLocation();
@@ -181,7 +187,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
   }, [active, mode]);
 
   // The main menu's width can be dragged, and dragged narrow enough it
-  // folds to icons; both are kept per account.
+  // folds to icons; both are kept per user.
   const { sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useUserPreferences();
   const sidebarResize = useResizableWidth({
     stored: sidebarWidth,
@@ -225,7 +231,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         <SidebarHeader className="relative h-(--pane-bar-height) shrink-0 justify-center p-(--sidebar-header-padding)">
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
-          ) : (
+          ) : mode === "admin" ? <OrganizationSwitcher /> : (
             <ModeHeader title={MODE_TITLE[mode]} />
           )}
         </SidebarHeader>
@@ -251,18 +257,14 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               </SidebarGroup>
             );
           })}
-          {mode === "admin" && (
-            <SidebarGroup>
-              <SidebarGroupLabel>{ADMIN_TITLE}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {ADMIN_NAV.filter(item => adminAccess[item.scope]).map((item) => (
-                    <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} />
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
+          {mode === "admin" && <>
+            {adminAccess.selected && <SidebarGroup><SidebarGroupLabel>Organization</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
+              {ORGANIZATION_NAV.filter(item => !item.administrator || adminAccess.organizations).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
+            </SidebarMenu></SidebarGroupContent></SidebarGroup>}
+            {adminAccess.platform && <SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
+              {PLATFORM_NAV.map(item => <NavItem key={item.to} {...item} />)}
+            </SidebarMenu></SidebarGroupContent></SidebarGroup>}
+          </>}
           {(mode === "account" || mode === "preferences") && (
             <SidebarGroup>
               <SidebarGroupLabel>{MODE_TITLE[mode]}</SidebarGroupLabel>
@@ -287,7 +289,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           )}
         </SidebarContent>
         <SidebarFooter>
-          <UserMenu user={user} canAdmin={adminAccess.any} />
+          <UserMenu user={user} canAdmin={adminAccess.any} organizationId={active?.organizationId} />
         </SidebarFooter>
         <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>

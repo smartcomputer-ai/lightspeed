@@ -60,7 +60,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
     <>
       <PageHeader
         title="Users"
-        description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage account membership in Admin → Accounts and universe roles in Admin → Universes → Access." : "People who can sign in to this deployment. Create local users here; manage account membership in Admin → Accounts."}
+        description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage organization membership in Admin → organization → People and universe roles in Admin → organization → Universes → Access." : "People who can sign in to this deployment. Create local users here; manage organization membership in Admin → organization → People."}
         actions={
           config.data && config.data.password !== "off" && <Button onClick={() => setCreateOpen(true)}>
             <AddIcon data-icon="inline-start" />
@@ -274,7 +274,7 @@ function EditUserDialog({
         <DialogHeader>
           <DialogTitle>Edit user</DialogTitle>
           <DialogDescription>
-            {company ? `Identity and platform role for ${user?.email} are managed by the company. Universe roles are managed in Admin → Universes → Access.` : `Update the user profile for ${user?.email}. A password reset signs the user out of every session.`}
+            {company ? `Identity and platform role for ${user?.email} are managed by the company. Universe roles are managed in Admin → organization → Universes → Access.` : `Update the user profile for ${user?.email}. A password reset signs the user out of every session.`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-5">
@@ -307,7 +307,7 @@ function EditUserDialog({
             <Field>
               <FieldLabel htmlFor="edit-user-id">User ID</FieldLabel>
               <Input id="edit-user-id" value={user?.id ?? ""} readOnly onFocus={(event) => event.currentTarget.select()} />
-              <FieldDescription>Use this ID to add this person to an account under Admin → Accounts.</FieldDescription>
+              <FieldDescription>Use this ID to add this person to an organization under Admin → organization → People.</FieldDescription>
             </Field>
             <Field>
               <FieldLabel htmlFor="edit-user-role">Platform role</FieldLabel>

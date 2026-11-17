@@ -14,7 +14,7 @@
               "type": "string",
               "enum": [
                 "user",
-                "application"
+                "serviceUser"
               ]
             },
             "id": {
@@ -45,7 +45,7 @@
                 "session",
                 "cliSession",
                 "personalKey",
-                "applicationKey"
+                "serviceUserKey"
               ]
             },
             "id": {
@@ -58,7 +58,7 @@
           ],
           "additionalProperties": false
         },
-        "accounts": {
+        "organizations": {
           "type": "array",
           "items": {
             "type": "object",
@@ -89,7 +89,7 @@
         "restrictions": {
           "type": "object",
           "properties": {
-            "accountIds": {
+            "organizationIds": {
               "maxItems": 1000,
               "type": "array",
               "items": {
@@ -129,7 +129,7 @@
       "required": [
         "principal",
         "credential",
-        "accounts",
+        "organizations",
         "restrictions"
       ],
       "additionalProperties": false
@@ -149,7 +149,7 @@
               "type": "string",
               "enum": [
                 "user",
-                "application"
+                "serviceUser"
               ]
             },
             "id": {
@@ -182,7 +182,7 @@
                 "session",
                 "cliSession",
                 "personalKey",
-                "applicationKey"
+                "serviceUserKey"
               ]
             },
             "id": {
@@ -301,7 +301,7 @@
               "restrictions": {
                 "type": "object",
                 "properties": {
-                  "accountIds": {
+                  "organizationIds": {
                     "maxItems": 1000,
                     "type": "array",
                     "items": {
@@ -375,7 +375,7 @@
           "default": {},
           "type": "object",
           "properties": {
-            "accountIds": {
+            "organizationIds": {
               "maxItems": 1000,
               "type": "array",
               "items": {
@@ -459,7 +459,7 @@
             "restrictions": {
               "type": "object",
               "properties": {
-                "accountIds": {
+                "organizationIds": {
                   "maxItems": 1000,
                   "type": "array",
                   "items": {
@@ -545,26 +545,26 @@
       ],
       "additionalProperties": false
     },
-    "PlatformApplicationsCredentialsListParams": {
+    "PlatformServiceUsersCredentialsListParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         },
-        "applicationId": {
+        "serviceUserId": {
           "type": "string",
           "format": "uuid",
           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
         }
       },
       "required": [
-        "accountId",
-        "applicationId"
+        "organizationId",
+        "serviceUserId"
       ],
       "additionalProperties": false
     },
-    "PlatformApplicationsCredentialsListResult": {
+    "PlatformServiceUsersCredentialsListResult": {
       "type": "object",
       "properties": {
         "credentials": {
@@ -608,7 +608,7 @@
               "restrictions": {
                 "type": "object",
                 "properties": {
-                  "accountIds": {
+                  "organizationIds": {
                     "maxItems": 1000,
                     "type": "array",
                     "items": {
@@ -665,7 +665,7 @@
       ],
       "additionalProperties": false
     },
-    "PlatformApplicationsCredentialsCreateParams": {
+    "PlatformServiceUsersCredentialsCreateParams": {
       "type": "object",
       "properties": {
         "name": {
@@ -682,7 +682,7 @@
           "default": {},
           "type": "object",
           "properties": {
-            "accountIds": {
+            "organizationIds": {
               "maxItems": 1000,
               "type": "array",
               "items": {
@@ -718,11 +718,11 @@
           },
           "additionalProperties": false
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         },
-        "applicationId": {
+        "serviceUserId": {
           "type": "string",
           "format": "uuid",
           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -730,12 +730,12 @@
       },
       "required": [
         "name",
-        "accountId",
-        "applicationId"
+        "organizationId",
+        "serviceUserId"
       ],
       "additionalProperties": false
     },
-    "PlatformApplicationsCredentialsCreateResult": {
+    "PlatformServiceUsersCredentialsCreateResult": {
       "type": "object",
       "properties": {
         "credential": {
@@ -777,7 +777,7 @@
             "restrictions": {
               "type": "object",
               "properties": {
-                "accountIds": {
+                "organizationIds": {
                   "maxItems": 1000,
                   "type": "array",
                   "items": {
@@ -837,14 +837,14 @@
       ],
       "additionalProperties": false
     },
-    "PlatformApplicationsCredentialsRevokeParams": {
+    "PlatformServiceUsersCredentialsRevokeParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         },
-        "applicationId": {
+        "serviceUserId": {
           "type": "string",
           "format": "uuid",
           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
@@ -855,13 +855,13 @@
         }
       },
       "required": [
-        "accountId",
-        "applicationId",
+        "organizationId",
+        "serviceUserId",
         "keyId"
       ],
       "additionalProperties": false
     },
-    "PlatformApplicationsCredentialsRevokeResult": {
+    "PlatformServiceUsersCredentialsRevokeResult": {
       "type": "object",
       "properties": {
         "revoked": {
@@ -874,15 +874,15 @@
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsListParams": {
+    "PlatformOrganizationsListParams": {
       "type": "object",
       "properties": {},
       "additionalProperties": false
     },
-    "PlatformAccountsListResult": {
+    "PlatformOrganizationsListResult": {
       "type": "object",
       "properties": {
-        "accounts": {
+        "organizations": {
           "type": "array",
           "items": {
             "type": "object",
@@ -1058,12 +1058,12 @@
         }
       },
       "required": [
-        "accounts",
+        "organizations",
         "canCreate"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsCreateParams": {
+    "PlatformOrganizationsCreateParams": {
       "type": "object",
       "properties": {
         "name": {
@@ -1105,10 +1105,10 @@
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsCreateResult": {
+    "PlatformOrganizationsCreateResult": {
       "type": "object",
       "properties": {
-        "account": {
+        "organization": {
           "type": "object",
           "properties": {
             "id": {
@@ -1278,27 +1278,27 @@
         }
       },
       "required": [
-        "account"
+        "organization"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsReadParams": {
+    "PlatformOrganizationsReadParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsReadResult": {
+    "PlatformOrganizationsReadResult": {
       "type": "object",
       "properties": {
-        "account": {
+        "organization": {
           "type": "object",
           "properties": {
             "id": {
@@ -1468,11 +1468,11 @@
         }
       },
       "required": [
-        "account"
+        "organization"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsUpdateParams": {
+    "PlatformOrganizationsUpdateParams": {
       "type": "object",
       "properties": {
         "name": {
@@ -1589,20 +1589,20 @@
           },
           "additionalProperties": false
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsUpdateResult": {
+    "PlatformOrganizationsUpdateResult": {
       "type": "object",
       "properties": {
-        "account": {
+        "organization": {
           "type": "object",
           "properties": {
             "id": {
@@ -1772,24 +1772,24 @@
         }
       },
       "required": [
-        "account"
+        "organization"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsMembersListParams": {
+    "PlatformOrganizationsMembersListParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsMembersListResult": {
+    "PlatformOrganizationsMembersListResult": {
       "type": "object",
       "properties": {
         "members": {
@@ -1842,7 +1842,7 @@
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsMembersPutParams": {
+    "PlatformOrganizationsMembersPutParams": {
       "type": "object",
       "properties": {
         "userId": {
@@ -1858,18 +1858,18 @@
             "admin"
           ]
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
         "userId",
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsMembersPutResult": {
+    "PlatformOrganizationsMembersPutResult": {
       "type": "object",
       "properties": {
         "member": {
@@ -1919,10 +1919,10 @@
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsMembersDeleteParams": {
+    "PlatformOrganizationsMembersDeleteParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         },
@@ -1932,12 +1932,12 @@
         }
       },
       "required": [
-        "accountId",
+        "organizationId",
         "userId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsMembersDeleteResult": {
+    "PlatformOrganizationsMembersDeleteResult": {
       "type": "object",
       "properties": {
         "ok": {
@@ -1950,23 +1950,23 @@
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsListParams": {
+    "PlatformOrganizationsServiceUsersListParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsListResult": {
+    "PlatformOrganizationsServiceUsersListResult": {
       "type": "object",
       "properties": {
-        "applications": {
+        "serviceUsers": {
           "type": "array",
           "items": {
             "type": "object",
@@ -1975,7 +1975,7 @@
                 "type": "string",
                 "minLength": 1
               },
-              "accountId": {
+              "organizationId": {
                 "type": "string",
                 "minLength": 1
               },
@@ -2003,7 +2003,7 @@
             },
             "required": [
               "id",
-              "accountId",
+              "organizationId",
               "name",
               "enabled",
               "role",
@@ -2014,11 +2014,11 @@
         }
       },
       "required": [
-        "applications"
+        "serviceUsers"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsCreateParams": {
+    "PlatformOrganizationsServiceUsersCreateParams": {
       "type": "object",
       "properties": {
         "name": {
@@ -2035,28 +2035,28 @@
             "admin"
           ]
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
         "name",
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsCreateResult": {
+    "PlatformOrganizationsServiceUsersCreateResult": {
       "type": "object",
       "properties": {
-        "application": {
+        "serviceUser": {
           "type": "object",
           "properties": {
             "id": {
               "type": "string",
               "minLength": 1
             },
-            "accountId": {
+            "organizationId": {
               "type": "string",
               "minLength": 1
             },
@@ -2084,7 +2084,7 @@
           },
           "required": [
             "id",
-            "accountId",
+            "organizationId",
             "name",
             "enabled",
             "role",
@@ -2094,11 +2094,11 @@
         }
       },
       "required": [
-        "application"
+        "serviceUser"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsUpdateParams": {
+    "PlatformOrganizationsServiceUsersUpdateParams": {
       "type": "object",
       "properties": {
         "name": {
@@ -2117,32 +2117,32 @@
             "admin"
           ]
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         },
-        "applicationId": {
+        "serviceUserId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
-        "accountId",
-        "applicationId"
+        "organizationId",
+        "serviceUserId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsUpdateResult": {
+    "PlatformOrganizationsServiceUsersUpdateResult": {
       "type": "object",
       "properties": {
-        "application": {
+        "serviceUser": {
           "type": "object",
           "properties": {
             "id": {
               "type": "string",
               "minLength": 1
             },
-            "accountId": {
+            "organizationId": {
               "type": "string",
               "minLength": 1
             },
@@ -2170,7 +2170,7 @@
           },
           "required": [
             "id",
-            "accountId",
+            "organizationId",
             "name",
             "enabled",
             "role",
@@ -2180,29 +2180,29 @@
         }
       },
       "required": [
-        "application"
+        "serviceUser"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsDeleteParams": {
+    "PlatformOrganizationsServiceUsersDeleteParams": {
       "type": "object",
       "properties": {
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         },
-        "applicationId": {
+        "serviceUserId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
-        "accountId",
-        "applicationId"
+        "organizationId",
+        "serviceUserId"
       ],
       "additionalProperties": false
     },
-    "PlatformAccountsApplicationsDeleteResult": {
+    "PlatformOrganizationsServiceUsersDeleteResult": {
       "type": "object",
       "properties": {
         "ok": {
@@ -2235,7 +2235,7 @@
               "type": "string",
               "enum": [
                 "user",
-                "application"
+                "serviceUser"
               ]
             },
             "id": {
@@ -2249,7 +2249,7 @@
           ],
           "additionalProperties": false
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
@@ -2258,7 +2258,7 @@
         "lightspeedUniverseId",
         "name",
         "initialOwner",
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
@@ -2272,7 +2272,7 @@
               "type": "string",
               "minLength": 1
             },
-            "accountId": {
+            "organizationId": {
               "type": "string",
               "minLength": 1
             },
@@ -2298,7 +2298,7 @@
                 "owner"
               ]
             },
-            "accountRole": {
+            "organizationRole": {
               "anyOf": [
                 {
                   "type": "string",
@@ -2372,12 +2372,12 @@
           },
           "required": [
             "id",
-            "accountId",
+            "organizationId",
             "lightspeedUniverseId",
             "name",
             "handle",
             "role",
-            "accountRole",
+            "organizationRole",
             "status",
             "protected",
             "expiresAtMs",
@@ -2421,7 +2421,7 @@
               "type": "string",
               "enum": [
                 "user",
-                "application"
+                "serviceUser"
               ]
             },
             "id": {
@@ -2459,14 +2459,14 @@
             }
           ]
         },
-        "accountId": {
+        "organizationId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
         "name",
-        "accountId"
+        "organizationId"
       ],
       "additionalProperties": false
     },
@@ -2480,7 +2480,7 @@
               "type": "string",
               "minLength": 1
             },
-            "accountId": {
+            "organizationId": {
               "type": "string",
               "minLength": 1
             },
@@ -2506,7 +2506,7 @@
                 "owner"
               ]
             },
-            "accountRole": {
+            "organizationRole": {
               "anyOf": [
                 {
                   "type": "string",
@@ -2580,12 +2580,12 @@
           },
           "required": [
             "id",
-            "accountId",
+            "organizationId",
             "lightspeedUniverseId",
             "name",
             "handle",
             "role",
-            "accountRole",
+            "organizationRole",
             "status",
             "protected",
             "expiresAtMs",
@@ -2664,7 +2664,7 @@
               "type": "string",
               "minLength": 1
             },
-            "accountId": {
+            "organizationId": {
               "type": "string",
               "minLength": 1
             },
@@ -2690,7 +2690,7 @@
                 "owner"
               ]
             },
-            "accountRole": {
+            "organizationRole": {
               "anyOf": [
                 {
                   "type": "string",
@@ -2764,12 +2764,12 @@
           },
           "required": [
             "id",
-            "accountId",
+            "organizationId",
             "lightspeedUniverseId",
             "name",
             "handle",
             "role",
-            "accountRole",
+            "organizationRole",
             "status",
             "protected",
             "expiresAtMs",
@@ -2825,7 +2825,7 @@
                     "type": "string",
                     "enum": [
                       "user",
-                      "application"
+                      "serviceUser"
                     ]
                   },
                   "id": {
@@ -2884,7 +2884,7 @@
               "type": "string",
               "enum": [
                 "user",
-                "application"
+                "serviceUser"
               ]
             },
             "id": {
@@ -2940,7 +2940,7 @@
                   "type": "string",
                   "enum": [
                     "user",
-                    "application"
+                    "serviceUser"
                   ]
                 },
                 "id": {

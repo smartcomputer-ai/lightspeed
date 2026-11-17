@@ -18,7 +18,7 @@ interface SavedConnection {
   serverKind: "runtime" | "platform";
   credentialFile?: string;
   ownedCredential?: boolean;
-  accountId?: string;
+  organizationId?: string;
   universe?: string;
   allowInsecureHttp?: boolean;
 }
@@ -29,8 +29,8 @@ export interface ConnectionClientOptions {
   configDir?: string;
   /** Invocation-only selection; never rewrites the CLI's saved metadata. */
   universe?: string;
-  /** A different account clears the saved universe unless universe is explicitly supplied. */
-  account?: string;
+  /** A different organization clears the saved universe unless universe is explicitly supplied. */
+  organization?: string;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -125,10 +125,10 @@ function savedConnection(value: unknown): SavedConnection {
   if (!record(value) || !nonempty(value.endpoint) || typeof value.single !== "boolean" ||
       !["none", "runtimeToken", "platformApiKey", "platformSession"].includes(String(value.credentialKind)) ||
       !["runtime", "platform"].includes(String(value.serverKind))) throw new Error("Invalid saved connection metadata; save it again with the CLI");
-  for (const field of ["credentialFile", "accountId", "universe"] as const) if (value[field] != null && !nonempty(value[field])) throw new Error(`Invalid saved connection ${field}`);
+  for (const field of ["credentialFile", "organizationId", "universe"] as const) if (value[field] != null && !nonempty(value[field])) throw new Error(`Invalid saved connection ${field}`);
   for (const field of ["ownedCredential", "allowInsecureHttp"] as const) if (value[field] !== undefined && typeof value[field] !== "boolean") throw new Error(`Invalid saved connection ${field}`);
   const saved = { ...value } as unknown as SavedConnection;
-  for (const field of ["credentialFile", "accountId", "universe"] as const) if (value[field] === null) delete saved[field];
+  for (const field of ["credentialFile", "organizationId", "universe"] as const) if (value[field] === null) delete saved[field];
   if ((saved.credentialKind === "none") !== saved.single || (saved.single ? saved.credentialFile != null : !saved.credentialFile)) throw new Error("Saved connection credential does not match its authentication mode");
   if ((saved.serverKind === "runtime") !== ["none", "runtimeToken"].includes(saved.credentialKind)) throw new Error("Saved credential kind does not match the deployment kind");
   if (saved.credentialFile && !isAbsolute(saved.credentialFile)) throw new Error("Saved credential path must be absolute");
@@ -151,9 +151,9 @@ export async function createClientFromConnection(options: ConnectionClientOption
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const loopback = host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
   if (url.protocol !== "https:" && !loopback && !saved.allowInsecureHttp) throw new Error("Saved deployment requires HTTPS or an explicit CLI insecure-HTTP opt-in");
-  const accountId = options.account ?? saved.accountId;
-  if (accountId !== undefined && (!accountId.trim() || saved.serverKind !== "platform")) throw new Error("Account selection requires a Platform deployment and a nonempty account ID");
-  let universe = options.universe ?? (options.account !== undefined && options.account !== saved.accountId ? undefined : saved.universe);
+  const organizationId = options.organization ?? saved.organizationId;
+  if (organizationId !== undefined && (!organizationId.trim() || saved.serverKind !== "platform")) throw new Error("Organization selection requires a Platform deployment and a nonempty organization ID");
+  let universe = options.universe ?? (options.organization !== undefined && options.organization !== saved.organizationId ? undefined : saved.universe);
   if (universe !== undefined && !universe.trim()) throw new Error("Universe selection must not be empty");
   const file = saved.credentialFile;
   if (file) await readCredential(file); // Refuse insecure input before any network request.
@@ -174,7 +174,7 @@ export async function createClientFromConnection(options: ConnectionClientOption
   const clientOptions: LightspeedClientOptions = {
     endpoint,
     token: async () => { const pending = file ? rotations.get(file) : undefined; if (pending) await pending; await binding(); return file ? readCredential(file) : undefined; },
-    ...(accountId === undefined ? {} : { accountId }),
+    ...(organizationId === undefined ? {} : { organizationId }),
     ...(universe === undefined ? {} : { universe }),
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     ...(ownedSession && file ? { onSessionToken: async (token: string, previous: string) => { if (!verified) { initialRotation = { token, previous }; return; } await rotateCredential(file, dir, token, previous, binding); } } : {}),
@@ -186,11 +186,11 @@ export async function createClientFromConnection(options: ConnectionClientOption
   if (saved.serverKind === "platform") {
     const platform = discovery.platform;
     const kind = record(platform) && record(platform.credential) ? platform.credential.kind : undefined;
-    if (saved.credentialKind === "platformSession" ? kind !== "cliSession" : kind !== "personalKey" && kind !== "applicationKey") throw new Error("Saved credential kind does not match authenticated Platform authority");
+    if (saved.credentialKind === "platformSession" ? kind !== "cliSession" : kind !== "personalKey" && kind !== "serviceUserKey") throw new Error("Saved credential kind does not match authenticated Platform authority");
   }
   verified = true;
   if (initialRotation && file) await rotateCredential(file, dir, initialRotation.token, initialRotation.previous, binding);
-  if (universe === undefined && (!accountId || saved.serverKind === "runtime") && nonempty(discovery.defaultUniverse)) {
+  if (universe === undefined && (!organizationId || saved.serverKind === "runtime") && nonempty(discovery.defaultUniverse)) {
     universe = discovery.defaultUniverse;
     client = new LightspeedClient({ ...clientOptions, universe });
   }

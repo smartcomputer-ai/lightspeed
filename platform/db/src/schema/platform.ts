@@ -21,7 +21,7 @@ export const identityAudit = pgTable("identity_audit", {
   details: jsonb("details").$type<Record<string, string | boolean | null>>().default({}).notNull(),
 }, (table) => [index("identity_audit_created_idx").on(table.createdAt)]);
 
-/// A runtime universe belongs to one account; creator identity is attribution only.
+/// A runtime universe belongs to one organization; creator identity is attribution only.
 export const universes = pgTable("universes", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: text("organization_id")
@@ -49,8 +49,8 @@ export const universes = pgTable("universes", {
   updatedAt: updatedAt(),
 });
 
-/** Independently enabled automation, owned by an account rather than a human profile. */
-export const applications = pgTable("applications", {
+/** Independently enabled automation, owned by an organization rather than a human profile. */
+export const serviceUsers = pgTable("service_users", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
@@ -58,25 +58,25 @@ export const applications = pgTable("applications", {
   role: text("role", { enum: ["admin", "creator", "member"] }).default("member").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, (table) => [index("applications_organization_idx").on(table.organizationId)]);
+}, (table) => [index("service_users_organization_idx").on(table.organizationId)]);
 
-/** Membership in the containing account remains mandatory for every grant. */
+/** Membership in the containing organization remains mandatory for every grant. */
 export const universeGrants = pgTable("universe_grants", {
   id: uuid("id").primaryKey().defaultRandom(),
   universeId: uuid("universe_id").notNull().references(() => universes.id, { onDelete: "cascade" }),
   userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
-  applicationId: uuid("application_id").references(() => applications.id, { onDelete: "cascade" }),
+  serviceUserId: uuid("service_user_id").references(() => serviceUsers.id, { onDelete: "cascade" }),
   role: text("role", { enum: ["owner", "operator", "contributor", "viewer"] }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
-  check("universe_grants_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.applicationId} IS NOT NULL)`),
+  check("universe_grants_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.serviceUserId} IS NOT NULL)`),
   uniqueIndex("universe_grants_user_idx").on(table.universeId, table.userId),
-  uniqueIndex("universe_grants_application_idx").on(table.universeId, table.applicationId),
+  uniqueIndex("universe_grants_service_user_idx").on(table.universeId, table.serviceUserId),
 ]);
 
 export interface CredentialRestrictions {
-  accountIds?: string[];
+  organizationIds?: string[];
   universeIds?: string[];
   operations?: string[];
   readOnly?: boolean;
@@ -87,19 +87,19 @@ export interface CredentialRestrictions {
 export const credentialBindings = pgTable("credential_bindings", {
   keyId: text("key_id").primaryKey().references(() => apikey.id, { onDelete: "cascade" }),
   userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
-  applicationId: uuid("application_id").references(() => applications.id, { onDelete: "cascade" }),
+  serviceUserId: uuid("service_user_id").references(() => serviceUsers.id, { onDelete: "cascade" }),
   restrictions: jsonb("restrictions").$type<CredentialRestrictions>().default({}).notNull(),
   createdBy: text("created_by").notNull(),
   createdAt: createdAt(),
 }, (table) => [
-  check("credential_bindings_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.applicationId} IS NOT NULL)`),
+  check("credential_bindings_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.serviceUserId} IS NOT NULL)`),
   index("credential_bindings_user_idx").on(table.userId),
-  index("credential_bindings_application_idx").on(table.applicationId),
+  index("credential_bindings_service_user_idx").on(table.serviceUserId),
 ]);
 
 export type UniverseSetupState = {
-  previous?: { applicationId?: string; credentialId?: string; grantId?: string; serverId?: string };
-  applicationId?: string;
+  previous?: { serviceUserId?: string; credentialId?: string; grantId?: string; serverId?: string };
+  serviceUserId?: string;
   credentialId?: string;
   grantId?: string;
   serverId?: string;

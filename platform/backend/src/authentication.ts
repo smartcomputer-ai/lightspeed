@@ -5,8 +5,8 @@ import type { AppContext } from "./context.js";
 import type { Session } from "./auth.js";
 import type { AuthContext } from "./auth-context.js";
 import { principalAllowed, sessionAllowed } from "./auth-access.js";
-import { APPLICATION_KEY_CONFIG, APPLICATION_KEY_PREFIX, PERSONAL_KEY_CONFIG, PERSONAL_KEY_PREFIX } from "./api-key-config.js";
-import { ensurePersonalAccount } from "./personal-accounts.js";
+import { SERVICE_USER_KEY_CONFIG, SERVICE_USER_KEY_PREFIX, PERSONAL_KEY_CONFIG, PERSONAL_KEY_PREFIX } from "./api-key-config.js";
+import { ensurePersonalOrganization } from "./personal-organizations.js";
 
 /** A valid credential exceeding its budget is retryable, not unauthenticated. */
 export class CredentialRateLimit extends Error {
@@ -18,7 +18,7 @@ export class CredentialRateLimit extends Error {
   }
 }
 
-/** Authentication resolves once; account/universe services apply current authority afterward. */
+/** Authentication resolves once; organization/universe services apply current authority afterward. */
 export async function authenticateRequest(ctx: AppContext, request: Request): Promise<{ auth: AuthContext; session?: Session; renewedToken?: string } | null> {
   const authorization = request.headers.get("authorization");
   if (authorization !== null) {
@@ -26,7 +26,7 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
     const match = /^Bearer ([^\s,]+)$/i.exec(authorization);
     if (!match || match[1]!.length > 4096) return null;
     const secret = match[1]!;
-    const configId = secret.startsWith(PERSONAL_KEY_PREFIX) ? PERSONAL_KEY_CONFIG : secret.startsWith(APPLICATION_KEY_PREFIX) ? APPLICATION_KEY_CONFIG : null;
+    const configId = secret.startsWith(PERSONAL_KEY_PREFIX) ? PERSONAL_KEY_CONFIG : secret.startsWith(SERVICE_USER_KEY_PREFIX) ? SERVICE_USER_KEY_CONFIG : null;
     if (!configId) {
       // Ignore cookies completely when a bearer is explicit. Better Auth owns
       // token decoding/signatures; only device-issued CLI sessions are accepted.
@@ -56,7 +56,7 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
     const limits = credentialRestrictionsSchema.safeParse(binding.restrictions);
     if (!limits.success) return null;
     if (configId === PERSONAL_KEY_CONFIG) {
-      if (!binding.userId || binding.applicationId || binding.userId !== key.referenceId) return null;
+      if (!binding.userId || binding.serviceUserId || binding.userId !== key.referenceId) return null;
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, binding.userId));
       if (!user || !principalAllowed(user, ctx.env)) return null;
       return { auth: {
@@ -64,21 +64,21 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
         credential: { kind: "personalKey", id: key.id, restrictions: limits.data }, actorId: user.id,
       } };
     }
-    if (!binding.applicationId || binding.userId) return null;
-    const [row] = await ctx.db.select({ application: schema.applications, account: schema.organization }).from(schema.applications)
-      .innerJoin(schema.organization, eq(schema.organization.id, schema.applications.organizationId))
-      .where(eq(schema.applications.id, binding.applicationId));
-    if (!row?.application.enabled || !row.account.enabled || row.account.id !== key.referenceId) return null;
+    if (!binding.serviceUserId || binding.userId) return null;
+    const [row] = await ctx.db.select({ serviceUser: schema.serviceUsers, organization: schema.organization }).from(schema.serviceUsers)
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.serviceUsers.organizationId))
+      .where(eq(schema.serviceUsers.id, binding.serviceUserId));
+    if (!row?.serviceUser.enabled || !row.organization.enabled || row.organization.id !== key.referenceId) return null;
     return { auth: {
-      principal: { kind: "application", id: row.application.id, application: row.application, accountId: row.account.id, platformAdmin: false },
-      credential: { kind: "applicationKey", id: key.id, restrictions: limits.data }, actorId: `application:${row.application.id}`,
+      principal: { kind: "serviceUser", id: row.serviceUser.id, serviceUser: row.serviceUser, organizationId: row.organization.id, platformAdmin: false },
+      credential: { kind: "serviceUserKey", id: key.id, restrictions: limits.data }, actorId: `serviceUser:${row.serviceUser.id}`,
     } };
   }
   const session = await ctx.auth.api.getSession({ headers: request.headers });
   if (!session || session.session.sessionKind !== "browser" || !sessionAllowed(session, ctx.env)) return null;
   const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, session.user.id));
   if (!user || !principalAllowed(user, ctx.env) || !sessionAllowed({ user, session: session.session }, ctx.env)) return null;
-  await ensurePersonalAccount(ctx.db, ctx.env, user.id);
+  await ensurePersonalOrganization(ctx.db, ctx.env, user.id);
   return { session, auth: {
     principal: { kind: "user", id: user.id, user, platformAdmin: user.role?.split(",").includes("admin") === true },
     credential: { kind: "session", id: session.session.id, restrictions: {} }, actorId: user.id,

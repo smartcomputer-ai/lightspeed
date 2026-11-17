@@ -21,7 +21,7 @@ vi.mock("@/lib/permissions", async (original) => ({
 }));
 vi.mock("@/lib/universes", async (original) => {
   const universe = () => ({
-    id: "universe", handle: "test", name: "Test", status: "active", lightspeedUniverseId: "engine", role: "owner", features: mocks.features,
+    id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", lightspeedUniverseId: "engine", role: "owner", features: mocks.features,
   });
   return {
     ...await original<typeof import("@/lib/universes")>(),
@@ -71,7 +71,7 @@ it("tells an admin where a switched-off feature is turned on", async () => {
   await render(<FeatureGate feature="bots"><p>Bot list</p></FeatureGate>);
   expect(container.textContent).toContain("Bots are turned off in this universe");
   expect(container.textContent).not.toContain("Bot list");
-  expect(container.querySelector("a")?.getAttribute("href")).toBe("/admin/universes/test/settings");
+  expect(container.querySelector("a")?.getAttribute("href")).toBe("/admin/organizations/team/universes/test/settings");
 });
 
 it("tells a member an admin can turn it on", async () => {

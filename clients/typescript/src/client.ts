@@ -47,8 +47,8 @@ export interface LightspeedClientOptions {
   /** Bearer credential or per-request provider. Omit for a single runtime,
    * header-based authentication, or same-origin Platform browser session cookies. */
   token?: string | (() => string | undefined | Promise<string | undefined>);
-  /** Saved account context; native helpers still take accountId explicitly. */
-  accountId?: string;
+  /** Saved organization context; native helpers still take organizationId explicitly. */
+  organizationId?: string;
   /** Persist a rotated CLI session only when this request used the expected credential. */
   onSessionToken?: (token: string, previousToken: string) => void | Promise<void>;
   /**
@@ -124,7 +124,7 @@ export class LightspeedClient extends LightspeedHelpers {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly headers: LightspeedClientOptions["headers"];
-  readonly accountId: string | undefined;
+  readonly organizationId: string | undefined;
   readonly platform: PlatformHelpers;
 
   constructor(endpoint: string | URL);
@@ -139,7 +139,7 @@ export class LightspeedClient extends LightspeedHelpers {
     }
     this.endpoint = normalizeEndpoint(resolved.endpoint);
     this.options = { ...resolved, endpoint: this.endpoint };
-    this.accountId = resolved.accountId;
+    this.organizationId = resolved.organizationId;
     this.platform = new PlatformHelpers(this);
     this.fetchImpl = fetchImpl;
     this.headers = resolved.headers;
@@ -224,7 +224,7 @@ export class LightspeedClient extends LightspeedHelpers {
     return await this.readBody(response, options.signal) as ClientOperationResult<M>;
   }
 
-  /** Native account, application, credential, and universe management on Platform. */
+  /** Native organization, service-user, credential, and universe management on Platform. */
   private async requestPlatform(operation: PlatformOperationId, params: PlatformOperationParams<PlatformOperationId>, options: CallOptions): Promise<unknown> {
     const spec = PLATFORM_OPERATIONS[operation];
     const body = { ...params } as Record<string, unknown>;

@@ -94,16 +94,22 @@ mod tests {
     #[test]
     fn native_paths_remove_owned_fields_from_body_and_encode_segments() {
         let parts = request_parts(
-            "platform/accounts/members/put",
-            json!({"accountId":"a/b", "userId":"u?#", "role":"creator"}),
+            "platform/organizations/members/put",
+            json!({"organizationId":"a/b", "userId":"u?#", "role":"creator"}),
         )
         .unwrap();
         assert_eq!(
             parts.path,
-            "/api/v1/platform/accounts/a%2Fb/members/u%3F%23"
+            "/api/v1/platform/organizations/a%2Fb/members/u%3F%23"
         );
         assert_eq!(parts.body, Some(json!({"role":"creator"})));
-        assert!(request_parts("platform/accounts/read", json!({"accountId":".."})).is_err());
+        assert!(
+            request_parts(
+                "platform/organizations/read",
+                json!({"organizationId":".."})
+            )
+            .is_err()
+        );
         assert!(request_parts("platform/invented", json!({})).is_err());
     }
 }

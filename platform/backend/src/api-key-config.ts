@@ -2,9 +2,9 @@ import type { ApiKeyConfigurationOptions } from "@better-auth/api-key";
 import type { ServerEnv } from "./env.js";
 
 export const PERSONAL_KEY_CONFIG = "personal";
-export const APPLICATION_KEY_CONFIG = "application";
+export const SERVICE_USER_KEY_CONFIG = "serviceUser";
 export const PERSONAL_KEY_PREFIX = "lsp_";
-export const APPLICATION_KEY_PREFIX = "lsa_";
+export const SERVICE_USER_KEY_PREFIX = "lsa_";
 
 export function apiKeyConfigurations(env: Pick<ServerEnv, "apiKeyDefaultExpiryDays" | "apiKeyMaxExpiryDays">): ApiKeyConfigurationOptions[] {
   const maximum = env.apiKeyMaxExpiryDays ?? 365;
@@ -19,6 +19,6 @@ export function apiKeyConfigurations(env: Pick<ServerEnv, "apiKeyDefaultExpiryDa
   };
   return [
     { ...common, configId: PERSONAL_KEY_CONFIG, references: "user", defaultPrefix: PERSONAL_KEY_PREFIX },
-    { ...common, configId: APPLICATION_KEY_CONFIG, references: "organization", defaultPrefix: APPLICATION_KEY_PREFIX },
+    { ...common, configId: SERVICE_USER_KEY_CONFIG, references: "organization", defaultPrefix: SERVICE_USER_KEY_PREFIX },
   ];
 }

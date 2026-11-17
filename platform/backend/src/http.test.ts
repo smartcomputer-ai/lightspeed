@@ -5,7 +5,7 @@ import { AuthorizationRefusal } from "./auth-context.js";
 import { withApiErrors } from "./http.js";
 
 it("preserves authorization and transaction refusal status for the app error handler", async () => {
-  for (const error of [new AuthorizationRefusal(403, "Account is disabled"), new HTTPException(409, { message: "Installation was superseded" })]) {
+  for (const error of [new AuthorizationRefusal(403, "Organization is disabled"), new HTTPException(409, { message: "Installation was superseded" })]) {
     const app = new Hono();
     app.onError((failure, c) => failure instanceof HTTPException ? c.json({ error: failure.message }, failure.status) : c.json({ error: "unexpected" }, 500));
     app.get("/", c => withApiErrors(c, async () => { throw error; }));

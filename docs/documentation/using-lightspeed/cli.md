@@ -3,11 +3,11 @@
 One `lightspeed` CLI connects to either the core runtime or Platform. A runtime
 in single mode needs no credential. An authenticated direct runtime requires
 an infrastructure token with full runtime authority. Platform connections use
-a personal/application API key or browser-approved CLI session, with the same
-current account and universe permissions as other Platform API clients.
+a user/service-user API key or browser-approved CLI session, with the same
+current organization and universe permissions as other Platform API clients.
 
-`connect` manages connections and login. `platform account`,
-`platform application`, and `platform api-key` manage Platform resources.
+`connect` manages connections and login. `platform organization`,
+`platform service-user`, and `platform api-key` manage Platform resources.
 `universe access` manages grants and declared access policy for a universe.
 The generic `api` command remains at the root.
 
@@ -18,8 +18,8 @@ Use the deployment URL, with or without `/api/v1`:
 ```bash
 lightspeed connect login --url https://lightspeed.example --name work
 lightspeed connect status
-lightspeed platform account list
-lightspeed platform account use ACCOUNT_ID
+lightspeed platform organization list
+lightspeed platform organization use ORGANIZATION_ID
 lightspeed universe list
 lightspeed universe use my-universe
 lightspeed session list
@@ -48,42 +48,42 @@ removing a connection does not revoke its key. HTTPS is required for credentials
 except on loopback; `--allow-insecure-http` explicitly opts a connection into
 remote plaintext HTTP for controlled development environments.
 
-The global `--account ACCOUNT_ID` overrides account selection for one command.
-`platform account use` saves it and clears the previous universe selection.
-Account selection guides provisioning and account commands; it does not grant access.
-Use `--connection NAME`, `--account`, and `--universe` together for automation.
+The global `--organization ORGANIZATION_ID` overrides organization selection for one command.
+`platform organization use` saves it and clears the previous universe selection.
+Organization selection guides provisioning and organization commands; it does not grant access.
+Use `--connection NAME`, `--organization`, and `--universe` together for automation.
 
 ### Platform administration
 
 ```bash
-lightspeed platform account member list
-lightspeed platform account member add USER_ID --role creator
-lightspeed platform application create "Build automation" --role creator
+lightspeed platform organization member list
+lightspeed platform organization member add USER_ID --role creator
+lightspeed platform service-user create "Build automation" --role creator
 lightspeed universe create --name "Development" --handle development
-lightspeed universe access put --application APPLICATION_ID --role operator
+lightspeed universe access put --service-user SERVICE_USER_ID --role operator
 lightspeed platform api-key create local-tool --scope-universe UNIVERSE_UUID --output-secret ./local-tool.key
-lightspeed platform api-key --application APPLICATION_ID create build --output-secret ./build.key
+lightspeed platform api-key --service-user SERVICE_USER_ID create build --output-secret ./build.key
 ```
 
-Account Admins manage members and applications; Creators can create universes.
-A creator becomes the initial universe Owner unless an authorized account Admin
+Organization Admins manage members and service users; Creators can create universes.
+A creator becomes the initial universe Owner unless an authorized organization Admin
 selects another Owner. Platform Admin provisioning requires `--owner-user` or
-`--owner-application`. Account policy supplies default deletion protection;
+`--owner-service-user`. Organization policy supplies default deletion protection;
 `config apply` creates new universes protected unless the document says otherwise.
 For retryable provisioning, pass `--universe-id UUID` to `config diff` and
 `config apply` for a single document; otherwise the plan prints a new UUID
 before creation so an interrupted attempt can be retried explicitly.
-Keys can be further limited with `--scope-account`, `--scope-universe`,
+Keys can be further limited with `--scope-organization`, `--scope-universe`,
 `--operation`, `--read-only`, and `--allow-universe-creation`. Key management
 requires a human browser or CLI session; API keys cannot mint other keys.
 New key secrets require `--output-secret FILE` (creates a new private file) or
 explicit `--show-secret`.
 
-Use `platform account update --file settings.json` for account settings and
+Use `platform organization update --file settings.json` for organization settings and
 `universe access policy-put --file policy.json` for declared access policy. `universe archive` and
 `universe restore` change Platform presentation state; they do not delete runtime
 resources. `api OPERATION --params params.json` exposes generated runtime and
-Platform operations, for example `platform/accounts/list` and `profiles/list`,
+Platform operations, for example `platform/organizations/list` and `profiles/list`,
 without a separate copy of their routes. This generic command accepts JSON
 operations; streaming and binary resources use their dedicated commands. Platform user suspension and company
 identity administration remain web administration features.
@@ -212,7 +212,7 @@ for old overrides there if the effective connection is unexpected.
 Saved connections live in `$XDG_CONFIG_HOME/lightspeed` or
 `$HOME/.config/lightspeed`. `LIGHTSPEED_CONFIG_DIR` overrides that directory.
 `connect status` shows the deployment kind, authentication kind, authenticated
-principal, selected account, and the selected universe's current handle and UUID. `universe status` shows just
+principal, selected organization, and the selected universe's current handle and UUID. `universe status` shows just
 the active universe. A direct connection has full runtime authority.
 `universe list` marks the selected universe with `*`. These commands support
 `--json`, as does `connect list`.
@@ -397,7 +397,7 @@ All linked universes use Platform's configured runtime endpoint and have
 distinct handles within that deployment.
 
 IDs, profiles and sessions stay in the runtime; Platform records the containing
-account and explicit universe grants. This
+organization and explicit universe grants. This
 association does not automatically share private sessions. Direct CLI access
 continues to work while Platform is stopped.
 
@@ -422,9 +422,9 @@ before deleting. `config apply` protects newly created universes when omitted
 and preserves protection on existing universes.
 
 Resource operations work through Platform with an API key or browser-approved
-CLI session. `universe create` uses the selected account on Platform and the
+CLI session. `universe create` uses the selected organization on Platform and the
 runtime deployment API for direct connections. Platform checks the principal
-and credential restrictions, including account Admin authority to clear
+and credential restrictions, including organization Admin authority to clear
 protection. Direct runtime credentials retain infrastructure authority.
 
 ## Command layout

@@ -14,7 +14,7 @@ export function sessionRoutes(ctx: AppContext) {
       // authority. It also works for keys without a human session.
       const auth = getAuth(c); const principal = auth.principal;
       return c.json({ principal: { kind: principal.kind, id: principal.id,
-        name: principal.kind === "user" ? principal.user.name : principal.application.name,
+        name: principal.kind === "user" ? principal.user.name : principal.serviceUser.name,
         email: principal.kind === "user" ? principal.user.email : null },
         credential: { kind: auth.credential.kind, id: auth.credential.id },
         session: auth.session ? { id: auth.session.id, createdAt: auth.session.createdAt.toISOString(), expiresAt: auth.session.expiresAt.toISOString() } : null });

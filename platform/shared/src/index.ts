@@ -25,7 +25,7 @@ export const universeUpdateSchema = z.object({
 });
 export type UniverseUpdateInput = z.infer<typeof universeUpdateSchema>;
 
-/// Member roles, least to most. Explicit grants assign these roles within an account.
+/// Member roles, least to most. Explicit grants assign these roles within an organization.
 export const UNIVERSE_ROLES = ["viewer", "contributor", "operator", "owner"] as const;
 export const universeRoleSchema = z.enum(UNIVERSE_ROLES);
 export type UniverseRole = z.infer<typeof universeRoleSchema>;

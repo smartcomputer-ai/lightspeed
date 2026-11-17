@@ -26,7 +26,7 @@ export function deviceAuthorizationPlugin(db: Db, env: ServerEnv, onRedemption: 
         if (deviceCode.status !== "approved") return;
         const [user] = typeof deviceCode.userId === "string" ? await db.select().from(schema.user).where(eq(schema.user.id, deviceCode.userId)) : [];
         if (!user || !principalAllowed(user, env) || deviceCode.approvalAccessVersion !== user.accessVersion) {
-          throw new APIError("BAD_REQUEST", { error: "access_denied", error_description: "Account access changed; sign in and authorize the CLI again" });
+          throw new APIError("BAD_REQUEST", { error: "access_denied", error_description: "User access changed; sign in and authorize the CLI again" });
         }
         onRedemption({ userId: user.id, accessVersion: user.accessVersion, source: user.identitySource === "company" ? "company" : "password",
           checkedAt: user.identitySource === "company" ? user.providerCheckedAt! : new Date() });

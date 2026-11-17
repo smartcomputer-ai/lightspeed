@@ -11,7 +11,7 @@ runs in a browser; use a same-origin Platform session or [give it a proxy](#serv
 
 ## Connect through Platform
 
-Use the deployment origin or `/api/v1` URL with a personal or application API
+Use the deployment origin or `/api/v1` URL with a user or service-user API
 key. Runtime resources and native Platform operations share `client.call` and
 one credential. Platform derives the principal; omit `actor`.
 
@@ -22,31 +22,31 @@ const client = new LightspeedClient({
   endpoint: "https://lightspeed.example",
   token: process.env.LIGHTSPEED_PLATFORM_KEY!,
 });
-const { accounts } = await client.platform.listAccounts();
+const { organizations } = await client.platform.listOrganizations();
 const { universe } = await client.platform.createUniverse({
-  accountId: accounts[0]!.id,
+  organizationId: organizations[0]!.id,
   universeId: crypto.randomUUID(), // Keep this ID if retrying creation.
   name: "Experiment",
   handle: "experiment",
 });
 // The same typed operation is available through the common dispatcher.
-const account = await client.call("platform/accounts/read", {
-  accountId: accounts[0]!.id,
+const organization = await client.call("platform/organizations/read", {
+  organizationId: organizations[0]!.id,
 });
 ```
 
-Creation requires an account Creator or Admin and a credential that permits
+Creation requires an organization Creator or Admin and a credential that permits
 creation. Native helpers under `client.platform` are generated from the same
 contract as their routes and types. Each accepts a typed parameter object and
 optional `CallOptions`; helpers without required parameters accept no arguments.
-Account IDs remain explicit parameters. Key-management routes require a human
+Organization IDs remain explicit parameters. Key-management routes require a human
 browser or CLI session; API keys cannot mint broader credentials.
 
 `ClientOperationId`, `ClientOperationParams`, and `ClientOperationResult` describe
 the composed client. `OperationId` and the corresponding runtime metadata remain
 runtime-only for server adapters. `client.initialize()` returns a discriminated
 `ClientConnectionResponse`: when `runtime === "platform"`, `platform` contains
-the authenticated principal, credential kind, accessible accounts, and restrictions.
+the authenticated principal, credential kind, accessible organizations, and restrictions.
 
 Origins, trailing slashes, and deployment base paths normalize consistently:
 `https://example.test/team/` becomes `https://example.test/team/api/v1`.
@@ -65,10 +65,10 @@ Then import the Node-only factory:
 import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
 
 const client = await createClientFromConnection({ name: "work" });
-const { accounts } = await client.platform.listAccounts();
-if (client.accountId) {
-  const applications = await client.platform.listApplications({
-    accountId: client.accountId,
+const { organizations } = await client.platform.listOrganizations();
+if (client.organizationId) {
+  const serviceUsers = await client.platform.listServiceUsers({
+    organizationId: client.organizationId,
   });
 }
 ```
@@ -82,10 +82,10 @@ denied operations. Imported credential files and API keys are never rewritten.
 It neither logs in automatically nor borrows environment tokens or endpoint
 overrides. Saved HTTPS requirements and explicit CLI development exceptions apply.
 
-`universe` and `account` factory options override selections for this client
-without editing the saved connection. Changing accounts clears the inherited
-universe unless you also supply `universe`. The selected account is available
-as read-only `client.accountId`; helpers still require explicit account IDs.
+`universe` and `organization` factory options override selections for this client
+without editing the saved connection. Changing organizations clears the inherited
+universe unless you also supply `universe`. The selected organization is available
+as read-only `client.organizationId`; helpers still require explicit organization IDs.
 Removing or rebinding the named connection stops subsequent authenticated calls.
 This factory is separate from the browser-safe main package entry.
 
@@ -190,10 +190,10 @@ Both layers reject with the same
 
 Helper availability describes the client surface; the deployment still decides
 which operations your credential may use. Platform exposes permitted runtime
-and deployment operations through its policy checks. For account-qualified
-universe creation on Platform, use `client.platform.createUniverse({ accountId,
+and deployment operations through its policy checks. For organization-qualified
+universe creation on Platform, use `client.platform.createUniverse({ organizationId,
 ... })`; `client.createUniverse(id, options)` addresses the runtime deployment
-operation without adding account ownership.
+operation without adding organization ownership.
 
 | Area | Runtime helpers |
 | --- | --- |
@@ -249,8 +249,8 @@ Native Platform helpers use `client.platform` and typed parameter objects:
 | --- | --- |
 | session | `readCurrentSession`, `revokeCurrentSession` |
 | credentials | `listPersonalApiKeys`, `createPersonalApiKey`, `revokePersonalApiKey` |
-| applications | `listApplicationApiKeys`, `createApplicationApiKey`, `revokeApplicationApiKey` |
-| accounts | `listAccounts`, `createAccount`, `readAccount`, `updateAccount`, `listAccountMembers`, `putAccountMember`, `removeAccountMember`, `listApplications`, `createApplication`, `updateApplication`, `disableApplication` |
+| service-users | `listServiceUserApiKeys`, `createServiceUserApiKey`, `revokeServiceUserApiKey` |
+| organizations | `listOrganizations`, `createOrganization`, `readOrganization`, `updateOrganization`, `listOrganizationMembers`, `putOrganizationMember`, `removeOrganizationMember`, `listServiceUsers`, `createServiceUser`, `updateServiceUser`, `disableServiceUser` |
 | universes | `adoptUniverse`, `createUniverse`, `updateUniverse`, `listUniverseGrants`, `putUniverseGrant`, `removeUniverseGrant`, `putUniverseAccessPolicy` |
 
 Additional conveniences include `awaitRun`, `readBlobText`, `putBlob`,

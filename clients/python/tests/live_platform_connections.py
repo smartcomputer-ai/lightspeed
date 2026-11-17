@@ -5,7 +5,7 @@ Run after building the TypeScript SDK:
     uv run pytest tests/live_platform_connections.py -v
 
 The fixture must contain `sdk-session` and `sdk-key` CLI connections for the
-same human/account/universe. The personal key must be read-only and restricted
+same human/organization/universe. The personal key must be read-only and restricted
 to that universe. `other-universe.txt` names another universe the human owns.
 The fixture script's renewal-database option must age only the dedicated CLI
 session and write `renewal-required`; the first SDK request verifies renewal.
@@ -90,8 +90,8 @@ async def test_saved_cli_credentials_work_across_sdks_and_revocation_is_enforced
         blob_ref = f"sha256:{hashlib.sha256(binary).hexdigest()}"
         assert (await session.upload_blob(blob_ref, binary))["blobRef"] == blob_ref
         for name, client in [("sdk-session", session), ("sdk-key", key)]:
-            accounts = await client.platform.list_accounts()
-            assert client.account_id in {account["id"] for account in accounts["accounts"]}
+            organizations = await client.platform.list_organizations()
+            assert client.organization_id in {organization["id"] for organization in organizations["organizations"]}
             assert "profiles" in await client.list_profiles()
             async with client.open_download("blobs/read", {"blobRef": blob_ref}) as response:
                 assert await response.aread() == binary
@@ -103,7 +103,7 @@ async def test_saved_cli_credentials_work_across_sdks_and_revocation_is_enforced
                 await stream.aclose()
             observed = await typescript_check(directory, name, "allowed", blob_ref)
             assert observed["principalId"] == session_info["platform"]["principal"]["id"]
-            assert observed["accountId"] == client.account_id
+            assert observed["organizationId"] == client.organization_id
 
         # The human can use the second universe, while its restricted key cannot.
         async with await AsyncLightspeedClient.from_connection(
@@ -145,7 +145,7 @@ async def test_saved_cli_credentials_work_across_sdks_and_revocation_is_enforced
         await session.platform.revoke_current_session()
         session_revoked = True
         with pytest.raises(LightspeedApiError) as revoked:
-            await session.platform.list_accounts()
+            await session.platform.list_organizations()
         assert revoked.value.status == 401
         assert await typescript_check(directory, "sdk-session", "revoked") == {"revoked": True}
     finally:

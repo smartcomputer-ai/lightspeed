@@ -2,19 +2,19 @@ import { z } from "zod";
 import { CREDENTIAL_OPERATIONS, credentialRestrictionsSchema } from "./credential-api.js";
 import { SESSION_OPERATIONS, platformSessionViewSchema } from "./session-api.js";
 
-export const accountRoleSchema = z.enum(["member", "creator", "admin"]);
-export type AccountRole = z.infer<typeof accountRoleSchema>;
+export const organizationRoleSchema = z.enum(["member", "creator", "admin"]);
+export type OrganizationRole = z.infer<typeof organizationRoleSchema>;
 /** Platform's extension to common connection discovery; core owns the common fields. */
 export const platformConnectionDetailsSchema = z.object({
   principal: platformSessionViewSchema.shape.principal.omit({ email: true }).extend({
     platformAdmin: z.boolean().describe("Whether the principal is a Platform Admin. Credential restrictions still apply to every operation."),
   }),
   credential: platformSessionViewSchema.shape.credential,
-  accounts: z.array(z.object({ id: z.string(), name: z.string(), role: accountRoleSchema })),
+  organizations: z.array(z.object({ id: z.string(), name: z.string(), role: organizationRoleSchema })),
   restrictions: credentialRestrictionsSchema,
 });
 export type PlatformConnectionDetails = z.infer<typeof platformConnectionDetailsSchema>;
-export const principalRefSchema = z.object({ kind: z.enum(["user", "application"]), id: z.string().min(1) }).strict();
+export const principalRefSchema = z.object({ kind: z.enum(["user", "serviceUser"]), id: z.string().min(1) }).strict();
 export type PrincipalRef = z.infer<typeof principalRefSchema>;
 const universeRole = z.enum(["viewer", "contributor", "operator", "owner"]);
 const id = z.string().min(1);
@@ -24,40 +24,40 @@ const timestamp = z.string().datetime();
 function declaredMemberSchema<T extends z.ZodType>(role: T) {
   return z.union([z.object({ email: z.email(), role }).strict(), z.object({ issuer: z.string().url(), subject: z.string().min(1), role }).strict()]);
 }
-const accountPolicy = z.object({
-  members: z.array(declaredMemberSchema(accountRoleSchema)).max(1000).optional(),
-  directoryGroupMappings: z.array(z.object({ issuer: z.string().url(), group: id, role: accountRoleSchema }).strict()).max(1000).optional(),
+const organizationPolicy = z.object({
+  members: z.array(declaredMemberSchema(organizationRoleSchema)).max(1000).optional(),
+  directoryGroupMappings: z.array(z.object({ issuer: z.string().url(), group: id, role: organizationRoleSchema }).strict()).max(1000).optional(),
 }).strict();
 export const universeAccessPolicySchema = z.object({
   members: z.array(declaredMemberSchema(universeRole)).max(1000).optional(),
   directoryGroupMappings: z.array(z.object({ issuer: z.string().url(), group: id, role: universeRole }).strict()).max(1000).optional(),
 }).strict();
-export const accountViewSchema = z.object({ id, name, slug: id, kind: z.enum(["personal", "shared", "development"]), enabled: z.boolean(), role: accountRoleSchema.nullable(), universeQuota: z.number().int().nonnegative(), defaultProtected: z.boolean(), requireProtected: z.boolean(), membershipPolicy: accountPolicy.optional(), createdAt: timestamp });
-export const accountCreateSchema = z.object({ name, slug: handle, kind: z.enum(["shared", "development"]).default("shared"), initialAdminUserId: id.optional(), universeQuota: z.number().int().min(0).max(100000).optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional() }).strict();
-export const accountUpdateSchema = z.object({ name: name.optional(), enabled: z.boolean().optional(), universeQuota: z.number().int().min(0).max(100000).optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional(), membershipPolicy: accountPolicy.optional() }).strict();
-export const accountMemberPutSchema = z.object({ userId: id, role: accountRoleSchema.default("member") }).strict();
-export const accountMemberViewSchema = z.object({ id, userId: id, name: z.string(), email: z.string(), role: accountRoleSchema, createdAt: timestamp });
-export const applicationViewSchema = z.object({ id, accountId: id, name, enabled: z.boolean(), role: accountRoleSchema, createdAt: timestamp });
-export const applicationCreateSchema = z.object({ name, role: accountRoleSchema.default("member") }).strict();
-export const applicationUpdateSchema = z.object({ name: name.optional(), enabled: z.boolean().optional(), role: accountRoleSchema.optional() }).strict();
+export const organizationViewSchema = z.object({ id, name, slug: id, kind: z.enum(["personal", "shared", "development"]), enabled: z.boolean(), role: organizationRoleSchema.nullable(), universeQuota: z.number().int().nonnegative(), defaultProtected: z.boolean(), requireProtected: z.boolean(), membershipPolicy: organizationPolicy.optional(), createdAt: timestamp });
+export const organizationCreateSchema = z.object({ name, slug: handle, kind: z.enum(["shared", "development"]).default("shared"), initialAdminUserId: id.optional(), universeQuota: z.number().int().min(0).max(100000).optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional() }).strict();
+export const organizationUpdateSchema = z.object({ name: name.optional(), enabled: z.boolean().optional(), universeQuota: z.number().int().min(0).max(100000).optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional(), membershipPolicy: organizationPolicy.optional() }).strict();
+export const organizationMemberPutSchema = z.object({ userId: id, role: organizationRoleSchema.default("member") }).strict();
+export const organizationMemberViewSchema = z.object({ id, userId: id, name: z.string(), email: z.string(), role: organizationRoleSchema, createdAt: timestamp });
+export const serviceUserViewSchema = z.object({ id, organizationId: id, name, enabled: z.boolean(), role: organizationRoleSchema, createdAt: timestamp });
+export const serviceUserCreateSchema = z.object({ name, role: organizationRoleSchema.default("member") }).strict();
+export const serviceUserUpdateSchema = z.object({ name: name.optional(), enabled: z.boolean().optional(), role: organizationRoleSchema.optional() }).strict();
 export const universeGrantPutSchema = z.object({ principal: principalRefSchema, role: universeRole }).strict();
 export const universeGrantViewSchema = z.object({ id, universeId: id, principal: principalRefSchema, role: universeRole, name: z.string(), createdAt: timestamp });
-export const accountUniverseCreateSchema = z.object({
+export const organizationUniverseCreateSchema = z.object({
   universeId: z.uuid().optional(), name, handle: handle.optional(), initialOwner: principalRefSchema.optional(),
   metadata: z.record(z.string(), z.string()).optional(),
   protected: z.boolean().optional(), expiresAtMs: z.number().int().safe().nonnegative().nullable().optional(),
 }).strict();
-export const accountUniverseAdoptSchema = z.object({ lightspeedUniverseId: z.uuid(), name, initialOwner: principalRefSchema }).strict();
+export const organizationUniverseAdoptSchema = z.object({ lightspeedUniverseId: z.uuid(), name, initialOwner: principalRefSchema }).strict();
 export const universeLifecycleUpdateSchema = z.object({ name: name.optional(), status: z.enum(["active", "archived"]).optional(), metadata: z.record(z.string(), z.string()).optional(), protected: z.boolean().optional(), expiresAtMs: z.number().int().safe().nonnegative().nullable().optional() }).strict();
 export const platformUniverseViewSchema = z.object({
-  id, accountId: id, lightspeedUniverseId: id, name, handle: id,
-  role: universeRole, accountRole: accountRoleSchema.nullable(), status: z.enum(["provisioning", "active", "archived", "deleting"]),
+  id, organizationId: id, lightspeedUniverseId: id, name, handle: id,
+  role: universeRole, organizationRole: organizationRoleSchema.nullable(), status: z.enum(["provisioning", "active", "archived", "deleting"]),
   protected: z.boolean(), expiresAtMs: z.number().nullable(), createdBy: z.string().nullable(),
   features: z.record(z.string(), z.boolean()), icon: z.string(), iconColor: z.string(),
   runtimeConfiguration: z.record(z.string(), z.unknown()), createdAt: timestamp, updatedAt: timestamp,
 });
 const ok = z.object({ ok: z.literal(true) });
-const accountPath = { accountId: id };
+const organizationPath = { organizationId: id };
 const universePath = { universe: id };
 
 /** Platform owns identity schemas; the shared runtime catalog remains Rust-owned.
@@ -65,19 +65,19 @@ const universePath = { universe: id };
 export const PLATFORM_OPERATIONS = {
   ...SESSION_OPERATIONS,
   ...CREDENTIAL_OPERATIONS,
-  "platform/accounts/list": { helper: { name: "listAccounts" }, method: "GET", path: "/api/v1/platform/accounts", params: z.object({}).strict(), result: z.object({ accounts: z.array(accountViewSchema), canCreate: z.boolean() }) },
-  "platform/accounts/create": { helper: { name: "createAccount" }, method: "POST", path: "/api/v1/platform/accounts", params: accountCreateSchema, result: z.object({ account: accountViewSchema }) },
-  "platform/accounts/read": { helper: { name: "readAccount" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}", params: z.object(accountPath).strict(), result: z.object({ account: accountViewSchema }) },
-  "platform/accounts/update": { helper: { name: "updateAccount" }, method: "PATCH", path: "/api/v1/platform/accounts/{accountId}", params: accountUpdateSchema.extend(accountPath), result: z.object({ account: accountViewSchema }) },
-  "platform/accounts/members/list": { helper: { name: "listAccountMembers" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}/members", params: z.object(accountPath).strict(), result: z.object({ members: z.array(accountMemberViewSchema) }) },
-  "platform/accounts/members/put": { helper: { name: "putAccountMember" }, method: "PUT", path: "/api/v1/platform/accounts/{accountId}/members/{userId}", params: accountMemberPutSchema.extend(accountPath), result: z.object({ member: accountMemberViewSchema }) },
-  "platform/accounts/members/delete": { helper: { name: "removeAccountMember" }, method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/members/{userId}", params: z.object({ ...accountPath, userId: id }).strict(), result: ok },
-  "platform/accounts/applications/list": { helper: { name: "listApplications" }, method: "GET", path: "/api/v1/platform/accounts/{accountId}/applications", params: z.object(accountPath).strict(), result: z.object({ applications: z.array(applicationViewSchema) }) },
-  "platform/accounts/applications/create": { helper: { name: "createApplication" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/applications", params: applicationCreateSchema.extend(accountPath), result: z.object({ application: applicationViewSchema }) },
-  "platform/accounts/applications/update": { helper: { name: "updateApplication" }, method: "PATCH", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}", params: applicationUpdateSchema.extend({ ...accountPath, applicationId: id }), result: z.object({ application: applicationViewSchema }) },
-  "platform/accounts/applications/delete": { helper: { name: "disableApplication" }, method: "DELETE", path: "/api/v1/platform/accounts/{accountId}/applications/{applicationId}", params: z.object({ ...accountPath, applicationId: id }).strict(), result: ok },
-  "platform/universes/adopt": { helper: { name: "adoptUniverse" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/universes/adopt", params: accountUniverseAdoptSchema.extend(accountPath), result: z.object({ universe: platformUniverseViewSchema }) },
-  "platform/universes/create": { helper: { name: "createUniverse" }, method: "POST", path: "/api/v1/platform/accounts/{accountId}/universes", params: accountUniverseCreateSchema.extend(accountPath), result: z.object({ universe: platformUniverseViewSchema }) },
+  "platform/organizations/list": { helper: { name: "listOrganizations" }, method: "GET", path: "/api/v1/platform/organizations", params: z.object({}).strict(), result: z.object({ organizations: z.array(organizationViewSchema), canCreate: z.boolean() }) },
+  "platform/organizations/create": { helper: { name: "createOrganization" }, method: "POST", path: "/api/v1/platform/organizations", params: organizationCreateSchema, result: z.object({ organization: organizationViewSchema }) },
+  "platform/organizations/read": { helper: { name: "readOrganization" }, method: "GET", path: "/api/v1/platform/organizations/{organizationId}", params: z.object(organizationPath).strict(), result: z.object({ organization: organizationViewSchema }) },
+  "platform/organizations/update": { helper: { name: "updateOrganization" }, method: "PATCH", path: "/api/v1/platform/organizations/{organizationId}", params: organizationUpdateSchema.extend(organizationPath), result: z.object({ organization: organizationViewSchema }) },
+  "platform/organizations/members/list": { helper: { name: "listOrganizationMembers" }, method: "GET", path: "/api/v1/platform/organizations/{organizationId}/members", params: z.object(organizationPath).strict(), result: z.object({ members: z.array(organizationMemberViewSchema) }) },
+  "platform/organizations/members/put": { helper: { name: "putOrganizationMember" }, method: "PUT", path: "/api/v1/platform/organizations/{organizationId}/members/{userId}", params: organizationMemberPutSchema.extend(organizationPath), result: z.object({ member: organizationMemberViewSchema }) },
+  "platform/organizations/members/delete": { helper: { name: "removeOrganizationMember" }, method: "DELETE", path: "/api/v1/platform/organizations/{organizationId}/members/{userId}", params: z.object({ ...organizationPath, userId: id }).strict(), result: ok },
+  "platform/organizations/service-users/list": { helper: { name: "listServiceUsers" }, method: "GET", path: "/api/v1/platform/organizations/{organizationId}/service-users", params: z.object(organizationPath).strict(), result: z.object({ serviceUsers: z.array(serviceUserViewSchema) }) },
+  "platform/organizations/service-users/create": { helper: { name: "createServiceUser" }, method: "POST", path: "/api/v1/platform/organizations/{organizationId}/service-users", params: serviceUserCreateSchema.extend(organizationPath), result: z.object({ serviceUser: serviceUserViewSchema }) },
+  "platform/organizations/service-users/update": { helper: { name: "updateServiceUser" }, method: "PATCH", path: "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}", params: serviceUserUpdateSchema.extend({ ...organizationPath, serviceUserId: id }), result: z.object({ serviceUser: serviceUserViewSchema }) },
+  "platform/organizations/service-users/delete": { helper: { name: "disableServiceUser" }, method: "DELETE", path: "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}", params: z.object({ ...organizationPath, serviceUserId: id }).strict(), result: ok },
+  "platform/universes/adopt": { helper: { name: "adoptUniverse" }, method: "POST", path: "/api/v1/platform/organizations/{organizationId}/universes/adopt", params: organizationUniverseAdoptSchema.extend(organizationPath), result: z.object({ universe: platformUniverseViewSchema }) },
+  "platform/universes/create": { helper: { name: "createUniverse" }, method: "POST", path: "/api/v1/platform/organizations/{organizationId}/universes", params: organizationUniverseCreateSchema.extend(organizationPath), result: z.object({ universe: platformUniverseViewSchema }) },
   "platform/universes/update": { helper: { name: "updateUniverse" }, method: "PATCH", path: "/api/v1/platform/universes/{universe}", params: universeLifecycleUpdateSchema.extend(universePath), result: z.object({ universe: platformUniverseViewSchema }) },
   "platform/universes/grants/list": { helper: { name: "listUniverseGrants" }, method: "GET", path: "/api/v1/platform/universes/{universe}/grants", params: z.object(universePath).strict(), result: z.object({ grants: z.array(universeGrantViewSchema) }) },
   "platform/universes/grants/put": { helper: { name: "putUniverseGrant" }, method: "PUT", path: "/api/v1/platform/universes/{universe}/grants", params: universeGrantPutSchema.extend(universePath), result: z.object({ grant: universeGrantViewSchema }) },

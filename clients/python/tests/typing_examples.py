@@ -49,14 +49,14 @@ def failure_message(event: SessionEventView) -> str | None:
 
 
 async def native_platform_types(client: AsyncLightspeedClient) -> None:
-    assert_type(await client.call("platform/accounts/list"), Platform.PlatformAccountsListResult)
-    assert_type(await client.platform.list_accounts(), Platform.PlatformAccountsListResult)
-    assert_type(await client.platform.read_account({"accountId": "account"}), Platform.PlatformAccountsReadResult)
-    assert_type(await client.call("platform/universes/create", {"accountId": "account", "name": "Experiment"}), Platform.PlatformUniversesCreateResult)
-    assert_type(await client.platform.create_universe({"accountId": "account", "name": "Experiment"}), Platform.PlatformUniversesCreateResult)
+    assert_type(await client.call("platform/organizations/list"), Platform.PlatformOrganizationsListResult)
+    assert_type(await client.platform.list_organizations(), Platform.PlatformOrganizationsListResult)
+    assert_type(await client.platform.read_organization({"organizationId": "organization"}), Platform.PlatformOrganizationsReadResult)
+    assert_type(await client.call("platform/universes/create", {"organizationId": "organization", "name": "Experiment"}), Platform.PlatformUniversesCreateResult)
+    assert_type(await client.platform.create_universe({"organizationId": "organization", "name": "Experiment"}), Platform.PlatformUniversesCreateResult)
     assert_type(await client.platform.create_personal_api_key({"name": "Automation"}), Platform.PlatformCredentialsCreateResult)
-    assert_type(client.account_id, str | None)
-    assert_type(await AsyncLightspeedClient.from_connection("work", account="account"), AsyncLightspeedClient)
+    assert_type(client.organization_id, str | None)
+    assert_type(await AsyncLightspeedClient.from_connection("work", organization="organization"), AsyncLightspeedClient)
 
 
 async def typed_discovery(client: AsyncLightspeedClient) -> None:

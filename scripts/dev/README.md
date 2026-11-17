@@ -86,6 +86,11 @@ shows how to attach it. Commands run as the daemon's OS user; its working
 directory is not a process sandbox.
 
 The local UI is available at `http://localhost:5173/app/`. The supervisor
+defaults `LIGHTSPEED_PLATFORM_BASE_URL` to `http://localhost:5173`, the public
+origin for browser sign-in and CLI device approval. Connect the CLI to that
+origin for Platform login; Vite forwards its API and device entry point to the
+backend. An explicit base URL override supports a development reverse proxy.
+The supervisor
 trusts both `http://127.0.0.1:5173` and `http://localhost:5173` for Better Auth;
 additional browser origins must be listed explicitly in
 `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS`.
@@ -357,4 +362,4 @@ for token generation, replacement and local connection setup.
 
 Configurator starts with the full and platform profiles, targets the Platform
 `/api/v1` endpoint, and receives no runtime infrastructure credentials. Install
-its restricted application key from the universe template as an Account Admin.
+its restricted service-user key from the universe template as an Organization Admin.

@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { platformApi, useAccounts } from "@/lib/platform-api";
+import { platformApi, useOrganizations } from "@/lib/platform-api";
 import { useUniverses } from "@/lib/universes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +25,9 @@ import {
   CardAction,
 } from "@/components/ui/card";
 
-type Application = {
-  accountId: string;
-  applicationId: string;
+type ServiceUser = {
+  organizationId: string;
+  serviceUserId: string;
   name?: string;
   enabled?: boolean;
 };
@@ -46,16 +46,16 @@ const toggle = (selected: string[], id: string) =>
     : [...selected, id];
 
 type ApiKeysCardProps = {
-  application?: Application;
+  serviceUser?: ServiceUser;
   createOpen?: boolean;
   onCreateOpenChange?: (open: boolean) => void;
 };
-export function ApiKeysCard({ application, ...dialogProps }: ApiKeysCardProps) {
+export function ApiKeysCard({ serviceUser, ...dialogProps }: ApiKeysCardProps) {
   // Changing the owner discards any displayed secret and unfinished form.
   return (
     <ApiKeysContent
-      key={application?.applicationId ?? "personal"}
-      application={application}
+      key={serviceUser?.serviceUserId ?? "personal"}
+      serviceUser={serviceUser}
       {...dialogProps}
     />
   );
@@ -115,7 +115,7 @@ function ScopeChoices({
 }
 
 function ApiKeysContent({
-  application,
+  serviceUser,
   createOpen,
   onCreateOpenChange,
 }: ApiKeysCardProps) {
@@ -126,18 +126,18 @@ function ApiKeysContent({
   const id = useId();
   const queryKey = [
     "api-keys",
-    application?.accountId ?? "personal",
-    application?.applicationId ?? "personal",
+    serviceUser?.organizationId ?? "personal",
+    serviceUser?.serviceUserId ?? "personal",
   ];
-  const accounts = useAccounts();
+  const organizations = useOrganizations();
   const universes = useUniverses();
   const [revoking, setRevoking] = useState<{ id: string; name: string } | null>(
     null,
   );
   const [name, setName] = useState("");
   const [days, setDays] = useState("");
-  const [limitAccounts, setLimitAccounts] = useState(false);
-  const [accountIds, setAccountIds] = useState<string[]>([]);
+  const [limitOrganizations, setLimitOrganizations] = useState(true);
+  const [organizationIds, setOrganizationIds] = useState<string[]>([]);
   const [limitUniverses, setLimitUniverses] = useState(false);
   const [universeIds, setUniverseIds] = useState<string[]>([]);
   const [operations, setOperations] = useState("");
@@ -148,34 +148,37 @@ function ApiKeysContent({
   );
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const owner = application?.name ?? "this application";
-  const scope = application
+  const owner = serviceUser?.name ?? "this service user";
+  const scope = serviceUser
     ? {
-        accountId: application.accountId,
-        applicationId: application.applicationId,
+        organizationId: serviceUser.organizationId,
+        serviceUserId: serviceUser.serviceUserId,
       }
     : undefined;
   const keys = useQuery({
     queryKey,
     queryFn: () =>
       scope
-        ? platformApi("platform/applications/credentials/list", scope)
+        ? platformApi("platform/service-users/credentials/list", scope)
         : platformApi("platform/credentials/list", {}),
   });
-  const accountChoices = (accounts.data?.accounts ?? []).map((account) => ({
-    id: account.id,
-    name: account.name,
-  }));
-  const allowedAccounts = application
-    ? [application.accountId]
-    : limitAccounts
-      ? accountIds
+  const organizationChoices = (organizations.data?.organizations ?? [])
+    .filter((organization) => organization.enabled)
+    .map((organization) => ({
+      id: organization.id,
+      name: organization.name,
+    }));
+  const allowedOrganizations = serviceUser
+    ? [serviceUser.organizationId]
+    : limitOrganizations
+      ? organizationIds
       : undefined;
   const availableUniverses = (universes.data ?? []).filter(
     (universe) =>
       universe.status === "active" &&
-      (!allowedAccounts ||
-        (!!universe.accountId && allowedAccounts.includes(universe.accountId))),
+      (!allowedOrganizations ||
+        (!!universe.organizationId &&
+          allowedOrganizations.includes(universe.organizationId))),
   );
   const universeChoices = availableUniverses.map((universe) => ({
     id: universe.lightspeedUniverseId,
@@ -193,10 +196,10 @@ function ApiKeysContent({
         name: name.trim(),
         ...(days ? { expiresInDays: Number(days) } : {}),
         restrictions: {
-          ...(application
-            ? { accountIds: [application.accountId] }
-            : limitAccounts
-              ? { accountIds }
+          ...(serviceUser
+            ? { organizationIds: [serviceUser.organizationId] }
+            : limitOrganizations
+              ? { organizationIds }
               : {}),
           ...(limitUniverses ? { universeIds: selectedUniverseIds } : {}),
           ...(operations.trim() ? { operations: split(operations) } : {}),
@@ -205,7 +208,7 @@ function ApiKeysContent({
         },
       };
       const result = scope
-        ? await platformApi("platform/applications/credentials/create", {
+        ? await platformApi("platform/service-users/credentials/create", {
             ...input,
             ...scope,
           })
@@ -222,7 +225,7 @@ function ApiKeysContent({
   const revoke = useMutation({
     mutationFn: (keyId: string) =>
       scope
-        ? platformApi("platform/applications/credentials/revoke", {
+        ? platformApi("platform/service-users/credentials/revoke", {
             ...scope,
             keyId,
           })
@@ -234,25 +237,26 @@ function ApiKeysContent({
     },
   });
   const invalidScope =
-    (!application && limitAccounts && !accountIds.length) ||
+    (!serviceUser && limitOrganizations && !organizationIds.length) ||
     (limitUniverses && !selectedUniverseIds.length);
-  const accountName = (value: string) =>
-    accountChoices.find((account) => account.id === value)?.name ?? value;
+  const organizationName = (value: string) =>
+    organizationChoices.find((organization) => organization.id === value)
+      ?.name ?? value;
   const universeName = (value: string) => {
     const universe = universes.data?.find(
       (universe) => universe.lightspeedUniverseId === value,
     );
     return universe ? `${universe.name} (${universe.handle})` : value;
   };
-  const disabled = application?.enabled === false;
+  const disabled = serviceUser?.enabled === false;
   const close = () => {
     if (create.isPending) return;
     setOpen(false);
     setSecret(null);
     setName("");
     setDays("");
-    setLimitAccounts(false);
-    setAccountIds([]);
+    setLimitOrganizations(true);
+    setOrganizationIds([]);
     setLimitUniverses(false);
     setUniverseIds([]);
     setOperations("");
@@ -261,20 +265,28 @@ function ApiKeysContent({
     create.reset();
   };
   return (
-    <Card id={application ? undefined : "api-keys"} className="scroll-mt-6">
+    <Card id={serviceUser ? undefined : "api-keys"} className="scroll-mt-6">
       <CardHeader>
         <CardTitle>
-          {application ? `API keys for ${owner}` : "Personal API keys"}
+          {serviceUser ? `API keys for ${owner}` : "Your API keys"}
         </CardTitle>
         <CardDescription>
-          {application
-            ? `These keys act as ${owner}, using its current account role and universe access.`
-            : "These keys act as you, using your current account roles and universe access."}{" "}
+          {serviceUser
+            ? `These keys act as ${owner}, using its current organization role and universe access.`
+            : "These keys act as you, using your current organization roles and universe access."}{" "}
           Restrictions can reduce that access, never add permissions. Keys are
           managed here even when restricted to one universe.
         </CardDescription>
         <CardAction>
-          <Button disabled={disabled} onClick={() => setOpen(true)}>
+          <Button
+            disabled={disabled || (!serviceUser && !organizationChoices.length)}
+            onClick={() => {
+              setOrganizationIds(
+                organizationChoices[0] ? [organizationChoices[0].id] : [],
+              );
+              setOpen(true);
+            }}
+          >
             <AddIcon data-icon="inline-start" />
             New API key
           </Button>
@@ -283,8 +295,8 @@ function ApiKeysContent({
       <CardContent className="grid gap-6">
         {disabled && (
           <p className="rounded-md border p-3 text-sm">
-            This application is disabled. Its keys cannot authenticate. You can
-            revoke existing keys; enable the application before creating
+            This service user is disabled. Its keys cannot authenticate. You can
+            revoke existing keys; enable the service user before creating
             another.
           </p>
         )}
@@ -304,7 +316,7 @@ function ApiKeysContent({
                 {secret ? "Save your API key" : "New API key"}
               </DialogTitle>
               <DialogDescription>
-                {application
+                {serviceUser
                   ? `This key acts as ${owner}.`
                   : "This key acts as you."}{" "}
                 Its restrictions can only reduce the owner's current
@@ -383,59 +395,61 @@ function ApiKeysContent({
                     Leave blank to use the deployment's standard expiry.
                   </FieldDescription>
                 </Field>
+                {serviceUser ? (
+                  <p className="text-sm">
+                    Organization:{" "}
+                    <strong>
+                      {organizationName(serviceUser.organizationId)}
+                    </strong>
+                    . The service user cannot access other organizations.
+                  </p>
+                ) : (
+                  <>
+                    <Field>
+                      <FieldLabel htmlFor={`${id}-organizations`}>
+                        Organizations
+                      </FieldLabel>
+                      <select
+                        id={`${id}-organizations`}
+                        aria-label="Organization access"
+                        className="rounded-md border bg-background p-2 text-sm"
+                        value={limitOrganizations ? "selected" : "all"}
+                        onChange={(event) => {
+                          setLimitOrganizations(
+                            event.target.value === "selected",
+                          );
+                          setUniverseIds([]);
+                        }}
+                      >
+                        <option value="all">
+                          All my accessible organizations
+                        </option>
+                        <option value="selected">Selected organizations</option>
+                      </select>
+                    </Field>
+                    {limitOrganizations && (
+                      <ScopeChoices
+                        title="Allowed organizations"
+                        choices={organizationChoices}
+                        selected={organizationIds}
+                        onChange={(value) => {
+                          setOrganizationIds(value);
+                          setUniverseIds([]);
+                        }}
+                        empty={
+                          organizations.isPending
+                            ? "Loading organizations…"
+                            : "No organizations available."
+                        }
+                      />
+                    )}
+                  </>
+                )}
                 <details>
                   <summary className="cursor-pointer text-sm font-medium">
-                    Restrict access
+                    Additional restrictions
                   </summary>
                   <div className="mt-4 grid gap-4">
-                    {application ? (
-                      <p className="text-sm">
-                        Account:{" "}
-                        <strong>{accountName(application.accountId)}</strong>.
-                        The application cannot access other accounts.
-                      </p>
-                    ) : (
-                      <>
-                        <Field>
-                          <FieldLabel htmlFor={`${id}-accounts`}>
-                            Accounts
-                          </FieldLabel>
-                          <select
-                            id={`${id}-accounts`}
-                            aria-label="Account access"
-                            className="rounded-md border bg-background p-2 text-sm"
-                            value={limitAccounts ? "selected" : "all"}
-                            onChange={(event) => {
-                              setLimitAccounts(
-                                event.target.value === "selected",
-                              );
-                              setUniverseIds([]);
-                            }}
-                          >
-                            <option value="all">
-                              All accounts I can access
-                            </option>
-                            <option value="selected">Selected accounts</option>
-                          </select>
-                        </Field>
-                        {limitAccounts && (
-                          <ScopeChoices
-                            title="Allowed accounts"
-                            choices={accountChoices}
-                            selected={accountIds}
-                            onChange={(value) => {
-                              setAccountIds(value);
-                              setUniverseIds([]);
-                            }}
-                            empty={
-                              accounts.isPending
-                                ? "Loading accounts…"
-                                : "No accounts available."
-                            }
-                          />
-                        )}
-                      </>
-                    )}
                     <Field>
                       <FieldLabel htmlFor={`${id}-universes`}>
                         Universes
@@ -452,9 +466,9 @@ function ApiKeysContent({
                         }}
                       >
                         <option value="all">
-                          {application
-                            ? "All universes this application can access"
-                            : "All universes I can access in the allowed accounts"}
+                          {serviceUser
+                            ? "All universes this service user can access"
+                            : "All universes I can access in the allowed organizations"}
                         </option>
                         <option value="selected">Selected universes</option>
                       </select>
@@ -468,7 +482,7 @@ function ApiKeysContent({
                         empty={
                           universes.isPending
                             ? "Loading universes…"
-                            : "No accessible universes in the selected accounts."
+                            : "No accessible universes in the selected organizations."
                         }
                       />
                     )}
@@ -508,7 +522,7 @@ function ApiKeysContent({
                         </Field>
                       </div>
                     </details>
-                    {[accounts.error, universes.error]
+                    {[organizations.error, universes.error]
                       .filter(Boolean)
                       .map((error, index) => (
                         <p
@@ -533,9 +547,9 @@ function ApiKeysContent({
                 <p className="-mt-2 text-sm text-muted-foreground">
                   {limitUniverses || readOnly
                     ? "Universe creation is unavailable for read-only keys or keys restricted to existing universes."
-                    : application
-                      ? "Requires the application's Creator or Admin role in this account."
-                      : "Requires your Creator or Admin role in an allowed account."}
+                    : serviceUser
+                      ? "Requires the service user's Creator or Admin role in this organization."
+                      : "Requires your Creator or Admin role in an allowed organization."}
                 </p>
                 {create.error && (
                   <p role="alert" className="text-sm text-destructive">
@@ -569,7 +583,7 @@ function ApiKeysContent({
         </Dialog>
         <ApiKeyRevokeDialog
           name={revoking?.name}
-          owner={application?.name}
+          owner={serviceUser?.name}
           pending={revoke.isPending}
           error={revoke.error}
           onConfirm={() => {
@@ -596,9 +610,9 @@ function ApiKeysContent({
           )}
           {keys.data?.credentials.length === 0 && (
             <p className="text-sm text-muted-foreground">
-              {application
-                ? "This application has no API keys."
-                : "You have no personal API keys."}
+              {serviceUser
+                ? "This service user has no API keys."
+                : "You have no API keys."}
             </p>
           )}
           {keys.data?.credentials.map((key) => {
@@ -608,7 +622,7 @@ function ApiKeysContent({
               : expired
                 ? "Expired"
                 : disabled
-                  ? "Application disabled"
+                  ? "Service user disabled"
                   : "Active";
             return (
               <div
@@ -625,13 +639,13 @@ function ApiKeysContent({
                     {new Date(key.expiresAt).toLocaleDateString()}
                   </p>
                   <p>
-                    Accounts:{" "}
-                    {key.restrictions.accountIds
-                      ? key.restrictions.accountIds
-                          .map(accountName)
+                    Organizations:{" "}
+                    {key.restrictions.organizationIds
+                      ? key.restrictions.organizationIds
+                          .map(organizationName)
                           .join(", ") || "None"
-                      : application
-                        ? accountName(application.accountId)
+                      : serviceUser
+                        ? organizationName(serviceUser.organizationId)
                         : "All you can access"}
                   </p>
                   <p>
@@ -640,7 +654,7 @@ function ApiKeysContent({
                       ? key.restrictions.universeIds
                           .map(universeName)
                           .join(", ") || "None"
-                      : "All accessible in the allowed accounts"}
+                      : "All accessible in the allowed organizations"}
                   </p>
                   <p>
                     {key.restrictions.readOnly

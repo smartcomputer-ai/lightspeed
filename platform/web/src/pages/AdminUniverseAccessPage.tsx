@@ -65,7 +65,7 @@ export function AdminUniverseAccessPage({ admin }: { admin: boolean }) {
       <>
         <PageHeader title="Access" />
         <p>
-          Only a universe Owner, Account Admin, or Platform Admin can view or
+          Only a universe Owner, Organization Admin, or Platform Admin can view or
           manage access.
         </p>
       </>
@@ -75,8 +75,8 @@ export function AdminUniverseAccessPage({ admin }: { admin: boolean }) {
       key={universe.id}
       record={universe}
       universe={universe.lightspeedUniverseId}
-      accountId={universe.accountId}
-      accountAdmin={admin || universe.accountRole === "admin"}
+      organizationId={universe.organizationId}
+      organizationAdmin={admin || universe.organizationRole === "admin"}
     />
   );
 }
@@ -84,13 +84,13 @@ export function AdminUniverseAccessPage({ admin }: { admin: boolean }) {
 function UniverseAccess({
   record,
   universe,
-  accountId,
-  accountAdmin,
+  organizationId,
+  organizationAdmin,
 }: {
   record: Universe;
   universe: string;
-  accountId?: string;
-  accountAdmin: boolean;
+  organizationId?: string;
+  organizationAdmin: boolean;
 }) {
   const client = useQueryClient();
   const [editorOpen, setEditorOpen] = useState(false);
@@ -109,17 +109,17 @@ function UniverseAccess({
     queryFn: () => platformApi("platform/universes/grants/list", { universe }),
   });
   const members = useQuery({
-    queryKey: ["account-members", accountId],
-    enabled: !!accountId,
+    queryKey: ["organization-members", organizationId],
+    enabled: !!organizationId,
     queryFn: () =>
-      platformApi("platform/accounts/members/list", { accountId: accountId! }),
+      platformApi("platform/organizations/members/list", { organizationId: organizationId! }),
   });
-  const applications = useQuery({
-    queryKey: ["applications", accountId],
-    enabled: !!accountId,
+  const serviceUsers = useQuery({
+    queryKey: ["service-users", organizationId],
+    enabled: !!organizationId,
     queryFn: () =>
-      platformApi("platform/accounts/applications/list", {
-        accountId: accountId!,
+      platformApi("platform/organizations/service-users/list", {
+        organizationId: organizationId!,
       }),
   });
   const refresh = async () => {
@@ -147,23 +147,23 @@ function UniverseAccess({
       value: `user:${m.userId}`,
       label: `${m.name}${m.email ? ` (${m.email})` : ""}`,
     })),
-    ...(applications.data?.applications ?? [])
+    ...(serviceUsers.data?.serviceUsers ?? [])
       .filter((a) => a.enabled)
       .map((a) => ({
-        value: `application:${a.id}`,
-        label: `${a.name} (application)`,
+        value: `serviceUser:${a.id}`,
+        label: `${a.name} (service user)`,
       })),
   ];
   const directoriesLoading =
-    !!accountId && (members.isLoading || applications.isLoading);
+    !!organizationId && (members.isLoading || serviceUsers.isLoading);
   const directoriesUnavailable =
-    !accountId || !!members.error || !!applications.error;
+    !organizationId || !!members.error || !!serviceUsers.error;
   return (
     <>
       <AdminUniverseHeader universe={record} section="access" />
       <SectionHeader
         title="Access"
-        description="Manage explicit access for people and applications. Account Admins and Platform Admins retain access through their role."
+        description="Manage explicit access for people and service users. Organization Admins and Platform Admins retain access through their role."
         actions={
           <Button
             onClick={() => {
@@ -181,34 +181,34 @@ function UniverseAccess({
       />
       <div className="mb-6 grid gap-2 text-sm text-muted-foreground">
         <p>
-          Universe Owners manage these grants. Account membership alone does not
+          Universe Owners manage these grants. Organization membership alone does not
           grant universe access to Members or Creators. Access granted by a
           configured universe policy is managed in that policy.
         </p>
         <p>
-          API keys belong to a person or an application and can be limited to
+          API keys belong to a person or a service user and can be limited to
           this universe. Manage{" "}
           <Link className="underline" to="/account#api-keys">
-            your personal API keys
+            your API keys
           </Link>
-          {accountAdmin && accountId ? (
+          {organizationAdmin && organizationId ? (
             <>
               {" "}
               or{" "}
               <Link
                 className="underline"
-                to={`/admin/accounts?account=${encodeURIComponent(accountId)}`}
+                to={`/admin/organizations/${encodeURIComponent(organizationId)}/people`}
               >
-                account members and application keys
-              </Link>
+                organization members
+              </Link>{" and "}<Link className="underline" to={`/admin/organizations/${encodeURIComponent(organizationId)}/api-keys`}>service user keys</Link>
             </>
           ) : (
-            "; ask an Account Admin to add people or manage application keys"
+            "; ask an Organization Admin to add people or manage service user keys"
           )}
           .
         </p>
       </div>
-      {[grants.error, members.error, applications.error]
+      {[grants.error, members.error, serviceUsers.error]
         .filter(Boolean)
         .map((e, i) => (
           <p role="alert" className="text-destructive" key={i}>
@@ -224,7 +224,7 @@ function UniverseAccess({
             <DialogDescription>
               {editing
                 ? `Change ${editing.name}’s role in ${record.name}.`
-                : `Choose an existing account member or application and its role in ${record.name}.`}
+                : `Choose an existing organization member or service user and its role in ${record.name}.`}
             </DialogDescription>
           </DialogHeader>
           <form
@@ -251,7 +251,7 @@ function UniverseAccess({
           >
             <Field className="min-w-0 sm:w-auto">
               <FieldLabel htmlFor="universe-access-recipient">
-                Account member or application
+                Organization member or service user
               </FieldLabel>
               {editing ? (
                 <Input
@@ -270,8 +270,8 @@ function UniverseAccess({
                 >
                   <option value="">
                     {directoriesLoading
-                      ? "Loading account members and applications…"
-                      : "Select a person or application"}
+                      ? "Loading organization members and service users…"
+                      : "Select a person or service user"}
                   </option>
                   {choices.map((c) => (
                     <option key={c.value} value={c.value}>
@@ -336,20 +336,20 @@ function UniverseAccess({
         !directoriesUnavailable &&
         choices.length === 0 && (
           <p className="mb-6 text-sm text-muted-foreground">
-            No account members or enabled applications are available. An Account
-            Admin can add them in Accounts.
+            No organization members or enabled service users are available. An Organization
+            Admin can add them in Organizations.
           </p>
         )}
-      {!accountId && (
+      {!organizationId && (
         <p role="alert">
-          This universe has no account. Contact a Platform Admin to restore its
-          account before adding access.
+          This universe has no organization. Contact a Platform Admin to restore its
+          organization before adding access.
         </p>
       )}
       {grants.isLoading && <LoadingNote />}
       {grants.data?.grants.length === 0 && (
         <p className="mb-3 text-sm text-muted-foreground">
-          No explicit universe grants. Account Admins and Platform Admins retain
+          No explicit universe grants. Organization Admins and Platform Admins retain
           access.
         </p>
       )}
@@ -358,7 +358,7 @@ function UniverseAccess({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Person or application</TableHead>
+                <TableHead>Person or service user</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Universe role</TableHead>
                 <TableHead />
@@ -369,7 +369,7 @@ function UniverseAccess({
                 <TableRow key={g.id}>
                   <TableCell>{g.name}</TableCell>
                   <TableCell>
-                    {g.principal.kind === "user" ? "Person" : "Application"}
+                    {g.principal.kind === "user" ? "Person" : "Service user"}
                   </TableCell>
                   <TableCell>{roleLabels[g.role]}</TableCell>
                   <TableCell className="whitespace-nowrap text-right">
@@ -421,7 +421,7 @@ function UniverseAccess({
             </AlertDialogTitle>
             <AlertDialogDescription>
               This removes their explicit universe grant. Access granted by
-              policy or an Account Admin or Platform Admin role remains.
+              policy or an Organization Admin or Platform Admin role remains.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {remove.error && (
@@ -443,7 +443,7 @@ function UniverseAccess({
       </AlertDialog>
       <p className="mt-3 text-sm text-muted-foreground">
         Keep at least one explicit Owner. Universe roles apply equally to people
-        and applications.
+        and service users.
       </p>
     </>
   );

@@ -499,7 +499,7 @@ describe("demo router", () => {
     expect((await call("PUT", path, { principal, role: "deployment_admin" })).status).toBe(400);
   });
 
-  it("installs and rotates the Configurator setup only for account administrators", async () => {
+  it("installs and rotates the Configurator setup only for organization administrators", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = `/api/ui/universes/${state.universe.id}/setups`;
@@ -512,9 +512,9 @@ describe("demo router", () => {
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
     state.universe.role = "owner";
     store.currentUser.role = "user";
-    state.universe.accountRole = "creator";
+    state.universe.organizationRole = "creator";
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
-    state.universe.accountRole = "admin";
+    state.universe.organizationRole = "admin";
     const installed = await call("POST", `${base}/configurator/install`);
     expect(installed.status).toBe(200);
     expect(installed.json).toMatchObject({ status: "ready", resources: { serverId: "configurator" } });
@@ -1059,20 +1059,20 @@ describe("demo router", () => {
 });
 
 
-it("supports application lifecycle and grants in the account demo", async () => {
+it("supports service user lifecycle and grants in the organization demo", async () => {
   const { store, call } = await boot();
-  const path = "/api/v1/platform/accounts/demo-account/applications";
+  const path = "/api/v1/platform/organizations/demo-organization/service-users";
   const created = await call("POST", path, { name: "CI robot", role: "creator" });
   expect(created.status).toBe(201);
-  const application = (created.json as { application: { id: string } }).application;
+  const serviceUser = (created.json as { serviceUser: { id: string } }).serviceUser;
   const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.universe;
   const grants = `/api/v1/platform/universes/${universe.lightspeedUniverseId}/grants`;
-  expect((await call("PUT", grants, { principal: { kind: "application", id: application.id }, role: "operator" })).status).toBe(200);
-  expect((await call("GET", grants)).json).toMatchObject({ grants: expect.arrayContaining([expect.objectContaining({ principal: { kind: "application", id: application.id }, role: "operator" })]) });
-  expect((await call("PATCH", `${path}/${application.id}`, { enabled: false })).status).toBe(200);
-  expect((await call("PUT", grants, { principal: { kind: "application", id: application.id }, role: "owner" })).status).toBe(400);
-  expect((await call("GET", `${path}/${application.id}/credentials`)).json).toEqual({ credentials: [] });
-  expect((await call("POST", `${path}/${application.id}/credentials`, { name: "automation" })).status).toBe(400);
+  expect((await call("PUT", grants, { principal: { kind: "serviceUser", id: serviceUser.id }, role: "operator" })).status).toBe(200);
+  expect((await call("GET", grants)).json).toMatchObject({ grants: expect.arrayContaining([expect.objectContaining({ principal: { kind: "serviceUser", id: serviceUser.id }, role: "operator" })]) });
+  expect((await call("PATCH", `${path}/${serviceUser.id}`, { enabled: false })).status).toBe(200);
+  expect((await call("PUT", grants, { principal: { kind: "serviceUser", id: serviceUser.id }, role: "owner" })).status).toBe(400);
+  expect((await call("GET", `${path}/${serviceUser.id}/credentials`)).json).toEqual({ credentials: [] });
+  expect((await call("POST", `${path}/${serviceUser.id}/credentials`, { name: "automation" })).status).toBe(400);
 });
 
 it("clears expiry explicitly before enabling protection in the demo", async () => {

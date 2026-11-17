@@ -238,7 +238,7 @@ function createPlan(profile, sourceEnv) {
       "local-platform-auth-secret-0123456789abcdef",
     LIGHTSPEED_PLATFORM_BASE_URL:
       sourceEnv.LIGHTSPEED_PLATFORM_BASE_URL ??
-      `http://127.0.0.1:${platformPort}`,
+      "http://localhost:5173",
     LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS:
       sourceEnv.LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS ??
       "http://127.0.0.1:5173,http://localhost:5173",
@@ -685,6 +685,7 @@ function printPlan(plan) {
   console.log(`connectors: ${plan.connectors.length > 0 ? plan.connectors.join(", ") : "none"}`);
   const configurator = plan.processes.find(process => process.name === "configurator");
   if (configurator) console.log(`configurator upstream: ${configurator.env.LIGHTSPEED_CONFIGURATOR_MCP_API_URL}`);
+  if (plan.processes.some(process => process.name === "platform")) console.log(`platform public URL: ${plan.env.LIGHTSPEED_PLATFORM_BASE_URL}`);
   console.log(`runtime auth: ${plan.env.LIGHTSPEED_AUTH_MODE}`);
   console.log(`development fixtures: ${plan.env.LIGHTSPEED_PLATFORM_DEV_SEED}`);
   console.log(

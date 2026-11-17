@@ -11,7 +11,7 @@ let fixture: Awaited<ReturnType<typeof identityFixture>>;
 let cookie: string;
 let userId: string;
 const context = (): AppContext => ({ ...fixture, pool: {} as never });
-const admission = (secret: string) => authenticateRequest(context(), new Request(`${fixture.env.baseUrl}/api/v1/platform/accounts`, { headers: { authorization: `Bearer ${secret}` } }));
+const admission = (secret: string) => authenticateRequest(context(), new Request(`${fixture.env.baseUrl}/api/v1/platform/organizations`, { headers: { authorization: `Bearer ${secret}` } }));
 
 beforeAll(async () => {
   fixture = await identityFixture({ ...identityEnv, oidc: null });
@@ -43,38 +43,38 @@ it("creates an expiring hashed personal key and never turns it into a browser se
   expect(await admission(created.secret)).toBeNull();
 });
 
-it("binds organization keys to applications without giving their creator membership", async () => {
-  const accountId = crypto.randomUUID();
-  await fixture.db.insert(schema.organization).values({ id: accountId, name: "Automation", slug: accountId, createdAt: new Date() });
-  const [application] = await fixture.db.insert(schema.applications).values({ organizationId: accountId, name: "Worker", role: "creator" }).returning();
-  const response = await fixture.request(`/api/v1/platform/accounts/${accountId}/applications/${application!.id}/credentials`, { name: "Worker key" }, cookie);
+it("binds organization keys to service users without giving their creator membership", async () => {
+  const organizationId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Automation", slug: organizationId, createdAt: new Date() });
+  const [serviceUser] = await fixture.db.insert(schema.serviceUsers).values({ organizationId: organizationId, name: "Worker", role: "creator" }).returning();
+  const response = await fixture.request(`/api/v1/platform/organizations/${organizationId}/service-users/${serviceUser!.id}/credentials`, { name: "Worker key" }, cookie);
   expect(response.status).toBe(201);
   const created = await response.json() as { credential: { id: string }; secret: string };
   expect(created.secret).toMatch(/^lsa_/);
-  expect((await fixture.db.select().from(schema.member).where(eq(schema.member.organizationId, accountId))).length).toBe(0);
+  expect((await fixture.db.select().from(schema.member).where(eq(schema.member.organizationId, organizationId))).length).toBe(0);
   const result = await admission(created.secret);
-  expect(result?.auth).toMatchObject({ principal: { kind: "application", id: application!.id, accountId, platformAdmin: false }, actorId: `application:${application!.id}` });
+  expect(result?.auth).toMatchObject({ principal: { kind: "serviceUser", id: serviceUser!.id, organizationId, platformAdmin: false }, actorId: `serviceUser:${serviceUser!.id}` });
   expect(result?.session).toBeUndefined();
-  await fixture.db.update(schema.applications).set({ enabled: false }).where(eq(schema.applications.id, application!.id));
+  await fixture.db.update(schema.serviceUsers).set({ enabled: false }).where(eq(schema.serviceUsers.id, serviceUser!.id));
   expect(await admission(created.secret)).toBeNull();
-  await fixture.db.update(schema.applications).set({ enabled: true }).where(eq(schema.applications.id, application!.id));
-  await fixture.db.update(schema.organization).set({ enabled: false }).where(eq(schema.organization.id, accountId));
+  await fixture.db.update(schema.serviceUsers).set({ enabled: true }).where(eq(schema.serviceUsers.id, serviceUser!.id));
+  await fixture.db.update(schema.organization).set({ enabled: false }).where(eq(schema.organization.id, organizationId));
   expect(await admission(created.secret)).toBeNull();
-  await fixture.db.update(schema.organization).set({ enabled: true }).where(eq(schema.organization.id, accountId));
+  await fixture.db.update(schema.organization).set({ enabled: true }).where(eq(schema.organization.id, organizationId));
   await fixture.db.delete(schema.credentialBindings).where(eq(schema.credentialBindings.keyId, created.credential.id));
   expect(await admission(created.secret)).toBeNull();
 });
 
 it("does not accept an unknown bearer through a valid cookie or expose plugin key management", async () => {
-  expect(await authenticateRequest(context(), new Request(`${fixture.env.baseUrl}/api/v1/platform/accounts`, { headers: { cookie, authorization: "Bearer invalid" } }))).toBeNull();
+  expect(await authenticateRequest(context(), new Request(`${fixture.env.baseUrl}/api/v1/platform/organizations`, { headers: { cookie, authorization: "Bearer invalid" } }))).toBeNull();
   expect((await fixture.request("/api/auth/api-key/create", { name: "Unreviewed" }, cookie)).status).toBe(404);
 });
 
-it("installs only an application Operator credential scoped to configuration in one universe", async () => {
-  const accountId = crypto.randomUUID();
+it("installs only a service user Operator credential scoped to configuration in one universe", async () => {
+  const organizationId = crypto.randomUUID();
   const universeId = crypto.randomUUID();
-  await fixture.db.insert(schema.organization).values({ id: accountId, name: "Configurator", slug: accountId, createdAt: new Date() });
-  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: accountId, lightspeedUniverseId: universeId, handle: `config-${accountId}`, name: "Configurable" }).returning();
+  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Configurator", slug: organizationId, createdAt: new Date() });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: organizationId, lightspeedUniverseId: universeId, handle: `config-${organizationId}`, name: "Configurable" }).returning();
   fixture.env.configuratorMcpUrl = "https://configurator.example/mcp";
   fixture.env.lightspeedApiUrl = "https://runtime.example/api/v1";
   fixture.env.lightspeedApiToken = "lsr_infrastructure_only";
@@ -104,23 +104,23 @@ it("installs only an application Operator credential scoped to configuration in 
     expect(await installed.text()).not.toContain(issuedSecret!);
     const first = issuedSecret!;
     const admissionResult = await admission(first);
-    expect(admissionResult?.auth.principal.kind).toBe("application");
+    expect(admissionResult?.auth.principal.kind).toBe("serviceUser");
     const auth = admissionResult!.auth;
-    expect(auth.credential.restrictions).toMatchObject({ accountIds: [accountId], universeIds: [universeId], allowUniverseCreation: false });
-    const [application] = await fixture.db.select().from(schema.applications).where(eq(schema.applications.id, auth.principal.id));
-    expect(application?.role).toBe("member");
-    const [grant] = await fixture.db.select().from(schema.universeGrants).where(eq(schema.universeGrants.applicationId, auth.principal.id));
+    expect(auth.credential.restrictions).toMatchObject({ organizationIds: [organizationId], universeIds: [universeId], allowUniverseCreation: false });
+    const [serviceUser] = await fixture.db.select().from(schema.serviceUsers).where(eq(schema.serviceUsers.id, auth.principal.id));
+    expect(serviceUser?.role).toBe("member");
+    const [grant] = await fixture.db.select().from(schema.universeGrants).where(eq(schema.universeGrants.serviceUserId, auth.principal.id));
     expect(grant?.role).toBe("operator");
-    expect(() => enforceRestrictions(auth, { operation: "profiles/put", accountId, universeId, write: true })).not.toThrow();
-    expect(() => enforceRestrictions(auth, { operation: "session/start", accountId, universeId, write: true })).toThrow();
-    expect(() => enforceRestrictions(auth, { operation: "profiles/read", accountId, universeId: crypto.randomUUID() })).toThrow();
+    expect(() => enforceRestrictions(auth, { operation: "profiles/put", organizationId, universeId, write: true })).not.toThrow();
+    expect(() => enforceRestrictions(auth, { operation: "session/start", organizationId, universeId, write: true })).toThrow();
+    expect(() => enforceRestrictions(auth, { operation: "profiles/read", organizationId, universeId: crypto.randomUUID() })).toThrow();
     failInstallation = true;
     expect((await fixture.request(path, {}, cookie)).status).toBeGreaterThanOrEqual(400);
     expect(await admission(first)).not.toBeNull();
     expect(await admission(issuedSecret!)).toBeNull();
     const [retained] = await fixture.db.select().from(schema.universeSetupInstallations).where(eq(schema.universeSetupInstallations.universeId, universe!.id));
     expect(retained?.status).toBe("ready");
-    expect(retained?.state.applicationId).toBe(auth.principal.id);
+    expect(retained?.state.serviceUserId).toBe(auth.principal.id);
     expect((await fixture.request(path, {}, cookie)).status).toBe(200);
     expect(await admission(first)).toBeNull();
     expect(await admission(issuedSecret!)).not.toBeNull();
@@ -143,7 +143,7 @@ it("returns retryable rate exhaustion without treating a verified credential as 
   const created = await response.json() as { credential: { id: string }; secret: string };
   await fixture.db.update(schema.apikey).set({ rateLimitMax: 1, rateLimitTimeWindow: 60_000, lastRequest: null, requestCount: 0 }).where(eq(schema.apikey.id, created.credential.id));
   expect(await admission(created.secret)).not.toBeNull();
-  const limited = await fixture.app.request(new Request(`${fixture.env.baseUrl}/api/v1/platform/accounts`, { headers: { authorization: `Bearer ${created.secret}` } }));
+  const limited = await fixture.app.request(new Request(`${fixture.env.baseUrl}/api/v1/platform/organizations`, { headers: { authorization: `Bearer ${created.secret}` } }));
   expect(limited.status).toBe(429);
   expect(limited.headers.get("content-type")).toContain("application/problem+json");
   expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);

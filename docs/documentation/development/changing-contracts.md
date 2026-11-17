@@ -347,7 +347,7 @@ covers the controller, daemon, and gateway responsibilities in more detail.
 Runtime and Platform data have separate owners and migration histories.
 Runtime PostgreSQL holds universes, sessions, creator attribution,
 visibility, and domain records such as bots and channel accounts. Platform owns
-login credentials, accounts, organization memberships and roles, universe
+login credentials, organizations, memberships and roles, universe
 mapping, and setup provenance. Add a table to the database that owns its
 behavior. [Access and security](../access-and-security/overview.md) explains the
 boundary that these records support.

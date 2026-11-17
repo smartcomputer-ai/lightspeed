@@ -11,17 +11,17 @@ export type Principal = {
   user: typeof schema.user.$inferSelect;
   platformAdmin: boolean;
 } | {
-  kind: "application";
+  kind: "serviceUser";
   id: string;
-  application: typeof schema.applications.$inferSelect;
-  accountId: string;
+  serviceUser: typeof schema.serviceUsers.$inferSelect;
+  organizationId: string;
   platformAdmin: false;
 };
 
 export interface AuthContext {
   principal: Principal;
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "applicationKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
     id: string;
     restrictions: CredentialRestrictions;
   };
@@ -41,17 +41,17 @@ export function getAuth(c: Context<{ Variables: ApiVariables }>): AuthContext {
 
 /** Credential ceilings always intersect current principal authority, including administrators. */
 export function enforceRestrictions(auth: AuthContext, target: {
-  operation: string; accountId?: string; universeId?: string; write?: boolean; createUniverse?: boolean;
+  operation: string; organizationId?: string; universeId?: string; write?: boolean; createUniverse?: boolean;
 }): void {
   const limits = auth.credential.restrictions;
   if (limits.operations && !limits.operations.includes(target.operation)) {
     throw new AuthorizationRefusal(403, "Credential does not permit this operation");
   }
-  if (target.write && limits.universeIds && !target.universeId) throw new AuthorizationRefusal(403, "Universe-limited credentials cannot perform account-wide operations");
+  if (target.write && limits.universeIds && !target.universeId) throw new AuthorizationRefusal(403, "Universe-limited credentials cannot perform organization-wide operations");
   if (target.write && limits.readOnly) throw new AuthorizationRefusal(403, "Credential is read-only");
-  if (target.accountId && ((limits.accountIds && !limits.accountIds.includes(target.accountId)) ||
-      (auth.principal.kind === "application" && auth.principal.accountId !== target.accountId))) {
-    throw new AuthorizationRefusal(403, "Credential does not permit this account");
+  if (target.organizationId && ((limits.organizationIds && !limits.organizationIds.includes(target.organizationId)) ||
+      (auth.principal.kind === "serviceUser" && auth.principal.organizationId !== target.organizationId))) {
+    throw new AuthorizationRefusal(403, "Credential does not permit this organization");
   }
   if (target.universeId && limits.universeIds && !limits.universeIds.includes(target.universeId)) {
     throw new AuthorizationRefusal(403, "Credential does not permit this universe");

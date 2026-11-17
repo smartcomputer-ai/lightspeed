@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import type { AccountRole, PlatformOperationResult } from "@lightspeed-ai/platform-shared";
+import type { OrganizationRole, PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import { platformApi } from "@/lib/platform-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,21 +14,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type Account = PlatformOperationResult<"platform/accounts/read">["account"];
-type Member = PlatformOperationResult<"platform/accounts/members/list">["members"][number];
-type Application = PlatformOperationResult<"platform/accounts/applications/list">["applications"][number];
-const roles: AccountRole[] = ["member", "creator", "admin"];
-const roleLabels: Record<AccountRole, string> = { member: "Member", creator: "Creator", admin: "Admin" };
+type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
+type Member = PlatformOperationResult<"platform/organizations/members/list">["members"][number];
+type ServiceUser = PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number];
+const roles: OrganizationRole[] = ["member", "creator", "admin"];
+const roleLabels: Record<OrganizationRole, string> = { member: "Member", creator: "Creator", admin: "Admin" };
 
-function RoleSelect({ value, onChange }: { value: AccountRole; onChange: (role: AccountRole) => void }) {
+function RoleSelect({ value, onChange }: { value: OrganizationRole; onChange: (role: OrganizationRole) => void }) {
   return (
     <Field>
-      <FieldLabel htmlFor="account-role">Account role</FieldLabel>
+      <FieldLabel htmlFor="organization-role">Organization role</FieldLabel>
       <select
-        id="account-role"
+        id="organization-role"
         className="min-w-0 rounded-md border bg-background p-2"
         value={value}
-        onChange={(event) => onChange(event.target.value as AccountRole)}
+        onChange={(event) => onChange(event.target.value as OrganizationRole)}
       >
         {roles.map((role) => (
           <option key={role} value={role}>
@@ -37,14 +37,14 @@ function RoleSelect({ value, onChange }: { value: AccountRole; onChange: (role: 
         ))}
       </select>
       <FieldDescription>
-        Members need universe access. Creators can create universes. Admins manage the account and all its
+        Members need universe access. Creators can create universes. Admins manage the organization and all its
         universes.
       </FieldDescription>
     </Field>
   );
 }
 
-function AccountDialog({
+function OrganizationDialog({
   title,
   description,
   close,
@@ -86,28 +86,28 @@ function FormActions({ close, pending, label }: { close: () => void; pending: bo
   );
 }
 
-export function CreateAccountDialog({
+export function CreateOrganizationDialog({
   close,
   saved,
 }: {
   close: () => void;
-  saved: (accountId: string) => Promise<void>;
+  saved: (organizationId: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const create = useMutation({
     mutationFn: () =>
-      platformApi("platform/accounts/create", {
+      platformApi("platform/organizations/create", {
         name: name.trim(),
         slug,
         kind: "shared",
       }),
-    onSuccess: (result) => saved(result.account.id),
+    onSuccess: (result) => saved(result.organization.id),
   });
   return (
-    <AccountDialog
-      title="New account"
-      description="Create a shared account for a team or business unit. You become its first Account Admin."
+    <OrganizationDialog
+      title="New organization"
+      description="Create a shared organization for a team or business unit. You become its first Organization Admin."
       close={close}
     >
       <form
@@ -118,10 +118,10 @@ export function CreateAccountDialog({
         }}
       >
         <Field>
-          <FieldLabel htmlFor="new-account-name">Name</FieldLabel>
+          <FieldLabel htmlFor="new-organization-name">Name</FieldLabel>
           <Input
-            id="new-account-name"
-            aria-label="New account name"
+            id="new-organization-name"
+            aria-label="New organization name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             required
@@ -129,10 +129,10 @@ export function CreateAccountDialog({
           />
         </Field>
         <Field>
-          <FieldLabel htmlFor="new-account-slug">Handle</FieldLabel>
+          <FieldLabel htmlFor="new-organization-slug">Handle</FieldLabel>
           <Input
-            id="new-account-slug"
-            aria-label="New account slug"
+            id="new-organization-slug"
+            aria-label="New organization slug"
             value={slug}
             onChange={(event) => setSlug(event.target.value)}
             required
@@ -145,29 +145,29 @@ export function CreateAccountDialog({
             {create.error.message}
           </p>
         )}
-        <FormActions close={close} pending={create.isPending} label="Create account" />
+        <FormActions close={close} pending={create.isPending} label="Create organization" />
       </form>
-    </AccountDialog>
+    </OrganizationDialog>
   );
 }
 
 export function MemberDialog({
-  accountId,
+  organizationId,
   member,
   close,
   saved,
 }: {
-  accountId: string;
+  organizationId: string;
   member?: Member;
   close: () => void;
   saved: () => Promise<void>;
 }) {
   const [userId, setUserId] = useState(member?.userId ?? "");
-  const [role, setRole] = useState<AccountRole>(member?.role ?? "member");
+  const [role, setRole] = useState<OrganizationRole>(member?.role ?? "member");
   const save = useMutation({
     mutationFn: () =>
-      platformApi("platform/accounts/members/put", {
-        accountId,
+      platformApi("platform/organizations/members/put", {
+        organizationId,
         userId: userId.trim(),
         role,
       }),
@@ -177,9 +177,9 @@ export function MemberDialog({
     },
   });
   return (
-    <AccountDialog
-      title={member ? `Edit ${member.name}'s account role` : "Add account member"}
-      description="Add existing users to this account. Universe roles are managed separately in Admin → Universes."
+    <OrganizationDialog
+      title={member ? `Edit ${member.name}'s organization role` : "Add organization member"}
+      description="Add existing users to this organization. Universe roles are managed separately in Admin → organization → Universes."
       close={close}
     >
       <form
@@ -191,9 +191,9 @@ export function MemberDialog({
       >
         {!member && (
           <Field>
-            <FieldLabel htmlFor="account-member-id">User ID</FieldLabel>
+            <FieldLabel htmlFor="organization-member-id">User ID</FieldLabel>
             <Input
-              id="account-member-id"
+              id="organization-member-id"
               value={userId}
               onChange={(event) => setUserId(event.target.value)}
               required
@@ -212,34 +212,34 @@ export function MemberDialog({
         )}
         <FormActions close={close} pending={save.isPending} label={member ? "Save changes" : "Add member"} />
       </form>
-    </AccountDialog>
+    </OrganizationDialog>
   );
 }
 
-export function ApplicationDialog({
-  accountId,
-  application,
+export function ServiceUserDialog({
+  organizationId,
+  serviceUser,
   close,
   saved,
 }: {
-  accountId: string;
-  application?: Application;
+  organizationId: string;
+  serviceUser?: ServiceUser;
   close: () => void;
   saved: () => Promise<void>;
 }) {
-  const [name, setName] = useState(application?.name ?? "");
-  const [role, setRole] = useState<AccountRole>(application?.role ?? "member");
+  const [name, setName] = useState(serviceUser?.name ?? "");
+  const [role, setRole] = useState<OrganizationRole>(serviceUser?.role ?? "member");
   const save = useMutation({
     mutationFn: () =>
-      application
-        ? platformApi("platform/accounts/applications/update", {
-            accountId,
-            applicationId: application.id,
+      serviceUser
+        ? platformApi("platform/organizations/service-users/update", {
+            organizationId,
+            serviceUserId: serviceUser.id,
             name: name.trim(),
             role,
           })
-        : platformApi("platform/accounts/applications/create", {
-            accountId,
+        : platformApi("platform/organizations/service-users/create", {
+            organizationId,
             name: name.trim(),
             role,
           }),
@@ -249,9 +249,9 @@ export function ApplicationDialog({
     },
   });
   return (
-    <AccountDialog
-      title={application ? "Edit application" : "New application"}
-      description="An application authenticates independently of its creator. Start with Member and grant access to the universes it needs."
+    <OrganizationDialog
+      title={serviceUser ? "Edit service user" : "New service user"}
+      description="A service user authenticates independently of its creator. Start with Member and grant access to the universes it needs."
       close={close}
     >
       <form
@@ -262,9 +262,9 @@ export function ApplicationDialog({
         }}
       >
         <Field>
-          <FieldLabel htmlFor="application-name">Application name</FieldLabel>
+          <FieldLabel htmlFor="serviceUser-name">Service user name</FieldLabel>
           <Input
-            id="application-name"
+            id="serviceUser-name"
             value={name}
             onChange={(event) => setName(event.target.value)}
             required
@@ -280,29 +280,29 @@ export function ApplicationDialog({
         <FormActions
           close={close}
           pending={save.isPending}
-          label={application ? "Save changes" : "Create application"}
+          label={serviceUser ? "Save changes" : "Create service user"}
         />
       </form>
-    </AccountDialog>
+    </OrganizationDialog>
   );
 }
 
 export function PolicyDialog({
-  account,
+  organization,
   close,
   saved,
 }: {
-  account: Account;
+  organization: Organization;
   close: () => void;
   saved: () => Promise<void>;
 }) {
-  const [quota, setQuota] = useState(String(account.universeQuota));
-  const [defaultProtected, setDefaultProtected] = useState(account.defaultProtected);
-  const [requireProtected, setRequireProtected] = useState(account.requireProtected);
+  const [quota, setQuota] = useState(String(organization.universeQuota));
+  const [defaultProtected, setDefaultProtected] = useState(organization.defaultProtected);
+  const [requireProtected, setRequireProtected] = useState(organization.requireProtected);
   const save = useMutation({
     mutationFn: () =>
-      platformApi("platform/accounts/update", {
-        accountId: account.id,
+      platformApi("platform/organizations/update", {
+        organizationId: organization.id,
         universeQuota: Number(quota),
         defaultProtected,
         requireProtected,
@@ -313,9 +313,9 @@ export function PolicyDialog({
     },
   });
   return (
-    <AccountDialog
-      title="Edit account policy"
-      description={`Policy for ${account.name}. Requiring protection applies to every universe in this account.`}
+    <OrganizationDialog
+      title="Edit organization policy"
+      description={`Policy for ${organization.name}. Requiring protection applies to every universe in this organization.`}
       close={close}
     >
       <form
@@ -326,9 +326,9 @@ export function PolicyDialog({
         }}
       >
         <Field>
-          <FieldLabel htmlFor="account-quota">Universe quota</FieldLabel>
+          <FieldLabel htmlFor="organization-quota">Universe quota</FieldLabel>
           <Input
-            id="account-quota"
+            id="organization-quota"
             type="number"
             value={quota}
             onChange={(event) => setQuota(event.target.value)}
@@ -361,7 +361,7 @@ export function PolicyDialog({
         )}
         <FormActions close={close} pending={save.isPending} label="Save policy" />
       </form>
-    </AccountDialog>
+    </OrganizationDialog>
   );
 }
 
@@ -380,7 +380,7 @@ export function ConfirmDialog({
 }) {
   const save = useMutation({ mutationFn: action, onSuccess: close });
   return (
-    <AccountDialog title={title} description={description} close={close}>
+    <OrganizationDialog title={title} description={description} close={close}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -395,6 +395,6 @@ export function ConfirmDialog({
         )}
         <FormActions close={close} pending={save.isPending} label={label} />
       </form>
-    </AccountDialog>
+    </OrganizationDialog>
   );
 }

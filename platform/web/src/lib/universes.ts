@@ -4,8 +4,8 @@ import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed-ai/pl
 import { api, type Universe } from "@/api";
 import { SETTINGS, settings } from "@/lib/settings";
 
-/// One list drives everything: memberships for the switcher, all universes
-/// for platform admins (role marks the ones they are actually members of).
+/// The server returns effective access, including inherited organization and
+/// platform administration. Working navigation filters this list to active universes.
 export function useUniverses() {
   return useQuery({
     queryKey: ["universes"],
@@ -26,11 +26,11 @@ export function useActiveUniverse(): {
   isLoading: boolean;
 } {
   const work = useMatch("/u/:handle/*");
-  const admin = useMatch("/admin/universes/:handle/*");
+  const admin = useMatch("/admin/organizations/:organizationId/universes/:handle/*");
   const handle = work?.params.handle ?? admin?.params.handle;
   const universes = useUniverses();
   return {
-    universe: handle ? universes.data?.find((u) => u.status !== "deleting" && u.handle === handle) : undefined,
+    universe: handle ? universes.data?.find((u) => u.status !== "deleting" && u.handle === handle && (!admin || u.organizationId === admin.params.organizationId)) : undefined,
     handle,
     isLoading: universes.isLoading,
   };

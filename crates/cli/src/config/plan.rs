@@ -290,8 +290,8 @@ pub(crate) async fn plan_with_owner(
     {
         if base.is_platform() {
             anyhow::ensure!(
-                base.selected_account().is_some(),
-                "Platform creation requires --account ID or platform account use ID"
+                base.selected_organization().is_some(),
+                "Platform creation requires --organization ID or platform organization use ID"
             );
         } else {
             anyhow::ensure!(
@@ -543,12 +543,12 @@ async fn create_universe(
     );
     let mut params = json!({ "universeId": universe_id.to_string(), "handle": handle, "protected":protected,"metadata":metadata });
     let response = if platform {
-        params["accountId"] = json!(
+        params["organizationId"] = json!(
             target
                 .api
                 .connection()
-                .selected_account()
-                .context("Platform creation needs an account")?
+                .selected_organization()
+                .context("Platform creation needs an organization")?
         );
         params["name"] = json!(name);
         if let Some(owner) = initial_owner {

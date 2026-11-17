@@ -1,4 +1,4 @@
-import { listAccountsForPrincipal } from "./account-access.js";
+import { listOrganizationsForPrincipal } from "./organization-access.js";
 import type { PlatformConnectionDetails } from "@lightspeed-ai/platform-shared";
 import { Hono, type Context } from "hono";
 import { LightspeedApiError, type ConnectionResponse, type UniverseWatchParams } from "@lightspeed-ai/sdk";
@@ -45,7 +45,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       if (MEMBER_OPERATIONS.has(spec.operationId)) {
         const access = await universeForRequest(ctx, c, reference ?? "");
         if (!access) throw new GateRefusal(404, "universe not found");
-        enforceRestrictions(auth, { operation: spec.operationId, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
+        enforceRestrictions(auth, { operation: spec.operationId, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
         const client = universeClient(ctx.env, access.universe, access.caller);
         for (const field of spec.pathFields) setField(params, field.field, c.req.param(field.parameter));
@@ -85,12 +85,12 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       }
       if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
       if (!reference) enforceRestrictions(auth, { operation: spec.operationId, write: spec.method !== "GET" });
-      if (!reference && (auth.credential.restrictions.accountIds || auth.credential.restrictions.universeIds)) throw new GateRefusal(403, "deployment operation is outside credential resource scope");
+      if (!reference && (auth.credential.restrictions.organizationIds || auth.credential.restrictions.universeIds)) throw new GateRefusal(403, "deployment operation is outside credential resource scope");
       // Deployment routes with a universe still resolve a Platform-owned resource.
       if (reference) {
         const access = await universeForRequest(ctx, c, reference);
         if (!access) throw new GateRefusal(404, "universe not found");
-        enforceRestrictions(auth, { operation: spec.operationId, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
+        enforceRestrictions(auth, { operation: spec.operationId, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
       }
       for (const field of spec.pathFields) upstreamPath = upstreamPath.replace(`{${field.parameter}}`, encodeURIComponent(c.req.param(field.parameter)!));
@@ -196,14 +196,14 @@ async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string
   const client = deploymentClient(ctx.env);
   if (operation === "initialize") {
     const principal = auth.principal;
-    const admitted = await listAccountsForPrincipal(ctx, auth);
-    const accounts = admitted.map(({ account, role }) => ({ id: account.id, name: account.name, role }));
+    const admitted = await listOrganizationsForPrincipal(ctx, auth);
+    const organizations = admitted.map(({ organization, role }) => ({ id: organization.id, name: organization.name, role }));
     const selected = auth.credential.restrictions.universeIds;
     const defaultUniverse = selected?.length === 1 && await universeForRequest(ctx, c, selected[0]!) ? selected[0] : undefined;
-    const platform: PlatformConnectionDetails = { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.application.name, platformAdmin: principal.platformAdmin }, credential: { kind: auth.credential.kind, id: auth.credential.id }, accounts, restrictions: auth.credential.restrictions };
+    const platform: PlatformConnectionDetails = { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.serviceUser.name, platformAdmin: principal.platformAdmin }, credential: { kind: auth.credential.kind, id: auth.credential.id }, organizations, restrictions: auth.credential.restrictions };
     return c.json({ ...connection, defaultUniverse, runtime: "platform", caller: { single: false }, platform });
   }
-  if (operation === "deployment/universes/create") return problem(c, 400, "invalidRequest", "Create through /api/v1/platform/accounts/{accountId}/universes to select an account and initial Owner");
+  if (operation === "deployment/universes/create") return problem(c, 400, "invalidRequest", "Create through /api/v1/platform/organizations/{organizationId}/universes to select an organization and initial Owner");
   if (operation === "deployment/universes/list") {
     const query = new URL(c.req.url).searchParams;
     if ([...query.keys()].some(key => key !== "metadata") || query.getAll("metadata").length > 1) return problem(c, 400, "invalidRequest", "unsupported universe list query");
@@ -218,7 +218,7 @@ async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string
   }
   const access = await universeForRequest(ctx, c, c.req.param("universe") ?? "", operation === "deployment/universes/delete");
   if (!access) throw new GateRefusal(404, "universe not found");
-  enforceRestrictions(auth, { operation, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: operation !== "deployment/universes/read" });
+  enforceRestrictions(auth, { operation, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: operation !== "deployment/universes/read" });
   if (operation === "deployment/universes/read") return c.json(await client.call(operation, { universe: access.universe.lightspeedUniverseId }));
   if (operation === "deployment/universes/delete") return c.json(await deleteManagedUniverse(ctx, access));
   const body = await policyBody(c.req.raw);

@@ -6,9 +6,9 @@ it.each(fixtures.accepted)("normalizes $input consistently for runtime and nativ
   expect(normalizeEndpoint(input)).toBe(normalized);
   expect(prepareHttpRequest("profiles/list", {}, { endpoint: input, universe: "u" }).url.href).toBe(`${normalized}/universes/u/profiles`);
   const calls: string[] = [];
-  const client = new LightspeedClient({ endpoint: input, fetch: async url => { calls.push(String(url)); return Response.json({ accounts: [] }); } });
-  await client.platform.listAccounts();
-  expect(calls).toEqual([`${normalized}/platform/accounts`]);
+  const client = new LightspeedClient({ endpoint: input, fetch: async url => { calls.push(String(url)); return Response.json({ organizations: [] }); } });
+  await client.platform.listOrganizations();
+  expect(calls).toEqual([`${normalized}/platform/organizations`]);
 });
 it.each(fixtures.rejected)("refuses ambiguous or credential-bearing endpoint %s", input => {
   expect(() => new LightspeedClient(input)).toThrow();

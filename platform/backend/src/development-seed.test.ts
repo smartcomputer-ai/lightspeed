@@ -8,7 +8,7 @@ vi.mock("better-auth/crypto", async importOriginal => ({ ...await importOriginal
 let fixture: Awaited<ReturnType<typeof identityFixture>>;
 let handle = "test";
 beforeEach(async () => {
-  fixture = await identityFixture({ ...identityEnv, oidc: null, personalAccounts: false, devSeed: true, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "seed-runtime-token-12345678901234567890" });
+  fixture = await identityFixture({ ...identityEnv, oidc: null, personalOrganizations: false, devSeed: true, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "seed-runtime-token-12345678901234567890" });
   handle = "test";
   vi.stubGlobal("fetch", vi.fn(async (url: string | Request | URL, init?: RequestInit) => {
     const request = decodeHttpRequest(url, init);
@@ -22,7 +22,7 @@ it("does nothing unless development seeding is explicitly enabled", async () => 
   expect(fetch).not.toHaveBeenCalled();
   expect(await fixture.db.select().from(schema.organization)).toEqual([]);
 });
-it("creates one shared development account, Creator memberships and separate universe grants", async () => {
+it("creates one shared development organization, Creator memberships and separate universe grants", async () => {
   await seedDevelopment(fixture.db, fixture.env);
   expect(await fixture.db.select().from(schema.organization)).toMatchObject([{ kind: "development", slug: "development", defaultProtected: false }]);
   const memberships = await fixture.db.select().from(schema.member);
@@ -30,14 +30,14 @@ it("creates one shared development account, Creator memberships and separate uni
   expect((await fixture.db.select().from(schema.universeGrants)).map(grant => grant.role).sort()).toEqual(["contributor", "operator", "owner", "viewer"]);
   expect(await fixture.db.select().from(schema.universes)).toMatchObject([{ handle: "test", features: { bots: true, channels: true } }]);
 });
-it("reruns without duplicating accounts, universe grants or credential logins", async () => {
+it("reruns without duplicating organizations, universe grants or credential logins", async () => {
   await seedDevelopment(fixture.db, fixture.env); await seedDevelopment(fixture.db, fixture.env);
   expect(await fixture.db.select().from(schema.organization)).toHaveLength(1);
   expect(await fixture.db.select().from(schema.universes)).toHaveLength(1);
   expect(await fixture.db.select().from(schema.universeGrants)).toHaveLength(4);
   expect(await fixture.db.select().from(schema.account)).toHaveLength(4);
 });
-it("preserves runtime renames without changing the account slug", async () => {
+it("preserves runtime renames without changing the organization slug", async () => {
   await seedDevelopment(fixture.db, fixture.env); handle = "renamed-test";
   await seedDevelopment(fixture.db, fixture.env);
   expect((await fixture.db.select().from(schema.universes))[0]?.handle).toBe("renamed-test");

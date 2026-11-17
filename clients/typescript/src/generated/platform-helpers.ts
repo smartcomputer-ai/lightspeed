@@ -8,20 +8,20 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listPersonalApiKeys": "platform/credentials/list",
   "createPersonalApiKey": "platform/credentials/create",
   "revokePersonalApiKey": "platform/credentials/revoke",
-  "listApplicationApiKeys": "platform/applications/credentials/list",
-  "createApplicationApiKey": "platform/applications/credentials/create",
-  "revokeApplicationApiKey": "platform/applications/credentials/revoke",
-  "listAccounts": "platform/accounts/list",
-  "createAccount": "platform/accounts/create",
-  "readAccount": "platform/accounts/read",
-  "updateAccount": "platform/accounts/update",
-  "listAccountMembers": "platform/accounts/members/list",
-  "putAccountMember": "platform/accounts/members/put",
-  "removeAccountMember": "platform/accounts/members/delete",
-  "listApplications": "platform/accounts/applications/list",
-  "createApplication": "platform/accounts/applications/create",
-  "updateApplication": "platform/accounts/applications/update",
-  "disableApplication": "platform/accounts/applications/delete",
+  "listServiceUserApiKeys": "platform/service-users/credentials/list",
+  "createServiceUserApiKey": "platform/service-users/credentials/create",
+  "revokeServiceUserApiKey": "platform/service-users/credentials/revoke",
+  "listOrganizations": "platform/organizations/list",
+  "createOrganization": "platform/organizations/create",
+  "readOrganization": "platform/organizations/read",
+  "updateOrganization": "platform/organizations/update",
+  "listOrganizationMembers": "platform/organizations/members/list",
+  "putOrganizationMember": "platform/organizations/members/put",
+  "removeOrganizationMember": "platform/organizations/members/delete",
+  "listServiceUsers": "platform/organizations/service-users/list",
+  "createServiceUser": "platform/organizations/service-users/create",
+  "updateServiceUser": "platform/organizations/service-users/update",
+  "disableServiceUser": "platform/organizations/service-users/delete",
   "adoptUniverse": "platform/universes/adopt",
   "createUniverse": "platform/universes/create",
   "updateUniverse": "platform/universes/update",
@@ -47,47 +47,47 @@ export class PlatformHelpers {
   revokePersonalApiKey(params: PlatformOperationParams<"platform/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/credentials/revoke">> {
     return this.client.call("platform/credentials/revoke", params, options);
   }
-  listApplicationApiKeys(params: PlatformOperationParams<"platform/applications/credentials/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/applications/credentials/list">> {
-    return this.client.call("platform/applications/credentials/list", params, options);
+  listServiceUserApiKeys(params: PlatformOperationParams<"platform/service-users/credentials/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/list">> {
+    return this.client.call("platform/service-users/credentials/list", params, options);
   }
-  createApplicationApiKey(params: PlatformOperationParams<"platform/applications/credentials/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/applications/credentials/create">> {
-    return this.client.call("platform/applications/credentials/create", params, options);
+  createServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/create">> {
+    return this.client.call("platform/service-users/credentials/create", params, options);
   }
-  revokeApplicationApiKey(params: PlatformOperationParams<"platform/applications/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/applications/credentials/revoke">> {
-    return this.client.call("platform/applications/credentials/revoke", params, options);
+  revokeServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/revoke">> {
+    return this.client.call("platform/service-users/credentials/revoke", params, options);
   }
-  listAccounts(params: PlatformOperationParams<"platform/accounts/list"> = {}, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/list">> {
-    return this.client.call("platform/accounts/list", params, options);
+  listOrganizations(params: PlatformOperationParams<"platform/organizations/list"> = {}, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/list">> {
+    return this.client.call("platform/organizations/list", params, options);
   }
-  createAccount(params: PlatformOperationParams<"platform/accounts/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/create">> {
-    return this.client.call("platform/accounts/create", params, options);
+  createOrganization(params: PlatformOperationParams<"platform/organizations/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/create">> {
+    return this.client.call("platform/organizations/create", params, options);
   }
-  readAccount(params: PlatformOperationParams<"platform/accounts/read">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/read">> {
-    return this.client.call("platform/accounts/read", params, options);
+  readOrganization(params: PlatformOperationParams<"platform/organizations/read">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/read">> {
+    return this.client.call("platform/organizations/read", params, options);
   }
-  updateAccount(params: PlatformOperationParams<"platform/accounts/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/update">> {
-    return this.client.call("platform/accounts/update", params, options);
+  updateOrganization(params: PlatformOperationParams<"platform/organizations/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/update">> {
+    return this.client.call("platform/organizations/update", params, options);
   }
-  listAccountMembers(params: PlatformOperationParams<"platform/accounts/members/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/members/list">> {
-    return this.client.call("platform/accounts/members/list", params, options);
+  listOrganizationMembers(params: PlatformOperationParams<"platform/organizations/members/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/members/list">> {
+    return this.client.call("platform/organizations/members/list", params, options);
   }
-  putAccountMember(params: PlatformOperationParams<"platform/accounts/members/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/members/put">> {
-    return this.client.call("platform/accounts/members/put", params, options);
+  putOrganizationMember(params: PlatformOperationParams<"platform/organizations/members/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/members/put">> {
+    return this.client.call("platform/organizations/members/put", params, options);
   }
-  removeAccountMember(params: PlatformOperationParams<"platform/accounts/members/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/members/delete">> {
-    return this.client.call("platform/accounts/members/delete", params, options);
+  removeOrganizationMember(params: PlatformOperationParams<"platform/organizations/members/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/members/delete">> {
+    return this.client.call("platform/organizations/members/delete", params, options);
   }
-  listApplications(params: PlatformOperationParams<"platform/accounts/applications/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/applications/list">> {
-    return this.client.call("platform/accounts/applications/list", params, options);
+  listServiceUsers(params: PlatformOperationParams<"platform/organizations/service-users/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/list">> {
+    return this.client.call("platform/organizations/service-users/list", params, options);
   }
-  createApplication(params: PlatformOperationParams<"platform/accounts/applications/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/applications/create">> {
-    return this.client.call("platform/accounts/applications/create", params, options);
+  createServiceUser(params: PlatformOperationParams<"platform/organizations/service-users/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/create">> {
+    return this.client.call("platform/organizations/service-users/create", params, options);
   }
-  updateApplication(params: PlatformOperationParams<"platform/accounts/applications/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/applications/update">> {
-    return this.client.call("platform/accounts/applications/update", params, options);
+  updateServiceUser(params: PlatformOperationParams<"platform/organizations/service-users/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/update">> {
+    return this.client.call("platform/organizations/service-users/update", params, options);
   }
-  disableApplication(params: PlatformOperationParams<"platform/accounts/applications/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/accounts/applications/delete">> {
-    return this.client.call("platform/accounts/applications/delete", params, options);
+  disableServiceUser(params: PlatformOperationParams<"platform/organizations/service-users/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/delete">> {
+    return this.client.call("platform/organizations/service-users/delete", params, options);
   }
   adoptUniverse(params: PlatformOperationParams<"platform/universes/adopt">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/adopt">> {
     return this.client.call("platform/universes/adopt", params, options);

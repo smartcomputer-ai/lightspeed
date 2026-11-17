@@ -16,24 +16,24 @@ page says about identifiers, events, and lifecycle applies to it too.
 
 ## Platform access
 
-Use a personal or application API key against the Platform `/api/v1` base URL
+Use a personal or service-user API key against the Platform `/api/v1` base URL
 for scoped access. Runtime resource routes use the same generated catalog as
-direct runtime access. Platform resolves the principal, checks current account
+direct runtime access. Platform resolves the principal, checks current organization
 and universe roles, and intersects those roles with credential restrictions.
 It forwards admitted requests with its own infrastructure token and trusted
 actor attribution. Clients must not supply actor headers to impersonate users.
 
-Platform-native account, application, grant, and credential routes live under
+Platform-native organization, service-user, grant, and credential routes live under
 `/api/v1/platform`. Their schemas and route descriptors are authored once in
 `platform/shared/src/platform-api.ts` and generated into both SDKs. Use
 `client.call(operation, params)` in either SDK for both runtime operation IDs,
 such as `profiles/list`, and native Platform IDs, such as
-`platform/accounts/read`. Generated `client.platform` helpers expose the same
+`platform/organizations/read`. Generated `client.platform` helpers expose the same
 native operations with typed parameter objects: TypeScript
-`client.platform.readAccount({ accountId })` and Python
-`client.platform.read_account({"accountId": account_id})`. Native operations
+`client.platform.readOrganization({ organizationId })` and Python
+`client.platform.read_organization({"organizationId": organization_id})`. Native operations
 require a Platform connection; direct runtimes do not serve them.
-Personal and application keys are managed from the web UI or
+Personal and service-user keys are managed from the web UI or
 `lightspeed platform api-key`. Use `lightspeed connect login --url DEPLOYMENT_URL`
 for browser-approved CLI access. See [People and roles](../access-and-security/people-and-roles.md).
 
@@ -43,12 +43,12 @@ For a local script, first select the connection and resources with the CLI:
 
 ```bash
 lightspeed connect login --url https://lightspeed.example --name work
-lightspeed platform account use ACCOUNT_ID
+lightspeed platform organization use ORGANIZATION_ID
 lightspeed universe use my-universe
 ```
 
 The SDK factories load the same named connection, pinned endpoint, credential
-file, and selected account/universe. Omit the name to use the CLI's selected
+file, and selected organization/universe. Omit the name to use the CLI's selected
 connection. They do not open a browser or start a login flow.
 
 In Node.js, import the factory from the Node-only entry point:
@@ -57,10 +57,10 @@ In Node.js, import the factory from the Node-only entry point:
 import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
 
 const client = await createClientFromConnection({ name: "work" });
-if (!client.accountId) throw new Error("Select an account with lightspeed platform account use");
-const { account } = await client.platform.readAccount({ accountId: client.accountId });
+if (!client.organizationId) throw new Error("Select an organization with lightspeed platform organization use");
+const { organization } = await client.platform.readOrganization({ organizationId: client.organizationId });
 const profiles = await client.call("profiles/list", {});
-console.log(account.name, profiles);
+console.log(organization.name, profiles);
 ```
 
 In Python, use the asynchronous factory:
@@ -71,11 +71,11 @@ from lightspeed_ai import AsyncLightspeedClient
 
 async def main():
     async with await AsyncLightspeedClient.from_connection("work") as client:
-        if client.account_id is None:
-            raise RuntimeError("Select an account with lightspeed platform account use")
-        account = await client.platform.read_account({"accountId": client.account_id})
+        if client.organization_id is None:
+            raise RuntimeError("Select an organization with lightspeed platform organization use")
+        organization = await client.platform.read_organization({"organizationId": client.organization_id})
         profiles = await client.call("profiles/list", {})
-        print(account, profiles)
+        print(organization, profiles)
 
 asyncio.run(main())
 ```
@@ -87,9 +87,9 @@ there is no automatic login or separate SDK refresh-token protocol. API keys
 retain their own expiry and restrictions. See
 [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
 
-The selected account is exposed as `client.accountId` / `client.account_id`.
+The selected organization is exposed as `client.organizationId` / `client.organization_id`.
 Pass it explicitly in native helper parameter objects; selection does not
-silently fill account fields or grant access. The main TypeScript import stays
+silently fill organization fields or grant access. The main TypeScript import stays
 browser-compatible and does not read local CLI files.
 
 ## Resource HTTP API
@@ -255,8 +255,8 @@ independent work.
 
 Every public runtime and native Platform operation has a typed named helper in
 both SDKs. Runtime helpers live directly on `client`; `client.platform` supplies
-native account, application, credential and access helpers such as
-`client.platform.readAccount({ accountId })`. Python uses matching snake_case
+native organization, service-user, credential and access helpers such as
+`client.platform.readOrganization({ organizationId })`. Python uses matching snake_case
 names. The generators check complete coverage against both operation catalogs.
 
 Prefer named helpers for application code. `client.call(operation, params)`
@@ -272,8 +272,8 @@ and terminal notification setting. `awaitRun` combines several operations.
 binary body. `putBlobs` exposes batch blob storage, while `putBlob` stores one
 value and returns its reference. These helpers keep the same server permissions
 and endpoint availability as their underlying operations. Platform admission
-still controls which runtime operations are available and applies account and
-universe policy; account-qualified universe creation uses
+still controls which runtime operations are available and applies organization and
+universe policy; organization-qualified universe creation uses
 `client.platform.createUniverse`. The
 [client README](../../../clients/typescript/README.md#helpers-and-call) lists them all.
 

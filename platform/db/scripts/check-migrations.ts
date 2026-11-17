@@ -86,7 +86,7 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireTable(pool, "organization");
   await requireTable(pool, "member");
   await requireTable(pool, "identity_audit");
-  for (const table of ["apikey", "applications", "credential_bindings", "universe_grants", "device_code"]) {
+  for (const table of ["apikey", "service_users", "credential_bindings", "universe_grants", "device_code"]) {
     await requireTable(pool, table);
   }
   await requireColumn(pool, "user", "oidc_subject");

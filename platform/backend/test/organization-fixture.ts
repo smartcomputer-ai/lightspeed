@@ -9,14 +9,14 @@ import { platformRoutes } from "../src/routes/platform.js";
 import { identityEnv, identityFixture } from "./identity-fixture.js";
 import { userSubject } from "./subject-fixture.js";
 
-export async function accountFixture() {
-  const fixture = await identityFixture({ ...identityEnv, oidc: null, personalAccounts: false, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "account-fixture-runtime-token-1234567890" });
+export async function organizationFixture() {
+  const fixture = await identityFixture({ ...identityEnv, oidc: null, personalOrganizations: false, lightspeedApiUrl: "https://runtime.example/api/v1", lightspeedApiToken: "organization-fixture-runtime-token-1234567890" });
   const context = { ...fixture, pool: {} as never } as AppContext;
-  for (const id of ["owner", "creator", "viewer", "other", "account-admin"]) await fixture.db.insert(schema.user).values({ id, name: id, email: `${id}@example.test`, emailVerified: true }).onConflictDoNothing();
-  await fixture.db.insert(schema.organization).values([{ id: "account-a", name: "A", slug: "a", createdAt: new Date(), defaultProtected: false, universeQuota: 2 }, { id: "account-b", name: "B", slug: "b", createdAt: new Date(), defaultProtected: false }]);
-  for (const [id, role] of [["owner", "member"], ["creator", "creator"], ["viewer", "member"], ["account-admin", "admin"]]) await fixture.db.insert(schema.member).values({ id: `member-${id}`, organizationId: "account-a", userId: id!, role: role!, createdAt: new Date() });
-  await fixture.db.insert(schema.member).values({ id: "other-account", organizationId: "account-b", userId: "other", role: "admin", createdAt: new Date() });
-  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: "account-a", name: "Work", handle: "work", lightspeedUniverseId: "11111111-1111-4111-8111-111111111111", createdBy: "owner", runtimeConfiguration: { protected: false } }).returning();
+  for (const id of ["owner", "creator", "viewer", "other", "organization-admin"]) await fixture.db.insert(schema.user).values({ id, name: id, email: `${id}@example.test`, emailVerified: true }).onConflictDoNothing();
+  await fixture.db.insert(schema.organization).values([{ id: "organization-a", name: "A", slug: "a", createdAt: new Date(), defaultProtected: false, universeQuota: 2 }, { id: "organization-b", name: "B", slug: "b", createdAt: new Date(), defaultProtected: false }]);
+  for (const [id, role] of [["owner", "member"], ["creator", "creator"], ["viewer", "member"], ["organization-admin", "admin"]]) await fixture.db.insert(schema.member).values({ id: `member-${id}`, organizationId: "organization-a", userId: id!, role: role!, createdAt: new Date() });
+  await fixture.db.insert(schema.member).values({ id: "other-organization", organizationId: "organization-b", userId: "other", role: "admin", createdAt: new Date() });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: "organization-a", name: "Work", handle: "work", lightspeedUniverseId: "11111111-1111-4111-8111-111111111111", createdBy: "owner", runtimeConfiguration: { protected: false } }).returning();
   const [ownerGrant] = await fixture.db.insert(schema.universeGrants).values({ universeId: universe!.id, userId: "owner", role: "owner" }).returning();
   await fixture.db.insert(schema.universeGrants).values({ universeId: universe!.id, userId: "viewer", role: "viewer" });
   let subject = userSubject("owner");

@@ -181,26 +181,26 @@ class AsyncLightspeedClient(GeneratedClient):
         self._owns_client = http_client is None
         self._credential_provider: Callable[[], str | None] | None = None
         self._response_hook: Callable[[httpx.Request, httpx.Response], Awaitable[None]] | None = None
-        self.account_id: str | None = None
+        self.organization_id: str | None = None
         self.platform = PlatformApi(self._invoke_platform)
 
     @classmethod
     async def from_connection(
         cls, name: str | None = None, *, config_dir: str | os.PathLike[str] | None = None,
-        universe: str | None = None, account: str | None = None,
+        universe: str | None = None, organization: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> Self:
         """Import and verify a named or selected CLI connection.
 
         Uses only that connection's pinned endpoint and credential file. It never
-        starts browser login or reads ambient token/endpoint overrides. Account
-        selection is available as `account_id` for explicit native API parameters.
+        starts browser login or reads ambient token/endpoint overrides. Organization
+        selection is available as `organization_id` for explicit native API parameters.
         """
         from ._connection import load_connection
-        imported = load_connection(name, config_dir, universe, account)
+        imported = load_connection(name, config_dir, universe, organization)
         client = cls(imported.endpoint, universe=imported.universe, http_client=http_client)
         client._credential_provider = imported.credential
-        client.account_id = imported.account_id
+        client.organization_id = imported.organization_id
         initial_response: tuple[httpx.Request, httpx.Response] | None = None
         async def collect(request: httpx.Request, response: httpx.Response) -> None:
             nonlocal initial_response
@@ -214,7 +214,7 @@ class AsyncLightspeedClient(GeneratedClient):
             if initial_response is not None:
                 await imported.accept_response(*initial_response)
             client._response_hook = imported.accept_response
-            if client._universe is None and not (imported.server_kind == "platform" and imported.account_id is not None):
+            if client._universe is None and not (imported.server_kind == "platform" and imported.organization_id is not None):
                 default = discovery.get("defaultUniverse")
                 if isinstance(default, str) and default:
                     client._universe = default
@@ -247,7 +247,7 @@ class AsyncLightspeedClient(GeneratedClient):
         )
         client._credential_provider = self._credential_provider
         client._response_hook = self._response_hook
-        client.account_id = self.account_id
+        client.organization_id = self.organization_id
         return client
 
     async def _request_headers(self, headers: HeadersInput | None = None) -> httpx.Headers:

@@ -36,7 +36,7 @@ function initials(name: string): string {
   );
 }
 
-export function UserMenu({ user, canAdmin }: { user: SessionUser; canAdmin: boolean }) {
+export function UserMenu({ user, canAdmin, organizationId }: { user: SessionUser; canAdmin: boolean; organizationId?: string }) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
 
@@ -73,7 +73,7 @@ export function UserMenu({ user, canAdmin }: { user: SessionUser; canAdmin: bool
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate("/account#api-keys")}>
               <SecurityIcon />
-              Personal API keys
+              Your API keys
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate("/preferences")}>
               <SettingsIcon />
@@ -105,7 +105,7 @@ export function UserMenu({ user, canAdmin }: { user: SessionUser; canAdmin: bool
             {canAdmin && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/admin")}>
+                <DropdownMenuItem onClick={() => navigate(organizationId ? `/admin?organization=${encodeURIComponent(organizationId)}` : "/admin")}>
                   <AdminIcon />
                   Admin
                 </DropdownMenuItem>

@@ -9,7 +9,7 @@ import { admin } from "better-auth/plugins/admin";
 import { bearer } from "better-auth/plugins/bearer";
 import { organization } from "better-auth/plugins/organization";
 import { deviceAuthorization, type DeviceAuthorizationGrant } from "better-auth/plugins/device-authorization";
-import { identityUserFields, identitySessionFields, accountOrganizationFields, deviceCodeFields } from "../src/auth-fields.js";
+import { identityUserFields, identitySessionFields, organizationFields, deviceCodeFields } from "../src/auth-fields.js";
 
 const db = drizzle("postgres://codegen-only");
 
@@ -18,5 +18,5 @@ export const auth = betterAuth({
   emailAndPassword: { enabled: true },
   user: { additionalFields: identityUserFields },
   session: { additionalFields: identitySessionFields },
-  plugins: [organization({ creatorRole: "admin", schema: { organization: { additionalFields: accountOrganizationFields } } }), admin(), bearer(), apiKey([{ configId: "personal", references: "user" }, { configId: "application", references: "organization" }]), deviceAuthorization<DeviceAuthorizationGrant<{}, {}>>({ grant: { requestSchemaFields: {}, deviceCodeSchemaFields: deviceCodeFields, authorizeRequest: () => undefined, assertSessionRedemption: () => {}, getVerificationContext: () => undefined } })],
+  plugins: [organization({ creatorRole: "admin", schema: { organization: { additionalFields: organizationFields } } }), admin(), bearer(), apiKey([{ configId: "personal", references: "user" }, { configId: "serviceUser", references: "organization" }]), deviceAuthorization<DeviceAuthorizationGrant<{}, {}>>({ grant: { requestSchemaFields: {}, deviceCodeSchemaFields: deviceCodeFields, authorizeRequest: () => undefined, assertSessionRedemption: () => {}, getVerificationContext: () => undefined } })],
 });

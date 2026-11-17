@@ -69,7 +69,7 @@ authentication secret across restarts.
 
 The administrator bootstrap variables apply only while the users table is
 empty. They cannot reset an existing password. Use **Admin → Users**
-from an authorized administrator account for account management.
+from an authorized administrator user for organization management.
 
 When sign-in works but a page fails, distinguish a Platform permission denial
 from an upstream runtime error. Viewers can read visible work, Contributors can

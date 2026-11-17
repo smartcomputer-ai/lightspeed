@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   useMutation,
   useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { platformApi, useAccounts } from "@/lib/platform-api";
+import { platformApi, useOrganizations } from "@/lib/platform-api";
 import { usePlatformAdmin } from "@/lib/permissions";
 import { ApiKeyRevokeDialog } from "@/components/api-key-revoke-dialog";
 import { ApiKeysCard } from "@/components/api-keys-card";
@@ -33,123 +33,99 @@ import {
 } from "@/components/ui/table";
 import { AddIcon } from "@/icons";
 
-/** Account selection bounds directory and key requests; opening a deep link never falls back to another owner. */
+/** Organization selection bounds directory and key requests; opening a deep link never falls back to another owner. */
 export function AdminApiKeysPage() {
-  const accounts = useAccounts();
+  const organizations = useOrganizations();
   const platformAdmin = usePlatformAdmin();
-  const [search, setSearch] = useSearchParams();
-  const accountId = search.get("account") ?? "";
+  const { organizationId = "" } = useParams();
   const managed =
-    accounts.data?.accounts.filter(
-      (account) => platformAdmin || account.role === "admin",
+    organizations.data?.organizations.filter(
+      (organization) => platformAdmin || organization.role === "admin",
     ) ?? [];
-  const account = managed.find((account) => account.id === accountId);
+  const organization = managed.find((organization) => organization.id === organizationId);
   return (
     <>
       <PageHeader
         title="API keys"
-        description="Manage application keys in accounts you administer. Keys act as their application and can only narrow its permissions."
+        description="Manage service user keys in organizations you administer. Keys act as their service user and can only narrow its permissions."
       />
       <p className="mb-6 text-sm text-muted-foreground">
         For scripts acting as you, use{" "}
         <Link className="underline" to="/account#api-keys">
-          your personal API keys
+          your API keys
         </Link>
         .
       </p>
-      {accounts.isLoading && <LoadingNote />}
-      {accounts.error && (
+      {organizations.isLoading && <LoadingNote />}
+      {organizations.error && (
         <p role="alert" className="text-destructive">
-          {accounts.error.message}
+          {organizations.error.message}
         </p>
       )}
-      {!!managed.length && (
-        <Field className="mb-6 max-w-xl">
-          <FieldLabel htmlFor="key-account">Account</FieldLabel>
-          <select
-            id="key-account"
-            className="min-w-0 max-w-full rounded-md border bg-background p-2"
-            value={accountId}
-            onChange={(event) =>
-              setSearch(
-                event.target.value ? { account: event.target.value } : {},
-              )
-            }
-          >
-            <option value="">Select an account</option>
-            {managed.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-                {!item.enabled ? " (suspended)" : ""}
-              </option>
-            ))}
-          </select>
-        </Field>
+      {organizations.data && !managed.length && (
+        <p>You need an Organization Admin role to manage service user keys.</p>
       )}
-      {accounts.data && !managed.length && (
-        <p>You need an Account Admin role to manage application keys.</p>
-      )}
-      {accountId && accounts.data && !account && (
+      {organizationId && organizations.data && !organization && (
         <p role="alert">
-          This account is unavailable or you do not administer it.
+          This organization is unavailable or you do not administer it.
         </p>
       )}
-      {account && !account.enabled && (
+      {organization && !organization.enabled && (
         <p>
-          This account is suspended. Restore its access before managing
-          application keys.
+          This organization is suspended. Restore its access before managing
+          service user keys.
         </p>
       )}
-      {account?.enabled && (
-        <AccountKeys
-          key={account.id}
-          accountId={account.id}
-          accountName={account.name}
+      {organization?.enabled && (
+        <OrganizationKeys
+          key={organization.id}
+          organizationId={organization.id}
+          organizationName={organization.name}
         />
       )}
-      {!accountId && !!managed.length && (
+      {!organizationId && !!managed.length && (
         <p className="text-sm text-muted-foreground">
-          Select an account to see keys across its applications.
+          Select an organization to see keys across its service users.
         </p>
       )}
     </>
   );
 }
 
-function AccountKeys({
-  accountId,
-  accountName,
+function OrganizationKeys({
+  organizationId,
+  organizationName,
 }: {
-  accountId: string;
-  accountName: string;
+  organizationId: string;
+  organizationName: string;
 }) {
   const client = useQueryClient();
   const [search, setSearch] = useSearchParams();
-  const applicationId = search.get("application") ?? "";
+  const serviceUserId = search.get("serviceUser") ?? "";
   const [ownerOpen, setOwnerOpen] = useState(false);
   const [ownerId, setOwnerId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [revoking, setRevoking] = useState<{
-    applicationId: string;
+    serviceUserId: string;
     keyId: string;
     name: string;
     owner: string;
   } | null>(null);
-  const applications = useQuery({
-    queryKey: ["applications", accountId],
+  const serviceUsers = useQuery({
+    queryKey: ["service-users", organizationId],
     queryFn: () =>
-      platformApi("platform/accounts/applications/list", { accountId }),
+      platformApi("platform/organizations/service-users/list", { organizationId }),
   });
-  const apps = applications.data?.applications ?? [];
-  const application = apps.find((app) => app.id === applicationId);
-  const inventoryApps = applicationId ? [] : apps;
+  const apps = serviceUsers.data?.serviceUsers ?? [];
+  const serviceUser = apps.find((app) => app.id === serviceUserId);
+  const inventoryApps = serviceUserId ? [] : apps;
   const lists = useQueries({
     queries: inventoryApps.map((app) => ({
-      queryKey: ["api-keys", accountId, app.id],
+      queryKey: ["api-keys", organizationId, app.id],
       queryFn: () =>
-        platformApi("platform/applications/credentials/list", {
-          accountId,
-          applicationId: app.id,
+        platformApi("platform/service-users/credentials/list", {
+          organizationId,
+          serviceUserId: app.id,
         }),
     })),
   });
@@ -160,39 +136,39 @@ function AccountKeys({
     })),
   );
   const revoke = useMutation({
-    mutationFn: (input: { applicationId: string; keyId: string }) =>
-      platformApi("platform/applications/credentials/revoke", {
-        accountId,
+    mutationFn: (input: { serviceUserId: string; keyId: string }) =>
+      platformApi("platform/service-users/credentials/revoke", {
+        organizationId,
         ...input,
       }),
     onSuccess: async (_, input) => {
       setRevoking(null);
       await client.invalidateQueries({
-        queryKey: ["api-keys", accountId, input.applicationId],
+        queryKey: ["api-keys", organizationId, input.serviceUserId],
       });
     },
   });
-  const selectApplication = (id: string) => {
+  const selectServiceUser = (id: string) => {
     setCreateOpen(false);
     setSearch(
-      id ? { account: accountId, application: id } : { account: accountId },
+      id ? { serviceUser: id } : {},
     );
   };
   return (
     <>
       <div className="mb-6 flex flex-wrap items-end gap-3">
         <Field className="min-w-0 flex-1 sm:max-w-xl">
-          <FieldLabel htmlFor="key-application">
-            Application in {accountName}
+          <FieldLabel htmlFor="key-serviceUser">
+            Service user in {organizationName}
           </FieldLabel>
           <select
-            id="key-application"
+            id="key-serviceUser"
             className="min-w-0 max-w-full rounded-md border bg-background p-2"
-            value={applicationId}
-            onChange={(event) => selectApplication(event.target.value)}
-            disabled={applications.isLoading}
+            value={serviceUserId}
+            onChange={(event) => selectServiceUser(event.target.value)}
+            disabled={serviceUsers.isLoading}
           >
-            <option value="">All applications</option>
+            <option value="">All service users</option>
             {apps.map((app) => (
               <option key={app.id} value={app.id}>
                 {app.name}
@@ -201,7 +177,7 @@ function AccountKeys({
             ))}
           </select>
         </Field>
-        {!application && (
+        {!serviceUser && (
           <Button
             disabled={!apps.some((app) => app.enabled)}
             onClick={() => {
@@ -214,31 +190,31 @@ function AccountKeys({
           </Button>
         )}
       </div>
-      {applications.isLoading && <LoadingNote />}
-      {applications.error && (
+      {serviceUsers.isLoading && <LoadingNote />}
+      {serviceUsers.error && (
         <p role="alert" className="text-destructive">
-          {applications.error.message}
+          {serviceUsers.error.message}
         </p>
       )}
-      {applicationId && applications.data && !application && (
+      {serviceUserId && serviceUsers.data && !serviceUser && (
         <p role="alert">
-          This application is unavailable in the selected account.
+          This service user is unavailable in the selected organization.
         </p>
       )}
-      {application && (
+      {serviceUser && (
         <ApiKeysCard
-          key={application.id}
-          application={{
-            accountId,
-            applicationId: application.id,
-            name: application.name,
-            enabled: application.enabled,
+          key={serviceUser.id}
+          serviceUser={{
+            organizationId,
+            serviceUserId: serviceUser.id,
+            name: serviceUser.name,
+            enabled: serviceUser.enabled,
           }}
           createOpen={createOpen}
           onCreateOpenChange={setCreateOpen}
         />
       )}
-      {!applicationId && applications.data && (
+      {!serviceUserId && serviceUsers.data && (
         <>
           {lists.some((list) => list.isLoading) && <LoadingNote />}
           {lists.map(
@@ -257,12 +233,12 @@ function AccountKeys({
 
           {!apps.length && (
             <p className="text-sm text-muted-foreground">
-              No applications yet.{" "}
+              No service users yet.{" "}
               <Link
                 className="underline"
-                to={`/admin/accounts?account=${encodeURIComponent(accountId)}`}
+                to={`/admin/organizations/${encodeURIComponent(organizationId)}/service-users`}
               >
-                Create an application in this account
+                Create a service user in this organization
               </Link>{" "}
               to give an integration its own identity.
             </p>
@@ -271,7 +247,7 @@ function AccountKeys({
             lists.every((list) => !list.isLoading && !list.error) &&
             !rows.length && (
               <p className="text-sm text-muted-foreground">
-                No application keys in this account yet.
+                No service user keys in this organization yet.
               </p>
             )}
           {!!rows.length && (
@@ -280,7 +256,7 @@ function AccountKeys({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Key</TableHead>
-                    <TableHead>Application</TableHead>
+                    <TableHead>Service user</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Expires</TableHead>
                     <TableHead />
@@ -298,7 +274,7 @@ function AccountKeys({
                       <TableCell>
                         <Link
                           className="underline"
-                          to={`/admin/api-keys?account=${encodeURIComponent(accountId)}&application=${encodeURIComponent(app.id)}`}
+                          to={`/admin/organizations/${encodeURIComponent(organizationId)}/api-keys?serviceUser=${encodeURIComponent(app.id)}`}
                         >
                           {app.name}
                         </Link>
@@ -310,7 +286,7 @@ function AccountKeys({
                             : new Date(key.expiresAt).getTime() <= Date.now()
                               ? "Expired"
                               : !app.enabled
-                                ? "Application disabled"
+                                ? "Service user disabled"
                                 : "Active"}
                         </Badge>
                       </TableCell>
@@ -324,7 +300,7 @@ function AccountKeys({
                           onClick={() => {
                             revoke.reset();
                             setRevoking({
-                              applicationId: app.id,
+                              serviceUserId: app.id,
                               keyId: key.id,
                               name: key.name,
                               owner: app.name,
@@ -350,7 +326,7 @@ function AccountKeys({
         onConfirm={() => {
           if (revoking)
             revoke.mutate({
-              applicationId: revoking.applicationId,
+              serviceUserId: revoking.serviceUserId,
               keyId: revoking.keyId,
             });
         }}
@@ -362,9 +338,9 @@ function AccountKeys({
       <Dialog open={ownerOpen} onOpenChange={setOwnerOpen}>
         <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>New application API key</DialogTitle>
+            <DialogTitle>New service user API key</DialogTitle>
             <DialogDescription>
-              Choose the application this key will act as in {accountName}.
+              Choose the service user this key will act as in {organizationName}.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -373,13 +349,13 @@ function AccountKeys({
               event.preventDefault();
               if (!apps.some((app) => app.id === ownerId && app.enabled))
                 return;
-              selectApplication(ownerId);
+              selectServiceUser(ownerId);
               setOwnerOpen(false);
               setCreateOpen(true);
             }}
           >
             <Field>
-              <FieldLabel htmlFor="key-owner">Application</FieldLabel>
+              <FieldLabel htmlFor="key-owner">Service user</FieldLabel>
               <select
                 id="key-owner"
                 className="min-w-0 max-w-full rounded-md border bg-background p-2"
@@ -387,7 +363,7 @@ function AccountKeys({
                 value={ownerId}
                 onChange={(event) => setOwnerId(event.target.value)}
               >
-                <option value="">Select an application</option>
+                <option value="">Select a service user</option>
                 {apps
                   .filter((app) => app.enabled)
                   .map((app) => (

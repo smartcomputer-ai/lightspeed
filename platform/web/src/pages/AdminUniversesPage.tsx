@@ -1,11 +1,11 @@
 import { DeleteUniverseDialog } from "@/components/admin/delete-universe-dialog";
 import { usePlatformAdmin } from "@/lib/permissions";
-import { platformApi, useAccounts } from "@/lib/platform-api";
+import { platformApi, useOrganizations } from "@/lib/platform-api";
 import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { AddIcon } from "@/icons";
 import {
   api,
@@ -42,17 +42,15 @@ import { NewUniverseDialog } from "@/components/universe-switcher";
 import { LoadingNote, PageHeader } from "@/components/page";
 import { universeHome, useUniverses } from "@/lib/universes";
 
-/// The full inventory (platform admins get every universe from the list
-/// endpoint, incl. archived ones) — as opposed to the memberships-only
-/// switcher. Reconciliation against the engine rides along: each row gets
-/// an engine status, and engine universes with no platform row (orphans)
-/// are listed below with adopt/delete actions. Reconciliation checks links;
-/// updating cached runtime handles requires the explicit sync action.
+/// Organization views contain only their administrable universes. Deployment
+/// reconciliation, orphans and purge controls belong to the Platform inventory.
 export function AdminUniversesPage() {
   const universes = useUniverses();
-  const platformAdmin = usePlatformAdmin();
-  const accounts = useAccounts();
-  const canCreate = platformAdmin || accounts.data?.accounts.some(account => account.enabled && (account.role === "admin" || account.role === "creator"));
+  const isPlatformAdmin = usePlatformAdmin();
+  const { organizationId } = useParams();
+  const platformAdmin = isPlatformAdmin && !organizationId;
+  const organizations = useOrganizations();
+  const canCreate = platformAdmin || organizations.data?.organizations.some(organization => organization.enabled && (!organizationId || organization.id === organizationId) && (organization.role === "admin" || organization.role === "creator"));
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [deletedUniverse, setDeletedUniverse] = useState<Universe | null>(null);
@@ -99,7 +97,7 @@ export function AdminUniversesPage() {
   });
 
   const rows = (universes.data ?? [])
-    .filter(universe => platformAdmin || universe.role === "owner")
+    .filter(universe => (!organizationId || universe.organizationId === organizationId) && (isPlatformAdmin || universe.role === "owner"))
     .map(universe => {
       const deletion = reconcile.data?.platform.find(row => row.id === universe.id)?.deletion ?? universe.deletion;
       return deletion ? { ...universe, deletion, status: "deleting" as const } : universe;
@@ -111,7 +109,7 @@ export function AdminUniversesPage() {
     <>
       <PageHeader
         title="Universes"
-        description={platformAdmin ? "Every universe on this deployment, including archived universes and deletions in progress." : "Universes you administer as an Owner or Account Admin."}
+        description={platformAdmin ? "Every universe on this deployment, including archived universes and deletions in progress." : "Universes you administer as an Owner or Organization Admin."}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {platformAdmin && <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
@@ -125,7 +123,7 @@ export function AdminUniversesPage() {
         }
       />
       {platformAdmin && <DeletedSessionsDialog universe={deletedUniverse} onClose={() => setDeletedUniverse(null)} />}
-      <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <NewUniverseDialog organizationId={organizationId} open={createOpen} onOpenChange={setCreateOpen} />
       {syncHandles.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncHandles.error.message}</p>}
       {syncHandles.data && !syncHandles.isPending && !syncHandles.error && (
         <p role="status" className="mb-4 text-sm text-muted-foreground">
@@ -178,7 +176,7 @@ export function AdminUniversesPage() {
                   </TableCell>
                   <TableActionsCell>
                     {universe.status !== "deleting" && <>
-                      <Button variant="outline" size="sm" onClick={() => navigate(`/admin/universes/${encodeURIComponent(universe.handle)}/access`)}>Manage</Button>
+                      <Button variant="outline" size="sm" onClick={() => navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes/${encodeURIComponent(universe.handle)}/access`)}>Manage</Button>
                       {platformAdmin && <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>}
                       {platformAdmin && engineStatus.get(universe.id) === "missing" && (
                         <Button
@@ -317,10 +315,10 @@ export function AdoptDialog({
   onOpenChange: (open: boolean) => void;
   onAdopted: () => void;
 }) {
-  const accounts = useAccounts();
-  const [selectedAccount, setSelectedAccount] = useState("");
-  const accountId = selectedAccount || accounts.data?.accounts.find(a => a.enabled)?.id || "";
-  const members = useQuery({ queryKey: ["account-members", accountId], enabled: !!orphan && !!accountId, queryFn: () => platformApi("platform/accounts/members/list", { accountId }) });
+  const organizations = useOrganizations();
+  const [selectedOrganization, setSelectedOrganization] = useState("");
+  const organizationId = selectedOrganization || organizations.data?.organizations.find(a => a.enabled)?.id || "";
+  const members = useQuery({ queryKey: ["organization-members", organizationId], enabled: !!orphan && !!organizationId, queryFn: () => platformApi("platform/organizations/members/list", { organizationId }) });
   const [selectedOwner, setSelectedOwner] = useState("");
   const ownerId = members.data?.members.some(m => m.userId === selectedOwner) ? selectedOwner : members.data?.members[0]?.userId ?? "";
   const [name, setName] = useState("");
@@ -329,7 +327,7 @@ export function AdoptDialog({
   const adopt = useMutation({
     mutationFn: () =>
       api<Universe>("POST", "/api/ui/universes/adopt", {
-        accountId,
+        organizationId,
         initialOwner: { kind: "user", id: ownerId },
         lightspeedUniverseId: orphan!.universeId,
         name: name.trim(),
@@ -349,7 +347,7 @@ export function AdoptDialog({
       setError("a name is required");
       return;
     }
-    if (!accountId || !ownerId || adopt.isPending) return;
+    if (!organizationId || !ownerId || adopt.isPending) return;
     adopt.mutate();
   };
 
@@ -361,14 +359,14 @@ export function AdoptDialog({
           <DialogDescription>
             Creates the Platform display entry linked to{" "}
             <span className="font-mono text-xs">{orphan?.universeId}</span>. Engine
-            access is managed within the selected account.
+            access is managed within the selected organization.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
           <Field>
-            <FieldLabel htmlFor="adopt-account">Account</FieldLabel><select id="adopt-account" className="rounded-md border bg-background p-2" value={accountId} onChange={e => setSelectedAccount(e.target.value)} required>{accounts.data?.accounts.filter(a => a.enabled).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <FieldLabel htmlFor="adopt-organization">Organization</FieldLabel><select id="adopt-organization" className="rounded-md border bg-background p-2" value={organizationId} onChange={e => setSelectedOrganization(e.target.value)} required>{organizations.data?.organizations.filter(a => a.enabled).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
             <FieldLabel htmlFor="adopt-owner">Initial Owner</FieldLabel><select id="adopt-owner" className="rounded-md border bg-background p-2" value={ownerId} onChange={e => setSelectedOwner(e.target.value)} required>{members.data?.members.map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select>
-            {(accounts.error || members.error) && <p role="alert">{(accounts.error || members.error)?.message}</p>}
+            {(organizations.error || members.error) && <p role="alert">{(organizations.error || members.error)?.message}</p>}
             <FieldLabel htmlFor="adopt-name">Name</FieldLabel>
             <Input
               id="adopt-name"
@@ -391,7 +389,7 @@ export function AdoptDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={adopt.isPending || !accountId || !ownerId}>
+            <Button type="submit" disabled={adopt.isPending || !organizationId || !ownerId}>
               {adopt.isPending ? "Adopting…" : "Adopt"}
             </Button>
           </DialogFooter>

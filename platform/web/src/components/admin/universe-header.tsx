@@ -11,12 +11,12 @@ export function AdminUniverseHeader({
   universe: Universe;
   section: "access" | "settings";
 }) {
-  const base = `/admin/universes/${encodeURIComponent(universe.handle)}`;
+  const base = `/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes/${encodeURIComponent(universe.handle)}`;
   return (
     <>
       <Link
         className="mb-3 inline-block text-sm text-muted-foreground hover:underline"
-        to="/admin/universes"
+        to={`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes`}
       >
         ← Universes
       </Link>

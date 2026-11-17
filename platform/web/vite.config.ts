@@ -34,7 +34,10 @@ export default defineConfig(({ mode }) => {
       proxy: demo
         ? undefined
         : {
-            "/api": "http://localhost:3000",
+            "/api": `http://localhost:${process.env.PORT ?? "3000"}`,
+            // Device login starts at the public origin; the backend redirects
+            // this entry point to the SPA's /app/device approval page.
+            "/device": `http://localhost:${process.env.PORT ?? "3000"}`,
           },
     },
   };

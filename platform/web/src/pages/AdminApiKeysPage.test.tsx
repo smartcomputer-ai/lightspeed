@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AdminApiKeysPage } from "./AdminApiKeysPage";
@@ -18,9 +18,9 @@ vi.mock("@/lib/permissions", () => ({
 }));
 vi.mock("@/lib/platform-api", () => ({
   platformApi: mocks.api,
-  useAccounts: () => ({
+  useOrganizations: () => ({
     data: {
-      accounts: [
+      organizations: [
         { id: "team", name: "Research", enabled: true, role: mocks.role },
         { id: "other", name: "Operations", enabled: true, role: "member" },
         { id: "suspended", name: "Suspended", enabled: false, role: "admin" },
@@ -31,7 +31,7 @@ vi.mock("@/lib/platform-api", () => ({
 vi.mock("@/components/api-keys-card", () => ({
   ApiKeysCard: (props: unknown) => {
     mocks.card(props);
-    return <div>Application key management</div>;
+    return <div>Service user key management</div>;
   },
 }));
 let root: Root;
@@ -48,14 +48,14 @@ beforeEach(() => {
   mocks.role = "admin";
   mocks.card.mockReset();
   mocks.api.mockReset().mockImplementation(async (operation) => {
-    if (operation === "platform/accounts/applications/list")
+    if (operation === "platform/organizations/service-users/list")
       return {
-        applications: [
+        serviceUsers: [
           { id: "robot", name: "Build robot", enabled: true, role: "member" },
           { id: "disabled", name: "Old robot", enabled: false, role: "member" },
         ],
       };
-    if (operation === "platform/applications/credentials/list")
+    if (operation === "platform/service-users/credentials/list")
       return {
         credentials: [
           {
@@ -84,12 +84,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-async function show(path = "/admin/api-keys") {
+async function show(path = "/admin/organizations/team/api-keys") {
   await act(async () =>
     root.render(
       <MemoryRouter initialEntries={[path]}>
         <QueryClientProvider client={client}>
-          <AdminApiKeysPage />
+          <Routes><Route path="/admin/organizations/:organizationId/api-keys" element={<AdminApiKeysPage />} /></Routes>
         </QueryClientProvider>
       </MemoryRouter>,
     ),
@@ -104,7 +104,7 @@ async function click(label: string) {
 }
 function apiCallsForRevocation() {
   return mocks.api.mock.calls.filter(
-    ([operation]) => operation === "platform/applications/credentials/revoke",
+    ([operation]) => operation === "platform/service-users/credentials/revoke",
   );
 }
 async function select(id: string, value: string) {
@@ -115,73 +115,71 @@ async function select(id: string, value: string) {
   });
 }
 
-it("only offers administered accounts and waits for an explicit account selection", async () => {
+it("uses the route organization without a second organization selector", async () => {
   await show();
-  const choices = [...document.querySelectorAll("#key-account option")].map(
-    (option) => option.textContent,
-  );
-  expect(choices).toContain("Research");
-  expect(choices).not.toContain("Operations");
-  expect(mocks.api).not.toHaveBeenCalled();
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/organizations/service-users/list", { organizationId: "team" }));
+  expect(document.querySelector("#key-organization")).toBeNull();
+  expect(mocks.api).not.toHaveBeenCalledWith("platform/organizations/service-users/list", { organizationId: "other" });
 });
 
 it.each(["other", "missing"])(
-  "does not fetch or fall back from unauthorized account %s",
-  async (account) => {
-    await show(`/admin/api-keys?account=${account}`);
+  "does not fetch or fall back from unauthorized organization %s",
+  async (organization) => {
+    await show(`/admin/organizations/${organization}/api-keys`);
     expect(document.body.textContent).toContain(
-      "This account is unavailable or you do not administer it.",
+      "This organization is unavailable or you do not administer it.",
     );
     expect(mocks.api).not.toHaveBeenCalled();
   },
 );
 
-it("allows a Platform Admin to select an account without a direct admin membership", async () => {
+it("allows a Platform Admin to select an organization without a direct admin membership", async () => {
   mocks.platformAdmin = true;
-  await show("/admin/api-keys?account=other&application=robot");
+  await show("/admin/organizations/other/api-keys?serviceUser=robot");
   await waitForUi(() =>
     expect(mocks.card).toHaveBeenCalledWith(
       expect.objectContaining({
-        application: expect.objectContaining({
-          accountId: "other",
-          applicationId: "robot",
+        serviceUser: expect.objectContaining({
+          organizationId: "other",
+          serviceUserId: "robot",
           name: "Build robot",
         }),
       }),
     ),
   );
   expect(mocks.api).toHaveBeenCalledWith(
-    "platform/accounts/applications/list",
-    { accountId: "other" },
+    "platform/organizations/service-users/list",
+    { organizationId: "other" },
   );
 });
 
-it("lists application key states and revokes with the exact owner scope", async () => {
-  await show("/admin/api-keys?account=team");
+it("lists service user key states and revokes with the exact owner scope", async () => {
+  await show("/admin/organizations/team/api-keys");
   await waitForUi(() =>
-    expect(document.body.textContent).toContain("Application disabled"),
+    expect(document.body.textContent).toContain("Service user disabled"),
   );
   expect(mocks.api).toHaveBeenCalledWith(
-    "platform/applications/credentials/list",
-    { accountId: "team", applicationId: "robot" },
+    "platform/service-users/credentials/list",
+    { organizationId: "team", serviceUserId: "robot" },
   );
   expect(mocks.api).toHaveBeenCalledWith(
-    "platform/applications/credentials/list",
-    { accountId: "team", applicationId: "disabled" },
+    "platform/service-users/credentials/list",
+    { organizationId: "team", serviceUserId: "disabled" },
   );
+  expect(document.querySelector('a[href="/admin/organizations/team/api-keys?serviceUser=robot"]')).not.toBeNull();
   await click("Revoke");
   expect(apiCallsForRevocation()).toHaveLength(0);
   await click("Revoke key");
   await waitForUi(() =>
     expect(mocks.api).toHaveBeenCalledWith(
-      "platform/applications/credentials/revoke",
-      { accountId: "team", applicationId: "robot", keyId: "key" },
+      "platform/service-users/credentials/revoke",
+      { organizationId: "team", serviceUserId: "robot", keyId: "key" },
     ),
   );
 });
 
-it("selects a named owner before opening key creation and excludes disabled applications", async () => {
-  await show("/admin/api-keys?account=team");
+it("selects a named owner before opening key creation and excludes disabled service users", async () => {
+  await show("/admin/organizations/team/api-keys");
   await waitForUi(() =>
     expect(document.querySelector<HTMLButtonElement>("button")?.disabled).toBe(
       false,
@@ -198,31 +196,37 @@ it("selects a named owner before opening key creation and excludes disabled appl
     expect(mocks.card).toHaveBeenCalledWith(
       expect.objectContaining({
         createOpen: true,
-        application: expect.objectContaining({
-          applicationId: "robot",
-          accountId: "team",
+        serviceUser: expect.objectContaining({
+          serviceUserId: "robot",
+          organizationId: "team",
         }),
       }),
     ),
   );
 });
 
-it("does not substitute another application for an unavailable deep link", async () => {
-  await show("/admin/api-keys?account=team&application=missing");
+it("does not substitute another service user for an unavailable deep link", async () => {
+  await show("/admin/organizations/team/api-keys?serviceUser=missing");
   await waitForUi(() =>
     expect(document.body.textContent).toContain(
-      "This application is unavailable",
+      "This service user is unavailable",
     ),
   );
   expect(mocks.card).not.toHaveBeenCalled();
   expect(mocks.api).not.toHaveBeenCalledWith(
-    "platform/applications/credentials/list",
+    "platform/service-users/credentials/list",
     expect.anything(),
   );
 });
 
-it("shows suspended accounts without making directory requests that require active access", async () => {
-  await show("/admin/api-keys?account=suspended");
-  expect(document.body.textContent).toContain("This account is suspended");
+it("shows suspended organizations without making directory requests that require active access", async () => {
+  await show("/admin/organizations/suspended/api-keys");
+  expect(document.body.textContent).toContain("This organization is suspended");
   expect(mocks.api).not.toHaveBeenCalled();
+});
+
+it("links an empty organization key inventory to its service-user page", async () => {
+  mocks.api.mockResolvedValue({ serviceUsers: [] });
+  await show();
+  await waitForUi(() => expect(document.querySelector('a[href="/admin/organizations/team/service-users"]')?.textContent).toContain("Create a service user"));
 });

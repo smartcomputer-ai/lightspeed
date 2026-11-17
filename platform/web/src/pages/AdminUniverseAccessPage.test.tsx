@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { AdminUniverseAccessPage } from "./AdminUniverseAccessPage";
 import { waitForUi } from "@/test/wait-for-ui";
-const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "owner", accountRole: "member" }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "owner", organizationRole: "member" }));
 vi.mock("@/lib/platform-api", () => ({ platformApi: mocks.api }));
 vi.mock("@/lib/universes", () => ({
   universeHome: () => "/u/test/sessions",
@@ -16,17 +16,17 @@ vi.mock("@/lib/universes", () => ({
       name: "Test universe",
       id: "platform-id",
       lightspeedUniverseId: "runtime-id",
-      accountId: "account",
-      handle: "test",
+
+      handle: "test", organizationId: "team",
       role: mocks.role,
-      accountRole: mocks.accountRole,
+      organizationRole: mocks.organizationRole,
     },
     isLoading: false,
   }),
 }));
 const grants = [
   { id: "owner-grant", principal: { kind: "user", id: "alice" }, name: "Alice", role: "owner" },
-  { id: "app-grant", principal: { kind: "application", id: "robot" }, name: "Build robot", role: "viewer" },
+  { id: "app-grant", principal: { kind: "serviceUser", id: "robot" }, name: "Build robot", role: "viewer" },
 ];
 let root: Root;
 let container: HTMLDivElement;
@@ -35,13 +35,13 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.role = "owner";
-  mocks.accountRole = "member";
+  mocks.organizationRole = "member";
   mocks.api.mockReset().mockImplementation(async (operation: string) => {
     if (operation === "platform/universes/grants/list") return { grants };
-    if (operation === "platform/accounts/members/list")
+    if (operation === "platform/organizations/members/list")
       return { members: [{ userId: "alice", name: "Alice", email: "alice@example.com" }] };
-    if (operation === "platform/accounts/applications/list")
-      return { applications: [{ id: "robot", name: "Build robot", enabled: true }] };
+    if (operation === "platform/organizations/service-users/list")
+      return { serviceUsers: [{ id: "robot", name: "Build robot", enabled: true }] };
     return {};
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -70,7 +70,7 @@ async function show() {
 }
 async function choose(label: string, value: string) {
   const node = document.querySelector<HTMLSelectElement>(
-    label === "Account member or application"
+    label === "Organization member or service user"
       ? "#universe-access-recipient"
       : label === "Universe role"
         ? "#universe-access-role"
@@ -81,7 +81,7 @@ async function choose(label: string, value: string) {
     node.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
-it("changes an application's universe role using the native scoped grant API", async () => {
+it("changes a service user's universe role using the native scoped grant API", async () => {
   await show();
   await waitForUi(() => expect(container.textContent).toContain("Build robot"));
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit role for Build robot"]')!.click());
@@ -93,7 +93,7 @@ it("changes an application's universe role using the native scoped grant API", a
   await waitForUi(() =>
     expect(mocks.api).toHaveBeenCalledWith("platform/universes/grants/put", {
       universe: "runtime-id",
-      principal: { kind: "application", id: "robot" },
+      principal: { kind: "serviceUser", id: "robot" },
       role: "operator",
     }),
   );
@@ -115,21 +115,21 @@ it("preserves the displayed Owner when the server refuses demotion", async () =>
   expect(container.querySelector('[aria-label="Edit role for Alice"]')?.closest("tr")?.querySelectorAll("td")[2]?.textContent).toBe("Owner");
   expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain("at least one explicit Owner");
 });
-it("grants an existing account application access without creating an account member", async () => {
+it("grants an existing organization service user access without creating an organization member", async () => {
   await show();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Add access")!.click());
-  await waitForUi(() => expect(document.querySelector('[value="application:robot"]')).not.toBeNull());
-  await choose("Account member or application", "application:robot");
+  await waitForUi(() => expect(document.querySelector('[value="serviceUser:robot"]')).not.toBeNull());
+  await choose("Organization member or service user", "serviceUser:robot");
   await choose("Universe role", "owner");
   await act(async () => document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
   await waitForUi(() =>
     expect(mocks.api).toHaveBeenCalledWith("platform/universes/grants/put", {
       universe: "runtime-id",
-      principal: { kind: "application", id: "robot" },
+      principal: { kind: "serviceUser", id: "robot" },
       role: "owner",
     }),
   );
-  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/accounts/members/put")).toBe(false);
+  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/members/put")).toBe(false);
 });
 it.each(["viewer", "contributor", "operator"])("does not fetch the grant directory for a %s", async (role) => {
   mocks.role = role;
@@ -138,30 +138,30 @@ it.each(["viewer", "contributor", "operator"])("does not fetch the grant directo
   expect(mocks.api).not.toHaveBeenCalled();
 });
 
-it("explains personal versus application keys without account admin controls for an Owner", async () => {
+it("explains personal versus service user keys without organization admin controls for an Owner", async () => {
   await show();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Add access")!.click());
   await waitForUi(() => expect(document.querySelector('[value="user:alice"]')?.textContent).toContain("alice@example.com"));
   expect(container.querySelector("h1")?.textContent).toBe("Test universe");
   expect(document.querySelector('[role="dialog"]')?.className).toContain("overflow-y-auto");
   expect(container.querySelector('a[href="/account#api-keys"]')).not.toBeNull();
-  expect(container.querySelector('a[href^="/admin/accounts"]')).toBeNull();
-  expect(container.textContent).toContain("ask an Account Admin");
+  expect(container.querySelector('a[href="/admin/organizations/team/people"]')).toBeNull();
+  expect(container.textContent).toContain("ask an Organization Admin");
   expect(container.textContent).not.toContain("Principal");
 });
 
-it("links Account Admins to this account's members and application keys", async () => {
-  mocks.accountRole = "admin";
+it("links Organization Admins to this organization's members and service user keys", async () => {
+  mocks.organizationRole = "admin";
   await show();
-  expect(container.querySelector('a[href="/admin/accounts?account=account"]')?.textContent).toBe(
-    "account members and application keys",
+  expect(container.querySelector('a[href="/admin/organizations/team/people"]')?.textContent).toBe(
+    "organization members",
   );
 });
 
 it("shows directory failures and disables grants instead of presenting an empty selection", async () => {
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (operation, params) => {
-    if (operation === "platform/accounts/members/list") throw new Error("Directory unavailable");
+    if (operation === "platform/organizations/members/list") throw new Error("Directory unavailable");
     return implementation(operation, params);
   });
   await show();
@@ -169,7 +169,7 @@ it("shows directory failures and disables grants instead of presenting an empty 
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Add access")!.click());
   expect(document.querySelector<HTMLSelectElement>("#universe-access-recipient")?.disabled).toBe(true);
   expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
-  expect(container.textContent).not.toContain("No account members or enabled applications are available");
+  expect(container.textContent).not.toContain("No organization members or enabled service users are available");
 });
 
 it("confirms removal in a scrollable dialog and keeps a refused grant visible", async () => {

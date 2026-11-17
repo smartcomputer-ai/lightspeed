@@ -2,7 +2,7 @@ import { decodeHttpRequest, problemResponse } from "../../test/http-fixture.js";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import { declaredPrincipalRole } from "./account-access.js";
+import { declaredPrincipalRole } from "./organization-access.js";
 import { syncDeclaredUniverses } from "./declared-universes.js";
 import { identityEnv, identityFixture } from "../test/identity-fixture.js";
 import type { AppContext } from "./context.js";
@@ -36,24 +36,24 @@ beforeEach(async () => {
   }));
 });
 async function link(runtimeId = first, handle = "research") {
-  const accountId = crypto.randomUUID();
-  await fixture.db.insert(schema.organization).values({ id: accountId, name: "Account", slug: accountId, createdAt: new Date() });
-  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: accountId, lightspeedUniverseId: runtimeId, handle, name: "Old name", accessPolicy: { directoryGroupMappings: [{ issuer, group: "owners", role: "owner" }] } }).returning();
+  const organizationId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Organization", slug: organizationId, createdAt: new Date() });
+  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: organizationId, lightspeedUniverseId: runtimeId, handle, name: "Old name", accessPolicy: { directoryGroupMappings: [{ issuer, group: "owners", role: "owner" }] } }).returning();
   return universe!;
 }
-it("never invents an account or Owner grant for runtime documents", async () => {
+it("never invents an organization or Owner grant for runtime documents", async () => {
   expect(await syncDeclaredUniverses(context)).toEqual({ adopted: 0, updated: 0 });
   expect(await fixture.db.select().from(schema.universes)).toEqual([]);
   expect(await fixture.db.select().from(schema.organization)).toEqual([]);
 });
-it("updates linked metadata without overwriting Platform access policy or account identity", async () => {
+it("updates linked metadata without overwriting Platform access policy or organization identity", async () => {
   const universe = await link();
   expect(await syncDeclaredUniverses(context)).toEqual({ adopted: 0, updated: 1 });
   const [updated] = await fixture.db.select().from(schema.universes);
   expect(updated).toMatchObject({ name: "Research", accessPolicy: universe.accessPolicy, runtimeConfiguration: { protected: true } });
-  expect((await fixture.db.select().from(schema.organization))[0]?.name).toBe("Account");
+  expect((await fixture.db.select().from(schema.organization))[0]?.name).toBe("Organization");
 });
-it("removes only the universe after a permanent tombstone, preserving its account and siblings", async () => {
+it("removes only the universe after a permanent tombstone, preserving its organization and siblings", async () => {
   const firstUniverse = await link(); const secondUniverse = await link(second, "other");
   inventory = inventory.slice(1); absentKind = "gone";
   await syncDeclaredUniverses(context);

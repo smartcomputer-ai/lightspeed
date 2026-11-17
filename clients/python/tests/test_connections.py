@@ -24,7 +24,7 @@ def test_shared_invalid_endpoints(endpoint):
         normalize_endpoint(endpoint)
 
 
-def saved(tmp_path, *, kind="platformSession", owned=True, account="account-a", universe="u", single=False):
+def saved(tmp_path, *, kind="platformSession", owned=True, organization="organization-a", universe="u", single=False):
     directory = tmp_path / "config"
     credentials = directory / "credentials"
     credentials.mkdir(parents=True)
@@ -34,7 +34,7 @@ def saved(tmp_path, *, kind="platformSession", owned=True, account="account-a", 
     entry = {"endpoint": "https://platform.test/team/api/v1", "single": single,
              "credentialKind": "none" if single else kind, "serverKind": "runtime" if single or kind == "runtimeToken" else "platform",
              "credentialFile": str(path) if not single else None, "ownedCredential": owned,
-             "accountId": None if single or kind == "runtimeToken" else account, "universe": universe}
+             "organizationId": None if single or kind == "runtimeToken" else organization, "universe": universe}
     config = {"selected": "work", "connections": {"work": entry}}
     (directory / "connections.json").write_text(json.dumps(config))
     return directory, path, config
@@ -43,7 +43,7 @@ def saved(tmp_path, *, kind="platformSession", owned=True, account="account-a", 
 def discovery(kind="cliSession", *, default="suggested", single=False):
     return {"runtime": "runtime" if single or kind == "runtimeToken" else "platform", "contractRevision": "1",
             "caller": {"single": single}, "defaultUniverse": default,
-            "platform": {"principal": {"kind": "application" if kind == "applicationKey" else "user", "id": "principal", "name": "Principal", "platformAdmin": False},
+            "platform": {"principal": {"kind": "serviceUser" if kind == "serviceUserKey" else "user", "id": "principal", "name": "Principal", "platformAdmin": False},
                          "credential": {"kind": kind, "id": "credential"}}}
 
 
@@ -56,24 +56,24 @@ async def test_import_pins_endpoint_and_credentials_ignores_ambient_overrides(tm
         requests.append(request)
         assert request.url.host == "platform.test"
         assert request.headers["authorization"] == "Bearer token-one"
-        return httpx.Response(200, json=discovery() if request.url.path.endswith("connection") else {"accounts": []})
+        return httpx.Response(200, json=discovery() if request.url.path.endswith("connection") else {"organizations": []})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         async with await AsyncLightspeedClient.from_connection(config_dir=directory, http_client=http) as client:
-            assert client.account_id == "account-a"
-            await client.platform.list_accounts()
+            assert client.organization_id == "organization-a"
+            await client.platform.list_organizations()
             config["connections"]["work"]["endpoint"] = "https://other.test/api/v1"
             (directory / "connections.json").write_text(json.dumps(config))
             with pytest.raises(ValueError, match="changed"):
-                await client.platform.list_accounts()
+                await client.platform.list_organizations()
     assert len(requests) == 2
 
 
 @pytest.mark.parametrize("explicit, expected", [(None, None), ("explicit", "explicit")])
-async def test_account_override_clears_inherited_universe_and_suppresses_default(tmp_path, explicit, expected):
+async def test_organization_override_clears_inherited_universe_and_suppresses_default(tmp_path, explicit, expected):
     directory, _, _ = saved(tmp_path)
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=discovery()))) as http:
-        async with await AsyncLightspeedClient.from_connection("work", config_dir=directory, account="account-b", universe=explicit, http_client=http) as client:
-            assert client.account_id == "account-b"
+        async with await AsyncLightspeedClient.from_connection("work", config_dir=directory, organization="organization-b", universe=explicit, http_client=http) as client:
+            assert client.organization_id == "organization-b"
             assert client._universe == expected
 
 
@@ -85,7 +85,7 @@ async def test_single_runtime_import_uses_discovered_universe_without_authentica
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         async with await AsyncLightspeedClient.from_connection(config_dir=directory, http_client=http) as client:
             assert client._universe == "suggested"
-            assert client.account_id is None
+            assert client.organization_id is None
 
 
 async def test_owned_session_renewal_on_discovery_and_denial_is_reread(tmp_path):
@@ -97,27 +97,27 @@ async def test_owned_session_renewal_on_discovery_and_denial_is_reread(tmp_path)
             return httpx.Response(200, json=discovery(), headers={"set-auth-token": "token-two"})
         if len(tokens) == 2:
             return httpx.Response(403, json={"type": "about:blank", "title": "Forbidden", "status": 403, "kind": "forbidden", "detail": "denied"}, headers={"set-auth-token": "token-three"})
-        return httpx.Response(200, json={"accounts": []})
+        return httpx.Response(200, json={"organizations": []})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         async with await AsyncLightspeedClient.from_connection(config_dir=directory, http_client=http) as client:
             with pytest.raises(LightspeedApiError):
-                await client.platform.list_accounts()
-            await client.platform.list_accounts()
+                await client.platform.list_organizations()
+            await client.platform.list_organizations()
     assert tokens == ["Bearer token-one", "Bearer token-two", "Bearer token-three"]
     assert path.read_text() == "token-three"
     if os.name == "posix":
         assert path.stat().st_mode & 0o777 == 0o600
 
 
-@pytest.mark.parametrize("kind, owned, auth_override", [("personalKey", True, None), ("cliSession", False, None), ("cliSession", True, "Bearer override-key")])
+@pytest.mark.parametrize("kind, owned, auth_override", [("personalKey", True, None), ("serviceUserKey", True, None), ("cliSession", False, None), ("cliSession", True, "Bearer override-key")])
 async def test_renewal_never_changes_api_keys_external_credentials_or_overridden_auth(tmp_path, kind, owned, auth_override):
-    directory, path, _ = saved(tmp_path, kind="platformApiKey" if kind == "personalKey" else "platformSession", owned=owned)
+    directory, path, _ = saved(tmp_path, kind="platformApiKey" if kind in ("personalKey", "serviceUserKey") else "platformSession", owned=owned)
     async def handle(request):
-        return httpx.Response(200, json=discovery(kind) if request.url.path.endswith("connection") else {"accounts": []},
+        return httpx.Response(200, json=discovery(kind) if request.url.path.endswith("connection") else {"organizations": []},
                               headers={} if request.url.path.endswith("connection") else {"set-auth-token": "unexpected-token"})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         async with await AsyncLightspeedClient.from_connection(config_dir=directory, http_client=http) as client:
-            await client.platform.list_accounts(headers={"authorization": auth_override} if auth_override else None)
+            await client.platform.list_organizations(headers={"authorization": auth_override} if auth_override else None)
     assert path.read_text() == "token-one"
 
 
@@ -170,7 +170,7 @@ async def test_custom_http_client_redirect_defaults_cannot_forward_credentials(t
                 if target == "runtime":
                     await client.list_profiles()
                 elif target == "platform":
-                    await client.platform.list_accounts()
+                    await client.platform.list_organizations()
                 elif target == "binary":
                     async with client.open_download("blobs/read", {"blobRef": "sha256:data"}):
                         pass
@@ -190,15 +190,15 @@ async def test_logout_during_atomic_renewal_removes_only_new_orphan(tmp_path, mo
         path.unlink()
         replace(source, destination)
     async def handle(request):
-        return httpx.Response(200, json=discovery() if request.url.path.endswith("connection") else {"accounts": []},
+        return httpx.Response(200, json=discovery() if request.url.path.endswith("connection") else {"organizations": []},
                               headers={} if request.url.path.endswith("connection") else {"set-auth-token": "token-two"})
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         async with await AsyncLightspeedClient.from_connection(config_dir=directory, http_client=http) as client:
             monkeypatch.setattr(_connection.os, "replace", logout_then_replace)
-            await client.platform.list_accounts()
+            await client.platform.list_organizations()
             assert not path.exists()
             with pytest.raises(ValueError, match="changed"):
-                await client.platform.list_accounts()
+                await client.platform.list_organizations()
 
 
 @pytest.mark.parametrize("unsafe", ["symlink", "permissions", "outside"])
@@ -236,7 +236,7 @@ async def test_saved_security_binding_changes_invalidate_existing_client(tmp_pat
             config["connections"]["work"][field] = value
             (directory / "connections.json").write_text(json.dumps(config))
             with pytest.raises(ValueError, match="changed"):
-                await client.platform.list_accounts()
+                await client.platform.list_organizations()
     assert len(calls) == 1
 
 
@@ -244,12 +244,12 @@ async def test_saved_selection_changes_do_not_retarget_existing_client(tmp_path)
     directory, _, config = saved(tmp_path)
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=discovery()))) as http:
         async with await AsyncLightspeedClient.from_connection(config_dir=directory, http_client=http) as client:
-            config["connections"]["work"]["accountId"] = "other"
+            config["connections"]["work"]["organizationId"] = "other"
             config["connections"]["work"]["universe"] = "other"
             (directory / "connections.json").write_text(json.dumps(config))
-            assert client.account_id == "account-a"
+            assert client.organization_id == "organization-a"
             assert client._universe == "u"
-            await client.platform.list_accounts()
+            await client.platform.list_organizations()
 
 
 async def test_non_ascii_renewal_never_replaces_a_valid_credential(tmp_path):

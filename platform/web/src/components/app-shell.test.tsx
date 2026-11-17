@@ -43,19 +43,19 @@ afterEach(async () => {
 });
 
 /// The sidebar as label → nav items, with the unlabelled first group as "".
-async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false, adminPath?: string, accountRole?: string): Promise<Record<string, string[]>> {
+async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/platform/accounts") return { accounts: accountRole ? [{ id: "account", enabled: true, role: accountRole }] : [], canCreate: false };
-    if (path === "/api/ui/universes") return [{ id: "universe", handle: "test", name: "Test", status: "active", role: mocks.role, features }];
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", name: "Team", enabled: true, role: organizationRole ?? "member" }], canCreate: false };
+    if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: mocks.role, features }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}>
-      <MemoryRouter initialEntries={[adminPath ?? (platformAdmin ? "/admin/audit" : "/u/test/bots")]}>
+      <MemoryRouter initialEntries={[adminPath ?? (platformAdmin ? "/admin/platform/audit" : "/u/test/bots")]}>
         <Routes>
           <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={platformAdmin} />}>
-            <Route path="*" element={null} />
+            <Route path="/admin/organizations/:organizationId/*" element={null} /><Route path="*" element={null} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -116,13 +116,13 @@ it.each([
   ["/u/test/sessions/s-1", ["Sessions", "Test"]],
   ["/u/test/workspaces/w-1/files/src/main.rs", ["Workspaces", "Test"]],
   ["/u/test/mcp-servers", ["MCP servers", "Test"]],
-  ["/admin/universes/test/access", ["Access", "Test", "Admin"]],
-  ["/admin/universes/test/settings", ["Settings and lifecycle", "Test", "Admin"]],
+  ["/admin/organizations/team/universes/test/access", ["Access", "Test", "Admin"]],
+  ["/admin/organizations/team/universes/test/settings", ["Settings and lifecycle", "Test", "Admin"]],
   ["/u/test/blobs/abc", ["Test"]],
-  ["/admin/audit", ["Audit log", "Admin"]],
-  ["/admin/environment-providers", ["Environment providers", "Admin"]],
+  ["/admin/platform/audit", ["Audit log", "Platform administration"]],
+  ["/admin/platform/environment-providers", ["Environment providers", "Platform administration"]],
   ["/account", ["Your profile"]],
-  ["/admin/accounts", ["Accounts", "Admin"]],
+  ["/admin/organizations/team/settings", ["Settings", "Admin"]],
   ["/preferences", ["Preferences"]],
   ["/accounts-elsewhere", []],
   ["/", []],
@@ -148,7 +148,7 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
   const key = "lightspeed:user-preferences:user";
   localStorage.setItem(key, JSON.stringify({ sidebarCollapsed: true }));
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/ui/universes") return [{ id: "universe", handle: "test", name: "Test", status: "active", role: "viewer" }];
+    if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: "viewer" }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
@@ -156,7 +156,7 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
       <MemoryRouter initialEntries={["/u/test/bots"]}>
         <Routes>
           <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={false} />}>
-            <Route path="*" element={null} />
+            <Route path="/admin/organizations/:organizationId/*" element={null} /><Route path="*" element={null} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -174,12 +174,12 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
 
 it("offers Audit log in Platform admin navigation", async () => {
   const groups = await sidebarFor("owner", { bots: true, channels: true }, true);
-  expect(groups["Admin"]).toContain("Audit log");
-  expect(container.querySelector('a[href="/admin/audit"]')?.getAttribute("aria-current")).toBe("page");
+  expect(groups["Platform"]).toContain("Audit log");
+  expect(container.querySelector('a[href="/admin/platform/audit"]')?.getAttribute("aria-current")).toBe("page");
 });
 
 it("opens a personal-key deep link and keeps profile section links navigable", async () => {
-  mocks.api.mockReset().mockImplementation(async (_method, path) => path === "/api/v1/platform/accounts" ? { accounts: [] } : []);
+  mocks.api.mockReset().mockImplementation(async (_method, path) => path === "/api/v1/platform/organizations" ? { organizations: [] } : []);
   const scroll = vi.fn();
   const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
@@ -207,13 +207,13 @@ it("opens a personal-key deep link and keeps profile section links navigable", a
 
 
 it("shows only universe administration to a universe Owner", async () => {
-  expect(await sidebarFor("owner", undefined, false, "/admin/universes")).toEqual({ Admin: ["Universes"] });
+  expect(await sidebarFor("owner", undefined, false, "/admin/organizations/team/universes")).toEqual({ Organization: ["Universes"] });
 });
 
-it("shows account administration without deployment controls to an Account Admin", async () => {
-  expect(await sidebarFor("viewer", undefined, false, "/admin/accounts", "admin")).toEqual({ Admin: ["Accounts", "Universes", "API keys"] });
+it("shows organization administration without deployment controls to an Organization Admin", async () => {
+  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ Organization: ["Universes", "People", "Service users", "API keys", "Settings"] });
 });
 
 it("does not offer administrative pages to a Creator with no owned universe", async () => {
-  expect(await sidebarFor("viewer", undefined, false, "/admin", "creator")).toEqual({ Admin: [] });
+  expect(await sidebarFor("viewer", undefined, false, "/admin", "creator")).toEqual({});
 });

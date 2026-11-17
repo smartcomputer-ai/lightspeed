@@ -9,11 +9,11 @@ import { waitForUi } from "@/test/wait-for-ui";
 const api = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/platform-api", () => ({
   platformApi: api,
-  useAccounts: () => ({
+  useOrganizations: () => ({
     data: {
-      accounts: [
-        { id: "team", name: "Research" },
-        { id: "other", name: "Operations" },
+      organizations: [
+        { id: "team", enabled: true, name: "Research" },
+        { id: "other", enabled: true, name: "Operations" },
       ],
     },
   }),
@@ -23,21 +23,21 @@ vi.mock("@/lib/universes", () => ({
     data: [
       {
         lightspeedUniverseId: "universe-one",
-        accountId: "team",
+        organizationId: "team",
         name: "Development",
         handle: "dev",
         status: "active",
       },
       {
         lightspeedUniverseId: "universe-two",
-        accountId: "other",
+        organizationId: "other",
         name: "Production",
         handle: "prod",
         status: "active",
       },
       {
         lightspeedUniverseId: "universe-old",
-        accountId: "team",
+        organizationId: "team",
         name: "Archived",
         handle: "old",
         status: "archived",
@@ -76,20 +76,20 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-async function show(application?: {
-  accountId: string;
-  applicationId: string;
+async function show(serviceUser?: {
+  organizationId: string;
+  serviceUserId: string;
   name?: string;
   enabled?: boolean;
 }) {
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
-        <ApiKeysCard application={application} />
+        <ApiKeysCard serviceUser={serviceUser} />
       </QueryClientProvider>,
     ),
   );
-  if (application?.enabled !== false) await click("New API key");
+  if (serviceUser?.enabled !== false) await click("New API key");
 }
 async function type(label: string, value: string) {
   const input = document.body.querySelector<HTMLInputElement>(
@@ -142,7 +142,7 @@ it("uses deployment expiry defaults and keeps the one-time secret out of query a
   );
   expect(api).toHaveBeenCalledWith("platform/credentials/create", {
     name: "Local automation",
-    restrictions: { readOnly: false, allowUniverseCreation: false },
+    restrictions: { organizationIds: ["team"], readOnly: false, allowUniverseCreation: false },
   });
   expect(submit()).toBeNull();
   expect(
@@ -167,10 +167,11 @@ it("uses deployment expiry defaults and keeps the one-time secret out of query a
   );
 });
 
-it("selects named account and universe restrictions and rejects empty selections", async () => {
+it("selects named organization and universe restrictions and rejects empty selections", async () => {
   await show();
   await type("API key name", "Research script");
-  await select("Account access", "selected");
+  await select("Organization access", "selected");
+  await check("Research");
   expect(submit().disabled).toBe(true);
   await check("Research");
   await select("Universe access", "selected");
@@ -184,7 +185,7 @@ it("selects named account and universe restrictions and rejects empty selections
     expect(api).toHaveBeenCalledWith("platform/credentials/create", {
       name: "Research script",
       restrictions: {
-        accountIds: ["team"],
+        organizationIds: ["team"],
         universeIds: ["universe-one"],
         readOnly: false,
         allowUniverseCreation: false,
@@ -193,15 +194,15 @@ it("selects named account and universe restrictions and rejects empty selections
   );
 });
 
-it("creates a named application credential restricted to its own account", async () => {
+it("creates a named service user credential restricted to its own organization", async () => {
   await show({
-    accountId: "team",
-    applicationId: "robot",
+    organizationId: "team",
+    serviceUserId: "robot",
     name: "Release bot",
   });
   expect(document.body.textContent).toContain("These keys act as Release bot");
   expect(
-    document.body.querySelector('[aria-label="Account access"]'),
+    document.body.querySelector('[aria-label="Organization access"]'),
   ).toBeNull();
   await type("API key name", "CI");
   await type("API key expiry in days", "14");
@@ -215,14 +216,14 @@ it("creates a named application credential restricted to its own account", async
   await click("Create API key");
   await waitForUi(() =>
     expect(api).toHaveBeenCalledWith(
-      "platform/applications/credentials/create",
+      "platform/service-users/credentials/create",
       {
-        accountId: "team",
-        applicationId: "robot",
+        organizationId: "team",
+        serviceUserId: "robot",
         name: "CI",
         expiresInDays: 14,
         restrictions: {
-          accountIds: ["team"],
+          organizationIds: ["team"],
           universeIds: ["universe-one"],
           operations: ["profiles/list", "profiles/read"],
           readOnly: false,
@@ -248,11 +249,11 @@ it("clears universe creation permission when the key becomes read only or restri
   expect(checkbox("Allow universe creation").checked).toBe(false);
 });
 
-it("shows named restrictions and lifecycle states and permits revocation for disabled applications", async () => {
+it("shows named restrictions and lifecycle states and permits revocation for disabled service users", async () => {
   const base = {
     start: "ls_123",
     restrictions: {
-      accountIds: ["team"],
+      organizationIds: ["team"],
       universeIds: ["universe-one"],
       readOnly: true,
       allowUniverseCreation: false,
@@ -288,15 +289,15 @@ it("shows named restrictions and lifecycle states and permits revocation for dis
       : {},
   );
   await show({
-    accountId: "team",
-    applicationId: "robot",
+    organizationId: "team",
+    serviceUserId: "robot",
     name: "Release bot",
     enabled: false,
   });
   await waitForUi(() =>
-    expect(document.body.textContent).toContain("Application disabled"),
+    expect(document.body.textContent).toContain("Service user disabled"),
   );
-  expect(document.body.textContent).toContain("Accounts: Research");
+  expect(document.body.textContent).toContain("Organizations: Research");
   expect(document.body.textContent).toContain("Universes: Development (dev)");
   expect(document.body.textContent).toContain("Expired");
   expect(document.body.textContent).toContain("Revoked");
@@ -311,14 +312,14 @@ it("shows named restrictions and lifecycle states and permits revocation for dis
   ]);
   await act(async () => buttons[0]!.click());
   expect(api).not.toHaveBeenCalledWith(
-    "platform/applications/credentials/revoke",
+    "platform/service-users/credentials/revoke",
     expect.anything(),
   );
   await click("Revoke key");
   await waitForUi(() =>
     expect(api).toHaveBeenCalledWith(
-      "platform/applications/credentials/revoke",
-      { accountId: "team", applicationId: "robot", keyId: "live" },
+      "platform/service-users/credentials/revoke",
+      { organizationId: "team", serviceUserId: "robot", keyId: "live" },
     ),
   );
 });
@@ -331,8 +332,8 @@ it("discards a one-time secret when switching the credential owner", async () =>
     expect(document.body.textContent).toContain("one-time-secret"),
   );
   await show({
-    accountId: "team",
-    applicationId: "robot",
+    organizationId: "team",
+    serviceUserId: "robot",
     name: "Release bot",
   });
   expect(document.body.textContent).not.toContain("one-time-secret");
@@ -352,13 +353,13 @@ it("does not describe empty credential restrictions as unrestricted access", asy
         enabled: true,
         start: "ls_123",
         expiresAt: "2999-01-01",
-        restrictions: { accountIds: [], universeIds: [], operations: [] },
+        restrictions: { organizationIds: [], universeIds: [], operations: [] },
       },
     ],
   });
   await show();
   await waitForUi(() =>
-    expect(document.body.textContent).toContain("Accounts: None"),
+    expect(document.body.textContent).toContain("Organizations: None"),
   );
   expect(document.body.textContent).toContain("Universes: None");
   expect(document.body.textContent).toContain("Operations: None");
@@ -378,4 +379,16 @@ it("opens a bounded scrollable dialog and resets an abandoned draft", async () =
       .value,
   ).toBe("");
   expect(checkbox("Allow universe creation").checked).toBe(false);
+});
+
+it("requires an explicit all-organizations choice to create an unrestricted user key", async () => {
+  await show();
+  expect(document.body.querySelector<HTMLSelectElement>('[aria-label="Organization access"]')!.value).toBe("selected");
+  expect(checkbox("Research").checked).toBe(true);
+  await select("Organization access", "all");
+  await type("API key name", "CLI everywhere");
+  await click("Create API key");
+  await waitForUi(() => expect(api).toHaveBeenCalledWith("platform/credentials/create", {
+    name: "CLI everywhere", restrictions: { readOnly: false, allowUniverseCreation: false },
+  }));
 });

@@ -1,24 +1,62 @@
-import { useAccounts } from "@/lib/platform-api";
+import { useParams } from "react-router-dom";
+import { useOrganizations } from "@/lib/platform-api";
 import { usePlatformAdmin } from "@/lib/permissions";
 import { useUniverses } from "@/lib/universes";
 
-/** Navigation hints only; the server authorizes every account and universe operation. */
+export const organizationAdminPath = (id: string) =>
+  `/admin/organizations/${encodeURIComponent(id)}`;
+export const organizationLabel = (
+  organization: { name: string; kind?: string },
+  distinguishPersonal = false,
+) =>
+  organization.kind === "personal"
+    ? distinguishPersonal
+      ? `Personal · ${organization.name}`
+      : "Personal"
+    : organization.name;
+
+/** Navigation hints only; the server authorizes every organization and universe operation. */
 export function useAdminAccess() {
   const platform = usePlatformAdmin();
-  const accounts = useAccounts();
+  const organizations = useOrganizations();
   const universes = useUniverses();
-  const accountAdmin = accounts.data?.accounts.some(account => account.enabled && account.role === "admin") ?? false;
-  const universeOwner = universes.data?.some(universe => universe.role === "owner") ?? false;
-  const manageAccounts = platform || accountAdmin || accounts.data?.canCreate === true;
-  const manageUniverses = platform || accountAdmin || universeOwner;
-  const manageKeys = platform || accountAdmin;
+  const { organizationId } = useParams();
+  const manageable = (organizations.data?.organizations ?? []).filter(
+    (organization) =>
+      platform ||
+      (organization.enabled &&
+        (organization.role === "admin" ||
+          universes.data?.some(
+            (universe) =>
+              universe.organizationId === organization.id &&
+              universe.role === "owner",
+          ))),
+  );
+  const selected = manageable.find(
+    (organization) => organization.id === organizationId,
+  );
+  const organizationAdmin =
+    !!selected && (platform || selected.role === "admin");
   return {
     platform,
-    accounts: manageAccounts,
-    universes: manageUniverses,
-    keys: manageKeys,
-    any: manageAccounts || manageUniverses,
-    isLoading: !platform && (accounts.isLoading || universes.isLoading),
-    error: accounts.error ?? universes.error,
+    selected,
+    manageable,
+    canCreate: organizations.data?.canCreate ?? false,
+    organizations: organizationAdmin,
+    universes:
+      !!selected &&
+      (organizationAdmin ||
+        universes.data?.some(
+          (universe) =>
+            universe.organizationId === selected.id &&
+            universe.role === "owner",
+        ) === true),
+    keys: organizationAdmin,
+    any:
+      platform ||
+      manageable.length > 0 ||
+      organizations.data?.canCreate === true,
+    isLoading: organizations.isLoading || universes.isLoading,
+    error: organizations.error ?? universes.error,
   };
 }

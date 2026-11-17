@@ -15,30 +15,30 @@ pub(crate) struct PlatformArgs {
 
 #[derive(Debug, Subcommand)]
 enum PlatformCommand {
-    /// Select and manage accounts and their members.
-    Account(AccountArgs),
-    /// Manage applications in the selected account.
-    Application(ApplicationArgs),
-    /// Manage personal or application API keys.
+    /// Select and manage organizations and their members.
+    Organization(OrganizationArgs),
+    /// Manage service users in the selected organization.
+    ServiceUser(ServiceUserArgs),
+    /// Manage personal or service user API keys.
     ApiKey(ApiKeyArgs),
 }
 
 pub(crate) async fn handle(args: PlatformArgs) -> Result<()> {
     require_platform()?;
     match args.command {
-        PlatformCommand::Account(args) => account(args).await,
-        PlatformCommand::Application(args) => application(args).await,
+        PlatformCommand::Organization(args) => organization(args).await,
+        PlatformCommand::ServiceUser(args) => service_user(args).await,
         PlatformCommand::ApiKey(args) => api_key(args).await,
     }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum AccountRole {
+enum OrganizationRole {
     Member,
     Creator,
     Admin,
 }
-impl AccountRole {
+impl OrganizationRole {
     fn value(self) -> &'static str {
         match self {
             Self::Member => "member",
@@ -66,19 +66,19 @@ impl UniverseRole {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct AccountArgs {
+pub(crate) struct OrganizationArgs {
     #[command(subcommand)]
-    command: AccountCommand,
+    command: OrganizationCommand,
 }
 #[derive(Debug, Subcommand)]
-enum AccountCommand {
+enum OrganizationCommand {
     List,
     Show {
-        #[arg(value_name = "ACCOUNT_ID")]
+        #[arg(value_name = "ORGANIZATION_ID")]
         target: Option<String>,
     },
     Use {
-        #[arg(value_name = "ACCOUNT_ID")]
+        #[arg(value_name = "ORGANIZATION_ID")]
         target: String,
     },
     Create {
@@ -90,7 +90,7 @@ enum AccountCommand {
         #[arg(long)]
         quota: Option<u32>,
     },
-    /// Apply account settings from a JSON object, including membershipPolicy.
+    /// Apply organization settings from a JSON object, including membershipPolicy.
     Update {
         #[arg(long)]
         file: PathBuf,
@@ -103,41 +103,41 @@ enum AccountCommand {
 #[derive(Debug, Subcommand)]
 enum MemberCommand {
     List,
-    /// Add or update an account member. Universe grants are managed with universe access.
+    /// Add or update an organization member. Universe grants are managed with universe access.
     #[command(visible_alias = "set-role")]
     Add {
         user: String,
         #[arg(long, value_enum, default_value = "member")]
-        role: AccountRole,
+        role: OrganizationRole,
     },
     Remove {
         user: String,
     },
 }
 #[derive(Debug, Args)]
-pub(crate) struct ApplicationArgs {
+pub(crate) struct ServiceUserArgs {
     #[command(subcommand)]
-    command: ApplicationCommand,
+    command: ServiceUserCommand,
 }
 #[derive(Debug, Subcommand)]
-enum ApplicationCommand {
+enum ServiceUserCommand {
     List,
     Create {
         name: String,
         #[arg(long, value_enum, default_value = "member")]
-        role: AccountRole,
+        role: OrganizationRole,
     },
     Update {
-        application: String,
+        service_user: String,
         #[arg(long)]
         name: Option<String>,
         #[arg(long, value_enum)]
-        role: Option<AccountRole>,
+        role: Option<OrganizationRole>,
         #[arg(long)]
         enabled: Option<bool>,
     },
     Disable {
-        application: String,
+        service_user: String,
     },
 }
 #[derive(Debug, Args)]
@@ -149,7 +149,7 @@ pub(crate) struct AccessArgs {
 enum AccessCommand {
     /// List explicit grants in the selected universe.
     List,
-    /// Grant an account user or application access to the selected universe.
+    /// Grant an organization user or service user access to the selected universe.
     Put {
         #[command(flatten)]
         principal: PrincipalArgs,
@@ -171,14 +171,14 @@ struct PrincipalArgs {
     #[arg(long)]
     user: Option<String>,
     #[arg(long)]
-    application: Option<String>,
+    service_user: Option<String>,
 }
 impl PrincipalArgs {
     fn value(self) -> Value {
         match self.user {
             Some(id) => json!({"kind":"user","id":id}),
             None => {
-                json!({"kind":"application","id":self.application.expect("clap requires principal")})
+                json!({"kind":"serviceUser","id":self.service_user.expect("clap requires principal")})
             }
         }
     }
@@ -191,7 +191,7 @@ pub(crate) struct InitialOwnerArgs {
     #[arg(long)]
     pub(crate) owner_user: Option<String>,
     #[arg(long)]
-    pub(crate) owner_application: Option<String>,
+    pub(crate) owner_service_user: Option<String>,
 }
 impl InitialOwnerArgs {
     pub(crate) fn value(&self) -> Option<Value> {
@@ -199,18 +199,18 @@ impl InitialOwnerArgs {
             .as_ref()
             .map(|id| json!({"kind":"user","id":id}))
             .or_else(|| {
-                self.owner_application
+                self.owner_service_user
                     .as_ref()
-                    .map(|id| json!({"kind":"application","id":id}))
+                    .map(|id| json!({"kind":"serviceUser","id":id}))
             })
     }
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ApiKeyArgs {
-    /// Manage keys for this account application instead of personal keys.
+    /// Manage keys for this organization service user instead of personal keys.
     #[arg(long, global = true)]
-    application: Option<String>,
+    service_user: Option<String>,
     #[command(subcommand)]
     command: ApiKeyCommand,
 }
@@ -221,8 +221,8 @@ enum ApiKeyCommand {
         name: String,
         #[arg(long)]
         expires_in_days: Option<u32>,
-        #[arg(long = "scope-account")]
-        accounts: Vec<String>,
+        #[arg(long = "scope-organization")]
+        organizations: Vec<String>,
         #[arg(long = "scope-universe")]
         universes: Vec<uuid::Uuid>,
         #[arg(long = "operation")]
@@ -259,12 +259,12 @@ pub(crate) struct ApiArgs {
     output: SecretOutput,
 }
 
-pub(crate) fn selected_account() -> Result<String> {
+pub(crate) fn selected_organization() -> Result<String> {
     connection::ACTIVE
         .get()
-        .and_then(|active| active.selected_account())
+        .and_then(|active| active.selected_organization())
         .map(str::to_owned)
-        .context("no account selected; use --account ID or platform account use ID")
+        .context("no organization selected; use --organization ID or platform organization use ID")
 }
 fn selected_universe() -> Result<String> {
     connection::ACTIVE
@@ -298,25 +298,34 @@ fn show(value: &Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
-fn with_account(mut params: Value) -> Result<Value> {
-    params["accountId"] = json!(selected_account()?);
+fn with_organization(mut params: Value) -> Result<Value> {
+    params["organizationId"] = json!(selected_organization()?);
     Ok(params)
 }
 
-pub(crate) async fn account(args: AccountArgs) -> Result<()> {
+pub(crate) async fn organization(args: OrganizationArgs) -> Result<()> {
     require_platform()?;
     let (operation, params) = match args.command {
-        AccountCommand::List => ("platform/accounts/list", json!({})),
-        AccountCommand::Show { target } => (
-            "platform/accounts/read",
-            json!({"accountId": target.map(Ok).unwrap_or_else(selected_account)?}),
+        OrganizationCommand::List => ("platform/organizations/list", json!({})),
+        OrganizationCommand::Show { target } => (
+            "platform/organizations/read",
+            json!({"organizationId": target.map(Ok).unwrap_or_else(selected_organization)?}),
         ),
-        AccountCommand::Use { target: account } => {
-            let result = call("platform/accounts/read", json!({"accountId":account})).await?;
-            connection::save_account(connection::ACTIVE.get().context("no connection")?, &account)?;
+        OrganizationCommand::Use {
+            target: organization,
+        } => {
+            let result = call(
+                "platform/organizations/read",
+                json!({"organizationId":organization}),
+            )
+            .await?;
+            connection::save_organization(
+                connection::ACTIVE.get().context("no connection")?,
+                &organization,
+            )?;
             return show(&result);
         }
-        AccountCommand::Create {
+        OrganizationCommand::Create {
             name,
             slug,
             initial_admin_user,
@@ -329,40 +338,43 @@ pub(crate) async fn account(args: AccountArgs) -> Result<()> {
             if let Some(value) = quota {
                 params["universeQuota"] = json!(value);
             }
-            ("platform/accounts/create", params)
+            ("platform/organizations/create", params)
         }
-        AccountCommand::Update { file } => (
-            "platform/accounts/update",
-            with_account(read_object(&file)?)?,
+        OrganizationCommand::Update { file } => (
+            "platform/organizations/update",
+            with_organization(read_object(&file)?)?,
         ),
-        AccountCommand::Member { command } => match command {
-            MemberCommand::List => ("platform/accounts/members/list", with_account(json!({}))?),
+        OrganizationCommand::Member { command } => match command {
+            MemberCommand::List => (
+                "platform/organizations/members/list",
+                with_organization(json!({}))?,
+            ),
             MemberCommand::Add { user, role } => (
-                "platform/accounts/members/put",
-                with_account(json!({"userId":user,"role":role.value()}))?,
+                "platform/organizations/members/put",
+                with_organization(json!({"userId":user,"role":role.value()}))?,
             ),
             MemberCommand::Remove { user } => (
-                "platform/accounts/members/delete",
-                with_account(json!({"userId":user}))?,
+                "platform/organizations/members/delete",
+                with_organization(json!({"userId":user}))?,
             ),
         },
     };
     show(&call(operation, params).await?)
 }
-pub(crate) async fn application(args: ApplicationArgs) -> Result<()> {
+pub(crate) async fn service_user(args: ServiceUserArgs) -> Result<()> {
     let (operation, params) = match args.command {
-        ApplicationCommand::List => ("platform/accounts/applications/list", json!({})),
-        ApplicationCommand::Create { name, role } => (
-            "platform/accounts/applications/create",
+        ServiceUserCommand::List => ("platform/organizations/service-users/list", json!({})),
+        ServiceUserCommand::Create { name, role } => (
+            "platform/organizations/service-users/create",
             json!({"name":name,"role":role.value()}),
         ),
-        ApplicationCommand::Update {
-            application,
+        ServiceUserCommand::Update {
+            service_user,
             name,
             role,
             enabled,
         } => {
-            let mut params = json!({"applicationId":application});
+            let mut params = json!({"serviceUserId":service_user});
             if let Some(value) = name {
                 params["name"] = json!(value);
             }
@@ -372,14 +384,14 @@ pub(crate) async fn application(args: ApplicationArgs) -> Result<()> {
             if let Some(value) = enabled {
                 params["enabled"] = json!(value);
             }
-            ("platform/accounts/applications/update", params)
+            ("platform/organizations/service-users/update", params)
         }
-        ApplicationCommand::Disable { application } => (
-            "platform/accounts/applications/delete",
-            json!({"applicationId":application}),
+        ServiceUserCommand::Disable { service_user } => (
+            "platform/organizations/service-users/delete",
+            json!({"serviceUserId":service_user}),
         ),
     };
-    show(&call(operation, with_account(params)?).await?)
+    show(&call(operation, with_organization(params)?).await?)
 }
 pub(crate) async fn access(args: AccessArgs) -> Result<()> {
     require_platform()?;
@@ -443,7 +455,7 @@ impl SecretOutput {
 fn issues_secret(operation: &str) -> bool {
     matches!(
         operation,
-        "platform/credentials/create" | "platform/applications/credentials/create"
+        "platform/credentials/create" | "platform/service-users/credentials/create"
     )
 }
 fn ensure_json_operation(operation: &str, universe: Option<&str>, params: Value) -> Result<()> {
@@ -477,12 +489,12 @@ pub(crate) async fn api(args: ApiArgs) -> Result<()> {
     args.output.finish(response, file)
 }
 pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
-    let mut params = match &args.application {
-        Some(id) => with_account(json!({"applicationId":id}))?,
+    let mut params = match &args.service_user {
+        Some(id) => with_organization(json!({"serviceUserId":id}))?,
         None => json!({}),
     };
-    let prefix = if args.application.is_some() {
-        "platform/applications/credentials"
+    let prefix = if args.service_user.is_some() {
+        "platform/service-users/credentials"
     } else {
         "platform/credentials"
     };
@@ -495,7 +507,7 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
         ApiKeyCommand::Create {
             name,
             expires_in_days,
-            accounts,
+            organizations,
             universes,
             operations,
             read_only,
@@ -503,8 +515,8 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
             output,
         } => {
             let mut restrictions = json!({});
-            if !accounts.is_empty() {
-                restrictions["accountIds"] = json!(accounts);
+            if !organizations.is_empty() {
+                restrictions["organizationIds"] = json!(organizations);
             }
             if !universes.is_empty() {
                 restrictions["universeIds"] = json!(universes);

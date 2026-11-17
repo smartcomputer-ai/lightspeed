@@ -2,19 +2,19 @@ import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import { PLATFORM_OPERATIONS, type AccountRole, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
+import { PLATFORM_OPERATIONS, type OrganizationRole, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
-import { accountForPrincipal, listAccountsForPrincipal, declaredPrincipalRole, requireAccountAdmin } from "../account-access.js";
+import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, requireOrganizationAdmin } from "../organization-access.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import { policyBody, problem } from "../runtime-http.js";
-import { adoptManagedUniverse, createManagedUniverse, requireAccountPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
+import { adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
-function accountView(account: typeof schema.organization.$inferSelect, role: AccountRole) { return { id: account.id, name: account.name, slug: account.slug, kind: account.kind, enabled: account.enabled, role, universeQuota: account.universeQuota, defaultProtected: account.defaultProtected, requireProtected: account.requireProtected, createdAt: account.createdAt, ...(role === "admin" ? { membershipPolicy: account.membershipPolicy } : {}) }; }
-function applicationView(application: typeof schema.applications.$inferSelect) { return { id: application.id, accountId: application.organizationId, name: application.name, enabled: application.enabled, role: application.role, createdAt: application.createdAt }; }
+function organizationView(organization: typeof schema.organization.$inferSelect, role: OrganizationRole) { return { id: organization.id, name: organization.name, slug: organization.slug, kind: organization.kind, enabled: organization.enabled, role, universeQuota: organization.universeQuota, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(role === "admin" ? { membershipPolicy: organization.membershipPolicy } : {}) }; }
+function serviceUserView(serviceUser: typeof schema.serviceUsers.$inferSelect) { return { id: serviceUser.id, organizationId: serviceUser.organizationId, name: serviceUser.name, enabled: serviceUser.enabled, role: serviceUser.role, createdAt: serviceUser.createdAt }; }
 
 export function platformRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
@@ -41,8 +41,8 @@ export function platformRoutes(ctx: AppContext) {
       }
       const parsed = spec.params.safeParse(parameters);
       if (!parsed.success) return problem(c, 400, "invalidRequest", parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
-      if (auth.credential.restrictions.universeIds && operation.startsWith("platform/accounts/") && spec.method !== "GET") throw new GateRefusal(403, "universe-restricted credential cannot mutate account-wide resources");
-      enforceRestrictions(auth, { operation, ...(typeof parameters.accountId === "string" ? { accountId: parameters.accountId } : {}), write: spec.method !== "GET" && typeof parameters.universe !== "string" });
+      if (auth.credential.restrictions.universeIds && operation.startsWith("platform/organizations/") && spec.method !== "GET") throw new GateRefusal(403, "universe-restricted credential cannot mutate organization-wide resources");
+      enforceRestrictions(auth, { operation, ...(typeof parameters.organizationId === "string" ? { organizationId: parameters.organizationId } : {}), write: spec.method !== "GET" && typeof parameters.universe !== "string" });
       return c.json(await dispatch(ctx, auth, operation as PlatformOperationId, parsed.data as Record<string, unknown>));
     });
   }
@@ -50,142 +50,142 @@ export function platformRoutes(ctx: AppContext) {
 }
 
 async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformOperationId, params: Record<string, unknown>): Promise<unknown> {
-  const accountId = params.accountId as string;
+  const organizationId = params.organizationId as string;
   switch (operation) {
-    case "platform/accounts/list": {
-      const accessible = await listAccountsForPrincipal(ctx, auth, true);
+    case "platform/organizations/list": {
+      const accessible = await listOrganizationsForPrincipal(ctx, auth, true);
       const limits = auth.credential.restrictions;
-      const canCreate = auth.principal.kind === "user" && (auth.principal.platformAdmin || ctx.env.allowSharedAccountCreation === true)
-        && !limits.readOnly && !limits.accountIds && !limits.universeIds && (!limits.operations || limits.operations.includes("platform/accounts/create"));
-      return { accounts: accessible.map(access => accountView(access.account, access.role)), canCreate };
+      const canCreate = auth.principal.kind === "user" && (auth.principal.platformAdmin || ctx.env.allowSharedOrganizationCreation === true)
+        && !limits.readOnly && !limits.organizationIds && !limits.universeIds && (!limits.operations || limits.operations.includes("platform/organizations/create"));
+      return { organizations: accessible.map(access => organizationView(access.organization, access.role)), canCreate };
     }
-    case "platform/accounts/create": {
-      if (!auth.principal.platformAdmin && !(ctx.env.allowSharedAccountCreation && auth.principal.kind === "user")) throw new GateRefusal(403, "shared-account creation is disabled for this principal");
-      // A scoped credential cannot create a resource outside its declared account set.
-      if (auth.credential.restrictions.accountIds || auth.credential.restrictions.universeIds) throw new GateRefusal(403, "credential cannot create accounts outside its scope");
-      const input = params as PlatformOperationParams<"platform/accounts/create">;
-      if (!auth.principal.platformAdmin && input.initialAdminUserId && input.initialAdminUserId !== auth.principal.id) throw new GateRefusal(403, "self-service account creators must remain the initial admin");
-      if (!auth.principal.platformAdmin && input.kind === "development") throw new GateRefusal(403, "only a platform admin can provision development accounts");
+    case "platform/organizations/create": {
+      if (!auth.principal.platformAdmin && !(ctx.env.allowSharedOrganizationCreation && auth.principal.kind === "user")) throw new GateRefusal(403, "shared-organization creation is disabled for this principal");
+      // A scoped credential cannot create a resource outside its declared organization set.
+      if (auth.credential.restrictions.organizationIds || auth.credential.restrictions.universeIds) throw new GateRefusal(403, "credential cannot create organizations outside its scope");
+      const input = params as PlatformOperationParams<"platform/organizations/create">;
+      if (!auth.principal.platformAdmin && input.initialAdminUserId && input.initialAdminUserId !== auth.principal.id) throw new GateRefusal(403, "self-service organization creators must remain the initial admin");
+      if (!auth.principal.platformAdmin && input.kind === "development") throw new GateRefusal(403, "only a platform admin can provision development organizations");
       const adminId = input.initialAdminUserId ?? (auth.principal.kind === "user" ? auth.principal.id : undefined);
-      if (!adminId) throw new GateRefusal(400, "initial account admin required");
+      if (!adminId) throw new GateRefusal(400, "initial organization admin required");
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, adminId)).limit(1);
       if (!user || user.banned) throw new GateRefusal(400, "initial admin must be an active user");
-      const account = await ctx.db.transaction(async tx => {
-        const [created] = await tx.insert(schema.organization).values({ id: crypto.randomUUID(), name: input.name, slug: input.slug, kind: input.kind, enabled: true, createdAt: new Date(), universeQuota: input.universeQuota ?? ctx.env.sharedAccountUniverseQuota ?? 100, defaultProtected: input.defaultProtected ?? input.kind !== "development", requireProtected: input.requireProtected ?? false }).returning();
+      const organization = await ctx.db.transaction(async tx => {
+        const [created] = await tx.insert(schema.organization).values({ id: crypto.randomUUID(), name: input.name, slug: input.slug, kind: input.kind, enabled: true, createdAt: new Date(), universeQuota: input.universeQuota ?? ctx.env.sharedOrganizationUniverseQuota ?? 100, defaultProtected: input.defaultProtected ?? input.kind !== "development", requireProtected: input.requireProtected ?? false }).returning();
         await tx.insert(schema.member).values({ id: crypto.randomUUID(), organizationId: created!.id, userId: adminId, role: "admin", createdAt: new Date() });
-        await auditAsSubject(tx, auth, { action: "account.create", targetId: created!.id });
+        await auditAsSubject(tx, auth, { action: "organization.create", targetId: created!.id });
         return created!;
       });
-      return { account: accountView(account, "admin") };
+      return { organization: organizationView(organization, "admin") };
     }
-    case "platform/accounts/read": {
-      const access = await accountForPrincipal(ctx, auth, accountId, true); if (!access) throw new GateRefusal(404, "account not found");
-      return { account: accountView(access.account, access.role) };
+    case "platform/organizations/read": {
+      const access = await organizationForPrincipal(ctx, auth, organizationId, true); if (!access) throw new GateRefusal(404, "organization not found");
+      return { organization: organizationView(access.organization, access.role) };
     }
-    case "platform/accounts/update": {
-      await requireAccountAdmin(ctx, auth, accountId);
-      const { accountId: _, ...input } = params as PlatformOperationParams<"platform/accounts/update">;
-      if (input.enabled !== undefined && !auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required to suspend an account");
-      const account = await ctx.db.transaction(async tx => {
-        const [current] = await tx.select().from(schema.organization).where(eq(schema.organization.id, accountId)).for("update");
-        await requireAccountAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, accountId);
+    case "platform/organizations/update": {
+      await requireOrganizationAdmin(ctx, auth, organizationId);
+      const { organizationId: _, ...input } = params as PlatformOperationParams<"platform/organizations/update">;
+      if (input.enabled !== undefined && !auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required to suspend an organization");
+      const organization = await ctx.db.transaction(async tx => {
+        const [current] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
+        await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);
         if (input.requireProtected === true && !current?.requireProtected) {
-          const universes = await tx.select().from(schema.universes).where(eq(schema.universes.organizationId, accountId));
+          const universes = await tx.select().from(schema.universes).where(eq(schema.universes.organizationId, organizationId));
           for (const universe of universes) {
             if (universe.status === "deleting") throw new GateRefusal(409, "wait for universe deletion before requiring protection");
             const state = universe.status === "provisioning" ? universe.runtimeConfiguration : (await deploymentClient(ctx.env).call("deployment/universes/read", { universe: universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(30000) })).universe;
-            if (state.protected !== true || state.expiresAtMs != null) throw new GateRefusal(409, "protect every universe and clear expiry before requiring account protection");
+            if (state.protected !== true || state.expiresAtMs != null) throw new GateRefusal(409, "protect every universe and clear expiry before requiring organization protection");
           }
         }
-        const [updated] = await tx.update(schema.organization).set(input).where(eq(schema.organization.id, accountId)).returning();
-        await auditAsSubject(tx, auth, { action: "account.update", targetId: accountId });
+        const [updated] = await tx.update(schema.organization).set(input).where(eq(schema.organization.id, organizationId)).returning();
+        await auditAsSubject(tx, auth, { action: "organization.update", targetId: organizationId });
         return updated!;
       });
-      return { account: accountView(account, "admin") };
+      return { organization: organizationView(organization, "admin") };
     }
-    case "platform/accounts/members/list": {
-      await requireAccountDirectory(ctx, auth, accountId);
-      const account = (await accountForPrincipal(ctx, auth, accountId))!;
-      const rows = await ctx.db.select({ user: schema.user, membership: schema.member }).from(schema.user).leftJoin(schema.member, and(eq(schema.member.userId, schema.user.id), eq(schema.member.organizationId, accountId)));
+    case "platform/organizations/members/list": {
+      await requireOrganizationDirectory(ctx, auth, organizationId);
+      const organization = (await organizationForPrincipal(ctx, auth, organizationId))!;
+      const rows = await ctx.db.select({ user: schema.user, membership: schema.member }).from(schema.user).leftJoin(schema.member, and(eq(schema.member.userId, schema.user.id), eq(schema.member.organizationId, organizationId)));
       const members = rows.flatMap(({ user, membership }) => {
-        const manual = ["member", "creator", "admin"].includes(membership?.role ?? "") ? membership!.role as AccountRole : undefined;
-        const role = declaredPrincipalRole(account.account.membershipPolicy, user, ["member", "creator", "admin"] as const, manual);
+        const manual = ["member", "creator", "admin"].includes(membership?.role ?? "") ? membership!.role as OrganizationRole : undefined;
+        const role = declaredPrincipalRole(organization.organization.membershipPolicy, user, ["member", "creator", "admin"] as const, manual);
         return role ? [{ id: membership?.id ?? `declared:${user.id}`, userId: user.id, name: user.name, email: user.email, role, createdAt: membership?.createdAt ?? user.createdAt }] : [];
       });
       return { members };
     }
-    case "platform/accounts/members/put": {
-      await requireAccountAdmin(ctx, auth, accountId);
-      const input = params as PlatformOperationParams<"platform/accounts/members/put">;
+    case "platform/organizations/members/put": {
+      await requireOrganizationAdmin(ctx, auth, organizationId);
+      const input = params as PlatformOperationParams<"platform/organizations/members/put">;
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, input.userId)).limit(1);
       if (!user || user.banned) throw new GateRefusal(404, "active user not found");
       const member = await ctx.db.transaction(async tx => {
-        await tx.execute(sql`SELECT id FROM organization WHERE id = ${accountId} FOR UPDATE`);
-        await requireAccountAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, accountId);
-        const [current] = await tx.select().from(schema.member).where(and(eq(schema.member.organizationId, accountId), eq(schema.member.userId, input.userId))).limit(1);
+        await tx.execute(sql`SELECT id FROM organization WHERE id = ${organizationId} FOR UPDATE`);
+        await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);
+        const [current] = await tx.select().from(schema.member).where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, input.userId))).limit(1);
         if (current?.role === "admin" && input.role !== "admin") {
-          const [other] = await tx.select({ id: schema.member.id }).from(schema.member).where(and(eq(schema.member.organizationId, accountId), eq(schema.member.role, "admin"), ne(schema.member.userId, input.userId))).limit(1);
-          if (!other) throw new GateRefusal(409, "account must retain an explicit admin");
+          const [other] = await tx.select({ id: schema.member.id }).from(schema.member).where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.role, "admin"), ne(schema.member.userId, input.userId))).limit(1);
+          if (!other) throw new GateRefusal(409, "organization must retain an explicit admin");
         }
-        const [updated] = current ? await tx.update(schema.member).set({ role: input.role }).where(eq(schema.member.id, current.id)).returning() : await tx.insert(schema.member).values({ id: crypto.randomUUID(), organizationId: accountId, userId: input.userId, role: input.role, createdAt: new Date() }).returning();
-        await auditAsSubject(tx, auth, { action: "account.member.put", targetId: input.userId, details: { accountId, role: input.role ?? "member" } });
+        const [updated] = current ? await tx.update(schema.member).set({ role: input.role }).where(eq(schema.member.id, current.id)).returning() : await tx.insert(schema.member).values({ id: crypto.randomUUID(), organizationId: organizationId, userId: input.userId, role: input.role, createdAt: new Date() }).returning();
+        await auditAsSubject(tx, auth, { action: "organization.member.put", targetId: input.userId, details: { organizationId, role: input.role ?? "member" } });
         return updated!;
       });
       return { member: { id: member.id, userId: member.userId, role: member.role, createdAt: member.createdAt, name: user.name, email: user.email } };
     }
-    case "platform/accounts/members/delete": {
-      await requireAccountAdmin(ctx, auth, accountId);
+    case "platform/organizations/members/delete": {
+      await requireOrganizationAdmin(ctx, auth, organizationId);
       await ctx.db.transaction(async tx => {
-        await tx.execute(sql`SELECT id FROM organization WHERE id = ${accountId} FOR UPDATE`);
-        await requireAccountAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, accountId);
-        const [current] = await tx.select().from(schema.member).where(and(eq(schema.member.organizationId, accountId), eq(schema.member.userId, params.userId as string))).limit(1);
+        await tx.execute(sql`SELECT id FROM organization WHERE id = ${organizationId} FOR UPDATE`);
+        await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);
+        const [current] = await tx.select().from(schema.member).where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, params.userId as string))).limit(1);
         if (current?.role === "admin") {
-          const [other] = await tx.select({ id: schema.member.id }).from(schema.member).where(and(eq(schema.member.organizationId, accountId), eq(schema.member.role, "admin"), ne(schema.member.id, current.id))).limit(1);
-          if (!other) throw new GateRefusal(409, "account must retain an explicit admin");
+          const [other] = await tx.select({ id: schema.member.id }).from(schema.member).where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.role, "admin"), ne(schema.member.id, current.id))).limit(1);
+          if (!other) throw new GateRefusal(409, "organization must retain an explicit admin");
         }
         if (current) await tx.delete(schema.member).where(eq(schema.member.id, current.id));
-        await auditAsSubject(tx, auth, { action: "account.member.delete", targetId: params.userId as string, details: { accountId } });
+        await auditAsSubject(tx, auth, { action: "organization.member.delete", targetId: params.userId as string, details: { organizationId } });
       });
       return { ok: true };
     }
-    case "platform/accounts/applications/list": {
-      await requireAccountDirectory(ctx, auth, accountId);
-      const applications = await ctx.db.select().from(schema.applications).where(eq(schema.applications.organizationId, accountId));
-      return { applications: applications.map(applicationView) };
+    case "platform/organizations/service-users/list": {
+      await requireOrganizationDirectory(ctx, auth, organizationId);
+      const serviceUsers = await ctx.db.select().from(schema.serviceUsers).where(eq(schema.serviceUsers.organizationId, organizationId));
+      return { serviceUsers: serviceUsers.map(serviceUserView) };
     }
-    case "platform/accounts/applications/create": {
-      await requireAccountAdmin(ctx, auth, accountId);
-      const input = params as PlatformOperationParams<"platform/accounts/applications/create">;
-      const [application] = await ctx.db.insert(schema.applications).values({ organizationId: accountId, name: input.name, role: input.role }).returning();
-      await auditAsSubject(ctx.db, auth, { action: "application.create", targetId: application!.id, details: { accountId } });
-      return { application: applicationView(application!) };
+    case "platform/organizations/service-users/create": {
+      await requireOrganizationAdmin(ctx, auth, organizationId);
+      const input = params as PlatformOperationParams<"platform/organizations/service-users/create">;
+      const [serviceUser] = await ctx.db.insert(schema.serviceUsers).values({ organizationId: organizationId, name: input.name, role: input.role }).returning();
+      await auditAsSubject(ctx.db, auth, { action: "serviceUser.create", targetId: serviceUser!.id, details: { organizationId } });
+      return { serviceUser: serviceUserView(serviceUser!) };
     }
-    case "platform/accounts/applications/update": {
-      await requireAccountAdmin(ctx, auth, accountId);
-      const { accountId: _, applicationId, ...input } = params as PlatformOperationParams<"platform/accounts/applications/update">;
-      const application = await ctx.db.transaction(async tx => {
-        await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, accountId)).for("update");
-        await requireAccountAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, accountId);
-        const [updated] = await tx.update(schema.applications).set(input).where(and(eq(schema.applications.organizationId, accountId), eq(schema.applications.id, applicationId))).returning();
+    case "platform/organizations/service-users/update": {
+      await requireOrganizationAdmin(ctx, auth, organizationId);
+      const { organizationId: _, serviceUserId, ...input } = params as PlatformOperationParams<"platform/organizations/service-users/update">;
+      const serviceUser = await ctx.db.transaction(async tx => {
+        await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
+        await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);
+        const [updated] = await tx.update(schema.serviceUsers).set(input).where(and(eq(schema.serviceUsers.organizationId, organizationId), eq(schema.serviceUsers.id, serviceUserId))).returning();
         return updated;
       });
-      if (!application) throw new GateRefusal(404, "application not found");
-      await auditAsSubject(ctx.db, auth, { action: "application.update", targetId: application.id, details: { accountId } });
-      return { application: applicationView(application) };
+      if (!serviceUser) throw new GateRefusal(404, "service user not found");
+      await auditAsSubject(ctx.db, auth, { action: "serviceUser.update", targetId: serviceUser.id, details: { organizationId } });
+      return { serviceUser: serviceUserView(serviceUser) };
     }
-    case "platform/accounts/applications/delete": {
-      await requireAccountAdmin(ctx, auth, accountId);
+    case "platform/organizations/service-users/delete": {
+      await requireOrganizationAdmin(ctx, auth, organizationId);
       // Suspension preserves attribution and Owner grants while immediately disabling all keys.
       await ctx.db.transaction(async tx => {
-        await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, accountId)).for("update");
-        await requireAccountAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, accountId);
-        await tx.update(schema.applications).set({ enabled: false }).where(and(eq(schema.applications.organizationId, accountId), eq(schema.applications.id, params.applicationId as string)));
+        await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
+        await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);
+        await tx.update(schema.serviceUsers).set({ enabled: false }).where(and(eq(schema.serviceUsers.organizationId, organizationId), eq(schema.serviceUsers.id, params.serviceUserId as string)));
       });
-      await auditAsSubject(ctx.db, auth, { action: "application.suspend", targetId: params.applicationId as string, details: { accountId } });
+      await auditAsSubject(ctx.db, auth, { action: "serviceUser.suspend", targetId: params.serviceUserId as string, details: { organizationId } });
       return { ok: true };
     }
-    case "platform/universes/adopt": return { universe: await adoptManagedUniverse(ctx, auth, accountId, params as PlatformOperationParams<"platform/universes/adopt">) };
-    case "platform/universes/create": return { universe: await createManagedUniverse(ctx, auth, accountId, params as PlatformOperationParams<"platform/universes/create">) };
+    case "platform/universes/adopt": return { universe: await adoptManagedUniverse(ctx, auth, organizationId, params as PlatformOperationParams<"platform/universes/adopt">) };
+    case "platform/universes/create": return { universe: await createManagedUniverse(ctx, auth, organizationId, params as PlatformOperationParams<"platform/universes/create">) };
     case "platform/universes/update": {
       const access = await ownerAccess(ctx, auth, params.universe as string, operation);
       return { universe: await updateUniverseLifecycle(ctx, access, params as PlatformOperationParams<"platform/universes/update">) };
@@ -197,16 +197,16 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     case "platform/universes/grants/put": {
       const access = await ownerAccess(ctx, auth, params.universe as string, operation);
       const input = params as PlatformOperationParams<"platform/universes/grants/put">;
-      const target = await requireAccountPrincipal(ctx, access.account.id, input.principal);
+      const target = await requireOrganizationPrincipal(ctx, access.organization.id, input.principal);
       const grant = await ctx.db.transaction(async tx => {
-        await tx.execute(sql`SELECT id FROM organization WHERE id = ${access.account.id} FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM organization WHERE id = ${access.organization.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM universes WHERE id = ${access.universe.id} FOR UPDATE`);
         await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, operation);
-        await requireAccountPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, access.account.id, input.principal);
-        const where = and(eq(schema.universeGrants.universeId, access.universe.id), input.principal.kind === "user" ? eq(schema.universeGrants.userId, input.principal.id) : eq(schema.universeGrants.applicationId, input.principal.id));
+        await requireOrganizationPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, access.organization.id, input.principal);
+        const where = and(eq(schema.universeGrants.universeId, access.universe.id), input.principal.kind === "user" ? eq(schema.universeGrants.userId, input.principal.id) : eq(schema.universeGrants.serviceUserId, input.principal.id));
         const [current] = await tx.select().from(schema.universeGrants).where(where).limit(1);
         if (current?.role === "owner" && input.role !== "owner") await requireOtherOwner(tx, access.universe.id, current.id);
-        const [updated] = current ? await tx.update(schema.universeGrants).set({ role: input.role }).where(eq(schema.universeGrants.id, current.id)).returning() : await tx.insert(schema.universeGrants).values({ universeId: access.universe.id, role: input.role, ...(input.principal.kind === "user" ? { userId: input.principal.id } : { applicationId: input.principal.id }) }).returning();
+        const [updated] = current ? await tx.update(schema.universeGrants).set({ role: input.role }).where(eq(schema.universeGrants.id, current.id)).returning() : await tx.insert(schema.universeGrants).values({ universeId: access.universe.id, role: input.role, ...(input.principal.kind === "user" ? { userId: input.principal.id } : { serviceUserId: input.principal.id }) }).returning();
         await auditAsSubject(tx, auth, { action: "universe.grant.put", targetId: input.principal.id, universeId: access.universe.id, details: { role: input.role } });
         return updated!;
       });
@@ -215,7 +215,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     case "platform/universes/grants/delete": {
       const access = await ownerAccess(ctx, auth, params.universe as string, operation);
       await ctx.db.transaction(async tx => {
-        await tx.execute(sql`SELECT id FROM organization WHERE id = ${access.account.id} FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM organization WHERE id = ${access.organization.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM universes WHERE id = ${access.universe.id} FOR UPDATE`);
         await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, operation);
         const [grant] = await tx.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, access.universe.id), eq(schema.universeGrants.id, params.grantId as string))).limit(1);
@@ -239,22 +239,22 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
 async function ownerAccess(ctx: AppContext, auth: AuthContext, reference: string, operation: string) {
   const access = await universeForPrincipal(ctx, auth, reference);
   if (!access) throw new GateRefusal(404, "universe not found");
-  enforceRestrictions(auth, { operation, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: !operation.endsWith("/list") });
+  enforceRestrictions(auth, { operation, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: !operation.endsWith("/list") });
   if (access.role !== "owner") throw new GateRefusal(403, "universe Owner required");
   return access;
 }
-async function requireAccountDirectory(ctx: AppContext, auth: AuthContext, accountId: string) {
-  const account = await accountForPrincipal(ctx, auth, accountId); if (!account) throw new GateRefusal(404, "account not found");
-  if (account.role === "admin") return;
-  if ((await listUniverseAccesses(ctx, auth)).some(access => access.account.id === accountId && access.role === "owner")) return;
-  throw new GateRefusal(403, "account admin or universe Owner required to browse account principals");
+async function requireOrganizationDirectory(ctx: AppContext, auth: AuthContext, organizationId: string) {
+  const organization = await organizationForPrincipal(ctx, auth, organizationId); if (!organization) throw new GateRefusal(404, "organization not found");
+  if (organization.role === "admin") return;
+  if ((await listUniverseAccesses(ctx, auth)).some(access => access.organization.id === organizationId && access.role === "owner")) return;
+  throw new GateRefusal(403, "organization admin or universe Owner required to browse organization principals");
 }
 async function requireOtherOwner(db: Pick<AppContext["db"], "select">, universeId: string, grantId: string) {
   const [other] = await db.select({ id: schema.universeGrants.id }).from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, universeId), eq(schema.universeGrants.role, "owner"), ne(schema.universeGrants.id, grantId))).limit(1);
   if (!other) throw new GateRefusal(409, "universe must retain at least one explicit Owner");
 }
 async function listGrants(ctx: AppContext, access: UniverseAccess) {
-  const rows = await ctx.db.select({ grant: schema.universeGrants, userName: schema.user.name, applicationName: schema.applications.name }).from(schema.universeGrants)
-    .leftJoin(schema.user, eq(schema.user.id, schema.universeGrants.userId)).leftJoin(schema.applications, eq(schema.applications.id, schema.universeGrants.applicationId)).where(eq(schema.universeGrants.universeId, access.universe.id));
-  return rows.map(({ grant, userName, applicationName }) => ({ id: grant.id, universeId: grant.universeId, principal: { kind: grant.userId ? "user" : "application", id: grant.userId ?? grant.applicationId! } as PrincipalRef, role: grant.role, name: userName ?? applicationName ?? "Removed principal", createdAt: grant.createdAt }));
+  const rows = await ctx.db.select({ grant: schema.universeGrants, userName: schema.user.name, serviceUserName: schema.serviceUsers.name }).from(schema.universeGrants)
+    .leftJoin(schema.user, eq(schema.user.id, schema.universeGrants.userId)).leftJoin(schema.serviceUsers, eq(schema.serviceUsers.id, schema.universeGrants.serviceUserId)).where(eq(schema.universeGrants.universeId, access.universe.id));
+  return rows.map(({ grant, userName, serviceUserName }) => ({ id: grant.id, universeId: grant.universeId, principal: { kind: grant.userId ? "user" : "serviceUser", id: grant.userId ?? grant.serviceUserId! } as PrincipalRef, role: grant.role, name: userName ?? serviceUserName ?? "Removed principal", createdAt: grant.createdAt }));
 }

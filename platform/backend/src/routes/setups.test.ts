@@ -59,5 +59,5 @@ it.each(["viewer", "contributor", "operator"] as const)("requires Owner for inst
 
 it("permits reviewed configuration operations without execution, lifecycle or identity administration", () => {
   expect(CONFIGURATOR_OPERATIONS).toContain("profiles/put");
-  for (const operation of ["session/start", "session/runs/start", "credentials/grants/import", "credentials/grants/lease", "deployment/universes/create", "platform/applications/create"]) expect(CONFIGURATOR_OPERATIONS).not.toContain(operation);
+  for (const operation of ["session/start", "session/runs/start", "credentials/grants/import", "credentials/grants/lease", "deployment/universes/create", "platform/organizations/service-users/create"]) expect(CONFIGURATOR_OPERATIONS).not.toContain(operation);
 });

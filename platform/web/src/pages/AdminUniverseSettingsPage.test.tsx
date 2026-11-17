@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   universe = {
-    id: "platform-id", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory",
+    id: "platform-id", organizationId: "team", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory",
     status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", features: { bots: true, channels: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {
@@ -44,11 +44,11 @@ afterEach(async () => {
 function Location() {
   return <p data-testid="location">{useLocation().pathname}</p>;
 }
-async function show(path = "/admin/universes/factory/settings") {
+async function show(path = "/admin/organizations/team/universes/factory/settings") {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/admin/universes/:handle/settings" element={<><AdminUniverseSettingsPage admin={false} /><Location /></>} />
+        <Route path="/admin/organizations/team/universes/:handle/settings" element={<><AdminUniverseSettingsPage admin={false} /><Location /></>} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
@@ -99,7 +99,7 @@ it("holds an invalid handle and follows a saved handle to its new URL", async ()
   await type("universe-handle", " plant ");
   expect(button("Save handle")!.disabled).toBe(false);
   await act(async () => input("universe-handle").closest("form")!.requestSubmit());
-  await waitForUi(() => expect(location()).toBe("/admin/universes/plant/settings"));
+  await waitForUi(() => expect(location()).toBe("/admin/organizations/team/universes/plant/settings"));
   expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/universes/platform-id/handle", { handle: "plant" });
 });
 
@@ -112,7 +112,7 @@ it("shows a refused handle change and stays put", async () => {
   await type("universe-handle", "taken");
   await act(async () => input("universe-handle").closest("form")!.requestSubmit());
   await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("handle already in use"));
-  expect(location()).toBe("/admin/universes/factory/settings");
+  expect(location()).toBe("/admin/organizations/team/universes/factory/settings");
 });
 
 it("archives only after confirmation, then leaves the universe", async () => {
@@ -121,7 +121,7 @@ it("archives only after confirmation, then leaves the universe", async () => {
   await waitForUi(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Archive Factory?"));
   expect(writes()).toHaveLength(0);
   await act(async () => button("Archive")!.click());
-  await waitForUi(() => expect(location()).toBe("/admin/universes"));
+  await waitForUi(() => expect(location()).toBe("/admin/organizations/team/universes"));
   expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "archived" });
 });
 
@@ -131,7 +131,7 @@ it("restores an archived universe without a confirmation", async () => {
   expect(button("Archive universe")).toBeUndefined();
   await act(async () => button("Restore universe")!.click());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "active" }));
-  expect(location()).toBe("/admin/universes/factory/settings");
+  expect(location()).toBe("/admin/organizations/team/universes/factory/settings");
 });
 
 
@@ -144,9 +144,9 @@ it("allows an Owner to rename a universe with a runtime displayName", async () =
 });
 
 
-it("requires an account administrator to clear protection", async () => {
+it("requires an organization administrator to clear protection", async () => {
   universe.protected = true;
-  universe.accountRole = "member";
+  universe.organizationRole = "member";
   await show();
   const protection = container.querySelector<HTMLElement>('[aria-label="Deletion protection"]')!;
   expect(protection.getAttribute("aria-disabled")).toBe("true");
@@ -155,9 +155,9 @@ it("requires an account administrator to clear protection", async () => {
   expect(button("Delete")?.disabled).toBe(true);
 });
 
-it("allows an Account Admin to clear protection as a separate lifecycle update", async () => {
+it("allows an Organization Admin to clear protection as a separate lifecycle update", async () => {
   universe.protected = true;
-  universe.accountRole = "admin";
+  universe.organizationRole = "admin";
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path, body) => path === "/api/v1/platform/universes/core-id" ? { universe: { ...universe, ...body } } : implementation(method, path, body));
   await show();

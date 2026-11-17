@@ -7,12 +7,12 @@ standalone runtime needs its own trusted gateway or a trusted network.
 
 ## Platform API keys
 
-Create personal keys under **Your profile → Personal API keys** and application keys
-under **Admin → API keys**, selecting the account and application.
-**Admin → Accounts → Applications** links to the same key management view. Better Auth stores hashed keys,
+Create user keys under **Your profile → Your API keys** and service-user keys
+under **Admin → organization → API keys**, selecting the service user.
+**Service users** links to the same key management view. Better Auth stores hashed keys,
 checks expiry and revocation, and maintains usage counters. The Platform
-binds each key to its user or application and applies current permissions.
-Application keys use Better Auth organization ownership, but the application
+binds each key to its user or service user and applies current permissions.
+Service-user keys use Better Auth organization ownership, but the service-user
 association is server-controlled: an organization key alone grants no access.
 
 Keys expire after 365 days by default, with a deployment-configurable maximum.
@@ -21,8 +21,8 @@ create a replacement, move consumers, and explicitly revoke the previous key.
 Keys cannot mint other keys. Human browser and CLI sessions manage credentials.
 
 Send `Authorization: Bearer <key>` to the Platform `/api/v1` base URL. Runtime
-resource routes are shared with the direct runtime API; native account,
-application, grant, and credential operations are under `/api/v1/platform`.
+resource routes are shared with the direct runtime API; native organization,
+service-user, grant, and credential operations are under `/api/v1/platform`.
 Both SDKs use `client.call` for runtime and native Platform operation IDs.
 Generated `client.platform` helpers provide typed native parameter objects
 without a separate transport or authentication path. `lightspeed connect login --url DEPLOYMENT_URL`
@@ -34,27 +34,29 @@ Local scripts can reuse a saved CLI connection through the Node-only
 `await AsyncLightspeedClient.from_connection(...)`. These factories reread the
 saved credential per request and renew CLI-owned session credentials without
 starting login or rewriting externally managed secret files. The selected
-account remains explicit in native helper parameters. See
+organization remains explicit in native helper parameters. See
 [Reuse a saved CLI connection](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
 
-In the web app, choose accounts and universes by name under **Restrict access**.
+In the web app, user keys default to one organization. Choose **All my accessible
+organizations** explicitly for broader use. Service-user keys remain confined
+to their organization. Choose universes by name under **Restrict access**.
 Operation IDs are an advanced restriction. The existing-key list shows status,
 expiry, and restrictions. A universe-specific key still belongs to its user or
-application; **Admin → Universes → Access** manages universe roles, not keys. Universe
+service user; **Admin → organization → Universes → Access** manages universe roles, not keys. Universe
 **Setup → Credentials** holds outbound secrets for agents connecting to external
 services, separate from keys for accessing Lightspeed.
 
-Optional account IDs, universe UUIDs, operation IDs, and read-only restrictions
+Optional organization IDs, universe UUIDs, operation IDs, and read-only restrictions
 narrow a key's authority. They never grant permissions its principal lacks.
-Universe creation also requires an account Creator or Admin role and the key's
+Universe creation also requires an organization Creator or Admin role and the key's
 creation permission. A key restricted to existing universes cannot create one.
-Application keys belong to one account and use that application's grants,
+Service-user keys belong to one organization and use that service user's grants,
 independently of their human creator's continued access.
 
-Local personal keys and application keys do not depend on a browser session.
+Local personal keys and service-user keys do not depend on a browser session.
 Company users require admission refreshed within the configured company
 window until an authoritative background directory source is available.
-Suspension and application disabling are checked on subsequent requests.
+Suspension and service-user disabling are checked on subsequent requests.
 
 The following sections describe **runtime infrastructure tokens**, which have
 full deployment authority and must remain with trusted infrastructure.
@@ -158,7 +160,7 @@ universe. This grants full deployment authority. See
 [TypeScript API client](../integrating-and-extending/api-and-typescript.md).
 
 Channel connector startup remains disabled during the transition. Configurator
-uses a restricted Platform application key; the development launcher starts it
+uses a restricted Platform service-user key; the development launcher starts it
 against Platform without a runtime infrastructure token. Environment daemons,
 environment providers and worker-to-environment-gateway credentials are
 unchanged; these are separate machine protocols.

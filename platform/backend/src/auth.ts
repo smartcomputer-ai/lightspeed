@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { apiKey } from "@better-auth/api-key";
 import { apiKeyConfigurations } from "./api-key-config.js";
 import { organizationKeyAuthority } from "./organization-key-authority.js";
-import { ensurePersonalAccount } from "./personal-accounts.js";
+import { ensurePersonalOrganization } from "./personal-organizations.js";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins/admin";
@@ -10,7 +10,7 @@ import { bearer } from "better-auth/plugins/bearer";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { organization } from "better-auth/plugins/organization";
 import { and, eq, sql } from "drizzle-orm";
-import { schema, identityUserFields, identitySessionFields, accountOrganizationFields, type Db } from "@lightspeed-ai/platform-db";
+import { schema, identityUserFields, identitySessionFields, organizationFields, type Db } from "@lightspeed-ai/platform-db";
 import type { ServerEnv } from "./env.js";
 import { admitCompanyIdentity, companyClaimsReader, companyProviderId, type LoginIdentity } from "./company-identity.js";
 import { canUsePassword, passwordMode, principalAllowed, sessionAllowed } from "./auth-access.js";
@@ -107,7 +107,7 @@ export function createAuth(db: Db, env: ServerEnv) {
     },
     ...(!oidc && env.github ? { socialProviders: { github: { clientId: env.github.clientId, clientSecret: env.github.clientSecret } } } : {}),
     plugins: [
-      organization({ allowUserToCreateOrganization: false, creatorRole: "admin", schema: { organization: { additionalFields: accountOrganizationFields } } }), admin(), bearer(),
+      organization({ allowUserToCreateOrganization: false, creatorRole: "admin", schema: { organization: { additionalFields: organizationFields } } }), admin(), bearer(),
       apiKey(apiKeyConfigurations(env)),
       deviceAuthorizationPlugin(db, env, identity => {
         const state = requests.getStore();
@@ -171,7 +171,7 @@ export function createAuth(db: Db, env: ServerEnv) {
         }
       }
       const response = await auth.handler(request);
-      if (response.ok && path === "/device/token" && requests.getStore()?.identity) await ensurePersonalAccount(db, env, requests.getStore()!.identity!.userId);
+      if (response.ok && path === "/device/token" && requests.getStore()?.identity) await ensurePersonalOrganization(db, env, requests.getStore()!.identity!.userId);
       if (response.ok && (path === "/device/approve" || path === "/device/deny")) await auditIdentity(db, {
         actorId: approvalActor, action: path === "/device/approve" ? "session.cli_approve" : "session.cli_deny", details: { clientId: CLI_CLIENT_ID },
       });
@@ -281,7 +281,7 @@ export function createAuth(db: Db, env: ServerEnv) {
     if (path === "/sign-in/email" && !response.ok && state.identity) {
       await auditIdentity(db, { action: "password.sign_in", targetId: state.identity.userId, outcome: "denied" });
     }
-    if (response.ok && state.identity) await ensurePersonalAccount(db, env, state.identity.userId);
+    if (response.ok && state.identity) await ensurePersonalOrganization(db, env, state.identity.userId);
     return response;
   });
   return { ...auth, handler, withOrganizationKeyAuthority: keyAuthority.run };

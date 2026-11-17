@@ -97,9 +97,12 @@ impl ConnectionDisplay {
         );
         if connection.is_platform() {
             details.push_str(&format!(
-                "  Server: Platform\n  Authentication: {:?}\n  Account: {}\n",
+                "  Server: Platform\n  Authentication: {:?}\n  Organization: {}\n",
                 connection.credential_kind,
-                connection.account_id.as_deref().unwrap_or("none selected")
+                connection
+                    .organization_id
+                    .as_deref()
+                    .unwrap_or("none selected")
             ));
             if let Some(principal) = &connection.principal {
                 details.push_str(&format!(
@@ -246,7 +249,7 @@ mod tests {
         let mut connection = connection(Some("team"), "https://platform.example/api/v1");
         connection.server_kind = Some(crate::connection::ServerKind::Platform);
         connection.credential_kind = CredentialKind::PlatformSession;
-        connection.account_id = Some("team-account".into());
+        connection.organization_id = Some("team-organization".into());
         connection.principal = Some(crate::connection::PlatformPrincipal {
             kind: "user".into(),
             id: "person".into(),
@@ -255,7 +258,7 @@ mod tests {
         });
         let display = ConnectionDisplay::new(&connection, &universe());
         assert!(display.details.contains("Principal: Ada"));
-        assert!(display.details.contains("Account: team-account"));
+        assert!(display.details.contains("Organization: team-organization"));
         assert!(!display.details.contains("full runtime access"));
         assert!(!display.details.contains("lsr_do_not_display"));
         assert!(

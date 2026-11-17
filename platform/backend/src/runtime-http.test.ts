@@ -10,15 +10,15 @@ import { ADMIN_OPERATIONS, DENIED_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIO
 const mocks = vi.hoisted(() => ({ access: vi.fn(), create: vi.fn(), remove: vi.fn(), handle: vi.fn() }));
 vi.mock("./routes/universes.js", () => ({ universeForRequest: mocks.access, listUniverseAccesses: vi.fn(async () => []), deleteManagedUniverse: mocks.remove, renameManagedUniverse: vi.fn(), updateUniverseLifecycle: vi.fn() }));
 vi.mock("./universe-handles.js", () => ({ requireAvailableCachedHandle: mocks.handle }));
-vi.mock("./account-access.js", () => ({ listAccountsForPrincipal: vi.fn(async () => []) }));
+vi.mock("./organization-access.js", () => ({ listOrganizationsForPrincipal: vi.fn(async () => []) }));
 const runtimeUniverse = "00000000-0000-0000-0000-000000000001";
 const token = "platform-test-token-12345678901234567890";
 const connection = { runtime: "runtime", contractRevision: "1", caller: { single: false, tokenName: "platform" }, serverInfo: { name: "Lightspeed", version: "1" } };
 const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, features: {} }, handle: "acme", role, caller: { actorId: "alice", role } });
 
-function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false, options: { auth?: AuthContext; accountRole?: "admin" | "creator" | "member" } = {}) {
+function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false, options: { auth?: AuthContext; organizationRole?: "admin" | "creator" | "member" } = {}) {
   const auth = options.auth ?? userSubject("alice", platformAdmin);
-  mocks.access.mockResolvedValue({ ...access(role), auth, accountRole: options.accountRole ?? (platformAdmin ? "admin" : "member"), account: { id: "account", requireProtected: false } });
+  mocks.access.mockResolvedValue({ ...access(role), auth, organizationRole: options.organizationRole ?? (platformAdmin ? "admin" : "member"), organization: { id: "organization", requireProtected: false } });
   const ctx = { db: { select: () => ({ from: () => ({ where: async () => [], then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([]).then(resolve) }) }) }, env: { lightspeedApiUrl: endpoint, lightspeedApiToken: token } } as unknown as AppContext;
   const result = new Hono<{ Variables: ApiVariables }>();
   result.use("*", async (c, next) => { c.set("auth", auth); c.set("session", { user: { id: "alice", role: platformAdmin ? "admin" : "user" } } as ApiVariables["session"]); await next(); });
@@ -127,9 +127,9 @@ describe("shared resource API admission", () => {
     expect(mocks.remove).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ handle: "acme" }));
     expect(calls).toHaveLength(1);
   });
-  it.each(["member", "creator", "admin"] as const)("does not let an account %s who owns a universe allocate deployment providers", async accountRole => {
+  it.each(["member", "creator", "admin"] as const)("does not let an organization %s who owns a universe allocate deployment providers", async organizationRole => {
     const calls = runtime();
-    const api = app("owner", undefined, false, { accountRole });
+    const api = app("owner", undefined, false, { organizationRole });
     for (const method of ["PUT", "DELETE"]) {
       const response = await api.request(path("/deployment-provider-bindings/compute"), {
         method,
@@ -144,7 +144,7 @@ describe("shared resource API admission", () => {
   it.each(["PUT", "DELETE"])("allows scoped Platform Admin %s requests to manage a universe's provider bindings", async method => {
     const auth = userSubject("alice", true);
     const operation = method === "PUT" ? "deployment/environment-providers/bindings/put" : "deployment/environment-providers/bindings/delete";
-    auth.credential = { kind: "personalKey", id: "admin-key", restrictions: { accountIds: ["account"], universeIds: [runtimeUniverse], operations: [operation] } };
+    auth.credential = { kind: "personalKey", id: "admin-key", restrictions: { organizationIds: ["organization"], universeIds: [runtimeUniverse], operations: [operation] } };
     let forwarded = "";
     const calls = runtime(async (_url, init) => {
       forwarded = await new Response(init.body).text();
@@ -163,7 +163,7 @@ describe("shared resource API admission", () => {
   });
   it.each([
     ["read-only", { readOnly: true }],
-    ["another account", { accountIds: ["another-account"] }],
+    ["another organization", { organizationIds: ["another-organization"] }],
     ["another universe", { universeIds: ["00000000-0000-0000-0000-000000000002"] }],
     ["another operation", { operations: ["environments/provider-bindings/list"] }],
   ] satisfies Array<[string, CredentialRestrictions]>)("honors %s restrictions on a Platform Admin binding key", async (_label, restrictions) => {
@@ -195,14 +195,14 @@ describe("shared resource API admission", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ platform: { principal: { kind: "user", id: "alice", platformAdmin } } });
   });
-  it("reports application authority without implying deployment administration", async () => {
-    const principal = { kind: "application", id: "pipeline", accountId: "account", platformAdmin: false, application: { id: "pipeline", name: "Pipeline" } } as Extract<AuthContext["principal"], { kind: "application" }>;
-    const auth: AuthContext = { principal, actorId: "application:pipeline", credential: { kind: "applicationKey", id: "pipeline-key", restrictions: {} } };
+  it("reports service user authority without implying deployment administration", async () => {
+    const principal = { kind: "serviceUser", id: "pipeline", organizationId: "organization", platformAdmin: false, serviceUser: { id: "pipeline", name: "Pipeline" } } as Extract<AuthContext["principal"], { kind: "serviceUser" }>;
+    const auth: AuthContext = { principal, actorId: "serviceUser:pipeline", credential: { kind: "serviceUserKey", id: "pipeline-key", restrictions: {} } };
     const calls = runtime();
-    const api = app("owner", undefined, false, { auth, accountRole: "admin" });
+    const api = app("owner", undefined, false, { auth, organizationRole: "admin" });
     const response = await api.request("/api/v1/connection");
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ platform: { principal: { kind: "application", id: "pipeline", platformAdmin: false } } });
+    expect(await response.json()).toMatchObject({ platform: { principal: { kind: "serviceUser", id: "pipeline", platformAdmin: false } } });
     expect((await api.request(path("/deployment-provider-bindings/compute"), { method: "PUT", body: '{"enabled":true}' })).status).toBe(403);
     expect(calls.every(call => call.url.pathname.endsWith("/connection"))).toBe(true);
   });

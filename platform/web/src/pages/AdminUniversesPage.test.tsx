@@ -13,7 +13,7 @@ vi.mock("@/lib/permissions", () => ({ usePlatformAdmin: () => mocks.platformAdmi
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (id: string, overrides: Partial<Universe> = {}): Universe => ({
-  id, lightspeedUniverseId: `core-${id}`, name: id, handle: id, status: "active",
+  id, organizationId: "team", lightspeedUniverseId: `core-${id}`, name: id, handle: id, status: "active",
   createdAt: "2026-01-01T00:00:00Z", role: null, features: { bots: true, channels: true }, ...overrides,
 });
 const orphan = (universeId: string, overrides: Partial<EngineUniverse> = {}): EngineUniverse => ({
@@ -42,8 +42,8 @@ beforeEach(() => {
     orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (path === "/api/v1/platform/accounts") return { accounts: [{ id: "account", name: "Team", enabled: true, role: "admin" }] };
-    if (path === "/api/v1/platform/accounts/account/members") return { members: [{ userId: "user", name: "User" }] };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "organization", name: "Team", enabled: true, role: "admin" }] };
+    if (path === "/api/v1/platform/organizations/organization/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "GET" && path === "/api/ui/universes") return universes;
     if (method === "GET" && path === "/api/ui/universes/reconcile") {
       if (reconcile instanceof Error) throw reconcile;
@@ -68,11 +68,12 @@ afterEach(async () => {
 function Location() {
   return <p data-testid="location">{useLocation().pathname}</p>;
 }
-async function show() {
+async function show(path = "/admin/platform/universes") {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><MemoryRouter initialEntries={["/admin/universes"]}>
+    <QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/admin/universes" element={<AdminUniversesPage />} />
+        <Route path="/admin/platform/universes" element={<AdminUniversesPage />} />
+        <Route path="/admin/organizations/:organizationId/universes" element={<AdminUniversesPage />} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></QueryClientProvider>,
@@ -171,7 +172,7 @@ it("adopts an orphan under the runtime handle it already has", async () => {
   expect(document.querySelector<HTMLInputElement>("#adopt-handle")!.value).toBe("kept");
   await type("#adopt-name", "Kept");
   await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept", accountId: "account", initialOwner: { kind: "user", id: "user" } }));
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept", organizationId: "organization", initialOwner: { kind: "user", id: "user" } }));
 });
 
 it("keeps the inventory when engine reconciliation is unavailable", async () => {
@@ -217,5 +218,13 @@ it("shows only manageable universes and avoids deployment endpoints for an Owner
   expect(buttonIn(row("Zeta"), "Deleted sessions")).toBeUndefined();
   expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
   await act(async () => buttonIn(row("Zeta"), "Manage")!.click());
-  await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/admin/universes/zeta/access"));
+  await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/admin/organizations/team/universes/zeta/access"));
+});
+
+it("keeps a Platform Admin's organization view scoped and omits deployment reconciliation", async () => {
+  universes = [universe("local", { name: "Local", role: "owner", organizationId: "team" }), universe("elsewhere", { name: "Elsewhere", role: "owner", organizationId: "other" })];
+  await show("/admin/organizations/team/universes");
+  expect(row("Local")).toBeDefined(); expect(row("Elsewhere")).toBeUndefined();
+  expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
+  expect(container.textContent).not.toContain("Sync from runtime");
 });

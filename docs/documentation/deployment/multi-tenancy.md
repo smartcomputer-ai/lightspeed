@@ -1,8 +1,8 @@
 # Managing universes
 
-A universe has a runtime UUID and belongs to one Platform account. Each
-account can contain many universes. The runtime owns sessions and resources;
-the Platform owns account membership and universe grants. Preserve that association when adopting,
+A universe has a runtime UUID and belongs to one Platform organization. Each
+organization can contain many universes. The runtime owns sessions and resources;
+the Platform owns organization membership and universe grants. Preserve that association when adopting,
 recovering, or retiring a universe.
 
 Each universe also has a handle: a readable name, unique within the
@@ -21,10 +21,10 @@ For sign-in and membership, see [People and roles](../access-and-security/people
 
 ## Create a universe
 
-Creators and Account Admins create universes using **New universe**, selecting
-an account and an initial Owner. Platform Admins can provision for any account
-with an explicit initial Owner. Creation observes the account quota and
-protection policy. Owners grant existing account members access on **Admin → Universes → Access**.
+Creators and Organization Admins create universes using **New universe**, selecting
+an organization and an initial Owner. Platform Admins can provision for any organization
+with an explicit initial Owner. Creation observes the organization quota and
+protection policy. Owners grant existing organization members access on **Admin → Universes → Access**.
 Creating a runtime universe directly through the API or server CLI creates
 only the runtime record; use **Adopt** to connect it to the Platform. Adoption
 keeps the universe's handle. The handle is chosen at creation, or derived from
@@ -39,7 +39,7 @@ systems, an interrupted operation or a partial restore can leave one side
 without the other.
 
 **Admin → Universes** reconciles the configured runtime inventory.
-**Adopt** connects an existing runtime universe to a selected account with an
+**Adopt** connects an existing runtime universe to a selected organization with an
 explicit initial Owner, without replacing its contents. **Create in engine** creates an empty missing runtime
 universe. It cannot restore deleted sessions or files, or recreate a universe whose
 UUID has been permanently deleted. All universes use the deployment's configured
@@ -95,14 +95,14 @@ inspect deletion records, including resource counts, attribution and cleanup
 results.
 
 Protected universes refuse deletion, even for Platform Admins. Owners can
-enable protection; only an Account Admin or Platform Admin can clear it.
+enable protection; only an Organization Admin or Platform Admin can clear it.
 An unprotected universe can have an expiry timestamp for automatic deletion.
 Protection and expiry are mutually exclusive. Clear protection and delete in
 separate requests. Configuration documents protect new universes by default.
 
 The Platform periodically follows the runtime's inventory, including deletions
 requested directly through the API or CLI. It removes that universe's grants and setups only after the runtime confirms `gone`. The containing
-account, its members, and its other universes remain. A universe
+organization, its members, and its other universes remain. A universe
 missing from an empty or different runtime remains marked missing so that an
 accidental configuration change does not discard memberships.
 

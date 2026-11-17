@@ -35,7 +35,7 @@ export function buildApp(ctx: AppContext) {
   app.get("/device", c => c.redirect(`/app/device${new URL(c.req.url).search}`));
   app.get("/api/login-config", (c) => c.json(publicAuthConfig(ctx.env)));
 
-  // Account membership, applications and credential association go through
+  // Organization membership, service users and credential association go through
   // reviewed Platform services; raw plugin management endpoints are not served.
   app.all("/api/auth/api-key/*", c => c.json({ error: "not found" }, 404));
   app.all("/api/auth/organization/*", (c) => c.json({ error: "not found" }, 404));

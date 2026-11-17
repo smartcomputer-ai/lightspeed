@@ -11,7 +11,7 @@ pub struct UniverseArgs {
 }
 #[derive(Debug, Subcommand)]
 enum UniverseCommand {
-    /// Manage this universe's user/application grants and policy through Platform.
+    /// Manage this universe's user/service-user grants and policy through Platform.
     Access(crate::platform_cli::AccessArgs),
     /// List universes; * marks the active universe for this invocation.
     List {
@@ -47,7 +47,7 @@ enum UniverseCommand {
         expires_in: Option<u64>,
         #[arg(long, value_parser = parse_metadata_pair)]
         metadata: Vec<(String, String)>,
-        /// Set deletion protection; Platform defaults to the account policy.
+        /// Set deletion protection; Platform defaults to the organization policy.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         protected: Option<bool>,
         /// Human-readable name for Platform provisioning.
@@ -326,7 +326,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
             let metadata: std::collections::BTreeMap<_, _> = metadata.into_iter().collect();
             let expires_at_ms = expires_in.map(expiry_after).transpose()?;
             if active.is_platform() {
-                let mut params = serde_json::json!({"accountId":crate::platform_cli::selected_account()?,"universeId":id,"name":name.or_else(|| handle.clone()).unwrap_or_else(|| id.clone()),"metadata":metadata});
+                let mut params = serde_json::json!({"organizationId":crate::platform_cli::selected_organization()?,"universeId":id,"name":name.or_else(|| handle.clone()).unwrap_or_else(|| id.clone()),"metadata":metadata});
                 if let Some(handle) = handle {
                     params["handle"] = serde_json::json!(handle);
                 }

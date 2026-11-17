@@ -1,11 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DBAdapter } from "@better-auth/core/db/adapter";
 
-export interface OrganizationKeyAuthority { userId: string; accountId: string }
+export interface OrganizationKeyAuthority { userId: string; organizationId: string }
 
 /** Better Auth checks concrete organization membership even for server key creation.
- * Platform also authorizes declared Account Admins and deployment administrators.
- * Translate that reviewed decision for this exact real user/account only during the
+ * Platform also authorizes declared Organization Admins and deployment administrators.
+ * Translate that reviewed decision for this exact real user/organization only during the
  * plugin call. This writes no membership and never creates a user or a session. */
 export function organizationKeyAuthority() {
   const active = new AsyncLocalStorage<OrganizationKeyAuthority>();
@@ -21,9 +21,9 @@ export function organizationKeyAuthority() {
           if (authority && query.model === "member" && !query.select && !query.join && query.where.length === 2 &&
               query.where.every(clause => (!clause.operator || clause.operator === "eq") && (!clause.connector || clause.connector === "AND")) &&
               query.where.some(clause => clause.field === "userId" && clause.value === authority.userId) &&
-              query.where.some(clause => clause.field === "organizationId" && clause.value === authority.accountId)) {
-            return { id: `effective:${authority.accountId}:${authority.userId}`, userId: authority.userId,
-              organizationId: authority.accountId, role: "admin", createdAt: new Date() } as T;
+              query.where.some(clause => clause.field === "organizationId" && clause.value === authority.organizationId)) {
+            return { id: `effective:${authority.organizationId}:${authority.userId}`, userId: authority.userId,
+              organizationId: authority.organizationId, role: "admin", createdAt: new Date() } as T;
           }
           return adapter.findOne<T>(query);
         },

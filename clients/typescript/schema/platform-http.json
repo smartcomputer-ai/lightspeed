@@ -51,144 +51,144 @@
       "result": "PlatformCredentialsRevokeResult"
     },
     {
-      "operationId": "platform/applications/credentials/list",
+      "operationId": "platform/service-users/credentials/list",
       "helper": {
-        "name": "listApplicationApiKeys"
+        "name": "listServiceUserApiKeys"
       },
       "method": "GET",
-      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials",
-      "params": "PlatformApplicationsCredentialsListParams",
-      "result": "PlatformApplicationsCredentialsListResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
+      "params": "PlatformServiceUsersCredentialsListParams",
+      "result": "PlatformServiceUsersCredentialsListResult"
     },
     {
-      "operationId": "platform/applications/credentials/create",
+      "operationId": "platform/service-users/credentials/create",
       "helper": {
-        "name": "createApplicationApiKey"
+        "name": "createServiceUserApiKey"
       },
       "method": "POST",
-      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials",
-      "params": "PlatformApplicationsCredentialsCreateParams",
-      "result": "PlatformApplicationsCredentialsCreateResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
+      "params": "PlatformServiceUsersCredentialsCreateParams",
+      "result": "PlatformServiceUsersCredentialsCreateResult"
     },
     {
-      "operationId": "platform/applications/credentials/revoke",
+      "operationId": "platform/service-users/credentials/revoke",
       "helper": {
-        "name": "revokeApplicationApiKey"
+        "name": "revokeServiceUserApiKey"
       },
       "method": "DELETE",
-      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}",
-      "params": "PlatformApplicationsCredentialsRevokeParams",
-      "result": "PlatformApplicationsCredentialsRevokeResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}",
+      "params": "PlatformServiceUsersCredentialsRevokeParams",
+      "result": "PlatformServiceUsersCredentialsRevokeResult"
     },
     {
-      "operationId": "platform/accounts/list",
+      "operationId": "platform/organizations/list",
       "helper": {
-        "name": "listAccounts"
+        "name": "listOrganizations"
       },
       "method": "GET",
-      "path": "/api/v1/platform/accounts",
-      "params": "PlatformAccountsListParams",
-      "result": "PlatformAccountsListResult"
+      "path": "/api/v1/platform/organizations",
+      "params": "PlatformOrganizationsListParams",
+      "result": "PlatformOrganizationsListResult"
     },
     {
-      "operationId": "platform/accounts/create",
+      "operationId": "platform/organizations/create",
       "helper": {
-        "name": "createAccount"
+        "name": "createOrganization"
       },
       "method": "POST",
-      "path": "/api/v1/platform/accounts",
-      "params": "PlatformAccountsCreateParams",
-      "result": "PlatformAccountsCreateResult"
+      "path": "/api/v1/platform/organizations",
+      "params": "PlatformOrganizationsCreateParams",
+      "result": "PlatformOrganizationsCreateResult"
     },
     {
-      "operationId": "platform/accounts/read",
+      "operationId": "platform/organizations/read",
       "helper": {
-        "name": "readAccount"
+        "name": "readOrganization"
       },
       "method": "GET",
-      "path": "/api/v1/platform/accounts/{accountId}",
-      "params": "PlatformAccountsReadParams",
-      "result": "PlatformAccountsReadResult"
+      "path": "/api/v1/platform/organizations/{organizationId}",
+      "params": "PlatformOrganizationsReadParams",
+      "result": "PlatformOrganizationsReadResult"
     },
     {
-      "operationId": "platform/accounts/update",
+      "operationId": "platform/organizations/update",
       "helper": {
-        "name": "updateAccount"
+        "name": "updateOrganization"
       },
       "method": "PATCH",
-      "path": "/api/v1/platform/accounts/{accountId}",
-      "params": "PlatformAccountsUpdateParams",
-      "result": "PlatformAccountsUpdateResult"
+      "path": "/api/v1/platform/organizations/{organizationId}",
+      "params": "PlatformOrganizationsUpdateParams",
+      "result": "PlatformOrganizationsUpdateResult"
     },
     {
-      "operationId": "platform/accounts/members/list",
+      "operationId": "platform/organizations/members/list",
       "helper": {
-        "name": "listAccountMembers"
+        "name": "listOrganizationMembers"
       },
       "method": "GET",
-      "path": "/api/v1/platform/accounts/{accountId}/members",
-      "params": "PlatformAccountsMembersListParams",
-      "result": "PlatformAccountsMembersListResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/members",
+      "params": "PlatformOrganizationsMembersListParams",
+      "result": "PlatformOrganizationsMembersListResult"
     },
     {
-      "operationId": "platform/accounts/members/put",
+      "operationId": "platform/organizations/members/put",
       "helper": {
-        "name": "putAccountMember"
+        "name": "putOrganizationMember"
       },
       "method": "PUT",
-      "path": "/api/v1/platform/accounts/{accountId}/members/{userId}",
-      "params": "PlatformAccountsMembersPutParams",
-      "result": "PlatformAccountsMembersPutResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/members/{userId}",
+      "params": "PlatformOrganizationsMembersPutParams",
+      "result": "PlatformOrganizationsMembersPutResult"
     },
     {
-      "operationId": "platform/accounts/members/delete",
+      "operationId": "platform/organizations/members/delete",
       "helper": {
-        "name": "removeAccountMember"
+        "name": "removeOrganizationMember"
       },
       "method": "DELETE",
-      "path": "/api/v1/platform/accounts/{accountId}/members/{userId}",
-      "params": "PlatformAccountsMembersDeleteParams",
-      "result": "PlatformAccountsMembersDeleteResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/members/{userId}",
+      "params": "PlatformOrganizationsMembersDeleteParams",
+      "result": "PlatformOrganizationsMembersDeleteResult"
     },
     {
-      "operationId": "platform/accounts/applications/list",
+      "operationId": "platform/organizations/service-users/list",
       "helper": {
-        "name": "listApplications"
+        "name": "listServiceUsers"
       },
       "method": "GET",
-      "path": "/api/v1/platform/accounts/{accountId}/applications",
-      "params": "PlatformAccountsApplicationsListParams",
-      "result": "PlatformAccountsApplicationsListResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users",
+      "params": "PlatformOrganizationsServiceUsersListParams",
+      "result": "PlatformOrganizationsServiceUsersListResult"
     },
     {
-      "operationId": "platform/accounts/applications/create",
+      "operationId": "platform/organizations/service-users/create",
       "helper": {
-        "name": "createApplication"
+        "name": "createServiceUser"
       },
       "method": "POST",
-      "path": "/api/v1/platform/accounts/{accountId}/applications",
-      "params": "PlatformAccountsApplicationsCreateParams",
-      "result": "PlatformAccountsApplicationsCreateResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users",
+      "params": "PlatformOrganizationsServiceUsersCreateParams",
+      "result": "PlatformOrganizationsServiceUsersCreateResult"
     },
     {
-      "operationId": "platform/accounts/applications/update",
+      "operationId": "platform/organizations/service-users/update",
       "helper": {
-        "name": "updateApplication"
+        "name": "updateServiceUser"
       },
       "method": "PATCH",
-      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}",
-      "params": "PlatformAccountsApplicationsUpdateParams",
-      "result": "PlatformAccountsApplicationsUpdateResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}",
+      "params": "PlatformOrganizationsServiceUsersUpdateParams",
+      "result": "PlatformOrganizationsServiceUsersUpdateResult"
     },
     {
-      "operationId": "platform/accounts/applications/delete",
+      "operationId": "platform/organizations/service-users/delete",
       "helper": {
-        "name": "disableApplication"
+        "name": "disableServiceUser"
       },
       "method": "DELETE",
-      "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}",
-      "params": "PlatformAccountsApplicationsDeleteParams",
-      "result": "PlatformAccountsApplicationsDeleteResult"
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}",
+      "params": "PlatformOrganizationsServiceUsersDeleteParams",
+      "result": "PlatformOrganizationsServiceUsersDeleteResult"
     },
     {
       "operationId": "platform/universes/adopt",
@@ -196,7 +196,7 @@
         "name": "adoptUniverse"
       },
       "method": "POST",
-      "path": "/api/v1/platform/accounts/{accountId}/universes/adopt",
+      "path": "/api/v1/platform/organizations/{organizationId}/universes/adopt",
       "params": "PlatformUniversesAdoptParams",
       "result": "PlatformUniversesAdoptResult"
     },
@@ -206,7 +206,7 @@
         "name": "createUniverse"
       },
       "method": "POST",
-      "path": "/api/v1/platform/accounts/{accountId}/universes",
+      "path": "/api/v1/platform/organizations/{organizationId}/universes",
       "params": "PlatformUniversesCreateParams",
       "result": "PlatformUniversesCreateResult"
     },

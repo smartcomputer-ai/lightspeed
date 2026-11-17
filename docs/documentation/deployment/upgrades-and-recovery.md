@@ -597,3 +597,17 @@ replacement work.
 | Restored listeners are healthy but work stalls | Verify namespace, workflows, role pollers, retained blobs, and optional service state through a complete test task. |
 | Workflow tasks keep failing after an upgrade, with a nondeterminism error or an activity payload that does not convert | The release was breaking. Move to [a new namespace](#move-a-breaking-release-to-a-new-namespace). A payload error also heals under a build that reads the payload. |
 | A session reads fine but reports `executionFailure` | Its workflow has stopped. [Restart it](#restart-a-stopped-session). |
+
+## Organization and service-user terminology change
+
+The native Platform API, CLI connection fields, and generated clients now use
+`organizationId` and `serviceUserId`. Regenerate or update clients together with
+the Platform; the former account/application routes are not aliases. The
+Platform database migration preserves credential restrictions and managed
+Configurator references while renaming the service-user identity records.
+
+This greenfield cutover does not migrate runtime session attribution from
+`application:<id>` to `serviceUser:<id>`. Recreate disposable development state,
+or explicitly migrate retained runtime attribution before relying on existing
+private sessions owned by those identities. SQL schema migration alone does
+not establish compatibility for that retained runtime state.

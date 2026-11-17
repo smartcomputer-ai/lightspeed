@@ -7,11 +7,11 @@ import { CREDENTIAL_OPERATIONS, credentialCreateSchema, credentialRestrictionsSc
 import { z } from "zod";
 import type { ApiVariables, AppContext } from "./context.js";
 import { getAuth, requireCredentialManagement, type AuthContext } from "./auth-context.js";
-import { requireAccountAdmin } from "./account-access.js";
-import { PERSONAL_KEY_CONFIG, APPLICATION_KEY_CONFIG } from "./api-key-config.js";
+import { requireOrganizationAdmin } from "./organization-access.js";
+import { PERSONAL_KEY_CONFIG, SERVICE_USER_KEY_CONFIG } from "./api-key-config.js";
 import { auditIdentity } from "./identity-audit.js";
 
-type Owner = { userId: string; applicationId?: never; accountId?: never } | { userId?: never; applicationId: string; accountId: string };
+type Owner = { userId: string; serviceUserId?: never; organizationId?: never } | { userId?: never; serviceUserId: string; organizationId: string };
 type Create = z.infer<typeof credentialCreateSchema>;
 const publicKeyColumns = {
   id: schema.apikey.id, name: schema.apikey.name, prefix: schema.apikey.prefix, start: schema.apikey.start,
@@ -30,8 +30,8 @@ function metadata(row: {
 }
 
 function ownerConditions(owner: Owner) {
-  return owner.applicationId ? and(eq(schema.credentialBindings.applicationId, owner.applicationId),
-    eq(schema.apikey.configId, APPLICATION_KEY_CONFIG), eq(schema.apikey.referenceId, owner.accountId)) :
+  return owner.serviceUserId ? and(eq(schema.credentialBindings.serviceUserId, owner.serviceUserId),
+    eq(schema.apikey.configId, SERVICE_USER_KEY_CONFIG), eq(schema.apikey.referenceId, owner.organizationId)) :
     and(eq(schema.credentialBindings.userId, owner.userId!), eq(schema.apikey.configId, PERSONAL_KEY_CONFIG), eq(schema.apikey.referenceId, owner.userId!));
 }
 
@@ -45,18 +45,18 @@ async function listCredentials(ctx: AppContext, owner: Owner) {
 async function createCredential(ctx: AppContext, auth: AuthContext, owner: Owner, input: Create) {
   const expiresInDays = input.expiresInDays ?? Math.min(ctx.env.apiKeyDefaultExpiryDays ?? 365, ctx.env.apiKeyMaxExpiryDays ?? 365);
   if (expiresInDays > (ctx.env.apiKeyMaxExpiryDays ?? 365)) throw new HTTPException(400, { message: "Credential expiry exceeds deployment policy" });
-  const configId = owner.applicationId ? APPLICATION_KEY_CONFIG : PERSONAL_KEY_CONFIG;
+  const configId = owner.serviceUserId ? SERVICE_USER_KEY_CONFIG : PERSONAL_KEY_CONFIG;
   const create = async () => {
     const key = await ctx.auth.api.createApiKey({ body: {
       configId, userId: auth.principal.id, name: input.name, expiresIn: expiresInDays * 86400,
-      ...(owner.applicationId ? { organizationId: owner.accountId } : {}),
+      ...(owner.serviceUserId ? { organizationId: owner.organizationId } : {}),
     } });
     try {
       await ctx.db.transaction(async (tx) => {
         await tx.insert(schema.credentialBindings).values({ keyId: key.id, userId: owner.userId,
-          applicationId: owner.applicationId, restrictions: input.restrictions, createdBy: auth.actorId });
+          serviceUserId: owner.serviceUserId, restrictions: input.restrictions, createdBy: auth.actorId });
         await auditIdentity(tx, { actorId: auth.actorId, action: "credential.create", targetId: key.id,
-          details: { principalKind: owner.applicationId ? "application" : "user", principalId: owner.applicationId ?? owner.userId!, credentialId: auth.credential.id } });
+          details: { principalKind: owner.serviceUserId ? "serviceUser" : "user", principalId: owner.serviceUserId ?? owner.userId!, credentialId: auth.credential.id } });
       });
     } catch (error) {
       // Unassociated keys are always refused by admission, including after a process crash.
@@ -65,7 +65,7 @@ async function createCredential(ctx: AppContext, auth: AuthContext, owner: Owner
     }
     return { credential: metadata({ ...key, lastUsedAt: key.lastRequest, restrictions: input.restrictions }), secret: key.key };
   };
-  return owner.applicationId ? ctx.auth.withOrganizationKeyAuthority({ userId: auth.principal.id, accountId: owner.accountId }, create) : create();
+  return owner.serviceUserId ? ctx.auth.withOrganizationKeyAuthority({ userId: auth.principal.id, organizationId: owner.organizationId }, create) : create();
 }
 
 async function revokeCredential(ctx: AppContext, auth: AuthContext, owner: Owner, keyId: string) {
@@ -74,32 +74,32 @@ async function revokeCredential(ctx: AppContext, auth: AuthContext, owner: Owner
     .where(and(ownerConditions(owner), eq(schema.apikey.id, keyId)));
   if (!key) throw new HTTPException(404, { message: "Credential not found" });
   const revoke = () => ctx.auth.api.updateApiKey({ body: { configId: key.configId, keyId, userId: auth.principal.id, enabled: false } });
-  if (owner.applicationId) await ctx.auth.withOrganizationKeyAuthority({ userId: auth.principal.id, accountId: owner.accountId }, revoke);
+  if (owner.serviceUserId) await ctx.auth.withOrganizationKeyAuthority({ userId: auth.principal.id, organizationId: owner.organizationId }, revoke);
   else await revoke();
   await ctx.db.transaction(async (tx) => {
     await tx.delete(schema.credentialBindings).where(eq(schema.credentialBindings.keyId, keyId));
     await auditIdentity(tx, { actorId: auth.actorId, action: "credential.revoke", targetId: keyId,
-      details: { principalKind: owner.applicationId ? "application" : "user", principalId: owner.applicationId ?? owner.userId!, credentialId: auth.credential.id } });
+      details: { principalKind: owner.serviceUserId ? "serviceUser" : "user", principalId: owner.serviceUserId ?? owner.userId!, credentialId: auth.credential.id } });
   });
   return { revoked: true as const };
 }
 
-/** Internal callers use the same browser/account authorization as native routes. */
-export async function createApplicationCredential(ctx: AppContext, auth: AuthContext, accountId: string, applicationId: string, input: Create) {
-  const owner = await applicationOwner(ctx, auth, accountId, applicationId);
+/** Internal callers use the same browser/organization authorization as native routes. */
+export async function createServiceUserCredential(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string, input: Create) {
+  const owner = await serviceUserOwner(ctx, auth, organizationId, serviceUserId);
   return createCredential(ctx, auth, owner, credentialCreateSchema.parse(input));
 }
-export async function revokeApplicationCredential(ctx: AppContext, auth: AuthContext, accountId: string, applicationId: string, keyId: string) {
-  return revokeCredential(ctx, auth, await applicationOwner(ctx, auth, accountId, applicationId), keyId);
+export async function revokeServiceUserCredential(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string, keyId: string) {
+  return revokeCredential(ctx, auth, await serviceUserOwner(ctx, auth, organizationId, serviceUserId), keyId);
 }
-async function applicationOwner(ctx: AppContext, auth: AuthContext, accountId: string, applicationId: string): Promise<Owner> {
+async function serviceUserOwner(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string): Promise<Owner> {
   requireCredentialManagement(auth);
-  await requireAccountAdmin(ctx, auth, accountId);
-  if (!z.string().uuid().safeParse(applicationId).success) throw new HTTPException(400, { message: "Invalid application identifier" });
-  const [app] = await ctx.db.select().from(schema.applications)
-    .where(and(eq(schema.applications.id, applicationId), eq(schema.applications.organizationId, accountId)));
-  if (!app) throw new HTTPException(404, { message: "Application not found" });
-  return { applicationId, accountId };
+  await requireOrganizationAdmin(ctx, auth, organizationId);
+  if (!z.string().uuid().safeParse(serviceUserId).success) throw new HTTPException(400, { message: "Invalid service user identifier" });
+  const [app] = await ctx.db.select().from(schema.serviceUsers)
+    .where(and(eq(schema.serviceUsers.id, serviceUserId), eq(schema.serviceUsers.organizationId, organizationId)));
+  if (!app) throw new HTTPException(404, { message: "Service user not found" });
+  return { serviceUserId, organizationId };
 }
 
 /** Mount at /api/v1/platform. Raw plugin management endpoints are never public. */
@@ -126,13 +126,13 @@ export function credentialRoutes(ctx: AppContext) {
   "platform/credentials/revoke": async c => {
     const auth = getAuth(c); return c.json(await revokeCredential(ctx, auth, personal(auth), c.req.param("keyId")!));
   },
-  "platform/applications/credentials/list": async c => c.json(await listCredentials(ctx, await applicationOwner(ctx, getAuth(c), c.req.param("accountId")!, c.req.param("applicationId")!))),
-  "platform/applications/credentials/create": async c => {
-    const auth = getAuth(c); const owner = await applicationOwner(ctx, auth, c.req.param("accountId")!, c.req.param("applicationId")!);
+  "platform/service-users/credentials/list": async c => c.json(await listCredentials(ctx, await serviceUserOwner(ctx, getAuth(c), c.req.param("organizationId")!, c.req.param("serviceUserId")!))),
+  "platform/service-users/credentials/create": async c => {
+    const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);
     return c.json(await createCredential(ctx, auth, owner, await input(c.req.raw)), 201);
   },
-  "platform/applications/credentials/revoke": async c => {
-    const auth = getAuth(c); const owner = await applicationOwner(ctx, auth, c.req.param("accountId")!, c.req.param("applicationId")!);
+  "platform/service-users/credentials/revoke": async c => {
+    const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);
     return c.json(await revokeCredential(ctx, auth, owner, c.req.param("keyId")!));
   },
   };

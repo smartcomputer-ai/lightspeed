@@ -9,23 +9,23 @@ const administrator = (restrictions: AuthContext["credential"]["restrictions"]):
   actorId: "u", credential: { kind: "personalKey", id: "key", restrictions },
 });
 it("keeps credential ceilings in force for deployment administrators", () => {
-  const auth = administrator({ accountIds: ["a"], universeIds: ["v"], operations: ["profiles/read"], readOnly: true });
-  expect(() => enforceRestrictions(auth, { operation: "profiles/read", accountId: "a", universeId: "v" })).not.toThrow();
+  const auth = administrator({ organizationIds: ["a"], universeIds: ["v"], operations: ["profiles/read"], readOnly: true });
+  expect(() => enforceRestrictions(auth, { operation: "profiles/read", organizationId: "a", universeId: "v" })).not.toThrow();
   for (const target of [
-    { operation: "profiles/put", accountId: "a", universeId: "v", write: true },
-    { operation: "profiles/read", accountId: "other", universeId: "v" },
-    { operation: "profiles/read", accountId: "a", universeId: "other" },
-    { operation: "profiles/read", accountId: "a", createUniverse: true },
+    { operation: "profiles/put", organizationId: "a", universeId: "v", write: true },
+    { operation: "profiles/read", organizationId: "other", universeId: "v" },
+    { operation: "profiles/read", organizationId: "a", universeId: "other" },
+    { operation: "profiles/read", organizationId: "a", createUniverse: true },
   ]) expect(() => enforceRestrictions(auth, target)).toThrow();
 });
-it("universe-scoped credentials cannot mutate their containing account or create universes", () => {
+it("universe-scoped credentials cannot mutate their containing organization or create universes", () => {
   const auth = administrator({ universeIds: ["v"], allowUniverseCreation: true });
-  expect(() => enforceRestrictions(auth, { operation: "platform/accounts/update", accountId: "a", write: true })).toThrow();
-  expect(() => enforceRestrictions(auth, { operation: "platform/universes/create", accountId: "a", createUniverse: true })).toThrow();
+  expect(() => enforceRestrictions(auth, { operation: "platform/organizations/update", organizationId: "a", write: true })).toThrow();
+  expect(() => enforceRestrictions(auth, { operation: "platform/universes/create", organizationId: "a", createUniverse: true })).toThrow();
 });
 it("API keys cannot mint broader credentials even when unrestricted", () => {
   expect(() => requireCredentialManagement(administrator({}))).toThrow();
-  const auth = administrator({}); auth.credential.kind = "applicationKey";
+  const auth = administrator({}); auth.credential.kind = "serviceUserKey";
   expect(() => requireCredentialManagement(auth)).toThrow();
 });
 it("company keys depend on current admission freshness, independently of a browser expiry", () => {

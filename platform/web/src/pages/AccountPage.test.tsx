@@ -132,7 +132,7 @@ it.each([
 });
 
 
-it("exposes a selectable user ID for account membership without making it editable", async () => {
+it("exposes a selectable user ID for organization membership without making it editable", async () => {
   await show();
   const id = input("account-user-id")!;
   expect(id.value).toBe(local.id);

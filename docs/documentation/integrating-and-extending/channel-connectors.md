@@ -3,7 +3,7 @@
 The development launcher does not start channel connectors. The standalone
 connector host runs as a trusted infrastructure component with a configured
 runtime token and Temporal access. Its runtime token has full deployment
-authority; it is not a user or application key and must not be passed to agents.
+authority; it is not a user or service-user key and must not be passed to agents.
 The host selects the universe explicitly for each account operation.
 
 A channel connector translates between a chat provider and Lightspeed. It
@@ -232,7 +232,7 @@ intended lifecycle.
 | Symptom | What to inspect |
 | --- | --- |
 | The new provider never starts | Host allowlist, factory, configured selection, and discovered account record. |
-| Host cannot authenticate | Check `LIGHTSPEED_API_URL` and `LIGHTSPEED_CONNECTOR_API_TOKEN` against the runtime's configured tokens. Platform user/application keys do not authenticate directly to the runtime. |
+| Host cannot authenticate | Check `LIGHTSPEED_API_URL` and `LIGHTSPEED_CONNECTOR_API_TOKEN` against the runtime's configured tokens. Platform user/service-user keys do not authenticate directly to the runtime. |
 | Inbound works but no replies arrive | Derived activity queue, registered contract names, worker readiness, and provider delivery errors. |
 | Reconnect repeats messages | Provider acknowledgment/cursor handling and stable message IDs. |
 | Removed accounts keep receiving work | Runner shutdown, subscriptions/timers, and duplicate host ownership. |

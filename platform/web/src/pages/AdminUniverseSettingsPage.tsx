@@ -150,7 +150,7 @@ export function HandleCard({ universe }: { universe: Universe }) {
         rows?.map((row) => (row.id === updated.id ? updated : row)),
       );
       setHandle(updated.handle);
-      navigate(`/admin/universes/${updated.handle}/settings`, {
+      navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes/${updated.handle}/settings`, {
         replace: true,
       });
       void queryClient.invalidateQueries({ queryKey: ["universes"] });
@@ -303,7 +303,7 @@ function DangerZone({ universe }: { universe: Universe }) {
     onSuccess: async (_, status) => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
       if (status === "archived") {
-        navigate("/admin/universes");
+        navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes`);
       }
     },
   });
@@ -362,7 +362,7 @@ function ProtectionCard({ universe }: { universe: Universe }) {
   const [expiry, setExpiry] = useState(
     universe.expiresAtMs ? new Date(universe.expiresAtMs).toISOString() : "",
   );
-  const mayUnprotect = platformAdmin || universe.accountRole === "admin";
+  const mayUnprotect = platformAdmin || universe.organizationRole === "admin";
   const update = useMutation({
     mutationFn: (input: { protected?: boolean; expiresAtMs?: number | null }) =>
       platformApi("platform/universes/update", {
@@ -378,7 +378,7 @@ function ProtectionCard({ universe }: { universe: Universe }) {
       }),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["universes"] });
-      navigate("/admin/universes");
+      navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes`);
     },
   });
   return (
@@ -387,7 +387,7 @@ function ProtectionCard({ universe }: { universe: Universe }) {
         <CardTitle>Deletion protection and expiry</CardTitle>
         <CardDescription>
           Protected universes cannot be deleted. Clearing protection requires an
-          Account Admin or Platform Admin and must be a separate action before
+          Organization Admin or Platform Admin and must be a separate action before
           deletion.
         </CardDescription>
       </CardHeader>

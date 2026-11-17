@@ -6,20 +6,20 @@ export interface PlatformOperationMap {
   "platform/credentials/list": { params: T.PlatformCredentialsListParams; result: T.PlatformCredentialsListResult };
   "platform/credentials/create": { params: T.PlatformCredentialsCreateParams; result: T.PlatformCredentialsCreateResult };
   "platform/credentials/revoke": { params: T.PlatformCredentialsRevokeParams; result: T.PlatformCredentialsRevokeResult };
-  "platform/applications/credentials/list": { params: T.PlatformApplicationsCredentialsListParams; result: T.PlatformApplicationsCredentialsListResult };
-  "platform/applications/credentials/create": { params: T.PlatformApplicationsCredentialsCreateParams; result: T.PlatformApplicationsCredentialsCreateResult };
-  "platform/applications/credentials/revoke": { params: T.PlatformApplicationsCredentialsRevokeParams; result: T.PlatformApplicationsCredentialsRevokeResult };
-  "platform/accounts/list": { params: T.PlatformAccountsListParams; result: T.PlatformAccountsListResult };
-  "platform/accounts/create": { params: T.PlatformAccountsCreateParams; result: T.PlatformAccountsCreateResult };
-  "platform/accounts/read": { params: T.PlatformAccountsReadParams; result: T.PlatformAccountsReadResult };
-  "platform/accounts/update": { params: T.PlatformAccountsUpdateParams; result: T.PlatformAccountsUpdateResult };
-  "platform/accounts/members/list": { params: T.PlatformAccountsMembersListParams; result: T.PlatformAccountsMembersListResult };
-  "platform/accounts/members/put": { params: T.PlatformAccountsMembersPutParams; result: T.PlatformAccountsMembersPutResult };
-  "platform/accounts/members/delete": { params: T.PlatformAccountsMembersDeleteParams; result: T.PlatformAccountsMembersDeleteResult };
-  "platform/accounts/applications/list": { params: T.PlatformAccountsApplicationsListParams; result: T.PlatformAccountsApplicationsListResult };
-  "platform/accounts/applications/create": { params: T.PlatformAccountsApplicationsCreateParams; result: T.PlatformAccountsApplicationsCreateResult };
-  "platform/accounts/applications/update": { params: T.PlatformAccountsApplicationsUpdateParams; result: T.PlatformAccountsApplicationsUpdateResult };
-  "platform/accounts/applications/delete": { params: T.PlatformAccountsApplicationsDeleteParams; result: T.PlatformAccountsApplicationsDeleteResult };
+  "platform/service-users/credentials/list": { params: T.PlatformServiceUsersCredentialsListParams; result: T.PlatformServiceUsersCredentialsListResult };
+  "platform/service-users/credentials/create": { params: T.PlatformServiceUsersCredentialsCreateParams; result: T.PlatformServiceUsersCredentialsCreateResult };
+  "platform/service-users/credentials/revoke": { params: T.PlatformServiceUsersCredentialsRevokeParams; result: T.PlatformServiceUsersCredentialsRevokeResult };
+  "platform/organizations/list": { params: T.PlatformOrganizationsListParams; result: T.PlatformOrganizationsListResult };
+  "platform/organizations/create": { params: T.PlatformOrganizationsCreateParams; result: T.PlatformOrganizationsCreateResult };
+  "platform/organizations/read": { params: T.PlatformOrganizationsReadParams; result: T.PlatformOrganizationsReadResult };
+  "platform/organizations/update": { params: T.PlatformOrganizationsUpdateParams; result: T.PlatformOrganizationsUpdateResult };
+  "platform/organizations/members/list": { params: T.PlatformOrganizationsMembersListParams; result: T.PlatformOrganizationsMembersListResult };
+  "platform/organizations/members/put": { params: T.PlatformOrganizationsMembersPutParams; result: T.PlatformOrganizationsMembersPutResult };
+  "platform/organizations/members/delete": { params: T.PlatformOrganizationsMembersDeleteParams; result: T.PlatformOrganizationsMembersDeleteResult };
+  "platform/organizations/service-users/list": { params: T.PlatformOrganizationsServiceUsersListParams; result: T.PlatformOrganizationsServiceUsersListResult };
+  "platform/organizations/service-users/create": { params: T.PlatformOrganizationsServiceUsersCreateParams; result: T.PlatformOrganizationsServiceUsersCreateResult };
+  "platform/organizations/service-users/update": { params: T.PlatformOrganizationsServiceUsersUpdateParams; result: T.PlatformOrganizationsServiceUsersUpdateResult };
+  "platform/organizations/service-users/delete": { params: T.PlatformOrganizationsServiceUsersDeleteParams; result: T.PlatformOrganizationsServiceUsersDeleteResult };
   "platform/universes/adopt": { params: T.PlatformUniversesAdoptParams; result: T.PlatformUniversesAdoptResult };
   "platform/universes/create": { params: T.PlatformUniversesCreateParams; result: T.PlatformUniversesCreateResult };
   "platform/universes/update": { params: T.PlatformUniversesUpdateParams; result: T.PlatformUniversesUpdateResult };
@@ -52,69 +52,69 @@ export const PLATFORM_OPERATIONS = {
     "method": "DELETE",
     "path": "/api/v1/platform/credentials/{keyId}"
   },
-  "platform/applications/credentials/list": {
+  "platform/service-users/credentials/list": {
     "method": "GET",
-    "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials"
   },
-  "platform/applications/credentials/create": {
+  "platform/service-users/credentials/create": {
     "method": "POST",
-    "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials"
   },
-  "platform/applications/credentials/revoke": {
+  "platform/service-users/credentials/revoke": {
     "method": "DELETE",
-    "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}"
   },
-  "platform/accounts/list": {
+  "platform/organizations/list": {
     "method": "GET",
-    "path": "/api/v1/platform/accounts"
+    "path": "/api/v1/platform/organizations"
   },
-  "platform/accounts/create": {
+  "platform/organizations/create": {
     "method": "POST",
-    "path": "/api/v1/platform/accounts"
+    "path": "/api/v1/platform/organizations"
   },
-  "platform/accounts/read": {
+  "platform/organizations/read": {
     "method": "GET",
-    "path": "/api/v1/platform/accounts/{accountId}"
+    "path": "/api/v1/platform/organizations/{organizationId}"
   },
-  "platform/accounts/update": {
+  "platform/organizations/update": {
     "method": "PATCH",
-    "path": "/api/v1/platform/accounts/{accountId}"
+    "path": "/api/v1/platform/organizations/{organizationId}"
   },
-  "platform/accounts/members/list": {
+  "platform/organizations/members/list": {
     "method": "GET",
-    "path": "/api/v1/platform/accounts/{accountId}/members"
+    "path": "/api/v1/platform/organizations/{organizationId}/members"
   },
-  "platform/accounts/members/put": {
+  "platform/organizations/members/put": {
     "method": "PUT",
-    "path": "/api/v1/platform/accounts/{accountId}/members/{userId}"
+    "path": "/api/v1/platform/organizations/{organizationId}/members/{userId}"
   },
-  "platform/accounts/members/delete": {
+  "platform/organizations/members/delete": {
     "method": "DELETE",
-    "path": "/api/v1/platform/accounts/{accountId}/members/{userId}"
+    "path": "/api/v1/platform/organizations/{organizationId}/members/{userId}"
   },
-  "platform/accounts/applications/list": {
+  "platform/organizations/service-users/list": {
     "method": "GET",
-    "path": "/api/v1/platform/accounts/{accountId}/applications"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users"
   },
-  "platform/accounts/applications/create": {
+  "platform/organizations/service-users/create": {
     "method": "POST",
-    "path": "/api/v1/platform/accounts/{accountId}/applications"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users"
   },
-  "platform/accounts/applications/update": {
+  "platform/organizations/service-users/update": {
     "method": "PATCH",
-    "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}"
   },
-  "platform/accounts/applications/delete": {
+  "platform/organizations/service-users/delete": {
     "method": "DELETE",
-    "path": "/api/v1/platform/accounts/{accountId}/applications/{applicationId}"
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}"
   },
   "platform/universes/adopt": {
     "method": "POST",
-    "path": "/api/v1/platform/accounts/{accountId}/universes/adopt"
+    "path": "/api/v1/platform/organizations/{organizationId}/universes/adopt"
   },
   "platform/universes/create": {
     "method": "POST",
-    "path": "/api/v1/platform/accounts/{accountId}/universes"
+    "path": "/api/v1/platform/organizations/{organizationId}/universes"
   },
   "platform/universes/update": {
     "method": "PATCH",

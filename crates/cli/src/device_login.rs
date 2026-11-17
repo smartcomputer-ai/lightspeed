@@ -262,7 +262,9 @@ pub async fn login(args: LoginArgs, selected: Option<&str>, api_url: Option<&str
         credential_file: Some(file.clone()),
         owned_credential: true,
         server_kind: Some(ServerKind::Platform),
-        account_id: previous.as_ref().and_then(|saved| saved.account_id.clone()),
+        organization_id: previous
+            .as_ref()
+            .and_then(|saved| saved.organization_id.clone()),
         universe: previous.as_ref().and_then(|saved| saved.universe.clone()),
         allow_insecure_http,
         ..Default::default()
@@ -293,7 +295,7 @@ pub async fn login(args: LoginArgs, selected: Option<&str>, api_url: Option<&str
             credential_file: Some(file.clone()),
             owned_credential: true,
             server_kind: ServerKind::Platform,
-            account_id: verified.account_id,
+            organization_id: verified.organization_id,
             universe: verified.universe,
             allow_insecure_http,
         },

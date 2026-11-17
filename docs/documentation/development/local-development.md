@@ -169,8 +169,8 @@ variants, to supply them. Migrations and universe setup still run. Explicit
 `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private local
 access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
 
-The full and platform profiles start Configurator against Platform. Account
-Admins install its restricted application credential from a universe template.
+The full and platform profiles start Configurator against Platform. Organization
+Admins install its restricted service-user credential from a universe template.
 Channel connectors remain disabled; `LIGHTSPEED_CHANNELS_CONNECTORS` must be
 empty. The launcher never gives full-authority runtime tokens to an agent. Bots and Channels core remain inside
 the runtime.

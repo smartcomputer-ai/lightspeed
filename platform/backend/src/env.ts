@@ -39,10 +39,10 @@ export interface ServerEnv {
   devSeed?: boolean;
   browserSessionIdleDays?: number;
   browserSessionMaxDays?: number;
-  personalAccounts?: boolean;
-  allowSharedAccountCreation?: boolean;
-  personalAccountUniverseQuota?: number;
-  sharedAccountUniverseQuota?: number;
+  personalOrganizations?: boolean;
+  allowSharedOrganizationCreation?: boolean;
+  personalOrganizationUniverseQuota?: number;
+  sharedOrganizationUniverseQuota?: number;
   apiKeyDefaultExpiryDays?: number;
   apiKeyMaxExpiryDays?: number;
   github: { clientId: string; clientSecret: string } | null;
@@ -77,7 +77,7 @@ function required(name: string): string {
 
 export function loadEnv(): ServerEnv {
   if (booleanEnv("LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER", false)) {
-    throw new Error("Configurator trusted-header authentication is retired; install a restricted Platform application credential instead");
+    throw new Error("Configurator trusted-header authentication is retired; install a restricted Platform service user credential instead");
   }
   const token = process.env.LIGHTSPEED_PLATFORM_API_TOKEN;
   const tokenFile = process.env.LIGHTSPEED_PLATFORM_API_TOKEN_FILE;
@@ -117,10 +117,10 @@ export function loadEnv(): ServerEnv {
     devSeed: booleanEnv("LIGHTSPEED_PLATFORM_DEV_SEED", false),
     browserSessionIdleDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS", 30, 1, 365),
     browserSessionMaxDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS", 90, 1, 3650),
-    personalAccounts: booleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ACCOUNTS", true),
-    allowSharedAccountCreation: booleanEnv("LIGHTSPEED_PLATFORM_SHARED_ACCOUNT_CREATION", false),
-    personalAccountUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 25, 0, 1000000),
-    sharedAccountUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 100, 0, 1000000),
+    personalOrganizations: booleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS", true),
+    allowSharedOrganizationCreation: booleanEnv("LIGHTSPEED_PLATFORM_SHARED_ORGANIZATION_CREATION", false),
+    personalOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 25, 0, 1000000),
+    sharedOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 100, 0, 1000000),
     apiKeyDefaultExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS", 365, 1, 3650),
     apiKeyMaxExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 365, 1, 3650),
     github,

@@ -4,8 +4,8 @@ import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import type { AppContext } from "./context.js";
 import { deploymentClient } from "./runtime-client.js";
 
-/** Sync runtime metadata only for explicitly account-linked resources. Runtime
- * documents cannot create Platform accounts, memberships or Owner grants. */
+/** Sync runtime metadata only for explicitly organization-linked resources. Runtime
+ * documents cannot create Platform organizations, memberships or Owner grants. */
 export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted: number; updated: number }> {
   if (!ctx.env.lightspeedApiUrl || !ctx.env.lightspeedApiToken) return { adopted: 0, updated: 0 };
   return ctx.db.transaction(async tx => {

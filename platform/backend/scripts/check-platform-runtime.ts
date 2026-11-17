@@ -46,13 +46,13 @@ const operator = await login(process.env.LIGHTSPEED_PLATFORM_LIVE_USER_EMAIL ?? 
 const browserClient = (cookie: string) => new LightspeedClient({ endpoint: origin, headers: { cookie, origin } });
 const adminApi = browserClient(admin.cookie);
 const operatorApi = browserClient(operator.cookie);
-const account = (await adminApi.platform.createAccount({ name: prefix, slug: prefix, initialAdminUserId: admin.id, defaultProtected: false })).account;
-await adminApi.platform.putAccountMember({ accountId: account.id, userId: operator.id, role: "creator" });
-const writer = await operatorApi.platform.createPersonalApiKey({ name: `${prefix}-writer`, restrictions: { accountIds: [account.id] } });
+const organization = (await adminApi.platform.createOrganization({ name: prefix, slug: prefix, initialAdminUserId: admin.id, defaultProtected: false })).organization;
+await adminApi.platform.putOrganizationMember({ organizationId: organization.id, userId: operator.id, role: "creator" });
+const writer = await operatorApi.platform.createPersonalApiKey({ name: `${prefix}-writer`, restrictions: { organizationIds: [organization.id] } });
 const writerApi = new LightspeedClient({ endpoint: origin, token: writer.secret });
 const created = [];
 for (const suffix of ["a", "b"]) {
-  const universe = (await writerApi.platform.createUniverse({ accountId: account.id, name: `${prefix}-${suffix}`, handle: `${prefix}-${suffix}`, protected: false })).universe;
+  const universe = (await writerApi.platform.createUniverse({ organizationId: organization.id, name: `${prefix}-${suffix}`, handle: `${prefix}-${suffix}`, protected: false })).universe;
   created.push(universe);
   assert.equal(universe.role, "owner");
   await adminApi.platform.putUniverseGrant({ universe: universe.id, principal: { kind: "user", id: admin.id }, role: "owner" });
@@ -79,7 +79,7 @@ for (let attempt = 0; attempt < 2; attempt += 1) {
 const discovered = await adminRuntime.call("mcp/servers/tools/discover", { serverId: "configurator" });
 assert.equal(discovered.status, "success", "the rotated managed credential must authenticate actual MCP discovery");
 if (discovered.status === "success") assert(discovered.tools.some(tool => tool.name === "lightspeed_profiles_list"));
-const readOnly = await operatorApi.platform.createPersonalApiKey({ name: `${prefix}-sdk`, restrictions: { readOnly: true, accountIds: [account.id], universeIds: [a.lightspeedUniverseId] } });
+const readOnly = await operatorApi.platform.createPersonalApiKey({ name: `${prefix}-sdk`, restrictions: { readOnly: true, organizationIds: [organization.id], universeIds: [a.lightspeedUniverseId] } });
 const scoped = new LightspeedClient({ endpoint: origin, token: readOnly.secret, universe: a.lightspeedUniverseId });
 assert.equal((await scoped.initialize()).runtime, "platform");
 await scoped.listProfiles({});
@@ -115,27 +115,27 @@ await adminApi.platform.revokePersonalApiKey({ keyId: scopedAdmin.credential.id 
 await adminApi.platform.putUniverseGrant({ universe: a.id, principal: { kind: "user", id: operator.id }, role: "viewer" });
 await expectStatus(await request(`/api/v1/universes/${a.lightspeedUniverseId}/profiles/forbidden`, { token: writer.secret, method: "PUT", body: {} }), 403);
 await adminApi.platform.putUniverseGrant({ universe: a.id, principal: { kind: "user", id: operator.id }, role: "owner" });
-await adminApi.platform.removeAccountMember({ accountId: account.id, userId: operator.id });
+await adminApi.platform.removeOrganizationMember({ organizationId: organization.id, userId: operator.id });
 await expectStatus(await request(`/api/v1/universes/${a.lightspeedUniverseId}/profiles`, { token: writer.secret }), 404);
-await adminApi.platform.putAccountMember({ accountId: account.id, userId: operator.id, role: "creator" });
+await adminApi.platform.putOrganizationMember({ organizationId: organization.id, userId: operator.id, role: "creator" });
 
-// Application creation authority is account-bound and stops when disabled.
-const application = (await adminApi.platform.createApplication({ accountId: account.id, name: `${prefix}-app`, role: "creator" })).application;
-const appKey = await adminApi.platform.createApplicationApiKey({ accountId: account.id, applicationId: application.id, name: "live application", restrictions: {} });
-const appApi = new LightspeedClient({ endpoint: origin, token: appKey.secret });
-const appUniverse = (await appApi.platform.createUniverse({ accountId: account.id, name: `${prefix}-app`, handle: `${prefix}-app`, protected: false })).universe;
-assert.equal(appUniverse.role, "owner");
-assert.equal(appUniverse.createdBy, `application:${application.id}`);
-const otherAccount = (await adminApi.platform.createAccount({ name: `${prefix}-other`, slug: `${prefix}-other`, initialAdminUserId: admin.id })).account;
-await expectStatus(await request(`/api/v1/platform/accounts/${otherAccount.id}`, { token: appKey.secret }), 403);
+// ServiceUser creation authority is organization-bound and stops when disabled.
+const serviceUser = (await adminApi.platform.createServiceUser({ organizationId: organization.id, name: `${prefix}-app`, role: "creator" })).serviceUser;
+const serviceUserKey = await adminApi.platform.createServiceUserApiKey({ organizationId: organization.id, serviceUserId: serviceUser.id, name: "live service user", restrictions: {} });
+const serviceUserApi = new LightspeedClient({ endpoint: origin, token: serviceUserKey.secret });
+const serviceUserUniverse = (await serviceUserApi.platform.createUniverse({ organizationId: organization.id, name: `${prefix}-app`, handle: `${prefix}-app`, protected: false })).universe;
+assert.equal(serviceUserUniverse.role, "owner");
+assert.equal(serviceUserUniverse.createdBy, `serviceUser:${serviceUser.id}`);
+const otherOrganization = (await adminApi.platform.createOrganization({ name: `${prefix}-other`, slug: `${prefix}-other`, initialAdminUserId: admin.id })).organization;
+await expectStatus(await request(`/api/v1/platform/organizations/${otherOrganization.id}`, { token: serviceUserKey.secret }), 403);
 
-await expectStatus(await request(`/api/v1/universes/${a.lightspeedUniverseId}/profiles`, { token: appKey.secret }), 404);
-await adminApi.platform.disableApplication({ accountId: account.id, applicationId: application.id });
-await expectStatus(await request("/api/v1/connection", { token: appKey.secret }), 401);
+await expectStatus(await request(`/api/v1/universes/${a.lightspeedUniverseId}/profiles`, { token: serviceUserKey.secret }), 404);
+await adminApi.platform.disableServiceUser({ organizationId: organization.id, serviceUserId: serviceUser.id });
+await expectStatus(await request("/api/v1/connection", { token: serviceUserKey.secret }), 401);
 
 function cli(args: string[], input?: string, onOutput?: (output: string) => void, expectedExit = 0): Promise<string> {
   const env: NodeJS.ProcessEnv = { ...process.env, LIGHTSPEED_CONFIG_DIR: configDir };
-  for (const key of Object.keys(env)) if (key.startsWith("LIGHTSPEED_API_") || key === "LIGHTSPEED_UNIVERSE" || key === "LIGHTSPEED_ACCOUNT") delete env[key];
+  for (const key of Object.keys(env)) if (key.startsWith("LIGHTSPEED_API_") || key === "LIGHTSPEED_UNIVERSE" || key === "LIGHTSPEED_ORGANIZATION") delete env[key];
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { env, stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
@@ -171,7 +171,7 @@ if (process.env.LIGHTSPEED_PLATFORM_LIVE_MODEL_CONNECTION === "true") {
 }
 await cli(["connect", "add", "sdk-key", "--url", origin, "--token-stdin"], readOnly.secret);
 for (const name of connections) {
-  await cli(["--connection", name, "platform", "account", "use", account.id]);
+  await cli(["--connection", name, "platform", "organization", "use", organization.id]);
   await cli(["--connection", name, "universe", "use", a.lightspeedUniverseId]);
   const discovery = JSON.parse(await cli(["--connection", name, "api", "initialize"]));
   assert.equal(discovery.runtime, "platform");
@@ -188,7 +188,7 @@ await writeFile(path.join(configDir, "other-universe.txt"), b.lightspeedUniverse
 // them. All other issued keys are revoked here, including the disabled app key.
 await operatorApi.platform.revokePersonalApiKey({ keyId: writer.credential.id });
 await expectStatus(await request("/api/v1/connection", { token: writer.secret }), 401);
-await adminApi.platform.revokeApplicationApiKey({ accountId: account.id, applicationId: application.id, keyId: appKey.credential.id });
+await adminApi.platform.revokeServiceUserApiKey({ organizationId: organization.id, serviceUserId: serviceUser.id, keyId: serviceUserKey.credential.id });
 const saved = JSON.parse(await readFile(path.join(configDir, "connections.json"), "utf8"));
 assert.equal(saved.connections["sdk-session"].credentialKind, "platformSession");
 assert.equal(saved.connections["sdk-key"].credentialKind, "platformApiKey");

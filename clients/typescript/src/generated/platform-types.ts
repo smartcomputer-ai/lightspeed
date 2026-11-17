@@ -7,7 +7,7 @@ export interface PlatformApi {}
  */
 export interface PlatformConnectionDetails {
   principal: {
-    kind: "user" | "application";
+    kind: "user" | "serviceUser";
     id: string;
     name: string;
     /**
@@ -16,10 +16,10 @@ export interface PlatformConnectionDetails {
     platformAdmin: boolean;
   };
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "applicationKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
     id: string;
   };
-  accounts: {
+  organizations: {
     id: string;
     name: string;
     role: "member" | "creator" | "admin";
@@ -28,7 +28,7 @@ export interface PlatformConnectionDetails {
     /**
      * @maxItems 1000
      */
-    accountIds?: string[];
+    organizationIds?: string[];
     /**
      * @maxItems 1000
      */
@@ -52,13 +52,13 @@ export interface PlatformSessionReadParams {}
  */
 export interface PlatformSessionReadResult {
   principal: {
-    kind: "user" | "application";
+    kind: "user" | "serviceUser";
     id: string;
     name: string;
     email: string | null;
   };
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "applicationKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
     id: string;
   };
   session: {
@@ -102,7 +102,7 @@ export interface PlatformCredentialsListResult {
       /**
        * @maxItems 1000
        */
-      accountIds?: string[];
+      organizationIds?: string[];
       /**
        * @maxItems 1000
        */
@@ -127,7 +127,7 @@ export interface PlatformCredentialsCreateParams {
     /**
      * @maxItems 1000
      */
-    accountIds?: string[];
+    organizationIds?: string[];
     /**
      * @maxItems 1000
      */
@@ -158,7 +158,7 @@ export interface PlatformCredentialsCreateResult {
       /**
        * @maxItems 1000
        */
-      accountIds?: string[];
+      organizationIds?: string[];
       /**
        * @maxItems 1000
        */
@@ -189,17 +189,17 @@ export interface PlatformCredentialsRevokeResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformApplicationsCredentialsListParams".
+ * via the `definition` "PlatformServiceUsersCredentialsListParams".
  */
-export interface PlatformApplicationsCredentialsListParams {
-  accountId: string;
-  applicationId: string;
+export interface PlatformServiceUsersCredentialsListParams {
+  organizationId: string;
+  serviceUserId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformApplicationsCredentialsListResult".
+ * via the `definition` "PlatformServiceUsersCredentialsListResult".
  */
-export interface PlatformApplicationsCredentialsListResult {
+export interface PlatformServiceUsersCredentialsListResult {
   credentials: {
     id: string;
     name: string;
@@ -213,7 +213,7 @@ export interface PlatformApplicationsCredentialsListResult {
       /**
        * @maxItems 1000
        */
-      accountIds?: string[];
+      organizationIds?: string[];
       /**
        * @maxItems 1000
        */
@@ -229,16 +229,16 @@ export interface PlatformApplicationsCredentialsListResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformApplicationsCredentialsCreateParams".
+ * via the `definition` "PlatformServiceUsersCredentialsCreateParams".
  */
-export interface PlatformApplicationsCredentialsCreateParams {
+export interface PlatformServiceUsersCredentialsCreateParams {
   name: string;
   expiresInDays?: number;
   restrictions?: {
     /**
      * @maxItems 1000
      */
-    accountIds?: string[];
+    organizationIds?: string[];
     /**
      * @maxItems 1000
      */
@@ -250,14 +250,14 @@ export interface PlatformApplicationsCredentialsCreateParams {
     readOnly?: boolean;
     allowUniverseCreation?: boolean;
   };
-  accountId: string;
-  applicationId: string;
+  organizationId: string;
+  serviceUserId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformApplicationsCredentialsCreateResult".
+ * via the `definition` "PlatformServiceUsersCredentialsCreateResult".
  */
-export interface PlatformApplicationsCredentialsCreateResult {
+export interface PlatformServiceUsersCredentialsCreateResult {
   credential: {
     id: string;
     name: string;
@@ -271,7 +271,7 @@ export interface PlatformApplicationsCredentialsCreateResult {
       /**
        * @maxItems 1000
        */
-      accountIds?: string[];
+      organizationIds?: string[];
       /**
        * @maxItems 1000
        */
@@ -288,31 +288,31 @@ export interface PlatformApplicationsCredentialsCreateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformApplicationsCredentialsRevokeParams".
+ * via the `definition` "PlatformServiceUsersCredentialsRevokeParams".
  */
-export interface PlatformApplicationsCredentialsRevokeParams {
-  accountId: string;
-  applicationId: string;
+export interface PlatformServiceUsersCredentialsRevokeParams {
+  organizationId: string;
+  serviceUserId: string;
   keyId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformApplicationsCredentialsRevokeResult".
+ * via the `definition` "PlatformServiceUsersCredentialsRevokeResult".
  */
-export interface PlatformApplicationsCredentialsRevokeResult {
+export interface PlatformServiceUsersCredentialsRevokeResult {
   revoked: true;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsListParams".
+ * via the `definition` "PlatformOrganizationsListParams".
  */
-export interface PlatformAccountsListParams {}
+export interface PlatformOrganizationsListParams {}
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsListResult".
+ * via the `definition` "PlatformOrganizationsListResult".
  */
-export interface PlatformAccountsListResult {
-  accounts: {
+export interface PlatformOrganizationsListResult {
+  organizations: {
     id: string;
     name: string;
     slug: string;
@@ -352,9 +352,9 @@ export interface PlatformAccountsListResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsCreateParams".
+ * via the `definition` "PlatformOrganizationsCreateParams".
  */
-export interface PlatformAccountsCreateParams {
+export interface PlatformOrganizationsCreateParams {
   name: string;
   slug: string;
   kind?: "shared" | "development";
@@ -365,10 +365,10 @@ export interface PlatformAccountsCreateParams {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsCreateResult".
+ * via the `definition` "PlatformOrganizationsCreateResult".
  */
-export interface PlatformAccountsCreateResult {
-  account: {
+export interface PlatformOrganizationsCreateResult {
+  organization: {
     id: string;
     name: string;
     slug: string;
@@ -407,17 +407,17 @@ export interface PlatformAccountsCreateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsReadParams".
+ * via the `definition` "PlatformOrganizationsReadParams".
  */
-export interface PlatformAccountsReadParams {
-  accountId: string;
+export interface PlatformOrganizationsReadParams {
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsReadResult".
+ * via the `definition` "PlatformOrganizationsReadResult".
  */
-export interface PlatformAccountsReadResult {
-  account: {
+export interface PlatformOrganizationsReadResult {
+  organization: {
     id: string;
     name: string;
     slug: string;
@@ -456,9 +456,9 @@ export interface PlatformAccountsReadResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsUpdateParams".
+ * via the `definition` "PlatformOrganizationsUpdateParams".
  */
-export interface PlatformAccountsUpdateParams {
+export interface PlatformOrganizationsUpdateParams {
   name?: string;
   enabled?: boolean;
   universeQuota?: number;
@@ -488,14 +488,14 @@ export interface PlatformAccountsUpdateParams {
       role: "member" | "creator" | "admin";
     }[];
   };
-  accountId: string;
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsUpdateResult".
+ * via the `definition` "PlatformOrganizationsUpdateResult".
  */
-export interface PlatformAccountsUpdateResult {
-  account: {
+export interface PlatformOrganizationsUpdateResult {
+  organization: {
     id: string;
     name: string;
     slug: string;
@@ -534,16 +534,16 @@ export interface PlatformAccountsUpdateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsMembersListParams".
+ * via the `definition` "PlatformOrganizationsMembersListParams".
  */
-export interface PlatformAccountsMembersListParams {
-  accountId: string;
+export interface PlatformOrganizationsMembersListParams {
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsMembersListResult".
+ * via the `definition` "PlatformOrganizationsMembersListResult".
  */
-export interface PlatformAccountsMembersListResult {
+export interface PlatformOrganizationsMembersListResult {
   members: {
     id: string;
     userId: string;
@@ -555,18 +555,18 @@ export interface PlatformAccountsMembersListResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsMembersPutParams".
+ * via the `definition` "PlatformOrganizationsMembersPutParams".
  */
-export interface PlatformAccountsMembersPutParams {
+export interface PlatformOrganizationsMembersPutParams {
   userId: string;
   role?: "member" | "creator" | "admin";
-  accountId: string;
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsMembersPutResult".
+ * via the `definition` "PlatformOrganizationsMembersPutResult".
  */
-export interface PlatformAccountsMembersPutResult {
+export interface PlatformOrganizationsMembersPutResult {
   member: {
     id: string;
     userId: string;
@@ -578,34 +578,34 @@ export interface PlatformAccountsMembersPutResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsMembersDeleteParams".
+ * via the `definition` "PlatformOrganizationsMembersDeleteParams".
  */
-export interface PlatformAccountsMembersDeleteParams {
-  accountId: string;
+export interface PlatformOrganizationsMembersDeleteParams {
+  organizationId: string;
   userId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsMembersDeleteResult".
+ * via the `definition` "PlatformOrganizationsMembersDeleteResult".
  */
-export interface PlatformAccountsMembersDeleteResult {
+export interface PlatformOrganizationsMembersDeleteResult {
   ok: true;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsListParams".
+ * via the `definition` "PlatformOrganizationsServiceUsersListParams".
  */
-export interface PlatformAccountsApplicationsListParams {
-  accountId: string;
+export interface PlatformOrganizationsServiceUsersListParams {
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsListResult".
+ * via the `definition` "PlatformOrganizationsServiceUsersListResult".
  */
-export interface PlatformAccountsApplicationsListResult {
-  applications: {
+export interface PlatformOrganizationsServiceUsersListResult {
+  serviceUsers: {
     id: string;
-    accountId: string;
+    organizationId: string;
     name: string;
     enabled: boolean;
     role: "member" | "creator" | "admin";
@@ -614,21 +614,21 @@ export interface PlatformAccountsApplicationsListResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsCreateParams".
+ * via the `definition` "PlatformOrganizationsServiceUsersCreateParams".
  */
-export interface PlatformAccountsApplicationsCreateParams {
+export interface PlatformOrganizationsServiceUsersCreateParams {
   name: string;
   role?: "member" | "creator" | "admin";
-  accountId: string;
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsCreateResult".
+ * via the `definition` "PlatformOrganizationsServiceUsersCreateResult".
  */
-export interface PlatformAccountsApplicationsCreateResult {
-  application: {
+export interface PlatformOrganizationsServiceUsersCreateResult {
+  serviceUser: {
     id: string;
-    accountId: string;
+    organizationId: string;
     name: string;
     enabled: boolean;
     role: "member" | "creator" | "admin";
@@ -637,23 +637,23 @@ export interface PlatformAccountsApplicationsCreateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsUpdateParams".
+ * via the `definition` "PlatformOrganizationsServiceUsersUpdateParams".
  */
-export interface PlatformAccountsApplicationsUpdateParams {
+export interface PlatformOrganizationsServiceUsersUpdateParams {
   name?: string;
   enabled?: boolean;
   role?: "member" | "creator" | "admin";
-  accountId: string;
-  applicationId: string;
+  organizationId: string;
+  serviceUserId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsUpdateResult".
+ * via the `definition` "PlatformOrganizationsServiceUsersUpdateResult".
  */
-export interface PlatformAccountsApplicationsUpdateResult {
-  application: {
+export interface PlatformOrganizationsServiceUsersUpdateResult {
+  serviceUser: {
     id: string;
-    accountId: string;
+    organizationId: string;
     name: string;
     enabled: boolean;
     role: "member" | "creator" | "admin";
@@ -662,17 +662,17 @@ export interface PlatformAccountsApplicationsUpdateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsDeleteParams".
+ * via the `definition` "PlatformOrganizationsServiceUsersDeleteParams".
  */
-export interface PlatformAccountsApplicationsDeleteParams {
-  accountId: string;
-  applicationId: string;
+export interface PlatformOrganizationsServiceUsersDeleteParams {
+  organizationId: string;
+  serviceUserId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformAccountsApplicationsDeleteResult".
+ * via the `definition` "PlatformOrganizationsServiceUsersDeleteResult".
  */
-export interface PlatformAccountsApplicationsDeleteResult {
+export interface PlatformOrganizationsServiceUsersDeleteResult {
   ok: true;
 }
 /**
@@ -683,10 +683,10 @@ export interface PlatformUniversesAdoptParams {
   lightspeedUniverseId: string;
   name: string;
   initialOwner: {
-    kind: "user" | "application";
+    kind: "user" | "serviceUser";
     id: string;
   };
-  accountId: string;
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
@@ -695,12 +695,12 @@ export interface PlatformUniversesAdoptParams {
 export interface PlatformUniversesAdoptResult {
   universe: {
     id: string;
-    accountId: string;
+    organizationId: string;
     lightspeedUniverseId: string;
     name: string;
     handle: string;
     role: "viewer" | "contributor" | "operator" | "owner";
-    accountRole: ("member" | "creator" | "admin") | null;
+    organizationRole: ("member" | "creator" | "admin") | null;
     status: "provisioning" | "active" | "archived" | "deleting";
     protected: boolean;
     expiresAtMs: number | null;
@@ -726,7 +726,7 @@ export interface PlatformUniversesCreateParams {
   name: string;
   handle?: string;
   initialOwner?: {
-    kind: "user" | "application";
+    kind: "user" | "serviceUser";
     id: string;
   };
   metadata?: {
@@ -734,7 +734,7 @@ export interface PlatformUniversesCreateParams {
   };
   protected?: boolean;
   expiresAtMs?: number | null;
-  accountId: string;
+  organizationId: string;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
@@ -743,12 +743,12 @@ export interface PlatformUniversesCreateParams {
 export interface PlatformUniversesCreateResult {
   universe: {
     id: string;
-    accountId: string;
+    organizationId: string;
     lightspeedUniverseId: string;
     name: string;
     handle: string;
     role: "viewer" | "contributor" | "operator" | "owner";
-    accountRole: ("member" | "creator" | "admin") | null;
+    organizationRole: ("member" | "creator" | "admin") | null;
     status: "provisioning" | "active" | "archived" | "deleting";
     protected: boolean;
     expiresAtMs: number | null;
@@ -786,12 +786,12 @@ export interface PlatformUniversesUpdateParams {
 export interface PlatformUniversesUpdateResult {
   universe: {
     id: string;
-    accountId: string;
+    organizationId: string;
     lightspeedUniverseId: string;
     name: string;
     handle: string;
     role: "viewer" | "contributor" | "operator" | "owner";
-    accountRole: ("member" | "creator" | "admin") | null;
+    organizationRole: ("member" | "creator" | "admin") | null;
     status: "provisioning" | "active" | "archived" | "deleting";
     protected: boolean;
     expiresAtMs: number | null;
@@ -824,7 +824,7 @@ export interface PlatformUniversesGrantsListResult {
     id: string;
     universeId: string;
     principal: {
-      kind: "user" | "application";
+      kind: "user" | "serviceUser";
       id: string;
     };
     role: "viewer" | "contributor" | "operator" | "owner";
@@ -838,7 +838,7 @@ export interface PlatformUniversesGrantsListResult {
  */
 export interface PlatformUniversesGrantsPutParams {
   principal: {
-    kind: "user" | "application";
+    kind: "user" | "serviceUser";
     id: string;
   };
   role: "viewer" | "contributor" | "operator" | "owner";
@@ -853,7 +853,7 @@ export interface PlatformUniversesGrantsPutResult {
     id: string;
     universeId: string;
     principal: {
-      kind: "user" | "application";
+      kind: "user" | "serviceUser";
       id: string;
     };
     role: "viewer" | "contributor" | "operator" | "owner";

@@ -11,7 +11,7 @@ This recipe initially stores small blobs in PostgreSQL. The current inline
 limit is 64 KiB per blob; larger writes require S3-compatible object storage.
 Use the small-text verification below, then configure object storage before
 using larger files, attachments, or payloads. Execution environments can be added afterward. The channel connector host remains disabled. Configurator is an optional
-service targeting the Platform API with restricted application credentials;
+service targeting the Platform API with restricted service-user credentials;
 see [Configurator MCP](../integrating-and-extending/configurator-mcp.md).
 
 ## Prepare the infrastructure
@@ -405,7 +405,7 @@ and [Troubleshooting](troubleshooting.md) for a failing request path.
 procedure and the complete recovery inventory, including optional connector
 and machine state.
 
-[Access and security](../access-and-security/overview.md) covers accounts, roles,
+[Access and security](../access-and-security/overview.md) covers organizations, roles,
 runtime tokens, and isolation; [Managing universes](multi-tenancy.md) explains
 universe reconciliation and retirement. [Configuration](configuration.md)
 explains deployment choices, with exact settings in the

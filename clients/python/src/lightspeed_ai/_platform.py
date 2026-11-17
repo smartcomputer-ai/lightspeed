@@ -20,53 +20,53 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/credentials/revoke': {'method': 'DELETE',
                                  'path': '/api/v1/platform/credentials/{keyId}',
                                  'helper': {'name': 'revokePersonalApiKey'}},
- 'platform/applications/credentials/list': {'method': 'GET',
-                                            'path': '/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials',
-                                            'helper': {'name': 'listApplicationApiKeys'}},
- 'platform/applications/credentials/create': {'method': 'POST',
-                                              'path': '/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials',
-                                              'helper': {'name': 'createApplicationApiKey'}},
- 'platform/applications/credentials/revoke': {'method': 'DELETE',
-                                              'path': '/api/v1/platform/accounts/{accountId}/applications/{applicationId}/credentials/{keyId}',
-                                              'helper': {'name': 'revokeApplicationApiKey'}},
- 'platform/accounts/list': {'method': 'GET',
-                            'path': '/api/v1/platform/accounts',
-                            'helper': {'name': 'listAccounts'}},
- 'platform/accounts/create': {'method': 'POST',
-                              'path': '/api/v1/platform/accounts',
-                              'helper': {'name': 'createAccount'}},
- 'platform/accounts/read': {'method': 'GET',
-                            'path': '/api/v1/platform/accounts/{accountId}',
-                            'helper': {'name': 'readAccount'}},
- 'platform/accounts/update': {'method': 'PATCH',
-                              'path': '/api/v1/platform/accounts/{accountId}',
-                              'helper': {'name': 'updateAccount'}},
- 'platform/accounts/members/list': {'method': 'GET',
-                                    'path': '/api/v1/platform/accounts/{accountId}/members',
-                                    'helper': {'name': 'listAccountMembers'}},
- 'platform/accounts/members/put': {'method': 'PUT',
-                                   'path': '/api/v1/platform/accounts/{accountId}/members/{userId}',
-                                   'helper': {'name': 'putAccountMember'}},
- 'platform/accounts/members/delete': {'method': 'DELETE',
-                                      'path': '/api/v1/platform/accounts/{accountId}/members/{userId}',
-                                      'helper': {'name': 'removeAccountMember'}},
- 'platform/accounts/applications/list': {'method': 'GET',
-                                         'path': '/api/v1/platform/accounts/{accountId}/applications',
-                                         'helper': {'name': 'listApplications'}},
- 'platform/accounts/applications/create': {'method': 'POST',
-                                           'path': '/api/v1/platform/accounts/{accountId}/applications',
-                                           'helper': {'name': 'createApplication'}},
- 'platform/accounts/applications/update': {'method': 'PATCH',
-                                           'path': '/api/v1/platform/accounts/{accountId}/applications/{applicationId}',
-                                           'helper': {'name': 'updateApplication'}},
- 'platform/accounts/applications/delete': {'method': 'DELETE',
-                                           'path': '/api/v1/platform/accounts/{accountId}/applications/{applicationId}',
-                                           'helper': {'name': 'disableApplication'}},
+ 'platform/service-users/credentials/list': {'method': 'GET',
+                                             'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials',
+                                             'helper': {'name': 'listServiceUserApiKeys'}},
+ 'platform/service-users/credentials/create': {'method': 'POST',
+                                               'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials',
+                                               'helper': {'name': 'createServiceUserApiKey'}},
+ 'platform/service-users/credentials/revoke': {'method': 'DELETE',
+                                               'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}',
+                                               'helper': {'name': 'revokeServiceUserApiKey'}},
+ 'platform/organizations/list': {'method': 'GET',
+                                 'path': '/api/v1/platform/organizations',
+                                 'helper': {'name': 'listOrganizations'}},
+ 'platform/organizations/create': {'method': 'POST',
+                                   'path': '/api/v1/platform/organizations',
+                                   'helper': {'name': 'createOrganization'}},
+ 'platform/organizations/read': {'method': 'GET',
+                                 'path': '/api/v1/platform/organizations/{organizationId}',
+                                 'helper': {'name': 'readOrganization'}},
+ 'platform/organizations/update': {'method': 'PATCH',
+                                   'path': '/api/v1/platform/organizations/{organizationId}',
+                                   'helper': {'name': 'updateOrganization'}},
+ 'platform/organizations/members/list': {'method': 'GET',
+                                         'path': '/api/v1/platform/organizations/{organizationId}/members',
+                                         'helper': {'name': 'listOrganizationMembers'}},
+ 'platform/organizations/members/put': {'method': 'PUT',
+                                        'path': '/api/v1/platform/organizations/{organizationId}/members/{userId}',
+                                        'helper': {'name': 'putOrganizationMember'}},
+ 'platform/organizations/members/delete': {'method': 'DELETE',
+                                           'path': '/api/v1/platform/organizations/{organizationId}/members/{userId}',
+                                           'helper': {'name': 'removeOrganizationMember'}},
+ 'platform/organizations/service-users/list': {'method': 'GET',
+                                               'path': '/api/v1/platform/organizations/{organizationId}/service-users',
+                                               'helper': {'name': 'listServiceUsers'}},
+ 'platform/organizations/service-users/create': {'method': 'POST',
+                                                 'path': '/api/v1/platform/organizations/{organizationId}/service-users',
+                                                 'helper': {'name': 'createServiceUser'}},
+ 'platform/organizations/service-users/update': {'method': 'PATCH',
+                                                 'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}',
+                                                 'helper': {'name': 'updateServiceUser'}},
+ 'platform/organizations/service-users/delete': {'method': 'DELETE',
+                                                 'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}',
+                                                 'helper': {'name': 'disableServiceUser'}},
  'platform/universes/adopt': {'method': 'POST',
-                              'path': '/api/v1/platform/accounts/{accountId}/universes/adopt',
+                              'path': '/api/v1/platform/organizations/{organizationId}/universes/adopt',
                               'helper': {'name': 'adoptUniverse'}},
  'platform/universes/create': {'method': 'POST',
-                               'path': '/api/v1/platform/accounts/{accountId}/universes',
+                               'path': '/api/v1/platform/organizations/{organizationId}/universes',
                                'helper': {'name': 'createUniverse'}},
  'platform/universes/update': {'method': 'PATCH',
                                'path': '/api/v1/platform/universes/{universe}',
@@ -107,47 +107,47 @@ class PlatformApi:
     async def revoke_personal_api_key(self, params: Api.PlatformCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformCredentialsRevokeResult:
         return cast(Api.PlatformCredentialsRevokeResult, await self._invoke('platform/credentials/revoke', dict(params or {}), headers))
 
-    async def list_application_api_keys(self, params: Api.PlatformApplicationsCredentialsListParams, *, headers: HeadersInput | None = None) -> Api.PlatformApplicationsCredentialsListResult:
-        return cast(Api.PlatformApplicationsCredentialsListResult, await self._invoke('platform/applications/credentials/list', dict(params or {}), headers))
+    async def list_service_user_api_keys(self, params: Api.PlatformServiceUsersCredentialsListParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsListResult:
+        return cast(Api.PlatformServiceUsersCredentialsListResult, await self._invoke('platform/service-users/credentials/list', dict(params or {}), headers))
 
-    async def create_application_api_key(self, params: Api.PlatformApplicationsCredentialsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformApplicationsCredentialsCreateResult:
-        return cast(Api.PlatformApplicationsCredentialsCreateResult, await self._invoke('platform/applications/credentials/create', dict(params or {}), headers))
+    async def create_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsCreateResult:
+        return cast(Api.PlatformServiceUsersCredentialsCreateResult, await self._invoke('platform/service-users/credentials/create', dict(params or {}), headers))
 
-    async def revoke_application_api_key(self, params: Api.PlatformApplicationsCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformApplicationsCredentialsRevokeResult:
-        return cast(Api.PlatformApplicationsCredentialsRevokeResult, await self._invoke('platform/applications/credentials/revoke', dict(params or {}), headers))
+    async def revoke_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsRevokeResult:
+        return cast(Api.PlatformServiceUsersCredentialsRevokeResult, await self._invoke('platform/service-users/credentials/revoke', dict(params or {}), headers))
 
-    async def list_accounts(self, params: Api.PlatformAccountsListParams | None = None, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsListResult:
-        return cast(Api.PlatformAccountsListResult, await self._invoke('platform/accounts/list', dict(params or {}), headers))
+    async def list_organizations(self, params: Api.PlatformOrganizationsListParams | None = None, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsListResult:
+        return cast(Api.PlatformOrganizationsListResult, await self._invoke('platform/organizations/list', dict(params or {}), headers))
 
-    async def create_account(self, params: Api.PlatformAccountsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsCreateResult:
-        return cast(Api.PlatformAccountsCreateResult, await self._invoke('platform/accounts/create', dict(params or {}), headers))
+    async def create_organization(self, params: Api.PlatformOrganizationsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsCreateResult:
+        return cast(Api.PlatformOrganizationsCreateResult, await self._invoke('platform/organizations/create', dict(params or {}), headers))
 
-    async def read_account(self, params: Api.PlatformAccountsReadParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsReadResult:
-        return cast(Api.PlatformAccountsReadResult, await self._invoke('platform/accounts/read', dict(params or {}), headers))
+    async def read_organization(self, params: Api.PlatformOrganizationsReadParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsReadResult:
+        return cast(Api.PlatformOrganizationsReadResult, await self._invoke('platform/organizations/read', dict(params or {}), headers))
 
-    async def update_account(self, params: Api.PlatformAccountsUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsUpdateResult:
-        return cast(Api.PlatformAccountsUpdateResult, await self._invoke('platform/accounts/update', dict(params or {}), headers))
+    async def update_organization(self, params: Api.PlatformOrganizationsUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsUpdateResult:
+        return cast(Api.PlatformOrganizationsUpdateResult, await self._invoke('platform/organizations/update', dict(params or {}), headers))
 
-    async def list_account_members(self, params: Api.PlatformAccountsMembersListParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsMembersListResult:
-        return cast(Api.PlatformAccountsMembersListResult, await self._invoke('platform/accounts/members/list', dict(params or {}), headers))
+    async def list_organization_members(self, params: Api.PlatformOrganizationsMembersListParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsMembersListResult:
+        return cast(Api.PlatformOrganizationsMembersListResult, await self._invoke('platform/organizations/members/list', dict(params or {}), headers))
 
-    async def put_account_member(self, params: Api.PlatformAccountsMembersPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsMembersPutResult:
-        return cast(Api.PlatformAccountsMembersPutResult, await self._invoke('platform/accounts/members/put', dict(params or {}), headers))
+    async def put_organization_member(self, params: Api.PlatformOrganizationsMembersPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsMembersPutResult:
+        return cast(Api.PlatformOrganizationsMembersPutResult, await self._invoke('platform/organizations/members/put', dict(params or {}), headers))
 
-    async def remove_account_member(self, params: Api.PlatformAccountsMembersDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsMembersDeleteResult:
-        return cast(Api.PlatformAccountsMembersDeleteResult, await self._invoke('platform/accounts/members/delete', dict(params or {}), headers))
+    async def remove_organization_member(self, params: Api.PlatformOrganizationsMembersDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsMembersDeleteResult:
+        return cast(Api.PlatformOrganizationsMembersDeleteResult, await self._invoke('platform/organizations/members/delete', dict(params or {}), headers))
 
-    async def list_applications(self, params: Api.PlatformAccountsApplicationsListParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsApplicationsListResult:
-        return cast(Api.PlatformAccountsApplicationsListResult, await self._invoke('platform/accounts/applications/list', dict(params or {}), headers))
+    async def list_service_users(self, params: Api.PlatformOrganizationsServiceUsersListParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersListResult:
+        return cast(Api.PlatformOrganizationsServiceUsersListResult, await self._invoke('platform/organizations/service-users/list', dict(params or {}), headers))
 
-    async def create_application(self, params: Api.PlatformAccountsApplicationsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsApplicationsCreateResult:
-        return cast(Api.PlatformAccountsApplicationsCreateResult, await self._invoke('platform/accounts/applications/create', dict(params or {}), headers))
+    async def create_service_user(self, params: Api.PlatformOrganizationsServiceUsersCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersCreateResult:
+        return cast(Api.PlatformOrganizationsServiceUsersCreateResult, await self._invoke('platform/organizations/service-users/create', dict(params or {}), headers))
 
-    async def update_application(self, params: Api.PlatformAccountsApplicationsUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsApplicationsUpdateResult:
-        return cast(Api.PlatformAccountsApplicationsUpdateResult, await self._invoke('platform/accounts/applications/update', dict(params or {}), headers))
+    async def update_service_user(self, params: Api.PlatformOrganizationsServiceUsersUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersUpdateResult:
+        return cast(Api.PlatformOrganizationsServiceUsersUpdateResult, await self._invoke('platform/organizations/service-users/update', dict(params or {}), headers))
 
-    async def disable_application(self, params: Api.PlatformAccountsApplicationsDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformAccountsApplicationsDeleteResult:
-        return cast(Api.PlatformAccountsApplicationsDeleteResult, await self._invoke('platform/accounts/applications/delete', dict(params or {}), headers))
+    async def disable_service_user(self, params: Api.PlatformOrganizationsServiceUsersDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersDeleteResult:
+        return cast(Api.PlatformOrganizationsServiceUsersDeleteResult, await self._invoke('platform/organizations/service-users/delete', dict(params or {}), headers))
 
     async def adopt_universe(self, params: Api.PlatformUniversesAdoptParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesAdoptResult:
         return cast(Api.PlatformUniversesAdoptResult, await self._invoke('platform/universes/adopt', dict(params or {}), headers))

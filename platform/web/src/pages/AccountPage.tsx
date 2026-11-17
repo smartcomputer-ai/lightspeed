@@ -18,7 +18,7 @@ export function AccountPage({ user }: { user: SessionUser }) {
   const config = useLoginConfig();
   return (
     <>
-      <PageHeader title="Your profile" description="Your identity, sign-in settings, and personal API keys." />
+      <PageHeader title="Your profile" description="Your identity, sign-in settings, and API keys." />
       <div className="grid gap-6">
         <ProfileCard user={user} />
         {user.identitySource !== "company" && config.data && config.data.password !== "off" && (!config.data.sso || user.emergencyAdmin) ? <PasswordCard /> : (
@@ -87,7 +87,7 @@ function ProfileCard({ user }: { user: SessionUser }) {
           <Field>
             <FieldLabel htmlFor="account-user-id">User ID</FieldLabel>
             <Input id="account-user-id" value={user.id} readOnly onFocus={(event) => event.currentTarget.select()} />
-            <FieldDescription>Share this ID with an account admin when they add you to an account.</FieldDescription>
+            <FieldDescription>Share this ID with an organization admin when they add you to an organization.</FieldDescription>
           </Field>
           {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
           {save.isSuccess && <p className="text-sm text-muted-foreground">Saved.</p>}

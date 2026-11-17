@@ -25,8 +25,8 @@ beforeEach(() => {
   localStorage.clear();
   mocks.api.mockReset();
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
-  client.setQueryData(["accounts"], { accounts: [] });
-  client.setQueryDefaults(["accounts"], { staleTime: Infinity });
+  client.setQueryData(["organizations"], { organizations: [] });
+  client.setQueryDefaults(["organizations"], { staleTime: Infinity });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -87,7 +87,7 @@ it("offers an admin a first universe when there is none", async () => {
 it("tells a member who to ask, without a create action", async () => {
   mocks.api.mockResolvedValue([]);
   await show(false);
-  await waitForUi(() => expect(container.textContent).toContain("Ask an account admin or universe owner"));
+  await waitForUi(() => expect(container.textContent).toContain("Ask an organization admin or universe owner"));
   expect([...container.querySelectorAll("button")].some((node) => node.textContent?.includes("New universe"))).toBe(false);
 });
 

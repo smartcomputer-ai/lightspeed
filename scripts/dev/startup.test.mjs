@@ -27,7 +27,32 @@ for (const profile of ["full", "platform"]) {
     });
     assert.match(output, /process: platform ->[^\n]+\n  after: runtime gateway -> http:\/\/127\.0\.0\.1:28080\/runtime\/health/);
   });
+  test(`${profile} uses the browser origin for CLI approval regardless of the backend port`, () => {
+    const env = { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", PORT: "23000" };
+    delete env.LIGHTSPEED_PLATFORM_BASE_URL;
+    const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
+      cwd: repoRoot, encoding: "utf8", env,
+    });
+    assert.match(output, /^platform public URL: http:\/\/localhost:5173$/m);
+    assert.match(output, /^ready: platform web -> http:\/\/localhost:5173\/app\/$/m);
+    assert.match(output, /^ready: platform API -> http:\/\/127\.0\.0\.1:23000\/health$/m);
+  });
 }
+
+test("an explicit development public origin remains authoritative", () => {
+  const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "platform"], {
+    cwd: repoRoot, encoding: "utf8",
+    env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_PLATFORM_BASE_URL: "https://dev.example.test" },
+  });
+  assert.match(output, /^platform public URL: https:\/\/dev\.example\.test$/m);
+});
+
+test("the development web origin forwards API and device approval to the configured backend", () => {
+  const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+    'import configure from "./platform/web/vite.config.ts"; const config = configure({ command: "serve", mode: "development" }); console.log(JSON.stringify(config.server.proxy));',
+  ], { cwd: repoRoot, encoding: "utf8", env: { ...process.env, PORT: "23000" } });
+  assert.deepEqual(JSON.parse(output), { "/api": "http://localhost:23000", "/device": "http://localhost:23000" });
+});
 
 for (const profile of ["full", "platform", "runtime", "demo", "infra"]) {
   test(`${profile} scopes development fixtures to the authenticated full profile`, () => {

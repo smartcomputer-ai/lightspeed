@@ -14,7 +14,7 @@ sessions, so keep it on your server.
 
 ## Connect through Platform
 
-Pass a personal or application key to the Platform deployment URL. Runtime
+Pass a user or service-user key to the Platform deployment URL. Runtime
 operations use the principal's current permissions intersected with key
 restrictions. Omit `actor`; Platform derives attribution. Direct runtime tokens
 remain full-authority infrastructure credentials.
@@ -26,9 +26,9 @@ from lightspeed_ai import AsyncLightspeedClient
 async with AsyncLightspeedClient(
     "https://lightspeed.example", token=platform_key
 ) as client:
-    accounts = await client.platform.list_accounts()
+    organizations = await client.platform.list_organizations()
     created = await client.platform.create_universe({
-        "accountId": accounts["accounts"][0]["id"],
+        "organizationId": organizations["organizations"][0]["id"],
         "universeId": str(uuid4()),  # Keep this ID if retrying creation.
         "name": "Experiment",
         "handle": "experiment",
@@ -39,7 +39,7 @@ Creation requires Creator or Admin access and a credential that permits it. Plat
 administrators supply an explicit `initialOwner` when provisioning. Native helpers
 take one parameter dictionary using API field names. The same operations are
 available through typed `client.call`, for example
-`await client.call("platform/accounts/list")`. Native parameter and result types
+`await client.call("platform/organizations/list")`. Native parameter and result types
 live in `lightspeed_ai.platform_types`.
 
 For local scripts, reuse the named or selected connection saved by `lightspeed login`
@@ -47,23 +47,23 @@ or `lightspeed connect add`:
 
 ```python
 async with await AsyncLightspeedClient.from_connection("work") as client:
-    accounts = await client.platform.list_accounts()
-    if client.account_id is not None:
-        account = await client.platform.read_account({"accountId": client.account_id})
+    organizations = await client.platform.list_organizations()
+    if client.organization_id is not None:
+        organization = await client.platform.read_organization({"organizationId": client.organization_id})
 ```
 
 The factory verifies the server's credential kind and imports the saved endpoint,
-credential, account and universe together. It does not start login or read ambient
-endpoint/token overrides. `config_dir`, `account` and `universe` can be supplied
-explicitly. Changing accounts clears an inherited universe; a selected account never
-silently chooses the server's suggested universe. Account IDs remain explicit in
+credential, organization and universe together. It does not start login or read ambient
+endpoint/token overrides. `config_dir`, `organization` and `universe` can be supplied
+explicitly. Changing organizations clears an inherited universe; a selected organization never
+silently chooses the server's suggested universe. Organization IDs remain explicit in
 native request parameters. Saved CLI session credentials are reread for each request
 and renewed only in their owned private file; API keys and externally managed files
 are never rewritten. Replacing or removing a saved connection invalidates an existing
 imported client.
 
-An imported human CLI session can manage personal keys, or application keys when
-its user is an account Admin. API keys cannot mint other keys.
+An imported human CLI session can manage personal keys, or service-user keys when
+its user is an organization Admin. API keys cannot mint other keys.
 
 ## Install
 
@@ -190,12 +190,12 @@ You can use named helpers or operation IDs:
 
 - **Named helpers** cover every runtime operation, including deployment administration,
   credentials, bots, channels, environments and binary transfers.
-- **`client.platform` helpers** such as `list_accounts()` and `read_account({"accountId": id})` cover native Platform operations.
+- **`client.platform` helpers** such as `list_organizations()` and `read_organization({"organizationId": id})` cover native Platform operations.
 - **`client.call(operation, params)`** reaches runtime and native Platform operations with generated parameter and result types. Empty parameters can be omitted when the operation has no required fields.
 
 `await client.initialize()` returns `ClientConnectionResponse`, a runtime/Platform
 union. When `info["runtime"] == "platform"`, `info["platform"]` contains typed
-principal, credential, account and restriction details.
+principal, credential, organization and restriction details.
 
 Every operation has a named helper. `call` remains useful when dispatching by an
 operation ID. Both preserve the same wire parameters and response DTOs; the helpers
@@ -217,8 +217,8 @@ universes = await client.list_universes()
 
 Runtime helper availability does not change server authorization. For example,
 `client.create_universe(...)` is runtime deployment administration; through Platform,
-use `client.platform.create_universe({"accountId": account_id, "name": "Work"})`
-to apply account ownership, quota and protection policy. Platform continues to deny
+use `client.platform.create_universe({"organizationId": organization_id, "name": "Work"})`
+to apply organization ownership, quota and protection policy. Platform continues to deny
 infrastructure and service-only operations where required.
 
 Use `watch` for live list changes and `read_events` for durable session events.
@@ -250,8 +250,8 @@ treat differently from an absent field, so pass it only when you mean it.
 | --- | --- |
 | Session | `read_current_session`, `revoke_current_session` |
 | Credentials | `list_personal_api_keys`, `create_personal_api_key`, `revoke_personal_api_key` |
-| Applications | `list_application_api_keys`, `create_application_api_key`, `revoke_application_api_key` |
-| Accounts | `list_accounts`, `create_account`, `read_account`, `update_account`, `list_account_members`, `put_account_member`, `remove_account_member`, `list_applications`, `create_application`, `update_application`, `disable_application` |
+| Service-Users | `list_service_user_api_keys`, `create_service_user_api_key`, `revoke_service_user_api_key` |
+| Organizations | `list_organizations`, `create_organization`, `read_organization`, `update_organization`, `list_organization_members`, `put_organization_member`, `remove_organization_member`, `list_service_users`, `create_service_user`, `update_service_user`, `disable_service_user` |
 | Universes | `adopt_universe`, `create_universe`, `update_universe`, `list_universe_grants`, `put_universe_grant`, `remove_universe_grant`, `put_universe_access_policy` |
 <!-- END GENERATED HELPERS -->
 
@@ -497,7 +497,7 @@ LIGHTSPEED_TEST_CONNECTION_CONFIG=/tmp/lightspeed-live-sdk-connections \
 Use the configured browser origin if it differs; the default development UI
 proxies API requests to Platform and uses this origin for authentication. The fixture script accepts
 `LIGHTSPEED_PLATFORM_LIVE_PASSWORD` for a nondefault development password and
-`LIGHTSPEED_LIVE_CLI` for a different CLI binary. It creates an account and
+`LIGHTSPEED_LIVE_CLI` for a different CLI binary. It creates an organization and
 universes in the development database, then saves dedicated `sdk-session` and
 `sdk-key` connections. The renewal-database option ages only the dedicated CLI
 session so the first SDK request must renew it. The explicit suite checks

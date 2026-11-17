@@ -17,8 +17,8 @@ if (mode === "revoked") {
   const client = await createClientFromConnection(options);
   const info = await client.initialize();
   assert.equal(info.runtime, "platform");
-  const accounts = await client.platform.listAccounts();
-  assert(accounts.accounts.some(account => account.id === client.accountId));
+  const organizations = await client.platform.listOrganizations();
+  assert(organizations.organizations.some(organization => organization.id === client.organizationId));
   assert(Array.isArray((await client.call("profiles/list", {})).profiles));
   const binary = Uint8Array.from({ length: 1_048_576 }, (_, index) => index % 256);
   const download = await client.openDownload("blobs/read", { blobRef });
@@ -46,5 +46,5 @@ if (mode === "revoked") {
     assert(Array.isArray((await outside.call("profiles/list", {})).profiles));
     await assert.rejects(outside.openDownload("blobs/read", { blobRef }), denied(404));
   }
-  console.log(JSON.stringify({ principalId: info.platform.principal.id, accountId: client.accountId }));
+  console.log(JSON.stringify({ principalId: info.platform.principal.id, organizationId: client.organizationId }));
 }

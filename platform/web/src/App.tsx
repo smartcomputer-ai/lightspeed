@@ -1,6 +1,6 @@
 import { AdminGate, AdminIndexRedirect } from "@/components/admin/admin-gate";
 import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
-import { AccountsPage } from "@/pages/AccountsPage";
+import { OrganizationsPage } from "@/pages/OrganizationsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { lazy, Suspense, useEffect } from "react";
@@ -167,23 +167,25 @@ export function App() {
         />
         <Route element={<AdminGate />}>
           <Route path="admin" element={<AdminIndexRedirect />} />
-          <Route element={<AdminGate scope="accounts" />}>
-            <Route path="admin/accounts" element={<AccountsPage />} />
-          </Route>
-          <Route element={<AdminGate scope="keys" />}>
-            <Route path="admin/api-keys" element={<AdminApiKeysPage />} />
-          </Route>
           <Route element={<AdminGate scope="universes" />}>
-            <Route path="admin/universes" element={<AdminUniversesPage />} />
-            <Route path="admin/universes/:handle" element={<Navigate to="access" replace />} />
-            <Route path="admin/universes/:handle/access" element={<AdminUniverseAccessPage admin={admin} />} />
-            <Route path="admin/universes/:handle/settings" element={<AdminUniverseSettingsPage admin={admin} />} />
+            <Route path="admin/organizations/:organizationId/universes" element={<AdminUniversesPage />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle" element={<Navigate to="access" replace />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/access" element={<AdminUniverseAccessPage admin={admin} />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<AdminUniverseSettingsPage admin={admin} />} />
+          </Route>
+          <Route element={<AdminGate scope="organizations" />}>
+            <Route path="admin/organizations/:organizationId/people" element={<OrganizationsPage section="people" />} />
+            <Route path="admin/organizations/:organizationId/service-users" element={<OrganizationsPage section="service-users" />} />
+            <Route path="admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} />
+            <Route path="admin/organizations/:organizationId/api-keys" element={<AdminApiKeysPage />} />
           </Route>
           <Route element={<AdminGate scope="platform" />}>
-            <Route path="admin/audit" element={<AdminAuditPage />} />
-            <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
-            <Route path="admin/channels" element={<AdminChannelsPage />} />
-            <Route path="admin/environment-providers" element={<AdminEnvironmentProvidersPage />} />
+            <Route path="admin/platform/organizations" element={<OrganizationsPage />} />
+            <Route path="admin/platform/universes" element={<AdminUniversesPage />} />
+            <Route path="admin/platform/audit" element={<AdminAuditPage />} />
+            <Route path="admin/platform/users" element={<AdminUsersPage currentUser={user} />} />
+            <Route path="admin/platform/channels" element={<AdminChannelsPage />} />
+            <Route path="admin/platform/environment-providers" element={<AdminEnvironmentProvidersPage />} />
           </Route>
         </Route>
         <Route path="account" element={<AccountPage user={user} />} />

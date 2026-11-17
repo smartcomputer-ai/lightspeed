@@ -144,7 +144,7 @@ impl McpPrivateNetworkPolicy {
 
 fn reject_retired_trusted_header_url(value: Option<&str>) -> Result<(), String> {
     if value.is_some_and(|value| !value.trim().is_empty()) {
-        return Err("LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL is retired; remove it and configure a restricted Platform application key as the MCP server credential".into());
+        return Err("LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL is retired; remove it and configure a restricted Platform service-user API key as the MCP server credential".into());
     }
     Ok(())
 }

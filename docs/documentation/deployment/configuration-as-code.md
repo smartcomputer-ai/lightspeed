@@ -21,19 +21,19 @@ services; see [Configure a deployment](configuration.md).
 
 ## Before you start
 
-- Through Platform, use an application API key for a pipeline, a personal API
+- Through Platform, use a service-user API key for a pipeline, a personal API
   key, or a saved browser-authorized CLI connection. A key acts as its user or
-  application; it does not carry a separate universe role.
+  service user; it does not carry a separate universe role.
 - Connect with `LIGHTSPEED_API_URL` and `LIGHTSPEED_API_TOKEN`, or a saved CLI
-  connection. Select the account for new universes with `--account ACCOUNT_ID`
-  or `lightspeed platform account use ACCOUNT_ID`. See
+  connection. Select the organization for new universes with `--organization ORGANIZATION_ID`
+  or `lightspeed platform organization use ORGANIZATION_ID`. See
   [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
 - Direct runtime connections also work. Use a configured runtime token when
   authentication is enabled, or an explicitly selected unauthenticated single
   runtime connection. Runtime tokens have full deployment authority and belong
   in infrastructure secret stores, outside agent workspaces. See
   [Runtime access](../access-and-security/api-keys-and-service-access.md).
-- Documents configure universes. Account membership, access grants, API keys,
+- Documents configure universes. Organization membership, access grants, API keys,
   and deployment service configuration have separate APIs;
   `apiKeys` sections and `kind: deployment` documents are not supported.
 
@@ -44,19 +44,19 @@ every request. Choose authority for the work the document will perform:
 
 | Work | Required authority |
 | --- | --- |
-| Create missing universes in an account | Account Creator or Account Admin; Platform Admin also has account authority. |
-| Reconcile ordinary resources in an existing universe | Universe Operator or Owner; Account Admin has Owner access throughout its account. |
+| Create missing universes in an organization | Organization Creator or Organization Admin; Platform Admin also has organization authority. |
+| Reconcile ordinary resources in an existing universe | Universe Operator or Owner; Organization Admin has Owner access throughout its organization. |
 | Change universe `displayName`, `metadata`, or enable `protected` | Universe Owner. |
-| Clear `protected` | Account Admin or Platform Admin, and account policy must permit unprotected universes. |
+| Clear `protected` | Organization Admin or Platform Admin, and organization policy must permit unprotected universes. |
 | Change `environmentProviders` allocation bindings | Platform Admin; see [Environment provider allocation](#environment-provider-allocation). |
 
 A Creator becomes the first Owner of each universe it creates. Creator alone
 does not grant access to other existing universes; give the principal a
 universe grant when needed. Platform Admin creation requires an explicit
-`--owner-user USER_ID` or `--owner-application APPLICATION_ID`. Account Admins
-can also use these flags to assign another initial Owner in the account.
+`--owner-user USER_ID` or `--owner-service-user SERVICE_USER_ID`. Organization Admins
+can also use these flags to assign another initial Owner in the organization.
 
-For automation that creates universes, use an account-scoped key with creation
+For automation that creates universes, use an organization-scoped key with creation
 allowed. A key restricted to existing universe UUIDs cannot create another
 universe, even when its principal is an Admin or Creator. Such a key can
 reconcile the universes in its scope, within the principal's granted role.
@@ -64,25 +64,25 @@ Operation restrictions must allow discovery, universe reads, the resource
 reads used by `diff`, and the writes needed by `apply`; creation also needs
 `platform/universes/create`. A read-only key cannot apply changes.
 
-For example, save a Platform application key from a mounted secret and select
-the account used for provisioning:
+For example, save a Platform service-user key from a mounted secret and select
+the organization used for provisioning:
 
 ```bash
 lightspeed connect add automation --url https://lightspeed.example --token-file /run/secrets/lightspeed-platform-key
-lightspeed --connection automation platform account use ACCOUNT_ID
+lightspeed --connection automation platform organization use ORGANIZATION_ID
 lightspeed --connection automation config diff -f config/
 lightspeed --connection automation config apply -f config/
 ```
 
-Use `--account ACCOUNT_ID` on an individual command to override that saved
+Use `--organization ORGANIZATION_ID` on an individual command to override that saved
 selection.
 
-The account selection and initial Owner are connection/command context, so the
-same universe document can be promoted across accounts and deployments.
-Account selection chooses where missing universes are created; it does not
-restrict existing-handle lookup to that account. Handles identify universes
-across the deployment. Restrict the key to the intended account when the
-pipeline must not reconcile a universe in another account.
+The organization selection and initial Owner are connection/command context, so the
+same universe document can be promoted across organizations and deployments.
+Organization selection chooses where missing universes are created; it does not
+restrict existing-handle lookup to that organization. Handles identify universes
+across the deployment. Restrict the key to the intended organization when the
+pipeline must not reconcile a universe in another organization.
 
 ## Write a universe document
 
@@ -174,10 +174,10 @@ the fields.
 `environmentProviders` enables or disables a universe's allocation to an
 existing deployment environment provider. This grants access to deployment
 infrastructure, so Platform keeps changes under Platform Admin authority.
-Account Admin and universe Owner do not imply permission to allocate any
+Organization Admin and universe Owner do not imply permission to allocate any
 deployment provider.
 
-An account pipeline should normally omit this section and use a provider
+An organization pipeline should normally omit this section and use a provider
 already allocated to its universe by a deployment administrator. It can then
 declare `source.type: provisioned` environments using that provider with
 Universe Operator authority. Deployment administrators can manage the
@@ -393,15 +393,15 @@ replaces the existing map.
 New universes created by `apply` are protected when `protected` is omitted.
 For an existing universe, omission preserves the current protection. An
 explicit `false` requests clearing protection. Through Platform, only the
-containing Account Admin or a Platform Admin can do this, and mandatory
-account protection must first be removed. Runtime tokens remain full-authority
+containing Organization Admin or a Platform Admin can do this, and mandatory
+organization protection must first be removed. Runtime tokens remain full-authority
 infrastructure credentials; the runtime still refuses deletion until
 protection has been explicitly cleared.
 
-Account members, directory-group mappings, and universe access policies are
+Organization members, directory-group mappings, and universe access policies are
 Platform-native configuration, not runtime universe configuration. A universe
-created directly with a runtime token has no Platform account association
-until an administrator adopts it into an account with an initial Owner.
+created directly with a runtime token has no Platform organization association
+until an administrator adopts it into an organization with an initial Owner.
 See [Managing universes](multi-tenancy.md).
 
 ## Export a universe
@@ -456,7 +456,7 @@ spec:
       containers:
         - name: apply
           image: <the runtime image of your release>
-          command: ["/usr/local/bin/lightspeed", "--account", "ACCOUNT_ID", "config", "apply", "-f", "/config"]
+          command: ["/usr/local/bin/lightspeed", "--organization", "ORGANIZATION_ID", "config", "apply", "-f", "/config"]
           env:
             - name: LIGHTSPEED_API_URL
               value: https://lightspeed.example/api/v1
@@ -474,8 +474,8 @@ spec:
 ```
 
 The job takes its connection from `LIGHTSPEED_API_URL` and
-`LIGHTSPEED_API_TOKEN`. Store the Platform application key in the `api-token`
-Secret entry and replace `ACCOUNT_ID` with its account. Give the application
+`LIGHTSPEED_API_TOKEN`. Store the Platform service-user key in the `api-token`
+Secret entry and replace `ORGANIZATION_ID` with its organization. Give the service user
 Creator authority to create its own universes, or the necessary grants to
 reconcile existing ones. It needs no home directory and no saved connection, and
 it writes nothing to the container's filesystem, so a read-only root

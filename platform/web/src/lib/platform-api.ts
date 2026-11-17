@@ -15,6 +15,6 @@ export async function platformApi<K extends PlatformOperationId>(operation: K, p
   return api<PlatformOperationResult<K>>(spec.method, path, spec.method === "GET" || Object.keys(body).length === 0 ? undefined : body);
 }
 
-export function useAccounts() {
-  return useQuery({ queryKey: ["accounts"], queryFn: () => platformApi("platform/accounts/list", {}) });
+export function useOrganizations() {
+  return useQuery({ queryKey: ["organizations"], queryFn: () => platformApi("platform/organizations/list", {}) });
 }

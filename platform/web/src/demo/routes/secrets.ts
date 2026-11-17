@@ -653,7 +653,7 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(universe.modelDefaults);
   });
 
-  /// Operators may inspect setup state; account administrators manage its credential.
+  /// Operators may inspect setup state; organization administrators manage its credential.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
     const role = universe?.universe.role;
@@ -664,7 +664,7 @@ export function secretRoutes(store: DemoStore): Hono {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     if (universe.universe.role !== "owner") return c.json({ error: "universe Owner required" }, 403);
-    if (store.currentUser.role !== "admin" && universe.universe.accountRole !== "admin") return c.json({ error: "account admin required" }, 403);
+    if (store.currentUser.role !== "admin" && universe.universe.organizationRole !== "admin") return c.json({ error: "organization admin required" }, 403);
     const previous = universe.setups.find(setup => setup.id === CONFIGURATOR_SETUP.id);
     const grant = mintGrant(store, universe, { providerId: "static-token", providerKind: "staticToken", displayName: "Configurator Platform credential" });
     const now = Date.now();
