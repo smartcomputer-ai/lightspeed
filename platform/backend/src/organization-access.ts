@@ -61,6 +61,25 @@ export function declaredUniverseRole(policy: Policy<UniverseRole>, identity: Ide
   return declaredPrincipalRole(policy, identity, ["viewer", "contributor", "operator", "owner"] as const, manual);
 }
 
+/** A personal organization is presented under its owner's current name, so
+ * renaming the user renames it; its stored name is only the creation-time value. */
+export async function withOwnerNames<T extends typeof schema.organization.$inferSelect>(db: AppContext["db"], organizations: T[]): Promise<T[]> {
+  const owners = [...new Set(organizations.flatMap(organization => organization.personalUserId ? [organization.personalUserId] : []))];
+  if (!owners.length) return organizations;
+  const names = new Map((await db.select({ id: schema.user.id, name: schema.user.name }).from(schema.user).where(inArray(schema.user.id, owners))).map(user => [user.id, user.name]));
+  return organizations.map(organization => {
+    const owner = organization.personalUserId ? names.get(organization.personalUserId) : undefined;
+    return owner ? { ...organization, name: owner } : organization;
+  });
+}
+
+/** A personal organization belongs to one user: its membership, membership
+ * policy and name are fixed. Its owner may still create service users. */
+export async function refusePersonalOrganization(db: AppContext["db"], organizationId: string, change: string) {
+  const [organization] = await db.select({ personalUserId: schema.organization.personalUserId }).from(schema.organization).where(eq(schema.organization.id, organizationId)).limit(1);
+  if (organization?.personalUserId) throw new HTTPException(409, { message: `a personal organization cannot change its ${change}` });
+}
+
 /** Resolve organization inventory with a bounded query count, including declarations.
  * Directory policies are evaluated locally; no query is issued per organization. */
 export async function listOrganizationsForPrincipal(ctx: AppContext, auth: AuthContext) {

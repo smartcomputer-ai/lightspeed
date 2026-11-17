@@ -1,4 +1,4 @@
-import { listOrganizationsForPrincipal } from "./organization-access.js";
+import { listOrganizationsForPrincipal, withOwnerNames } from "./organization-access.js";
 import type { PlatformConnectionDetails } from "@lightspeed-ai/platform-shared";
 import { Hono, type Context } from "hono";
 import { LightspeedApiError, type ConnectionResponse, type UniverseWatchParams } from "@lightspeed-ai/sdk";
@@ -197,7 +197,8 @@ async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string
   if (operation === "initialize") {
     const principal = auth.principal;
     const admitted = await listOrganizationsForPrincipal(ctx, auth);
-    const organizations = admitted.map(({ organization, role }) => ({ id: organization.id, name: organization.name, role }));
+    const named = await withOwnerNames(ctx.db, admitted.map(access => access.organization));
+    const organizations = admitted.map(({ role }, index) => ({ id: named[index]!.id, name: named[index]!.name, role }));
     const selected = auth.credential.restrictions.universeIds;
     const defaultUniverse = selected?.length === 1 && await universeForRequest(ctx, c, selected[0]!) ? selected[0] : undefined;
     const platform: PlatformConnectionDetails = { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.serviceUser.name, platformAdmin: principal.platformAdmin }, credential: { kind: auth.credential.kind, id: auth.credential.id }, organizations, restrictions: auth.credential.restrictions };

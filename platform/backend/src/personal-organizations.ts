@@ -28,7 +28,7 @@ export async function ensurePersonalOrganization(db: Db, env: ServerEnv, userId:
     if (existing) return;
     const id = randomUUID();
     await tx.insert(schema.organization).values({
-      id, name: `${user.name}'s organization`, slug: `personal-${id}`, personalUserId: userId,
+      id, name: user.name, slug: `personal-${id}`, personalUserId: userId,
       universeQuota: env.personalOrganizationUniverseQuota ?? 25, defaultProtected: false,
       requireProtected: false, createdAt: new Date(),
     });

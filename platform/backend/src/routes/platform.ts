@@ -5,7 +5,7 @@ import { schema } from "@lightspeed-ai/platform-db";
 import { PLATFORM_OPERATIONS, type OrganizationRole, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
-import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, requireOrganizationAdmin } from "../organization-access.js";
+import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, refusePersonalOrganization, requireOrganizationAdmin, withOwnerNames } from "../organization-access.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
@@ -67,7 +67,8 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const canCreate = auth.principal.kind === "user" && (auth.principal.platformAdmin || ctx.env.allowSharedOrganizationCreation === true)
         && !limits.readOnly && !limits.organizationIds && !limits.universeIds && (!limits.operations || limits.operations.includes("platform/organizations/create"));
       const counts = await universeCounts(ctx.db, accessible.filter(access => access.role === "admin").map(access => access.organization.id));
-      return { organizations: accessible.map(access => organizationView(access.organization, access.role, counts.get(access.organization.id) ?? 0)), canCreate };
+      const named = await withOwnerNames(ctx.db, accessible.map(access => access.organization));
+      return { organizations: accessible.map((access, index) => organizationView(named[index]!, access.role, counts.get(access.organization.id) ?? 0)), canCreate };
     }
     case "platform/organizations/create": {
       if (!auth.principal.platformAdmin && !(ctx.env.allowSharedOrganizationCreation && auth.principal.kind === "user")) throw new GateRefusal(403, "shared-organization creation is disabled for this principal");
@@ -89,11 +90,15 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     }
     case "platform/organizations/read": {
       const access = await organizationForPrincipal(ctx, auth, organizationId); if (!access) throw new GateRefusal(404, "organization not found");
-      return { organization: organizationView(access.organization, access.role, access.role === "admin" ? await universeCount(ctx.db, organizationId) : 0) };
+      const [named] = await withOwnerNames(ctx.db, [access.organization]);
+      return { organization: organizationView(named!, access.role, access.role === "admin" ? await universeCount(ctx.db, organizationId) : 0) };
     }
     case "platform/organizations/update": {
       await requireOrganizationAdmin(ctx, auth, organizationId);
       const { organizationId: _, ...input } = params as PlatformOperationParams<"platform/organizations/update">;
+      if (input.universeQuota !== undefined && !auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required to change the universe quota");
+      if (input.name !== undefined) await refusePersonalOrganization(ctx.db, organizationId, "name");
+      if (input.membershipPolicy !== undefined) await refusePersonalOrganization(ctx.db, organizationId, "membership policy");
       const organization = await ctx.db.transaction(async tx => {
         const [current] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
         await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);
@@ -109,7 +114,8 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
         await auditAsSubject(tx, auth, { action: "organization.update", targetId: organizationId });
         return updated!;
       });
-      return { organization: organizationView(organization, "admin", await universeCount(ctx.db, organizationId)) };
+      const [named] = await withOwnerNames(ctx.db, [organization]);
+      return { organization: organizationView(named!, "admin", await universeCount(ctx.db, organizationId)) };
     }
     case "platform/organizations/members/list": {
       await requireOrganizationDirectory(ctx, auth, organizationId);
@@ -124,6 +130,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     }
     case "platform/organizations/members/put": {
       await requireOrganizationAdmin(ctx, auth, organizationId);
+      await refusePersonalOrganization(ctx.db, organizationId, "members");
       const input = params as PlatformOperationParams<"platform/organizations/members/put">;
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, input.userId)).limit(1);
       if (!user || user.banned) throw new GateRefusal(404, "active user not found");
@@ -143,6 +150,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     }
     case "platform/organizations/members/delete": {
       await requireOrganizationAdmin(ctx, auth, organizationId);
+      await refusePersonalOrganization(ctx.db, organizationId, "members");
       await ctx.db.transaction(async tx => {
         await tx.execute(sql`SELECT id FROM organization WHERE id = ${organizationId} FOR UPDATE`);
         await requireOrganizationAdmin({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId);

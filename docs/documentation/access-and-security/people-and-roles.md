@@ -5,10 +5,14 @@ service users. Each universe belongs to exactly one organization. Better Auth
 provides the organization and membership records. A Better Auth user remains
 a person; its OAuth connection records are unrelated to organizations.
 
-Organizations can be personal, shared, or development organizations. Personal organizations
-are provisioned for admitted users by default, including company users; a
-deployment can disable this. Shared organizations can represent a company or a
-business unit. Organizations are siblings, without nesting. Organization Admins can see
+Organizations are personal or shared. Personal organizations are provisioned
+for admitted users by default, including company users; a deployment can
+disable this. A personal organization belongs to one user and is shown under
+that user's name: it has no other members, so its universes cannot be shared,
+though its owner can create service users. Collaboration happens in a shared
+organization, which can represent a company, a business unit, or a team. A
+local development deployment seeds one shared organization for its developers.
+Organizations are siblings, without nesting. Organization Admins can see
 and administer all universes in their organization, including private sessions.
 
 ## Organization and deployment roles
@@ -83,9 +87,9 @@ to create their own. There is no email invitation or SCIM workflow yet.
 **New universe** selects an organization where the caller is a Creator or Admin.
 Creating from an organization's Admin page fixes that destination. The initial
 quotas are 25 universes for personal organizations and 100 for shared ones,
-configurable by deployment and organization policy. Shared universes are
-protected by default; personal and development universes are not. Organization
-policy may require protection. Handles remain unique across the deployment.
+configurable by deployment and by Platform Admins per organization. Universes
+in shared organizations are protected by default; personal ones are not.
+Organization policy may change that default or require protection. Handles remain unique across the deployment.
 
 The working universe switcher groups accessible active universes by organization
 and supports search. A personal organization is labeled **Personal**. Switching

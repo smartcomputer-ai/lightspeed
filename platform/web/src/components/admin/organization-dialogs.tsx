@@ -288,12 +288,16 @@ export function ServiceUserDialog({
   );
 }
 
+/// Protection policy for Organization Admins; the universe quota is a
+/// Platform Admin limit, so only they see that field.
 export function PolicyDialog({
   organization,
+  canEditQuota,
   close,
   saved,
 }: {
   organization: Organization;
+  canEditQuota: boolean;
   close: () => void;
   saved: () => Promise<void>;
 }) {
@@ -304,7 +308,7 @@ export function PolicyDialog({
     mutationFn: () =>
       platformApi("platform/organizations/update", {
         organizationId: organization.id,
-        universeQuota: Number(quota),
+        ...(canEditQuota ? { universeQuota: Number(quota) } : {}),
         defaultProtected,
         requireProtected,
       }),
@@ -326,7 +330,7 @@ export function PolicyDialog({
           save.mutate();
         }}
       >
-        <Field>
+        {canEditQuota && <Field>
           <FieldLabel htmlFor="organization-quota">Universe quota</FieldLabel>
           <Input
             id="organization-quota"
@@ -338,7 +342,7 @@ export function PolicyDialog({
             step={1}
             required
           />
-        </Field>
+        </Field>}
         <label className="flex gap-2">
           <input
             type="checkbox"

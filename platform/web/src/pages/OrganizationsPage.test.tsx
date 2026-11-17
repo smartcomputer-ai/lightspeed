@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   canCreate: false,
   loading: false,
   empty: false,
+  personal: false,
 }));
 vi.mock("@/lib/platform-api", () => ({
   platformApi: mocks.api,
@@ -28,7 +29,7 @@ vi.mock("@/lib/platform-api", () => ({
                 {
                   id: "team",
                   name: "Team",
-                  personal: false,
+                  personal: mocks.personal,
                   role: mocks.role,
                   universeQuota: 100,
                   universeCount: 3,
@@ -66,6 +67,7 @@ beforeEach(() => {
   mocks.canCreate = false;
   mocks.loading = false;
   mocks.empty = false;
+  mocks.personal = false;
   mocks.api
     .mockReset()
     .mockImplementation(async (operation) =>
@@ -218,8 +220,7 @@ it("links service user keys to unified administration and confirms disabling a s
 });
 
 it("keeps policy changes as a draft until explicitly saved", async () => {
-  mocks.role = "admin";
-  await show("/admin/organizations/team/settings");
+  await show("/admin/organizations/team/settings", true);
   await click("Edit policy");
   await type("#organization-quota", "50");
   expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/update")).toBe(false);
@@ -253,4 +254,28 @@ it("shows universe usage in organization settings", async () => {
   mocks.role = "admin";
   await show("/admin/organizations/team/settings");
   expect(container.textContent).toContain("Universes: 3 of 100");
+});
+
+it("leaves the universe quota to Platform Admins", async () => {
+  mocks.role = "admin";
+  await show("/admin/organizations/team/settings");
+  await click("Edit policy");
+  expect(dialog().querySelector("#organization-quota")).toBeNull();
+  await submit();
+  await waitForUi(() =>
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", {
+      organizationId: "team",
+      defaultProtected: true,
+      requireProtected: false,
+    }),
+  );
+});
+
+it("explains that a personal organization has no other members", async () => {
+  mocks.role = "admin";
+  mocks.personal = true;
+  await show("/admin/organizations/team/people");
+  expect(container.textContent).toContain("only its owner as a member");
+  expect(button("Add member")).toBeUndefined();
+  expect(mocks.api).not.toHaveBeenCalled();
 });

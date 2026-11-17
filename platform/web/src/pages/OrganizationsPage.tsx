@@ -91,6 +91,7 @@ function OrganizationDetails({
   section: Section;
 }) {
   const client = useQueryClient();
+  const admin = usePlatformAdmin();
   const organizationId = organization.id;
   const [member, setMember] = useState<Member | "new" | null>(null);
   const [serviceUser, setServiceUser] = useState<ServiceUser | "new" | null>(
@@ -101,7 +102,7 @@ function OrganizationDetails({
   const [toggleApp, setToggleApp] = useState<ServiceUser | null>(null);
   const members = useQuery({
     queryKey: ["organization-members", organizationId],
-    enabled: section === "people",
+    enabled: section === "people" && !organization.personal,
     queryFn: () =>
       platformApi("platform/organizations/members/list", { organizationId }),
   });
@@ -132,7 +133,11 @@ function OrganizationDetails({
         <section>
           <PageHeader
             title="Organization settings"
-            description={`${organization.name} · Organization Admins manage every universe here.`}
+            description={
+              organization.personal
+                ? `${organization.name} · A personal organization: its owner is its only member.`
+                : `${organization.name} · Organization Admins manage every universe here.`
+            }
             actions={
               <Button variant="outline" onClick={() => setPolicyOpen(true)}>
                 <EditIcon data-icon="inline-start" />
@@ -169,169 +174,174 @@ function OrganizationDetails({
           </Card>
         </section>
       )}
-      <>
-        {section === "people" && (
-          <section className="min-w-0">
-            <PageHeader
-              title="People"
-              description={`${organization.name} · Organization roles apply across its universes. Assign universe roles under Universes → Access.`}
-              actions={
-                <Button onClick={() => setMember("new")}>
-                  <AddIcon data-icon="inline-start" />
-                  Add member
-                </Button>
-              }
-            />
-            {hasPolicy && (
-              <p className="mb-3 text-sm text-muted-foreground">
-                Organization policy also grants membership. Removing a member or
-                lowering their role here does not remove access granted by that
-                policy.
-              </p>
-            )}
-            {members.isLoading && <LoadingNote />}
-            {members.error && (
-              <p role="alert" className="text-destructive">
-                {members.error.message}
-              </p>
-            )}
-            {members.data?.members.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No organization members yet. Add an existing user.
-              </p>
-            )}
-            {!!members.data?.members.length && (
-              <TableCard>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Person</TableHead>
-                      <TableHead>Organization role</TableHead>
-                      <TableHead />
+      {section === "people" && organization.personal && (
+        <section className="min-w-0">
+          <PageHeader title="People" />
+          <p className="text-sm text-muted-foreground">
+            A personal organization has only its owner as a member. To work with
+            other people, create a team organization.
+          </p>
+        </section>
+      )}
+      {section === "people" && !organization.personal && (
+        <section className="min-w-0">
+          <PageHeader
+            title="People"
+            description={`${organization.name} · Organization roles apply across its universes. Assign universe roles under Universes → Access.`}
+            actions={
+              <Button onClick={() => setMember("new")}>
+                <AddIcon data-icon="inline-start" />
+                Add member
+              </Button>
+            }
+          />
+          {hasPolicy && (
+            <p className="mb-3 text-sm text-muted-foreground">
+              Organization policy also grants membership. Removing a member or
+              lowering their role here does not remove access granted by that
+              policy.
+            </p>
+          )}
+          {members.isLoading && <LoadingNote />}
+          {members.error && (
+            <p role="alert" className="text-destructive">
+              {members.error.message}
+            </p>
+          )}
+          {members.data?.members.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No organization members yet. Add an existing user.
+            </p>
+          )}
+          {!!members.data?.members.length && (
+            <TableCard>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Person</TableHead>
+                    <TableHead>Organization role</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {members.data.members.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <p className="font-medium">{item.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.email}
+                        </p>
+                      </TableCell>
+                      <TableCell>{roleLabels[item.role]}</TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Edit organization role for ${item.name}`}
+                            onClick={() => setMember(item)}
+                          >
+                            <EditIcon />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            aria-label={`Remove ${item.name}`}
+                            onClick={() => setRemove(item)}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {members.data.members.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          <p className="font-medium">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {item.email}
-                          </p>
-                        </TableCell>
-                        <TableCell>{roleLabels[item.role]}</TableCell>
-                        <TableCell>
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label={`Edit organization role for ${item.name}`}
-                              onClick={() => setMember(item)}
-                            >
-                              <EditIcon />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              aria-label={`Remove ${item.name}`}
-                              onClick={() => setRemove(item)}
-                            >
-                              Remove
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableCard>
-            )}
-          </section>
-        )}
-        {section === "service-users" && (
-          <section className="min-w-0">
-            <PageHeader
-              title="Service users"
-              description={`${organization.name} · Service users have their own permissions and API keys. Grant access to specific universes under Universes → Access.`}
-              actions={
-                <Button onClick={() => setServiceUser("new")}>
-                  <AddIcon data-icon="inline-start" />
-                  New service user
-                </Button>
-              }
-            />
-            {apps.isLoading && <LoadingNote />}
-            {apps.error && (
-              <p role="alert" className="text-destructive">
-                {apps.error.message}
-              </p>
-            )}
-            {apps.data?.serviceUsers.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No service users yet. Create one for an integration that needs
-                its own identity.
-              </p>
-            )}
-            {!!apps.data?.serviceUsers.length && (
-              <TableCard>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Service user</TableHead>
-                      <TableHead>Organization role</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead />
+                  ))}
+                </TableBody>
+              </Table>
+            </TableCard>
+          )}
+        </section>
+      )}
+      {section === "service-users" && (
+        <section className="min-w-0">
+          <PageHeader
+            title="Service users"
+            description={`${organization.name} · Service users have their own permissions and API keys. Grant access to specific universes under Universes → Access.`}
+            actions={
+              <Button onClick={() => setServiceUser("new")}>
+                <AddIcon data-icon="inline-start" />
+                New service user
+              </Button>
+            }
+          />
+          {apps.isLoading && <LoadingNote />}
+          {apps.error && (
+            <p role="alert" className="text-destructive">
+              {apps.error.message}
+            </p>
+          )}
+          {apps.data?.serviceUsers.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              No service users yet. Create one for an integration that needs its
+              own identity.
+            </p>
+          )}
+          {!!apps.data?.serviceUsers.length && (
+            <TableCard>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Service user</TableHead>
+                    <TableHead>Organization role</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {apps.data.serviceUsers.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="font-medium">{item.name}</TableCell>
+                      <TableCell>{roleLabels[item.role]}</TableCell>
+                      <TableCell>
+                        {item.enabled ? "Active" : "Disabled"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            nativeButton={false}
+                            variant="outline"
+                            render={
+                              <Link
+                                to={`/admin/organizations/${encodeURIComponent(organizationId)}/api-keys?serviceUser=${encodeURIComponent(item.id)}`}
+                              />
+                            }
+                            aria-label={`API keys for ${item.name}`}
+                          >
+                            API keys
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Edit ${item.name}`}
+                            onClick={() => setServiceUser(item)}
+                          >
+                            <EditIcon />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.name}`}
+                            onClick={() => setToggleApp(item)}
+                          >
+                            {item.enabled ? "Disable" : "Enable"}
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {apps.data.serviceUsers.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-medium">
-                          {item.name}
-                        </TableCell>
-                        <TableCell>{roleLabels[item.role]}</TableCell>
-                        <TableCell>
-                          {item.enabled ? "Active" : "Disabled"}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              nativeButton={false}
-                              variant="outline"
-                              render={
-                                <Link
-                                  to={`/admin/organizations/${encodeURIComponent(organizationId)}/api-keys?serviceUser=${encodeURIComponent(item.id)}`}
-                                />
-                              }
-                              aria-label={`API keys for ${item.name}`}
-                            >
-                              API keys
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label={`Edit ${item.name}`}
-                              onClick={() => setServiceUser(item)}
-                            >
-                              <EditIcon />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.name}`}
-                              onClick={() => setToggleApp(item)}
-                            >
-                              {item.enabled ? "Disable" : "Enable"}
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableCard>
-            )}
-          </section>
-        )}
-      </>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableCard>
+          )}
+        </section>
+      )}
       <p className="text-sm text-muted-foreground">
         For API access acting as you, manage{" "}
         <Link className="underline" to="/account#api-keys">
@@ -342,6 +352,7 @@ function OrganizationDetails({
       {policyOpen && (
         <PolicyDialog
           organization={organization}
+          canEditQuota={admin}
           close={() => setPolicyOpen(false)}
           saved={refresh}
         />

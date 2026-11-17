@@ -25,7 +25,9 @@ const SETUP = ["Profiles", "Environments", "MCP servers", "Models"];
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
+let personalOrganization = false;
 beforeEach(() => {
+  personalOrganization = false;
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
@@ -46,7 +48,7 @@ afterEach(async () => {
 async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", name: "Team", role: organizationRole ?? "member" }], canCreate: false };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", name: "Team", personal: personalOrganization, role: organizationRole ?? "member" }], canCreate: false };
     if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: mocks.role, features }];
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -223,6 +225,11 @@ it("opens a personal-key deep link and keeps profile section links navigable", a
 it("shows only universe administration to a universe Owner", async () => {
   expect(await sidebarFor("owner", undefined, false, "/admin/organizations/team/universes")).toEqual({ "": ["Universes"] });
   expect(container.querySelector('[data-sidebar="separator"]')).toBeNull();
+});
+
+it("leaves People out of a personal organization's administration", async () => {
+  personalOrganization = true;
+  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "Service users", "API keys", "Settings"] });
 });
 
 it("shows organization administration without deployment controls to an Organization Admin", async () => {

@@ -381,7 +381,7 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN` | `break-glass` with OIDC; `local` without | `break-glass` permits only designated local emergency admins; `off` disables password sign-in and changes. `local` is rejected with OIDC. |
 | `LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS` | `true` | Provision one personal organization for each admitted user. Can be disabled in shared-organization deployments. |
 | `LIGHTSPEED_PLATFORM_SHARED_ORGANIZATION_CREATION` | `false` | Allow admitted users to create shared organizations; otherwise only Platform Admins can. |
-| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | `25` | Default personal-organization universe quota; organization policy can override it. |
+| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | `25` | Default personal-organization universe quota; a Platform Admin can override it per organization. |
 | `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | `100` | Default shared-organization universe quota. |
 | `LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS` | `365` | Default user/service-user key lifetime, capped by the maximum. |
 | `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | `365` | Maximum key lifetime. Both expiry settings accept 1–3650 days. |

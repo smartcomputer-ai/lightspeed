@@ -65,9 +65,11 @@ const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string }> = 
   { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
   { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes" },
 ];
+/// `shared` sections do not apply to a personal organization, whose owner
+/// is its only member.
 const ORGANIZATION_NAV = [
   { path: "universes", icon: UniversesIcon, label: "Universes", administrator: false },
-  { path: "people", icon: UserIcon, label: "People", administrator: true },
+  { path: "people", icon: UserIcon, label: "People", administrator: true, shared: true },
   { path: "service-users", icon: UserAdminIcon, label: "Service users", administrator: true },
   { path: "api-keys", icon: SecurityIcon, label: "API keys", administrator: true },
   { path: "settings", icon: SecurityIcon, label: "Settings", administrator: true },
@@ -260,7 +262,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           })}
           {mode === "admin" && <>
             {adminAccess.selected && <SidebarGroup><SidebarGroupContent><SidebarMenu>
-              {ORGANIZATION_NAV.filter(item => !item.administrator || adminAccess.organizations).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
+              {ORGANIZATION_NAV.filter(item => (!item.administrator || adminAccess.organizations) && !(item.shared && adminAccess.selected?.personal)).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
             </SidebarMenu></SidebarGroupContent></SidebarGroup>}
             {adminAccess.platform && <><SidebarSeparator /><SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
               {PLATFORM_NAV.map(item => <NavItem key={item.to} {...item} />)}
