@@ -1555,8 +1555,6 @@ impl PgStore {
 mod tests {
     use super::*;
 
-    const MIGRATION: &str = include_str!("../migrations/013_camel_case_bot_values.sql");
-
     #[test]
     fn stored_trigger_reasons_are_the_api_spelling_and_pass_the_check() {
         for reason in [
@@ -1569,7 +1567,10 @@ mod tests {
             let stored = disabled_reason_to_str(reason);
             assert_eq!(serde_json::to_value(reason).unwrap(), stored);
             assert_eq!(disabled_reason_from_str(stored).unwrap(), reason);
-            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+            assert!(
+                crate::BOTS_SCHEMA_SQL.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
         }
     }
 
@@ -1589,7 +1590,10 @@ mod tests {
             let stored = outcome.as_str();
             assert_eq!(serde_json::to_value(outcome).unwrap(), stored);
             assert_eq!(outcome_from_str(stored).unwrap(), outcome);
-            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+            assert!(
+                crate::BOTS_SCHEMA_SQL.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
         }
     }
 }

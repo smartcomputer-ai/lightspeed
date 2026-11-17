@@ -4870,14 +4870,14 @@ async fn pg_live_provisioned_environment_lifecycle_follows_the_domain_rules() {
     assert!(matches!(
         store
             .create_environment(create_environment(
-                &EnvironmentProviderId::new(format!("unbound-{}", Uuid::new_v4().simple())),
-                "lifecycle-unbound",
-                "lifecycle-unbound",
+                &EnvironmentProviderId::new(format!("missing-{}", Uuid::new_v4().simple())),
+                "lifecycle-missing",
+                "lifecycle-missing",
                 100,
             ))
             .await,
         Err(EnvironmentRegistryError::NotFound {
-            kind: "environment_provider_binding",
+            kind: "environment_provider",
             ..
         })
     ));

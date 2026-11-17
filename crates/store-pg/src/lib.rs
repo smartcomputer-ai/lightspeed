@@ -55,14 +55,14 @@ pub struct SessionListPageWithAccess {
     pub next_cursor: Option<harness::storage::SessionListCursor>,
 }
 
-pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
+pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_initial_core.sql");
 pub const VFS_SCHEMA_SQL: &str = include_str!("../migrations/002_vfs.sql");
-pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/003_mcp.sql");
-pub const CREDENTIALS_SCHEMA_SQL: &str = include_str!("../migrations/004_auth.sql");
+pub const CREDENTIALS_SCHEMA_SQL: &str = include_str!("../migrations/003_credentials.sql");
+pub const MCP_SCHEMA_SQL: &str = include_str!("../migrations/004_mcp.sql");
 pub const ENVIRONMENT_SCHEMA_SQL: &str = include_str!("../migrations/005_environments.sql");
 pub const PROFILE_SCHEMA_SQL: &str = include_str!("../migrations/006_agent_profiles.sql");
-pub const BOTS_SCHEMA_SQL: &str = include_str!("../migrations/008_bots.sql");
-pub const CHANNELS_SCHEMA_SQL: &str = include_str!("../migrations/009_channels.sql");
+pub const BOTS_SCHEMA_SQL: &str = include_str!("../migrations/007_bots.sql");
+pub const CHANNELS_SCHEMA_SQL: &str = include_str!("../migrations/008_channels.sql");
 
 pub const DEFAULT_INLINE_THRESHOLD_BYTES: usize = 64 * 1024;
 

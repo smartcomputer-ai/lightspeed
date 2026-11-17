@@ -16,13 +16,13 @@
 --   pairing code), the paired trigger owns the chat while the row exists
 --   (a disabled owner parks the chat, it is never rerouted), and deleting
 --   the trigger or the pairing frees it. Rows cascade from both the chat
---   trigger (`bot_triggers`, `008_bots.sql`) and the account.
+--   trigger and the account.
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- channel_accounts
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS channel_accounts (
+CREATE TABLE channel_accounts (
     -- ── Identity ───────────────────────────────────────────────────────────
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
@@ -95,7 +95,7 @@ COMMENT ON COLUMN channel_accounts.updated_at_ms IS
 -- channel_pairings
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS channel_pairings (
+CREATE TABLE channel_pairings (
     -- ── Identity: the conversation itself ──────────────────────────────────
     universe_id uuid NOT NULL,
     -- Channel account the conversation arrived through.
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS channel_pairings (
 );
 
 -- The trigger's pairing list.
-CREATE INDEX IF NOT EXISTS channel_pairings_trigger_idx
+CREATE INDEX channel_pairings_trigger_idx
     ON channel_pairings (universe_id, bot_id, trigger_id);
 
 COMMENT ON TABLE channel_pairings IS

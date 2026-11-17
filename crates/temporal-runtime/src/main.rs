@@ -312,7 +312,7 @@ fn explain_migration_error(error: store_pg::PgStoreError) -> anyhow::Error {
     anyhow::anyhow!(
         "database schema does not match this build: {mismatch}.\n\
          If this is disposable local development data, run `./dev.sh reset` and retry. Reset deletes local PostgreSQL and MinIO data.\n\
-         To keep the data, restore the migration used by this database and put changes in a new migration; do not edit the migration ledger."
+         To keep the data, use a build that matches this database until the data has been migrated to the schema required by this build. Leave the migration ledger intact."
     )
 }
 

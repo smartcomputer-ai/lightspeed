@@ -98,6 +98,28 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?;
 
+    // The former baseline also began at revision 1. Its ledger must not
+    // qualify as an installation of the current baseline.
+    pool.execute(
+        "CREATE TABLE schema_migrations (version bigint, name text, checksum text);
+         INSERT INTO schema_migrations VALUES (1, 'core', repeat('0', 64));",
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let legacy = PgStore::migrate(pool)
+        .await
+        .expect_err("a different baseline must be refused");
+    if !matches!(
+        legacy,
+        PgStoreError::MigrationNameChanged { version: 1, ref actual, .. } if actual == "core"
+    ) {
+        return Err(format!("unexpected legacy baseline error: {legacy}"));
+    }
+    sqlx::query("DROP TABLE schema_migrations")
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
     let (left, right) = tokio::join!(PgStore::migrate(pool), PgStore::migrate(pool));
     left.map_err(|error| error.to_string())?;
     right.map_err(|error| error.to_string())?;

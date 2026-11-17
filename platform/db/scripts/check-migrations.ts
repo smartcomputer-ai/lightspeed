@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -30,6 +31,7 @@ if (!upgradeFrom || !Number.isSafeInteger(schemaRevision) || schemaRevision < 1)
 const suffix = `${process.pid}_${Date.now()}`;
 const emptyName = checkedIdentifier(`lightspeed_platform_empty_${suffix}`);
 const upgradeName = checkedIdentifier(`lightspeed_platform_upgrade_${suffix}`);
+const legacyName = checkedIdentifier(`lightspeed_platform_legacy_${suffix}`);
 const admin = new pg.Client({ connectionString: baseUrl });
 const previousMigrations = await mkdtemp(path.join(tmpdir(), "lightspeed-platform-migrations-"));
 let adminConnected = false;
@@ -38,9 +40,10 @@ try {
   await admin.connect();
   adminConnected = true;
   await createDatabase(admin, emptyName);
-  await createDatabase(admin, upgradeName);
+  await createDatabase(admin, legacyName);
 
   await checkEmptyInstall(databaseUrl(baseUrl, emptyName));
+  await checkLegacyLedger(databaseUrl(baseUrl, legacyName));
   const journal = await readJournal();
   if (journal.entries.length !== schemaRevision) {
     throw new Error("platform schema revision does not match the migration journal");
@@ -53,6 +56,7 @@ try {
     }
     console.log("platform migrations: single baseline; upgrade check starts with the next migration");
   } else {
+    await createDatabase(admin, upgradeName);
     await preparePreviousMigrations(previousMigrations, journal);
     await checkUpgrade(databaseUrl(baseUrl, upgradeName), previousMigrations, journal);
   }
@@ -60,6 +64,7 @@ try {
   if (adminConnected) {
     await dropDatabase(admin, emptyName);
     await dropDatabase(admin, upgradeName);
+    await dropDatabase(admin, legacyName);
   }
   await admin.end().catch(() => undefined);
   await rm(previousMigrations, { recursive: true, force: true });
@@ -70,6 +75,28 @@ async function checkEmptyInstall(connectionString: string): Promise<void> {
   try {
     await migrateDb(handle);
     await requirePlatformShape(handle.pool);
+    await migrateDb(handle);
+    await requireLedgerLength(handle.pool, schemaRevision);
+  } finally {
+    await handle.pool.end();
+  }
+}
+
+async function checkLegacyLedger(connectionString: string): Promise<void> {
+  const handle = createDb(connectionString);
+  try {
+    // A later timestamp would cause Drizzle to skip the entire new baseline.
+    await handle.pool.query(`
+      CREATE SCHEMA drizzle;
+      CREATE TABLE drizzle.__drizzle_migrations (
+        id serial PRIMARY KEY, hash text NOT NULL, created_at bigint
+      );
+      INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+      VALUES ('legacy-baseline', 9223372036854775807);
+    `);
+    await assert.rejects(() => migrateDb(handle), /different migration baseline/);
+    await requireLedgerLength(handle.pool, 1);
+    await requireNoTable(handle.pool, "universes");
   } finally {
     await handle.pool.end();
   }
@@ -86,6 +113,7 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireTable(pool, "organization");
   await requireTable(pool, "member");
   await requireTable(pool, "identity_audit");
+  await requireTable(pool, "platform_settings");
   for (const table of ["apikey", "service_users", "credential_bindings", "universe_grants", "device_code"]) {
     await requireTable(pool, table);
   }

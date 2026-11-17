@@ -19,14 +19,12 @@
 --   they sit beside the document in `secrets_json` and are shown only to
 --   managing principals. Credentials proper (HMAC secrets, poll auth) are
 --   grant references inside the document.
--- - Chat provider accounts and conversation pairings live in
---   `009_channels.sql`.
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- bots
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS bots (
+CREATE TABLE bots (
     -- ── Identity ───────────────────────────────────────────────────────────
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
@@ -57,6 +55,10 @@ CREATE TABLE IF NOT EXISTS bots (
     closed_sessions_json jsonb NOT NULL DEFAULT '[]',
     created_at_ms bigint NOT NULL,
     updated_at_ms bigint NOT NULL,
+
+    -- The controller's latest reported status.
+    controller_status_json jsonb,
+    controller_status_at_ms bigint,
 
     PRIMARY KEY (universe_id, bot_id),
 
@@ -101,7 +103,7 @@ COMMENT ON COLUMN bots.updated_at_ms IS
 -- bot_triggers
 -- ═══════════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS bot_triggers (
+CREATE TABLE bot_triggers (
     -- ── Identity ───────────────────────────────────────────────────────────
     universe_id uuid NOT NULL,
     bot_id text NOT NULL,
@@ -129,8 +131,8 @@ CREATE TABLE IF NOT EXISTS bot_triggers (
     -- code. Kept out of the document so it round-trips verbatim; shown only
     -- to managing principals.
     secrets_json jsonb NOT NULL DEFAULT '{}',
-    -- Why the runtime disabled the trigger (breaker | poll_failed |
-    -- one_shot | operator | bot_closed); NULL while enabled. A put that
+    -- Why the runtime disabled the trigger (breaker | pollFailed |
+    -- oneShot | operator | botClosed); NULL while enabled. A put that
     -- enables the trigger clears it. Set and cleared together with
     -- disabled_at_ms.
     disabled_reason text,
@@ -166,7 +168,7 @@ CREATE TABLE IF NOT EXISTS bot_triggers (
     CONSTRAINT bot_triggers_disabled_reason_known
         CHECK (
             disabled_reason IS NULL
-            OR disabled_reason IN ('breaker', 'poll_failed', 'one_shot', 'operator', 'bot_closed')
+            OR disabled_reason IN ('breaker', 'pollFailed', 'oneShot', 'operator', 'botClosed')
         ),
     CONSTRAINT bot_triggers_disabled_pair
         CHECK ((disabled_reason IS NULL) = (disabled_at_ms IS NULL)),
@@ -184,12 +186,12 @@ CREATE TABLE IF NOT EXISTS bot_triggers (
         CHECK (updated_at_ms >= created_at_ms)
 );
 
-CREATE INDEX IF NOT EXISTS bot_triggers_kind_idx
+CREATE INDEX bot_triggers_kind_idx
     ON bot_triggers (universe_id, kind, bot_id, trigger_id);
 
 -- At most one inbox (`kind = 'bot'`) per bot: the inbox owns the bot's
 -- filter, route, coalesce, and delivery policy for addressed events.
-CREATE UNIQUE INDEX IF NOT EXISTS bot_triggers_inbox_unique_idx
+CREATE UNIQUE INDEX bot_triggers_inbox_unique_idx
     ON bot_triggers (universe_id, bot_id)
     WHERE kind = 'bot';
 
@@ -206,7 +208,7 @@ COMMENT ON COLUMN bot_triggers.document_json IS
 COMMENT ON COLUMN bot_triggers.secrets_json IS
     'Server-minted capability tokens (webhookToken, pairingCode); shown only to managing principals.';
 COMMENT ON COLUMN bot_triggers.disabled_reason IS
-    'Why the runtime disabled the trigger (breaker|poll_failed|one_shot|operator|bot_closed); cleared when a put enables it again.';
+    'Why the runtime disabled the trigger (breaker|pollFailed|oneShot|operator|botClosed); cleared when a put enables it again.';
 COMMENT ON COLUMN bot_triggers.disabled_at_ms IS
     'When the runtime disabled the trigger, in Unix milliseconds.';
 COMMENT ON COLUMN bot_triggers.last_filter_error IS
@@ -232,7 +234,7 @@ COMMENT ON COLUMN bot_triggers.updated_at_ms IS
 -- the full envelope, including the source's own data and headers, is the
 -- CAS document at `document_ref`.
 
-CREATE TABLE IF NOT EXISTS bot_events (
+CREATE TABLE bot_events (
     -- ── Identity and order ─────────────────────────────────────────────────
     universe_id uuid NOT NULL,
     bot_id text NOT NULL,
@@ -295,7 +297,7 @@ CREATE TABLE IF NOT EXISTS bot_events (
 
     -- ── Outcome, written once when the delivery finishes ───────────────────
     -- The model's decision (handled | deferred | ignored | blocked) or the
-    -- system's (unresolved | run_failed | steered | appended | archived);
+    -- system's (unresolved | runFailed | steered | appended | archived);
     -- NULL while pending.
     outcome text,
     -- Free-text detail recorded with the outcome (the model's reason).
@@ -345,7 +347,7 @@ CREATE TABLE IF NOT EXISTS bot_events (
             outcome IS NULL
             OR outcome IN (
                 'handled', 'deferred', 'ignored', 'blocked', 'unresolved',
-                'run_failed', 'steered', 'appended', 'archived'
+                'runFailed', 'steered', 'appended', 'archived'
             )
         ),
     CONSTRAINT bot_events_resolved_nonnegative
@@ -355,20 +357,20 @@ CREATE TABLE IF NOT EXISTS bot_events (
 );
 
 -- The log: newest first per bot.
-CREATE INDEX IF NOT EXISTS bot_events_log_idx
+CREATE INDEX bot_events_log_idx
     ON bot_events (universe_id, bot_id, received_at_ms DESC, seq DESC);
 
 -- Per-trigger flood breaker window.
-CREATE INDEX IF NOT EXISTS bot_events_trigger_rate_idx
+CREATE INDEX bot_events_trigger_rate_idx
     ON bot_events (universe_id, bot_id, trigger_id, received_at_ms);
 
 -- Per-sender emit rate cap, across every receiving bot in the universe.
-CREATE INDEX IF NOT EXISTS bot_events_sender_rate_idx
+CREATE INDEX bot_events_sender_rate_idx
     ON bot_events (universe_id, sender_bot_id, received_at_ms)
     WHERE sender_bot_id IS NOT NULL;
 
 -- Pending count on the roster.
-CREATE INDEX IF NOT EXISTS bot_events_pending_idx
+CREATE INDEX bot_events_pending_idx
     ON bot_events (universe_id, bot_id)
     WHERE outcome IS NULL;
 
@@ -404,7 +406,7 @@ COMMENT ON COLUMN bot_events.in_reply_to_json IS
     'Public BotEventReplyRef correlation of a receipt: the asked event #N at the answering bot.';
 -- Derived by the bot store in the same transaction as event insertion.
 -- Covers documents, prompts, media, and receiver tool declarations.
-CREATE TABLE IF NOT EXISTS cas_bot_event_roots (
+CREATE TABLE cas_bot_event_roots (
     universe_id uuid NOT NULL,
     bot_id text NOT NULL,
     event_id text NOT NULL,
@@ -416,7 +418,7 @@ CREATE TABLE IF NOT EXISTS cas_bot_event_roots (
     FOREIGN KEY (universe_id, digest)
         REFERENCES cas_blobs (universe_id, digest) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED
 );
-CREATE INDEX IF NOT EXISTS cas_bot_event_roots_digest_idx
+CREATE INDEX cas_bot_event_roots_digest_idx
     ON cas_bot_event_roots (universe_id, digest);
 
 COMMENT ON COLUMN bot_events.receiver_json IS

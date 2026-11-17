@@ -17,7 +17,6 @@ beforeAll(async () => {
   for (const entry of journal.entries) {
     await database.exec(await readFile(new URL(`${entry.tag}.sql`, migrations), "utf8"));
   }
-  // Existing and newly created universes have the same appearance defaults.
   await database.exec(`
     INSERT INTO "user" (id, name, email) VALUES
       ('admin', 'Admin', 'admin@example.test'), ('viewer', 'Viewer', 'viewer@example.test'),
@@ -45,7 +44,7 @@ function request(userId: string, method = "GET", body?: unknown, platformAdmin =
   });
 }
 
-it("gives existing and newly created universes the default appearance", async () => {
+it("gives universes the default appearance", async () => {
   expect(await (await request("viewer")).json()).toMatchObject({ icon: "orbit", iconColor: "default" });
   await database.exec(`
     INSERT INTO organization (id, name, slug, created_at) VALUES ('new-org', 'New', 'new', now());

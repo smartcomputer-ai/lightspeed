@@ -51,19 +51,7 @@ async fn universes_are_named_at_creation_and_renamed_only_explicitly() {
 }
 
 async fn exercise(pool: &sqlx::PgPool) {
-    for migration in store_pg::MIGRATIONS
-        .iter()
-        .filter(|migration| migration.version < 16)
-    {
-        apply_migration(pool, migration.version).await;
-    }
-    upgrade_keeps_fitting_names_and_derives_the_rest(pool).await;
-    for migration in store_pg::MIGRATIONS
-        .iter()
-        .filter(|migration| migration.version > 16)
-    {
-        apply_migration(pool, migration.version).await;
-    }
+    PgStore::migrate(pool).await.expect("apply migrations");
 
     // A universe created without a handle takes the one derived from its id.
     let id = Uuid::new_v4();
@@ -220,45 +208,6 @@ async fn exercise(pool: &sqlx::PgPool) {
     }
 }
 
-/// Apply the handle migration to the actual preceding schema, with rows of
-/// every kind it has to carry. Later migrations run only after these checks.
-async fn upgrade_keeps_fitting_names_and_derives_the_rest(pool: &sqlx::PgPool) {
-    let kept = Uuid::new_v4();
-    let unnamed = Uuid::new_v4();
-    let mixed_case = Uuid::new_v4();
-    let uuid_shaped = Uuid::new_v4();
-    for (id, slug) in [
-        (kept, Some("kept-name".to_owned())),
-        (unnamed, None),
-        (mixed_case, Some("My.Universe:one".to_owned())),
-        (uuid_shaped, Some(Uuid::new_v4().simple().to_string())),
-    ] {
-        sqlx::query("INSERT INTO universes (universe_id, slug) VALUES ($1, $2)")
-            .bind(id)
-            .bind(slug)
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-
-    apply_migration(pool, 16).await;
-
-    for id in [kept, unnamed, mixed_case, uuid_shaped] {
-        let actual: String =
-            sqlx::query_scalar("SELECT handle FROM universes WHERE universe_id = $1")
-                .bind(id)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-        let expected = if id == kept {
-            "kept-name".to_owned()
-        } else {
-            store_pg::default_universe_handle(id)
-        };
-        assert_eq!(actual, expected);
-    }
-}
-
 fn is_unique_violation(error: &store_pg::PgStoreError) -> bool {
     matches!(error, store_pg::PgStoreError::Postgres(sqlx::Error::Database(error)) if error.is_unique_violation())
 }
@@ -275,15 +224,4 @@ async fn handle(pool: &sqlx::PgPool, id: Uuid) -> String {
         .unwrap()
         .unwrap()
         .handle
-}
-
-/// Run one embedded migration over the isolated historical fixture.
-async fn apply_migration(pool: &sqlx::PgPool, version: i64) {
-    let migration = store_pg::MIGRATIONS
-        .iter()
-        .find(|migration| migration.version == version)
-        .expect("embedded migration");
-    pool.execute(sqlx::raw_sql(migration.sql))
-        .await
-        .expect("apply migration");
 }

@@ -2205,11 +2205,8 @@ impl PgStore {
 mod tests {
     use super::*;
 
-    const CREDENTIAL_SOURCE_MIGRATION: &str =
-        include_str!("../migrations/019_environment_credential_sources.sql");
-
     #[test]
-    fn stored_credential_source_kinds_pass_the_latest_check() {
+    fn stored_credential_source_kinds_pass_the_check() {
         let grant = EnvironmentCredentialSource::CredentialGrant {
             grant_id: CredentialGrantId::new("authgrant_repo"),
         };
@@ -2227,10 +2224,10 @@ mod tests {
 
         // The check that names the allowed kinds is the line after its
         // constraint name; a bare secret id is not among them.
-        let allowed = CREDENTIAL_SOURCE_MIGRATION
+        let allowed = crate::ENVIRONMENT_SCHEMA_SQL
             .lines()
             .skip_while(|line| {
-                !line.contains("ADD CONSTRAINT environment_credentials_source_kind_known")
+                !line.contains("CONSTRAINT environment_credentials_source_kind_known")
             })
             .nth(1)
             .expect("source kind check");

@@ -1,29 +1,62 @@
--- Core PostgreSQL schema for Lightspeed sessions and content-addressed storage.
---
--- Design notes:
--- - Postgres is the source of truth for session logs and CAS metadata.
--- - A universe is the tenant/project/workspace boundary.
--- - Sessions and agents share CAS within a universe.
--- - CAS metadata and object keys are isolated between universes.
--- - Small CAS payloads are stored inline in bytea.
--- - Large CAS payloads are stored externally; object_key points at the bytes.
--- - Packed CAS objects are intentionally omitted from v1. put_many can batch
---   hashes, external uploads, and INSERTs without changing this schema.
--- - Column-scoped lineage deletion requires PostgreSQL 15 or newer.
+-- Universes, session logs and projections, and content-addressed storage.
 
-CREATE TABLE IF NOT EXISTS universes (
+CREATE TABLE universes (
     universe_id uuid PRIMARY KEY,
-    slug text UNIQUE,
-    -- Server-side default so every insert path stamps creation time without
-    -- threading a clock through `ensure_universe`.
+    -- A deployment-unique URL label, distinct from a UUID.
+    handle text NOT NULL,
+    -- Every insert path stamps creation time, including ensure_universe.
     created_at_ms bigint NOT NULL
         DEFAULT ((extract(epoch FROM now()) * 1000)::bigint),
+    display_name text CHECK (display_name IS NULL OR char_length(display_name) BETWEEN 1 AND 120),
+    deleting_at_ms bigint,
+    deletion_json jsonb,
+    metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    protected boolean NOT NULL DEFAULT false,
+    expires_at_ms bigint,
 
-    CONSTRAINT universes_slug_format
-        CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')
+    CONSTRAINT universes_handle_format CHECK (
+        handle ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+        AND handle !~ '^[0-9a-f]{32}$'
+        AND handle !~ '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'
+    ),
+    CONSTRAINT universes_deletion_state
+        CHECK ((deleting_at_ms IS NULL) = (deletion_json IS NULL)),
+    CONSTRAINT universes_metadata_object
+        CHECK (jsonb_typeof(metadata_json) = 'object'),
+    CONSTRAINT universes_protection_expiry
+        CHECK (NOT protected OR expires_at_ms IS NULL),
+    CONSTRAINT universes_protected_deletion
+        CHECK (NOT protected OR deleting_at_ms IS NULL),
+    CONSTRAINT universes_positive_expiry
+        CHECK (expires_at_ms IS NULL OR expires_at_ms > 0)
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
+-- Beginning deletion releases the handle. The UUID stays reserved.
+CREATE UNIQUE INDEX universes_handle_key ON universes (handle)
+    WHERE deleting_at_ms IS NULL;
+
+CREATE INDEX universes_metadata_idx ON universes USING gin (metadata_json jsonb_path_ops);
+
+CREATE INDEX universes_expiry_idx ON universes (expires_at_ms, universe_id)
+    WHERE expires_at_ms IS NOT NULL AND deleting_at_ms IS NULL;
+
+-- Deletion receipts outlive the universe and retain its original identity.
+CREATE TABLE universes_deleted (
+    universe_id uuid PRIMARY KEY,
+    handle text NOT NULL,
+    display_name text,
+    created_at_ms bigint NOT NULL,
+    deleting_at_ms bigint NOT NULL,
+    deleted_at_ms bigint NOT NULL,
+    requested_by jsonb NOT NULL,
+    summary jsonb NOT NULL,
+    metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT universes_deleted_metadata_object CHECK (jsonb_typeof(metadata_json) = 'object')
+);
+
+CREATE INDEX universes_deleted_newest ON universes_deleted (deleted_at_ms DESC, universe_id DESC);
+
+CREATE TABLE sessions (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     session_id text NOT NULL,
@@ -41,10 +74,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     delete_after_close_ms bigint,
     delete_at_ms bigint GENERATED ALWAYS AS
         (closed_at_ms + delete_after_close_ms) STORED,
-    -- Cheap catalog projection of external lifecycle ownership. Workflow-tool
-    -- declarations without a lifecycle controller do not make a session
-    -- managed; controller/tool details remain in the log.
-    managed boolean NOT NULL DEFAULT false,
+    -- Catalog projection of lifecycle ownership. Controller and tool details
+    -- remain in the event log.
+    lifecycle_controlled boolean NOT NULL DEFAULT false,
     -- Who started it: the attribution of the request or bot worker, stamped
     -- once by the gateway right after the start. Null on delegated children,
     -- which read their root's, and on a root until the stamp.
@@ -88,6 +120,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     origin_json jsonb,
     origin_root_session_id text,
     origin_parent_session_id text,
+    -- Soft deletion belongs to the storage lifecycle.
+    deleted_at_ms bigint,
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 0),
 
     PRIMARY KEY (universe_id, session_id),
 
@@ -152,51 +187,56 @@ CREATE TABLE IF NOT EXISTS sessions (
     CONSTRAINT sessions_updated_at_ms_nonnegative
         CHECK (updated_at_ms >= 0),
     CONSTRAINT sessions_updated_after_created
-        CHECK (updated_at_ms >= created_at_ms)
+        CHECK (updated_at_ms >= created_at_ms),
+    CONSTRAINT sessions_deleted_closed
+        CHECK (deleted_at_ms IS NULL OR lifecycle_status = 'closed')
 );
 
-CREATE INDEX IF NOT EXISTS sessions_source_session_id_idx
+CREATE INDEX sessions_source_session_id_idx
     ON sessions (universe_id, source_session_id)
     WHERE source_session_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS sessions_origin_root_idx
+CREATE INDEX sessions_origin_root_idx
     ON sessions (universe_id, origin_root_session_id)
     WHERE origin_root_session_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS sessions_origin_parent_idx
+CREATE INDEX sessions_origin_parent_idx
     ON sessions (universe_id, origin_parent_session_id)
     WHERE origin_parent_session_id IS NOT NULL;
 
 -- Keyset paging for session listings: newest activity first.
-CREATE INDEX IF NOT EXISTS sessions_updated_at_idx
+CREATE INDEX sessions_updated_at_idx
     ON sessions (universe_id, updated_at_ms DESC, session_id DESC);
 
-CREATE INDEX IF NOT EXISTS sessions_lifecycle_updated_at_idx
+CREATE INDEX sessions_lifecycle_updated_at_idx
     ON sessions (universe_id, lifecycle_status, updated_at_ms DESC, session_id DESC);
 
-CREATE INDEX IF NOT EXISTS sessions_retention_root_idx
+CREATE INDEX sessions_retention_root_idx
     ON sessions (universe_id, retention_root_session_id, session_id);
-CREATE INDEX IF NOT EXISTS sessions_retention_due_idx
+CREATE INDEX sessions_retention_due_idx
     ON sessions (universe_id, delete_at_ms, session_id)
     WHERE lifecycle_status = 'closed' AND delete_at_ms IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS sessions_metadata_idx
+CREATE INDEX sessions_metadata_idx
     ON sessions USING gin (metadata_json jsonb_path_ops);
 
--- What a session is doing now, for lists: a row only while a run is working
--- or waiting for approvals, written with the events that change it. Idle
--- sessions have no row; the event log remains authoritative.
-CREATE TABLE IF NOT EXISTS session_activity (
+-- Materialized session summary and current activity for catalog reads.
+CREATE TABLE session_summary (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
-    activity text NOT NULL CHECK (activity IN ('working', 'waiting')),
-    since_ms bigint NOT NULL CHECK (since_ms >= 0),
+    activity text NOT NULL DEFAULT 'idle' CHECK (activity IN ('idle', 'working', 'waiting')),
+    phase text,
+    since_ms bigint CHECK (since_ms >= 0),
+    summary_json jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(summary_json) = 'object'),
     PRIMARY KEY (universe_id, session_id),
-    FOREIGN KEY (universe_id, session_id)
-        REFERENCES sessions (universe_id, session_id) ON DELETE CASCADE
+    FOREIGN KEY (universe_id, session_id) REFERENCES sessions (universe_id, session_id) ON DELETE CASCADE,
+    CHECK ((activity = 'idle') = (since_ms IS NULL))
 );
 
-CREATE TABLE IF NOT EXISTS session_events (
+CREATE INDEX session_summary_active_idx ON session_summary (universe_id, session_id)
+    WHERE activity <> 'idle';
+
+CREATE TABLE session_events (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
     entry_json jsonb NOT NULL,
@@ -232,10 +272,10 @@ CREATE TABLE IF NOT EXISTS session_events (
         CHECK (entry_json #> '{event,payload}' IS NOT NULL)
 );
 
-CREATE INDEX IF NOT EXISTS session_events_event_kind_idx
+CREATE INDEX session_events_event_kind_idx
     ON session_events (universe_id, event_kind);
 
-CREATE TABLE IF NOT EXISTS cas_blobs (
+CREATE TABLE cas_blobs (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     digest text NOT NULL,
@@ -281,21 +321,21 @@ CREATE TABLE IF NOT EXISTS cas_blobs (
         )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS cas_blobs_blob_ref_idx
+CREATE UNIQUE INDEX cas_blobs_blob_ref_idx
     ON cas_blobs (universe_id, blob_ref);
 
-CREATE UNIQUE INDEX IF NOT EXISTS cas_blobs_object_key_idx
+CREATE UNIQUE INDEX cas_blobs_object_key_idx
     ON cas_blobs (object_key)
     WHERE object_key IS NOT NULL;
 
 -- The sweep considers the oldest untouched blobs after its grace period.
-CREATE INDEX IF NOT EXISTS cas_blobs_touched_at_idx
+CREATE INDEX cas_blobs_touched_at_idx
     ON cas_blobs (universe_id, touched_at_ms, digest);
 
 -- Derived by the session store in the append transaction. One row per
 -- session and blob, regardless of how many events reference it. The FK
 -- serializes attachment against collection, including uncommitted appends.
-CREATE TABLE IF NOT EXISTS cas_session_roots (
+CREATE TABLE cas_session_roots (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
     digest text NOT NULL,
@@ -306,13 +346,13 @@ CREATE TABLE IF NOT EXISTS cas_session_roots (
     FOREIGN KEY (universe_id, digest)
         REFERENCES cas_blobs (universe_id, digest) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED
 );
-CREATE INDEX IF NOT EXISTS cas_session_roots_digest_idx
+CREATE INDEX cas_session_roots_digest_idx
     ON cas_session_roots (universe_id, digest);
 
 -- Disposable, advance-only pointers to CAS-backed session reducer state.
 -- The append-only event log remains the sole durable authority.
 
-CREATE TABLE IF NOT EXISTS session_checkpoints (
+CREATE TABLE session_checkpoints (
     universe_id uuid NOT NULL,
     session_id text NOT NULL,
     through_seq bigint NOT NULL,
@@ -340,13 +380,13 @@ CREATE TABLE IF NOT EXISTS session_checkpoints (
     )
 );
 
-CREATE INDEX IF NOT EXISTS session_checkpoints_state_digest_idx
+CREATE INDEX session_checkpoints_state_digest_idx
     ON session_checkpoints (universe_id, state_digest);
 
 COMMENT ON TABLE session_checkpoints IS
     'Disposable advance-only pointers to CAS-backed reducer state; session_events remains authoritative.';
 
-CREATE TABLE IF NOT EXISTS cas_blob_edges (
+CREATE TABLE cas_blob_edges (
     universe_id uuid NOT NULL,
     parent_digest text NOT NULL,
     child_digest text NOT NULL,
@@ -362,8 +402,18 @@ CREATE TABLE IF NOT EXISTS cas_blob_edges (
         CHECK (edge_kind <> '')
 );
 
-CREATE INDEX IF NOT EXISTS cas_blob_edges_child_digest_idx
+CREATE INDEX cas_blob_edges_child_digest_idx
     ON cas_blob_edges (universe_id, child_digest);
+
+-- Where the blob sweep stopped in each universe, so a restart or a new leader
+-- carries on rather than walking the oldest rows again. A position and not a
+-- holder: the digest has no foreign key to cas_blobs, and the blob it names may
+-- be deleted while the row stands.
+CREATE TABLE cas_sweep_cursors (
+    universe_id uuid PRIMARY KEY REFERENCES universes (universe_id) ON DELETE CASCADE,
+    touched_at_ms bigint NOT NULL,
+    digest text NOT NULL
+);
 
 COMMENT ON TABLE universes IS
     'Tenant/project/workspace boundary; sessions and CAS are shared within one universe.';
@@ -389,3 +439,14 @@ COMMENT ON COLUMN cas_blobs.touched_at_ms IS
     'Unix milliseconds of the most recent put or input admission; collection grace counts from here.';
 COMMENT ON TABLE cas_session_roots IS
     'Distinct blob references derived transactionally from a session log; removed with the session.';
+
+-- Renewable leases for runtime replicas.
+CREATE TABLE runtime_instances (
+    instance_id uuid PRIMARY KEY,
+    roles text[] NOT NULL,
+    peer_url text,
+    started_at_ms bigint NOT NULL CHECK (started_at_ms >= 0),
+    lease_expires_at_ms bigint NOT NULL CHECK (lease_expires_at_ms >= started_at_ms)
+);
+
+CREATE INDEX runtime_instances_lease_idx ON runtime_instances (lease_expires_at_ms);

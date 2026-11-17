@@ -757,14 +757,15 @@ fn mcp_sql_error(action: &str, error: sqlx::Error) -> McpRegistryError {
 mod tests {
     use super::*;
 
-    const MIGRATION: &str = include_str!("../migrations/014_runtime_and_lifecycle_vocabulary.sql");
-
     #[test]
     fn stored_execution_values_round_trip_and_pass_the_check() {
         for execution in [McpExecution::Provider, McpExecution::Runtime] {
             let stored = execution_to_str(execution);
             assert_eq!(execution_from_str(stored).unwrap(), execution);
-            assert!(MIGRATION.contains(&format!("'{stored}'")), "{stored}");
+            assert!(
+                crate::MCP_SCHEMA_SQL.contains(&format!("'{stored}'")),
+                "{stored}"
+            );
         }
         assert!(execution_from_str("native").is_err());
     }

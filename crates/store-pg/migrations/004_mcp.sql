@@ -1,15 +1,6 @@
--- Remote MCP server catalog for provider-hosted and native MCP execution.
---
--- Design notes:
--- - This migration intentionally creates only the MCP catalog table.
--- - Generic secrets, OAuth clients, grants, refresh state, and token leases
---   belong to the auth subsystem and must not be stored here.
--- - Session links are materialized into the event-sourced engine tool set;
---   there is no separate session_mcp_links table in this migration.
--- - The catalog owns the non-secret auth-grant binding for each configured
---   server. Grant and token material remain owned by the auth tables.
+-- Remote MCP servers, execution policy, and per-server request headers.
 
-CREATE TABLE IF NOT EXISTS mcp_servers (
+CREATE TABLE mcp_servers (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     server_id text NOT NULL,
@@ -21,7 +12,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     allowed_tools text[],
     approval_default text NOT NULL DEFAULT 'never',
     defer_loading_default boolean,
-    execution text NOT NULL DEFAULT 'provider',
+    execution text NOT NULL DEFAULT 'runtime',
     exposure text NOT NULL DEFAULT 'inject',
     allow_private_network boolean NOT NULL DEFAULT false,
     auth_policy text NOT NULL DEFAULT 'none',
@@ -33,6 +24,10 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     updated_at_ms bigint NOT NULL,
 
     PRIMARY KEY (universe_id, server_id),
+
+    CONSTRAINT mcp_servers_auth_grant_fk
+        FOREIGN KEY (universe_id, auth_grant_id)
+        REFERENCES credentials_grants (universe_id, grant_id) ON DELETE RESTRICT,
 
     CONSTRAINT mcp_servers_server_id_format
         CHECK (server_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
@@ -65,11 +60,11 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     CONSTRAINT mcp_servers_approval_default_known
         CHECK (approval_default IN ('always', 'never')),
     CONSTRAINT mcp_servers_execution_known
-        CHECK (execution IN ('provider', 'native')),
+        CHECK (execution IN ('provider', 'runtime')),
     CONSTRAINT mcp_servers_exposure_known
         CHECK (exposure IN ('inject', 'search')),
     CONSTRAINT mcp_servers_exposure_matches_execution
-        CHECK (execution = 'native' OR exposure = 'inject'),
+        CHECK (execution = 'runtime' OR exposure = 'inject'),
     CONSTRAINT mcp_servers_auth_policy_known
         CHECK (
             auth_policy IN (
@@ -96,14 +91,18 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
         CHECK (updated_at_ms >= created_at_ms)
 );
 
-CREATE INDEX IF NOT EXISTS mcp_servers_status_idx
+CREATE INDEX mcp_servers_status_idx
     ON mcp_servers (universe_id, status, server_id);
 
-CREATE INDEX IF NOT EXISTS mcp_servers_default_label_idx
+CREATE INDEX mcp_servers_default_label_idx
     ON mcp_servers (universe_id, default_server_label);
 
-CREATE INDEX IF NOT EXISTS mcp_servers_auth_policy_idx
+CREATE INDEX mcp_servers_auth_policy_idx
     ON mcp_servers (universe_id, auth_policy, server_id);
+
+CREATE INDEX mcp_servers_auth_grant_idx
+    ON mcp_servers (universe_id, auth_grant_id)
+    WHERE auth_grant_id IS NOT NULL;
 
 COMMENT ON TABLE mcp_servers IS
     'Universe-scoped remote MCP server catalog; session-visible links are materialized into engine tool-set events.';
@@ -116,8 +115,48 @@ COMMENT ON COLUMN mcp_servers.default_server_label IS
 COMMENT ON COLUMN mcp_servers.allowed_tools IS
     'Optional provider-side MCP tool allowlist. NULL means no catalog-level allowlist.';
 COMMENT ON COLUMN mcp_servers.auth_policy IS
-    'Non-secret MCP auth requirement hint. Generic credentials, grants, and token refresh are owned by the auth subsystem.';
+    'Non-secret MCP auth requirement hint. Generic credentials, grants, and token refresh are owned by the credential registry.';
 COMMENT ON COLUMN mcp_servers.auth_metadata_json IS
     'Non-secret MCP auth metadata such as OAuth resource, scopes, protected resource metadata URL, or authorization server URL.';
 COMMENT ON COLUMN mcp_servers.auth_grant_id IS
-    'Universe auth grant selected by this configured MCP server; sessions never override this binding.';
+    'Universe credential grant selected by this configured MCP server; sessions never override this binding.';
+
+-- Extra request headers of a configured MCP server, one row per header. A row
+-- holds either a plain value or the credential grant whose token is sent raw. Grant
+-- ids are a column rather than JSON so a credential in use by a header cannot
+-- be deleted. The grant reference is deferrable but checked immediately, so
+-- only a universe delete (which defers its constraints) can remove grants and
+-- headers in either cascade order.
+CREATE TABLE mcp_server_headers (
+    universe_id uuid NOT NULL,
+    server_id text NOT NULL,
+    name text NOT NULL,
+    literal_value text,
+    grant_id text,
+
+    PRIMARY KEY (universe_id, server_id, name),
+    FOREIGN KEY (universe_id, server_id)
+        REFERENCES mcp_servers (universe_id, server_id) ON DELETE CASCADE,
+    CONSTRAINT mcp_server_headers_grant_fk
+        FOREIGN KEY (universe_id, grant_id)
+        REFERENCES credentials_grants (universe_id, grant_id)
+        ON DELETE NO ACTION DEFERRABLE INITIALLY IMMEDIATE,
+    CONSTRAINT mcp_server_headers_one_source
+        CHECK ((literal_value IS NULL) <> (grant_id IS NULL)),
+    CONSTRAINT mcp_server_headers_name_lowercase
+        CHECK (name <> '' AND name = lower(name)),
+    -- These header names conventionally carry secrets.
+    CONSTRAINT mcp_server_headers_secret_names_reference_a_credential
+        CHECK (name NOT IN ('api-key', 'proxy-authorization', 'x-api-key') OR grant_id IS NOT NULL)
+);
+
+CREATE INDEX mcp_server_headers_grant_idx
+    ON mcp_server_headers (universe_id, grant_id)
+    WHERE grant_id IS NOT NULL;
+
+COMMENT ON TABLE mcp_server_headers IS
+    'Extra request headers sent to a configured MCP server; independent of its auth policy, which owns Authorization.';
+COMMENT ON COLUMN mcp_server_headers.literal_value IS
+    'Plain, non-secret header value returned by reads.';
+COMMENT ON COLUMN mcp_server_headers.grant_id IS
+    'Universe credential grant whose token is resolved per request and sent raw; the token never enters this table.';

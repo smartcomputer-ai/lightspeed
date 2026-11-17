@@ -5,7 +5,7 @@
 -- - Workspaces track mutable heads over immutable snapshot refs.
 -- - Mounts expose snapshots or workspaces to a session-visible filesystem.
 
-CREATE TABLE IF NOT EXISTS vfs_snapshots (
+CREATE TABLE vfs_snapshots (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     digest text NOT NULL,
@@ -26,10 +26,10 @@ CREATE TABLE IF NOT EXISTS vfs_snapshots (
         CHECK (created_at_ms >= 0)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS vfs_snapshots_snapshot_ref_idx
+CREATE UNIQUE INDEX vfs_snapshots_snapshot_ref_idx
     ON vfs_snapshots (universe_id, snapshot_ref);
 
-CREATE TABLE IF NOT EXISTS vfs_workspaces (
+CREATE TABLE vfs_workspaces (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     workspace_id text NOT NULL,
@@ -68,10 +68,10 @@ CREATE TABLE IF NOT EXISTS vfs_workspaces (
         CHECK (updated_at_ms >= created_at_ms)
 );
 
-CREATE INDEX IF NOT EXISTS vfs_workspaces_head_digest_idx
+CREATE INDEX vfs_workspaces_head_digest_idx
     ON vfs_workspaces (universe_id, head_snapshot_digest);
 
-CREATE INDEX IF NOT EXISTS vfs_workspaces_base_digest_idx
+CREATE INDEX vfs_workspaces_base_digest_idx
     ON vfs_workspaces (universe_id, base_snapshot_digest);
 
 COMMENT ON TABLE vfs_snapshots IS

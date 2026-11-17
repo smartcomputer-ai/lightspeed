@@ -793,11 +793,8 @@ mod tests {
 
     use super::*;
 
-    const PROVIDER_KIND_MIGRATION: &str =
-        include_str!("../migrations/015_mcp_headers_and_static_tokens.sql");
-
     #[test]
-    fn stored_provider_kinds_round_trip_and_pass_the_latest_check() {
+    fn stored_provider_kinds_round_trip_and_pass_the_check() {
         for kind in [
             CredentialProviderKind::StaticToken,
             CredentialProviderKind::McpOAuth,
@@ -810,7 +807,7 @@ mod tests {
             let stored = provider_kind_to_str(kind);
             assert_eq!(provider_kind_from_str(stored).unwrap(), kind);
             assert!(
-                PROVIDER_KIND_MIGRATION.contains(&format!("'{stored}'")),
+                crate::CREDENTIALS_SCHEMA_SQL.contains(&format!("'{stored}'")),
                 "{stored}"
             );
         }
