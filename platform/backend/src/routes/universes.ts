@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { and, count, eq, inArray, or, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
-import { UNIVERSE_ROLES, ORGANIZATION_ROLES, highestRole, universeActions, organizationUniverseAdoptSchema, organizationUniverseCreateSchema, effectiveFeatures, mergeFeatureOverrides, universeHandleFromName, universeHandleSchema, universeUpdateSchema, type OrganizationAction, type OrganizationRole, type PrincipalRef, type UniverseAction, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { UNIVERSE_ROLES, ORGANIZATION_ROLES, organizationRoleSchema, highestRole, universeActions, organizationUniverseAdoptSchema, organizationUniverseCreateSchema, effectiveFeatures, mergeFeatureOverrides, universeHandleFromName, universeHandleSchema, universeUpdateSchema, type OrganizationAction, type OrganizationRole, type PrincipalRef, type UniverseAction, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { z } from "zod";
 import type { AppContext, ApiVariables } from "../context.js";
 import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
@@ -110,6 +110,29 @@ export async function requireOrganizationPrincipal(ctx: AppContext, organization
   return { name: user.name };
 }
 
+type GrantRow = typeof schema.universeGrants.$inferSelect;
+
+/** The grants whose principal is still active in the containing organization.
+ * A person can leave through a directory change, with no removal to clean up
+ * after, so an explicit grant outlives membership. Such a grant gives nothing
+ * (universe access starts from organization access) and never counts as an
+ * Owner. */
+export async function activeGrantIds(db: Pick<AppContext["db"], "select">, organization: typeof schema.organization.$inferSelect, grants: GrantRow[]): Promise<Set<string>> {
+  const userIds = grants.flatMap(grant => grant.userId ? [grant.userId] : []);
+  const serviceUserIds = grants.flatMap(grant => grant.serviceUserId ? [grant.serviceUserId] : []);
+  const [users, members, serviceUsers] = await Promise.all([
+    userIds.length ? db.select().from(schema.user).where(inArray(schema.user.id, userIds)) : [],
+    userIds.length ? db.select({ userId: schema.member.userId, role: schema.member.role }).from(schema.member).where(and(eq(schema.member.organizationId, organization.id), inArray(schema.member.userId, userIds))) : [],
+    serviceUserIds.length ? db.select({ id: schema.serviceUsers.id }).from(schema.serviceUsers).where(and(eq(schema.serviceUsers.organizationId, organization.id), eq(schema.serviceUsers.enabled, true), inArray(schema.serviceUsers.id, serviceUserIds))) : [],
+  ]);
+  const manual = new Map(members.map(member => [member.userId, organizationRoleSchema.safeParse(member.role).data]));
+  const active = new Set([
+    ...users.filter(user => declaredPrincipalRole(organization.membershipPolicy, user, ORGANIZATION_ROLES, manual.get(user.id)) !== undefined).map(user => user.id),
+    ...serviceUsers.map(serviceUser => serviceUser.id),
+  ]);
+  return new Set(grants.filter(grant => active.has(grant.userId ?? grant.serviceUserId!)).map(grant => grant.id));
+}
+
 export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, organizationId: string, input: z.infer<typeof organizationUniverseCreateSchema>) {
   enforceRestrictions(auth, { operation: "platform/universes/create", organizationId, write: true, createUniverse: true });
   const access = await organizationForPrincipal(ctx, auth, organizationId);
@@ -164,12 +187,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
     const currentAccess = await organizationForPrincipal(scopedContext, auth, organizationId);
     if (!currentAccess?.actions.has("createUniverse")) throw new GateRefusal(403, "organization creation authority was revoked");
     const owners = await tx.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, row.id), eq(schema.universeGrants.role, "owner")));
-    let activeOwner = false;
-    for (const grant of owners) {
-      try { await requireOrganizationPrincipal(scopedContext, organizationId, grant.userId ? { kind: "user", id: grant.userId } : { kind: "serviceUser", id: grant.serviceUserId! }); activeOwner = true; break; }
-      catch (error) { if (!(error instanceof GateRefusal)) throw error; }
-    }
-    if (!activeOwner) throw new GateRefusal(409, "creation requires an active explicit Owner; organization administration must recover the grant");
+    if (!(await activeGrantIds(tx, organization, owners)).size) throw new GateRefusal(409, "creation requires an active explicit Owner; organization administration must recover the grant");
     if (reservation.status === "provisioning") {
       const protection = organization.requireProtected || reservation.runtimeConfiguration.protected === true;
       const expiresAtMs = protection ? null : typeof reservation.runtimeConfiguration.expiresAtMs === "number" ? reservation.runtimeConfiguration.expiresAtMs : null;

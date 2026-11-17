@@ -72,7 +72,7 @@ export function organizationRoutes(store: DemoStore) {
     Object.assign(state.universe, { organizationId: organization.id, protected: protectedValue, expiresAtMs: input.expiresAtMs ?? null });
     const createdAt = new Date().toISOString(); const id = store.nextId("grant");
     if (owner.kind === "user") state.members.push({ id, userId: owner.id, name: ownerUser!.name, role: "owner", createdAt });
-    else serviceUserGrants.set(state.universe.id, [{ id, principal: owner, universeId: state.universe.id, name: ownerApp!.name, role: "owner", createdAt }]);
+    else serviceUserGrants.set(state.universe.id, [{ id, principal: owner, universeId: state.universe.id, name: ownerApp!.name, role: "owner", active: true, createdAt }]);
     return c.json({ universe: demoUniverseView(store, state) }, 201);
   });
   app.patch("/universes/:universe", async c => {
@@ -84,7 +84,10 @@ export function organizationRoutes(store: DemoStore) {
     if (parsed.data.expiresAtMs != null && parsed.data.expiresAtMs <= Date.now()) return c.json({ error: "Expiry must be in the future" }, 400);
     Object.assign(state.universe, parsed.data); return c.json({ universe: demoUniverseView(store, state) });
   });
-  const grantsFor = (state: NonNullable<ReturnType<typeof stateFor>>): Grant[] => [...state.members.map(m => ({ id: m.id, universeId: state.universe.id, principal: { kind: "user" as const, id: m.userId }, role: m.role, name: m.name, createdAt: m.createdAt })), ...(serviceUserGrants.get(state.universe.id) ?? [])];
+  const grantsFor = (state: NonNullable<ReturnType<typeof stateFor>>): Grant[] => [
+    ...state.members.map(m => ({ id: m.id, universeId: state.universe.id, principal: { kind: "user" as const, id: m.userId }, role: m.role, name: m.name, active: memberships.get(state.universe.organizationId!)?.has(m.userId) ?? false, createdAt: m.createdAt })),
+    ...(serviceUserGrants.get(state.universe.id) ?? []).map(g => ({ ...g, active: serviceUsers.get(g.principal.id)?.enabled ?? false })),
+  ];
   app.get("/universes/:universe/grants", c => { const state = stateFor(c.req.param("universe")); return state ? c.json({ grants: grantsFor(state) }) : c.json({ error: "Universe not found" }, 404); });
   app.put("/universes/:universe/grants", async c => {
     const state = stateFor(c.req.param("universe")); if (!state) return c.json({ error: "Universe not found" }, 404);
@@ -92,8 +95,8 @@ export function organizationRoutes(store: DemoStore) {
     const { principal, role } = parsed.data; const serviceUser = serviceUsers.get(principal.id); const user = store.users.get(principal.id);
     if (principal.kind === "user" ? !memberships.get(state.universe.organizationId!)?.has(principal.id) : !serviceUser?.enabled || serviceUser.organizationId !== state.universe.organizationId) return c.json({ error: "Principal must be an active organization member" }, 400);
     const grants = grantsFor(state); const prior = grants.find(g => g.principal.kind === principal.kind && g.principal.id === principal.id);
-    if (prior?.role === "owner" && role !== "owner" && !grants.some(g => g.id !== prior.id && g.role === "owner")) return c.json({ error: "Keep at least one Owner" }, 409);
-    const grant: Grant = { id: prior?.id ?? store.nextId("grant"), universeId: state.universe.id, principal, role, name: principal.kind === "user" ? user!.name : serviceUser!.name, createdAt: prior?.createdAt ?? new Date().toISOString() };
+    if (prior?.role === "owner" && role !== "owner" && !grants.some(g => g.id !== prior.id && g.role === "owner" && g.active)) return c.json({ error: "Keep at least one Owner" }, 409);
+    const grant: Grant = { id: prior?.id ?? store.nextId("grant"), universeId: state.universe.id, principal, role, name: principal.kind === "user" ? user!.name : serviceUser!.name, active: true, createdAt: prior?.createdAt ?? new Date().toISOString() };
     if (principal.kind === "user") { state.members = state.members.filter(m => m.userId !== principal.id); state.members.push({ id: grant.id, userId: principal.id, name: grant.name, role, createdAt: grant.createdAt }); }
     else serviceUserGrants.set(state.universe.id, [...(serviceUserGrants.get(state.universe.id) ?? []).filter(g => g.id !== grant.id), grant]);
     return c.json({ grant });
@@ -101,7 +104,7 @@ export function organizationRoutes(store: DemoStore) {
   app.delete("/universes/:universe/grants/:grantId", c => {
     const state = stateFor(c.req.param("universe")); if (!state) return c.json({ error: "Universe not found" }, 404);
     const grants = grantsFor(state); const grant = grants.find(g => g.id === c.req.param("grantId"));
-    if (grant?.role === "owner" && !grants.some(g => g.id !== grant.id && g.role === "owner")) return c.json({ error: "Keep at least one Owner" }, 409);
+    if (grant?.role === "owner" && !grants.some(g => g.id !== grant.id && g.role === "owner" && g.active)) return c.json({ error: "Keep at least one Owner" }, 409);
     state.members = state.members.filter(m => m.id !== c.req.param("grantId")); serviceUserGrants.set(state.universe.id, (serviceUserGrants.get(state.universe.id) ?? []).filter(g => g.id !== c.req.param("grantId"))); return c.json({ ok: true });
   });
   for (const path of ["/credentials", "/organizations/:organizationId/service-users/:serviceUserId/credentials"]) {

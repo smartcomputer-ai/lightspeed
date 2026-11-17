@@ -556,6 +556,8 @@ describe("demo router", () => {
     const principal = { kind: "user", id: owner.userId };
     expect((await call("PUT", path, { principal, role: "viewer" })).status).toBe(409);
     expect(owner.role).toBe("owner");
+    // Only an Owner who is still an organization member keeps the universe owned.
+    store.organizationMemberships.get(state.universe.organizationId!)!.set("other-user", "member");
     state.members.push({ ...owner, id: "other-owner", userId: "other-user" });
     expect((await call("PUT", path, { principal, role: "operator" })).status).toBe(200);
     const listed = (await call("GET", path)).json as { grants: { principal: { id: string }; role: string }[] };

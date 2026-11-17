@@ -80,9 +80,16 @@ close and soft-delete any session, subject to lifecycle requirements. Only
 Platform Admins permanently purge soft-deleted session history.
 
 A universe can have multiple Owners. Creation establishes an explicit initial
-Owner. Ordinary grant changes cannot remove the last Owner; add another
-first. Suspension still takes effect immediately, even for a sole Owner, and
-Organization Admins can restore access. Owners grant access to existing organization
+Owner. Ordinary grant changes cannot remove the last Owner who is still an
+organization member; add another first. Suspension still takes effect
+immediately, even for a sole Owner, and Organization Admins can restore access.
+
+Removing a person from an organization also removes the roles they were given
+in its universes. When a person leaves through a membership-policy change
+instead, their roles stay but give nothing: **Settings → Members** marks them
+"No longer an organization member", they never count as an Owner, and they apply
+again if the person returns. A disabled service user's roles behave the same
+way. Owners grant access to existing organization
 members and service users. Organization membership management requires an Organization
 Admin.
 
@@ -158,8 +165,8 @@ own organization role and universe grants. Unlike people, they do not receive
 the organization's default universe access. They have no fake email address or human
 session. Organization Admins create them with **New service user** under
 **Admin → organization → Members**; a service user's details hold its role, its
-API keys, **Disable**, and **Delete**. Disabling a service user blocks its keys
-without deleting its universes.
+API keys, and **Disable**. Disabling a service user blocks its keys until it is
+enabled again; its universe roles and the universes it created stay.
 
 A user key represents the signed-in person; a service-user key represents the
 service user. User keys live under **Your profile → Your API keys**. The web form for a new user

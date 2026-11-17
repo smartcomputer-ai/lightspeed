@@ -34,8 +34,8 @@ vi.mock("@/lib/universes", () => ({
   }),
 }));
 const grants = [
-  { id: "owner-grant", principal: { kind: "user", id: "alice" }, name: "Alice", role: "owner", createdAt: "2026-11-01T00:00:00.000Z" },
-  { id: "app-grant", principal: { kind: "serviceUser", id: "robot" }, name: "Build robot", role: "viewer", createdAt: "2026-11-01T00:00:00.000Z" },
+  { id: "owner-grant", principal: { kind: "user", id: "alice" }, name: "Alice", role: "owner", active: true, createdAt: "2026-11-01T00:00:00.000Z" },
+  { id: "app-grant", principal: { kind: "serviceUser", id: "robot" }, name: "Build robot", role: "viewer", active: true, createdAt: "2026-11-01T00:00:00.000Z" },
 ];
 let root: Root;
 let container: HTMLDivElement;
@@ -86,8 +86,8 @@ const button = (label: string, scope: ParentNode = document) =>
 it("says who gets in through the organization's default before listing the roles given here", async () => {
   await show();
   await waitForUi(() => expect(rows()).toHaveLength(2));
-  expect(container.textContent).toContain("All 2 members of Acme are Viewers here");
-  expect(container.textContent).toContain("Organization Admins are Owners of every universe");
+  expect(container.querySelector("h1")?.textContent).toBe("Universe Members");
+  expect(container.textContent).toContain("Everyone in Acme can use this universe as a Viewer, and its admins as Owners.");
   expect(container.querySelector('a[href="/admin/organizations/team/settings"]')).toBeNull();
   expect(rows()[0]!.textContent).toContain("alice@example.com");
   expect(rows()[1]!.textContent).toContain("Service user");
@@ -98,7 +98,7 @@ it("tells members they need a role here when the organization gives none by defa
   mocks.base = null;
   mocks.organizationRole = "admin";
   await show();
-  expect(container.textContent).toContain("can use this universe only with a role given below");
+  expect(container.textContent).toContain("Only the members below can use this universe, plus Acme's admins as Owners.");
   expect(container.querySelector('a[href="/admin/organizations/team/settings"]')).not.toBeNull();
 });
 
@@ -115,6 +115,18 @@ it("changes a role only on Save and removes it only after confirming", async () 
   const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((node) => node.textContent?.trim() === "Remove role")!;
   await act(async () => confirm.click());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/universes/grants/delete", { universe: "runtime-id", grantId: "app-grant" }));
+});
+
+it("marks a role whose holder has left the organization", async () => {
+  mocks.api.mockImplementation(async (operation: string) => operation === "platform/universes/grants/list"
+    ? { grants: [grants[0], { id: "gone-grant", principal: { kind: "user", id: "carol" }, name: "Carol", role: "owner", active: false, createdAt: "2026-11-01T00:00:00.000Z" }] }
+    : { members: [], serviceUsers: [] });
+  await show();
+  await waitForUi(() => expect(rows()).toHaveLength(2));
+  expect(rows()[0]!.textContent).not.toContain("No longer an organization member");
+  expect(rows()[1]!.textContent).toContain("No longer an organization member");
+  await act(async () => (rows()[1]!.querySelector("td") as HTMLElement).click());
+  expect(dialog().textContent).toContain("gives nothing until they return");
 });
 
 it("adds a member who has no role here yet", async () => {
@@ -136,6 +148,6 @@ it("adds a member who has no role here yet", async () => {
 it("shows nothing to someone who cannot administer the universe", async () => {
   mocks.role = "operator";
   await show();
-  expect(container.textContent).not.toContain("Roles given here");
+  expect(container.textContent).not.toContain("Universe Members");
   expect(mocks.api).not.toHaveBeenCalled();
 });

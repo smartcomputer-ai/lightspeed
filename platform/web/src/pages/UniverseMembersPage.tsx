@@ -25,9 +25,8 @@ type Grant = PlatformOperationResult<"platform/universes/grants/list">["grants"]
 const ROLE_LABELS: Record<UniverseRole, string> = { viewer: "Viewer", contributor: "Contributor", operator: "Operator", owner: "Owner" };
 const ROLES: UniverseRole[] = ["viewer", "contributor", "operator", "owner"];
 
-/// Who can use a universe: everyone in its organization through the
-/// default universe access, Organization Admins as Owners, and the roles
-/// given here, which add to the default.
+/// Who can use a universe beyond the organization's default access, which
+/// every person gets, and Organization Admins, who are always Owners.
 export function UniverseMembersPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
@@ -65,48 +64,40 @@ function Members({ universe }: { universe: Universe }) {
     ? people.data?.members.find((member) => member.userId === grant.principal.id)?.email
     : undefined;
   const base = organization?.baseUniverseRole ?? null;
-  const memberCount = people.data?.members.length;
+  const organizationName = organization?.name ?? "the organization";
 
   return (
     <>
-      <PageHeader title="Members" description={`Who can use ${universe.name}, and with which role.`}
+      <PageHeader title="Universe Members"
+        description={(
+          <>
+            {base
+              ? `Everyone in ${organizationName} can use this universe as a ${ROLE_LABELS[base]}, and its admins as Owners. Add members here to set permissions explicitly.`
+              : `Only the members below can use this universe, plus ${organizationName}'s admins as Owners.`}
+            {organization && organizationAllows(organization, "managePolicy") && (
+              <> <Link className="underline" to={`${organizationAdminPath(organizationId)}/settings`}>Change the default</Link></>
+            )}
+          </>
+        )}
         actions={(
           <Button onClick={() => setAdding(true)}>
             <AddIcon data-icon="inline-start" />
             Add member
           </Button>
         )} />
-      <ul className="mb-6 grid max-w-3xl gap-1 text-sm text-muted-foreground">
-        <li>
-          {base
-            ? `${memberCount === undefined ? "All" : `All ${memberCount}`} members of ${organization?.name ?? "the organization"} are ${ROLE_LABELS[base]}s here, through the organization's default universe access.`
-            : `Members of ${organization?.name ?? "the organization"} can use this universe only with a role given below.`}
-          {organization && organizationAllows(organization, "managePolicy") && (
-            <> <Link className="underline" to={`${organizationAdminPath(organizationId)}/settings`}>Change the default</Link></>
-          )}
-        </li>
-        <li>Organization Admins are Owners of every universe in the organization.</li>
-        <li>Roles given here add to the default. Service users get only what is given here.</li>
-      </ul>
-      <h2 className="mb-3 text-sm font-semibold">Roles given here</h2>
       {grants.isPending && <LoadingNote />}
       {grants.error && <ReadError error={grants.error} loading={!grants.data} prefix="Members unavailable" />}
-      {grants.data?.grants.length === 0 && (
-        <EmptyState icon={MemberIcon} title="No roles given here">
-          Give a person or service user a role above the default with Add member.
-        </EmptyState>
-      )}
+      {grants.data?.grants.length === 0 && <EmptyState icon={MemberIcon} title="No members added" />}
       {!!grants.data?.grants.length && (
-        <ResourceTable label="Roles given here" columns={["Member", "Role"]}>
+        <ResourceTable label="Universe members" columns={["Member", "Role"]}>
           {grants.data.grants.map((grant) => (
             <ResourceRow key={grant.id} name={grant.name} onOpen={(trigger) => { triggerRef.current = trigger; setSelectedId(grant.id); }}>
               <ResourceIdentityCell name={grant.name} subtitle={grant.principal.kind === "serviceUser" ? "Service user" : email(grant)} />
-              <TableCell><ResourceValue>{ROLE_LABELS[grant.role]}</ResourceValue></TableCell>
+              <TableCell><ResourceValue description={grant.active ? undefined : inactiveNote(grant)}>{ROLE_LABELS[grant.role]}</ResourceValue></TableCell>
             </ResourceRow>
           ))}
         </ResourceTable>
       )}
-      <p className="mt-3 text-sm text-muted-foreground">Keep at least one Owner given here.</p>
       {adding && (
         <AddMemberDialog universeId={universeId} grants={grants.data?.grants ?? []} close={() => setAdding(false)} saved={refresh}
           people={people} serviceUsers={serviceUsers} />
@@ -117,6 +108,11 @@ function Members({ universe }: { universe: Universe }) {
       </ResourceDetailsDialog>
     </>
   );
+}
+
+/// Grants outlive the membership that made them useful, until removed here.
+function inactiveNote(grant: Grant) {
+  return grant.principal.kind === "serviceUser" ? "Service user disabled" : "No longer an organization member";
 }
 
 function RoleSelect({ id, value, onChange }: { id: string; value: UniverseRole; onChange: (role: UniverseRole) => void }) {
@@ -145,8 +141,13 @@ function GrantDetails({ universeId, grant, saved, removed }: { universeId: strin
     <>
       <ResourceDetailsGrid>
         <ResourceDetail label="Kind">{grant.principal.kind === "serviceUser" ? "Service user" : "Person"}</ResourceDetail>
-        <ResourceDetail label="Given">{new Date(grant.createdAt).toLocaleDateString()}</ResourceDetail>
+        <ResourceDetail label="Permission granted">{new Date(grant.createdAt).toLocaleDateString()}</ResourceDetail>
       </ResourceDetailsGrid>
+      {!grant.active && (
+        <p className="text-sm text-muted-foreground">
+          {inactiveNote(grant)}, so this role gives nothing until they return.
+        </p>
+      )}
       <form onSubmit={submit} className="grid gap-2">
         <div className="flex flex-wrap items-end gap-3">
           <Field className="min-w-40 flex-1">
@@ -161,7 +162,7 @@ function GrantDetails({ universeId, grant, saved, removed }: { universeId: strin
         <ConfirmDangerButton label="Remove role" title={`Remove ${grant.name}'s role?`} pending={remove.isPending}
           description={grant.principal.kind === "serviceUser"
             ? "The service user loses access to this universe."
-            : "They keep what the organization's default universe access and their organization role give them."}
+            : "They keep the organization's default access."}
           onConfirm={() => remove.mutate()} />
         {remove.error && <p role="alert" className="text-sm text-destructive">{remove.error.message}</p>}
       </ResourceActions>

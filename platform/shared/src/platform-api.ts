@@ -40,7 +40,9 @@ export const serviceUserViewSchema = z.object({ id, organizationId: id, name, en
 export const serviceUserCreateSchema = z.object({ name, role: organizationRoleSchema.default("member") }).strict();
 export const serviceUserUpdateSchema = z.object({ name: name.optional(), enabled: z.boolean().optional(), role: organizationRoleSchema.optional() }).strict();
 export const universeGrantPutSchema = z.object({ principal: principalRefSchema, role: universeRole }).strict();
-export const universeGrantViewSchema = z.object({ id, universeId: id, principal: principalRefSchema, role: universeRole, name: z.string(), createdAt: timestamp });
+export const universeGrantViewSchema = z.object({ id, universeId: id, principal: principalRefSchema, role: universeRole, name: z.string(),
+  /** False once the principal has left the organization or been disabled: the grant then gives nothing and does not count as an Owner. */
+  active: z.boolean(), createdAt: timestamp });
 export const organizationUniverseCreateSchema = z.object({
   universeId: z.uuid().optional(), name, handle: handle.optional(), initialOwner: principalRefSchema.optional(),
   metadata: z.record(z.string(), z.string()).optional(),

@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import { PLATFORM_OPERATIONS, type OrganizationRole, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
+import { ORGANIZATION_ROLES, PLATFORM_OPERATIONS, type OrganizationRole, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
 import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, refusePersonalOrganization, requireOrganizationAction, withOwnerNames, type OrganizationAccess } from "../organization-access.js";
@@ -10,7 +10,7 @@ import { auditAsSubject } from "../identity-audit.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import { policyBody, problem } from "../runtime-http.js";
-import { adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
+import { activeGrantIds, adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 /** Usage and policy are administration details: only a caller who may manage the organization's policy sees them. */
@@ -162,7 +162,14 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
           if (!other) throw new GateRefusal(409, "organization must retain an explicit admin");
         }
         if (current) await tx.delete(schema.member).where(eq(schema.member.id, current.id));
-        await auditAsSubject(tx, auth, { action: "organization.member.delete", targetId: params.userId as string, details: { organizationId } });
+        // Roles given in this organization's universes go with the membership,
+        // unless a directory declaration keeps the person a member.
+        const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).limit(1);
+        const [user] = await tx.select().from(schema.user).where(eq(schema.user.id, params.userId as string)).limit(1);
+        const declared = user && declaredPrincipalRole(organization!.membershipPolicy, user, ORGANIZATION_ROLES) !== undefined;
+        const removedGrants = declared ? [] : await tx.delete(schema.universeGrants).where(and(eq(schema.universeGrants.userId, params.userId as string),
+          inArray(schema.universeGrants.universeId, tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.organizationId, organizationId))))).returning({ id: schema.universeGrants.id });
+        await auditAsSubject(tx, auth, { action: "organization.member.delete", targetId: params.userId as string, details: { organizationId, removedUniverseGrants: String(removedGrants.length) } });
       });
       return { ok: true };
     }
@@ -223,7 +230,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
         await requireOrganizationPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, access.organization.id, input.principal);
         const where = and(eq(schema.universeGrants.universeId, access.universe.id), input.principal.kind === "user" ? eq(schema.universeGrants.userId, input.principal.id) : eq(schema.universeGrants.serviceUserId, input.principal.id));
         const [current] = await tx.select().from(schema.universeGrants).where(where).limit(1);
-        if (current?.role === "owner" && input.role !== "owner") await requireOtherOwner(tx, access.universe.id, current.id);
+        if (current?.role === "owner" && input.role !== "owner") await requireOtherOwner(tx, access, current.id);
         const [updated] = current ? await tx.update(schema.universeGrants).set({ role: input.role }).where(eq(schema.universeGrants.id, current.id)).returning() : await tx.insert(schema.universeGrants).values({ universeId: access.universe.id, role: input.role, ...(input.principal.kind === "user" ? { userId: input.principal.id } : { serviceUserId: input.principal.id }) }).returning();
         await auditAsSubject(tx, auth, { action: "universe.grant.put", targetId: input.principal.id, universeId: access.universe.id, details: { role: input.role } });
         return updated!;
@@ -237,7 +244,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
         await tx.execute(sql`SELECT id FROM universes WHERE id = ${access.universe.id} FOR UPDATE`);
         await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, operation);
         const [grant] = await tx.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, access.universe.id), eq(schema.universeGrants.id, params.grantId as string))).limit(1);
-        if (grant?.role === "owner") await requireOtherOwner(tx, access.universe.id, grant.id);
+        if (grant?.role === "owner") await requireOtherOwner(tx, access, grant.id);
         if (grant) await tx.delete(schema.universeGrants).where(eq(schema.universeGrants.id, grant.id));
         await auditAsSubject(tx, auth, { action: "universe.grant.delete", targetId: params.grantId as string, universeId: access.universe.id });
       });
@@ -268,12 +275,14 @@ async function requireOrganizationDirectory(ctx: AppContext, auth: AuthContext, 
   if ((await listUniverseAccesses(ctx, auth)).some(access => access.organization.id === organizationId && access.actions.has("administer"))) return;
   throw new GateRefusal(403, "browsing organization principals requires manageMembers, or administer on one of its universes");
 }
-async function requireOtherOwner(db: Pick<AppContext["db"], "select">, universeId: string, grantId: string) {
-  const [other] = await db.select({ id: schema.universeGrants.id }).from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, universeId), eq(schema.universeGrants.role, "owner"), ne(schema.universeGrants.id, grantId))).limit(1);
-  if (!other) throw new GateRefusal(409, "universe must retain at least one explicit Owner");
+/** Only an Owner who is still in the organization keeps a universe owned. */
+async function requireOtherOwner(db: Pick<AppContext["db"], "select">, access: UniverseAccess, grantId: string) {
+  const others = await db.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, access.universe.id), eq(schema.universeGrants.role, "owner"), ne(schema.universeGrants.id, grantId)));
+  if (!(await activeGrantIds(db, access.organization, others)).size) throw new GateRefusal(409, "universe must retain at least one explicit Owner who is an organization member");
 }
 async function listGrants(ctx: AppContext, access: UniverseAccess) {
   const rows = await ctx.db.select({ grant: schema.universeGrants, userName: schema.user.name, serviceUserName: schema.serviceUsers.name }).from(schema.universeGrants)
     .leftJoin(schema.user, eq(schema.user.id, schema.universeGrants.userId)).leftJoin(schema.serviceUsers, eq(schema.serviceUsers.id, schema.universeGrants.serviceUserId)).where(eq(schema.universeGrants.universeId, access.universe.id));
-  return rows.map(({ grant, userName, serviceUserName }) => ({ id: grant.id, universeId: grant.universeId, principal: { kind: grant.userId ? "user" : "serviceUser", id: grant.userId ?? grant.serviceUserId! } as PrincipalRef, role: grant.role, name: userName ?? serviceUserName ?? "Removed principal", createdAt: grant.createdAt }));
+  const active = await activeGrantIds(ctx.db, access.organization, rows.map(row => row.grant));
+  return rows.map(({ grant, userName, serviceUserName }) => ({ id: grant.id, universeId: grant.universeId, principal: { kind: grant.userId ? "user" : "serviceUser", id: grant.userId ?? grant.serviceUserId! } as PrincipalRef, role: grant.role, name: userName ?? serviceUserName ?? "Removed principal", active: active.has(grant.id), createdAt: grant.createdAt }));
 }

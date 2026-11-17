@@ -87,7 +87,7 @@ export function platformRoutes(store: DemoStore): Hono {
     });
     const protectedValue = orphan.protected || organization.requireProtected;
     Object.assign(state.universe, { organizationId, createdBy: store.currentUser.id, protected: protectedValue, runtimeConfiguration: { ...orphan, protected: protectedValue } });
-    const grant = { id: store.nextId("grant"), universeId: state.universe.id, principal: initialOwner, name: initialOwner.kind === "user" ? ownerUser!.name : ownerServiceUser!.name, role: "owner" as const, createdAt: nowIso() };
+    const grant = { id: store.nextId("grant"), universeId: state.universe.id, principal: initialOwner, name: initialOwner.kind === "user" ? ownerUser!.name : ownerServiceUser!.name, role: "owner" as const, active: true, createdAt: nowIso() };
     state.members = initialOwner.kind === "user" ? [{ id: grant.id, userId: initialOwner.id, name: grant.name, role: grant.role, createdAt: grant.createdAt }] : [];
     if (initialOwner.kind === "serviceUser") store.serviceUserGrants.set(state.universe.id, [grant]);
     store.auditEvents.push({ id: crypto.randomUUID(), createdAt: nowIso(), actorId: store.currentUser.id, targetId: engineId, universeId: state.universe.id, action: "universe.adopt", outcome: "success", details: { organizationId } });

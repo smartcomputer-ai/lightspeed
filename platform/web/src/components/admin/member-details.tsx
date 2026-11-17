@@ -23,8 +23,8 @@ const ROLE_HINT = "Members get the organization's default universe access. Creat
 /// How a person joined: added by an admin, granted by the membership
 /// policy, or both. Only an added membership can be removed here.
 export function joinedVia(member: Member): string {
-  if (member.added && member.declared) return "Added by an admin, and the membership policy";
-  return member.added ? "Added by an admin" : "Membership policy";
+  if (member.added && member.declared) return "An admin, and the membership policy";
+  return member.added ? "An admin" : "The membership policy";
 }
 
 export function serviceUserStatus(serviceUser: ServiceUser): ResourceStatusInfo {
@@ -97,7 +97,7 @@ function PersonDetails({ organizationId, personal, member, onRemoved }: { organi
             <RoleField id="person-role" value={role} onChange={setRole} />
             <SaveButton type="submit" dirty={role !== member.role} saving={save.isPending} error={save.isError} />
           </div>
-          <p className="text-sm text-muted-foreground">{ROLE_HINT}{member.declared && " Policy can grant a higher role than the one set here."}</p>
+          <p className="text-sm text-muted-foreground">{ROLE_HINT}{member.declared && " The membership policy can give a higher role than the one set here."}</p>
           {save.error && <p role="alert" className="text-sm text-destructive">{save.error.message}</p>}
         </form>
       )}
@@ -106,11 +106,11 @@ function PersonDetails({ organizationId, personal, member, onRemoved }: { organi
           {member.added ? (
             <ConfirmDangerButton label="Remove from organization" title={`Remove ${member.name}?`} pending={remove.isPending}
               description={member.declared
-                ? "This removes the membership an admin added. The organization's membership policy still grants them membership."
-                : "They lose this organization's universes, except what a Platform Admin role gives them."}
+                ? "The membership policy still makes them a member, so they keep their access."
+                : "They lose access to this organization's universes, and the roles they were given in them."}
               onConfirm={() => remove.mutate()} />
           ) : (
-            <p className="text-sm text-muted-foreground">The organization's membership policy grants this membership; change the policy to remove it.</p>
+            <p className="text-sm text-muted-foreground">The membership policy makes them a member. Change the policy to remove them.</p>
           )}
           {remove.error && <p role="alert" className="text-sm text-destructive">{remove.error.message}</p>}
         </ResourceActions>
@@ -129,13 +129,13 @@ export function ServiceUserDetailsDialog({ organizationId, serviceUser, onOpenCh
 }) {
   return (
     <ResourceDetailsDialog open={serviceUser !== null} onOpenChange={onOpenChange} finalFocus={finalFocus}
-      title={serviceUser?.name ?? "Service user"} description="A non-human identity for an integration, with its own role and API keys.">
-      {serviceUser && <ServiceUserDetails key={serviceUser.id} organizationId={organizationId} serviceUser={serviceUser} onDeleted={() => onOpenChange(false)} />}
+      title={serviceUser?.name ?? "Service user"} description="An identity for an integration, with its own role and API keys.">
+      {serviceUser && <ServiceUserDetails key={serviceUser.id} organizationId={organizationId} serviceUser={serviceUser} />}
     </ResourceDetailsDialog>
   );
 }
 
-function ServiceUserDetails({ organizationId, serviceUser, onDeleted }: { organizationId: string; serviceUser: ServiceUser; onDeleted: () => void }) {
+function ServiceUserDetails({ organizationId, serviceUser }: { organizationId: string; serviceUser: ServiceUser }) {
   const refresh = useRefreshMembers(organizationId);
   const [name, setName] = useState(serviceUser.name);
   const [role, setRole] = useState<OrganizationRole>(serviceUser.role);
@@ -147,10 +147,6 @@ function ServiceUserDetails({ organizationId, serviceUser, onDeleted }: { organi
   const setEnabled = useMutation({
     mutationFn: (enabled: boolean) => platformApi("platform/organizations/service-users/update", { organizationId, serviceUserId: serviceUser.id, enabled }),
     onSuccess: () => void refresh(),
-  });
-  const remove = useMutation({
-    mutationFn: () => platformApi("platform/organizations/service-users/delete", { organizationId, serviceUserId: serviceUser.id }),
-    onSuccess: async () => { await refresh(); onDeleted(); },
   });
   const submit = (event: FormEvent) => { event.preventDefault(); if (dirty) save.mutate(); };
   return (
@@ -177,17 +173,12 @@ function ServiceUserDetails({ organizationId, serviceUser, onDeleted }: { organi
       <ResourceActions>
         {serviceUser.enabled ? (
           <ConfirmDangerButton label="Disable" title={`Disable ${serviceUser.name}?`} pending={setEnabled.isPending}
-            description="All of its API keys stop working. Its universes stay, and you can enable it again later."
+            description="Its API keys stop working until you enable it again. Its universe roles and the universes it created stay."
             onConfirm={() => setEnabled.mutate(false)} />
         ) : (
           <Button variant="outline" size="sm" disabled={setEnabled.isPending} onClick={() => setEnabled.mutate(true)}>Enable</Button>
         )}
-        <ConfirmDangerButton label="Delete" title={`Delete ${serviceUser.name}?`} pending={remove.isPending}
-          description="Its API keys and universe roles are removed for good. Universes it created stay in the organization."
-          onConfirm={() => remove.mutate()} />
-        {[setEnabled.error, remove.error].filter(Boolean).map((error, index) => (
-          <p key={index} role="alert" className="text-sm text-destructive">{error?.message}</p>
-        ))}
+        {setEnabled.error && <p role="alert" className="text-sm text-destructive">{setEnabled.error.message}</p>}
       </ResourceActions>
     </>
   );

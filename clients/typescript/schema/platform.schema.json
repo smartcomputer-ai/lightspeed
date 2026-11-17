@@ -3218,6 +3218,9 @@
               "name": {
                 "type": "string"
               },
+              "active": {
+                "type": "boolean"
+              },
               "createdAt": {
                 "type": "string",
                 "format": "date-time",
@@ -3230,6 +3233,7 @@
               "principal",
               "role",
               "name",
+              "active",
               "createdAt"
             ],
             "additionalProperties": false
@@ -3333,6 +3337,9 @@
             "name": {
               "type": "string"
             },
+            "active": {
+              "type": "boolean"
+            },
             "createdAt": {
               "type": "string",
               "format": "date-time",
@@ -3345,6 +3352,7 @@
             "principal",
             "role",
             "name",
+            "active",
             "createdAt"
           ],
           "additionalProperties": false

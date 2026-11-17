@@ -747,6 +747,7 @@ class Grant(TypedDict):
     principal: Principal2
     role: Literal['viewer', 'contributor', 'operator', 'owner']
     name: str
+    active: bool
     createdAt: str
 
 
@@ -766,6 +767,7 @@ class Grant1(TypedDict):
     principal: Principal2
     role: Literal['viewer', 'contributor', 'operator', 'owner']
     name: str
+    active: bool
     createdAt: str
 
 

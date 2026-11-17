@@ -965,6 +965,7 @@ export interface PlatformUniversesGrantsListResult {
     };
     role: "viewer" | "contributor" | "operator" | "owner";
     name: string;
+    active: boolean;
     createdAt: string;
   }[];
 }
@@ -994,6 +995,7 @@ export interface PlatformUniversesGrantsPutResult {
     };
     role: "viewer" | "contributor" | "operator" | "owner";
     name: string;
+    active: boolean;
     createdAt: string;
   };
 }

@@ -13,6 +13,8 @@ import { ResourceIdentityCell, ResourceRow, ResourceStatusBadge, ResourceTable, 
 import { AddPersonDialog, NewServiceUserDialog } from "@/components/admin/organization-dialogs";
 import { PersonDetailsDialog, ROLE_LABELS, ServiceUserDetailsDialog, serviceUserStatus } from "@/components/admin/member-details";
 
+const UNIVERSE_ROLE_LABELS = { viewer: "Viewers", contributor: "Contributors", operator: "Operators", owner: "Owners" } as const;
+
 type Organization = PlatformOperationResult<"platform/organizations/list">["organizations"][number];
 
 /// Everyone with a role in one organization: people and service users, each
@@ -26,11 +28,19 @@ export function OrganizationMembersPage() {
   if (organizations.error) return <ReadError error={organizations.error} loading={false} prefix="Organizations unavailable" />;
   if (!organization) return (
     <>
-      <PageHeader title="Members" />
+      <PageHeader title="Organization Members" />
       <p role="alert">This organization is unavailable or you do not have permission to manage its members.</p>
     </>
   );
   return <Members key={organization.id} organization={organization} />;
+}
+
+/// What an organization role gives in its universes, in the page's words.
+function defaultAccess(organization: Organization) {
+  const base = organization.baseUniverseRole;
+  return base
+    ? `People can use every universe as ${UNIVERSE_ROLE_LABELS[base]}, and Admins as Owners.`
+    : "People can use only the universes they are added to, and Admins own every universe.";
 }
 
 function Members({ organization }: { organization: Organization }) {
@@ -64,10 +74,10 @@ function Members({ organization }: { organization: Organization }) {
   return (
     <>
       <PageHeader
-        title="Members"
+        title="Organization Members"
         description={organization.personal
-          ? `${organization.name} · A personal organization has only its owner as a member. It can still have service users.`
-          : `${organization.name} · Organization roles apply across its universes. Give universe roles under a universe's Settings → Members.`}
+          ? `${organization.name} is a personal organization: its owner is the only person in it, but it can have service users.`
+          : `People and service users in ${organization.name}. ${defaultAccess(organization)} To set permissions in one universe, use its Universe Members page.`}
         actions={(canAddPeople || managesServiceUsers) && (
           <div className="flex flex-wrap gap-2">
             {managesServiceUsers && (

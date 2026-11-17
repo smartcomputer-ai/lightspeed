@@ -158,7 +158,7 @@ it("changes a person's role only when its Save is pressed, and removes only memb
   await waitForUi(() => expect(rows("People")).toHaveLength(2));
   await openRow("People", 0);
   expect(dialog().textContent).toContain("ada");
-  expect(dialog().textContent).toContain("Added by an admin");
+  expect(dialog().textContent).toContain("Joined viaAn admin");
   expect(button("Remove from organization", dialog())).toBeDefined();
   expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/members/put")).toBe(false);
   await act(async () => dialog().querySelector<HTMLButtonElement>('[data-icon="dismiss"], [data-slot="dialog-close"]')?.click());
@@ -166,8 +166,8 @@ it("changes a person's role only when its Save is pressed, and removes only memb
   await waitForUi(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await openRow("People", 1);
   expect(button("Remove from organization", dialog())).toBeUndefined();
-  expect(dialog().textContent).toContain("Joined viaMembership policy");
-  expect(dialog().textContent).toContain("membership policy grants this membership");
+  expect(dialog().textContent).toContain("Joined viaThe membership policy");
+  expect(dialog().textContent).toContain("Change the policy to remove them");
 });
 
 it("adds a person only after the add dialog is submitted, and keeps a failed add's values", async () => {
@@ -210,7 +210,7 @@ it("keeps a personal organization to its owner while allowing service users", as
   await show("/admin/organizations/team/members");
   expect(button("Add person")).toBeUndefined();
   expect(button("New service user")).toBeDefined();
-  expect(container.textContent).toContain("only its owner as a member");
+  expect(container.textContent).toContain("its owner is the only person in it");
 });
 
 it("lets a Platform Admin manage members without a direct membership", async () => {

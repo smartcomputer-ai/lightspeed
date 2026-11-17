@@ -91,25 +91,29 @@ it("adds credentials, channels and templates for an Operator", async () => {
   });
 });
 
-it("keeps membership and lifecycle out of the working universe menu", async () => {
+it("gives an Owner the universe's own settings and members in its menu", async () => {
   expect(await sidebarFor("owner")).toEqual({
     "": WORK,
     Setup: [...SETUP, "Credentials"],
-    Settings: ["Channels", "Templates"],
+    Settings: ["General", "Members", "Channels", "Templates"],
   });
+});
+
+it("keeps settings and members out of an Operator's menu", async () => {
+  expect(await sidebarFor("operator")).toMatchObject({ Settings: ["Channels", "Templates"] });
 });
 
 it("leaves switched-off channels out of the menu", async () => {
   expect(await sidebarFor("owner", { bots: true, channels: false })).toMatchObject({
     "": WORK,
-    Settings: ["Templates"],
+    Settings: ["General", "Members", "Templates"],
   });
 });
 
 it("leaves bots, and the channels they need, out of the menu", async () => {
   expect(await sidebarFor("owner", { bots: false, channels: false })).toMatchObject({
     "": ["Sessions", "Workspaces"],
-    Settings: ["Templates"],
+    Settings: ["General", "Members", "Templates"],
   });
 });
 
@@ -123,8 +127,6 @@ it.each([
   ["/u/test/sessions/s-1", ["Sessions", "Test"]],
   ["/u/test/workspaces/w-1/files/src/main.rs", ["Workspaces", "Test"]],
   ["/u/test/mcp-servers", ["MCP servers", "Test"]],
-  ["/admin/organizations/team/universes/test/access", ["Access", "Test", "Admin"]],
-  ["/admin/organizations/team/universes/test/settings", ["Settings and lifecycle", "Test", "Admin"]],
   ["/u/test/blobs/abc", ["Test"]],
   ["/admin/platform/audit", ["Audit log", "Platform administration"]],
   ["/admin/platform/environment-providers", ["Environment providers", "Platform administration"]],
@@ -147,7 +149,7 @@ it("links each page at its flat route", async () => {
     "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
     "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
     "/u/test/credentials",
-    "/u/test/settings/channels", "/u/test/settings/templates",
+    "/u/test/settings/general", "/u/test/settings/members", "/u/test/settings/channels", "/u/test/settings/templates",
   ]);
 });
 
