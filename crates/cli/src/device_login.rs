@@ -292,7 +292,7 @@ pub async fn login(args: LoginArgs, selected: Option<&str>, api_url: Option<&str
             credential_kind: CredentialKind::PlatformSession,
             credential_file: Some(file.clone()),
             owned_credential: true,
-            server_kind: Some(ServerKind::Platform),
+            server_kind: ServerKind::Platform,
             account_id: verified.account_id,
             universe: verified.universe,
             allow_insecure_http,

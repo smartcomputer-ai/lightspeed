@@ -52,8 +52,7 @@ To require a deployment key before startup, for example in CI:
 ./dev.sh runtime --require-api-keys
 ```
 
-The older `--allow-missing-api-keys` flag is accepted for compatibility and has
-no effect. Deployment-wide keys can still be configured in the root `.env`.
+Deployment-wide provider keys can be configured in the root `.env`.
 
 `npm run dev` delegates to the same root launcher, so these are equivalent:
 
@@ -117,10 +116,11 @@ from the configured email and password when its own user table is empty. The
 supervisor logs this dependency wait and fails startup after 60 seconds if the
 runtime never becomes ready. `--plan` also shows startup dependencies.
 
-The connector host remains disabled during the runtime access
-cutover. `LIGHTSPEED_CHANNELS_CONNECTORS` must be empty. Runtime tokens are full
-authority credentials and are never passed to agents. Bots and Channels core
-remain runtime components; removing Channels is separate work.
+The launcher does not start connector hosts; `LIGHTSPEED_CHANNELS_CONNECTORS`
+must be empty. Standalone connector hosts are trusted infrastructure components
+with their own configured runtime token and Temporal access. Runtime tokens
+have full authority and are never passed to agents. Bots and Channels core
+remain runtime components.
 
 The runtime uses three separate listeners: private HTTP API at `127.0.0.1:18080`,
 public callbacks/webhooks at `127.0.0.1:18082`, and environment routes at

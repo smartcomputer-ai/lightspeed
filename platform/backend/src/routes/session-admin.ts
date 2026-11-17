@@ -4,7 +4,8 @@ import { schema } from "@lightspeed-ai/platform-db";
 import type { ApiVariables, AppContext } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
 import { auditIdentity } from "../identity-audit.js";
-import { deploymentClientFor, withGateway } from "./gateway.js";
+import { withApiErrors } from "../http.js";
+import { deploymentClient } from "../runtime-client.js";
 
 /** Deleted sessions are available only through Platform administration. */
 export function sessionAdminRoutes(ctx: AppContext) {
@@ -13,18 +14,18 @@ export function sessionAdminRoutes(ctx: AppContext) {
     if (!isPlatformAdmin(c.get("session"))) return c.json({ error: "platform admin required" }, 403);
     await next();
   });
-  app.get("/universes/:id/deleted-sessions", (c) => withGateway(c, async () => {
+  app.get("/universes/:id/deleted-sessions", (c) => withApiErrors(c, async () => {
     const [universe] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.id, c.req.param("id"))).limit(1);
     if (!universe) return c.json({ error: "not found" }, 404);
-    const result = await deploymentClientFor(ctx, universe.gatewayUrl).call("deployment/sessions/deleted/list", {
+    const result = await deploymentClient(ctx.env).call("deployment/sessions/deleted/list", {
       universe: universe.lightspeedUniverseId, after: c.req.query("after"),
     });
     return c.json(result);
   }));
-  app.post("/universes/:id/sessions/:sessionId/purge", (c) => withGateway(c, async () => {
+  app.post("/universes/:id/sessions/:sessionId/purge", (c) => withApiErrors(c, async () => {
     const [universe] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.id, c.req.param("id"))).limit(1);
     if (!universe) return c.json({ error: "not found" }, 404);
-    const result = await deploymentClientFor(ctx, universe.gatewayUrl).call("deployment/sessions/purge", {
+    const result = await deploymentClient(ctx.env).call("deployment/sessions/purge", {
       universe: universe.lightspeedUniverseId, sessionId: c.req.param("sessionId"),
     });
     if (result.deletedSessionIds.length) await auditIdentity(ctx.db, {

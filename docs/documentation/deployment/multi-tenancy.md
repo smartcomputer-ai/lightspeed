@@ -38,12 +38,12 @@ records the association in the Platform database. Because these are separate
 systems, an interrupted operation or a partial restore can leave one side
 without the other.
 
-**Platform admin → Universes** reconciles the configured default runtime inventory.
+**Platform admin → Universes** reconciles the configured runtime inventory.
 **Adopt** connects an existing runtime universe to a selected account with an
 explicit initial Owner, without replacing its contents. **Create in engine** creates an empty missing runtime
 universe. It cannot restore deleted sessions or files, or recreate a universe whose
-UUID has been permanently deleted. Universes using custom
-gateway URLs can appear as `unchecked` in this inventory.
+UUID has been permanently deleted. All universes use the deployment's configured
+runtime endpoint.
 
 Preserve runtime UUIDs and their Platform mappings during recovery. Secret
 encryption and workflow identities depend on those UUIDs, so copying records

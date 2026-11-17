@@ -85,7 +85,7 @@ docker run --rm --entrypoint node "$platform_workers_image" \
     const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/sdk/workflow");
     const config = parseHostConfig({
       LIGHTSPEED_API_URL: "http://runtime:18080/api/v1",
-      LIGHTSPEED_CONNECTOR_API_TOKEN: "lsk_release_smoke_test",
+      LIGHTSPEED_CONNECTOR_API_TOKEN: "lsr_release_smoke_fixture_0123456789",
       LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
     });
     if (config.providers.join(",") !== "telegram") process.exit(1);

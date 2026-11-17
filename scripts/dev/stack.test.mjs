@@ -44,13 +44,18 @@ test("invalid configuration gets a summary, with launcher stack traces only on r
   }
 });
 
-test("unknown CLI arguments are explained before checking Docker", () => {
-  const result = spawnSync("./dev.sh", ["not-a-profile"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Unknown command or profile/);
-  assert.match(result.stderr, /--help/);
-  assert.doesNotMatch(result.stderr, /Docker|at parseCli/);
-});
+for (const [argument, diagnostic] of [
+  ["not-a-profile", /Unknown command or profile/],
+  ["--allow-missing-api-keys", /unexpected development arguments/],
+]) {
+  test(`unsupported CLI argument ${argument} is explained before checking Docker`, () => {
+    const result = spawnSync("./dev.sh", [argument], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, diagnostic);
+    assert.match(result.stderr, /--help/);
+    assert.doesNotMatch(result.stderr, /Docker|at parseCli/);
+  });
+}
 
 for (const bindVariable of ["LIGHTSPEED_GATEWAY_BIND", "LIGHTSPEED_PUBLIC_BIND", "LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND"]) {
   test(`an occupied ${bindVariable} fails before infrastructure or migrations and releases supervisor state`, { timeout: 5_000 }, async (t) => {

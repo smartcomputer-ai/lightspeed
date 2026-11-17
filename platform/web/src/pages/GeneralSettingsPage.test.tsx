@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   universe = {
-    id: "platform-id", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory", gatewayUrl: null,
+    id: "platform-id", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory",
     status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", features: { bots: true, channels: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {

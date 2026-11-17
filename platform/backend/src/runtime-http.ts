@@ -6,9 +6,9 @@ import { HTTP_CONTRACT_REVISION, HTTP_OPERATIONS } from "@lightspeed-ai/sdk/serv
 import type { AppContext, ApiVariables } from "./context.js";
 import { enforceRestrictions, getAuth } from "./auth-context.js";
 import { HTTPException } from "hono/http-exception";
-import { clientOptions, deploymentClient, GateRefusal, memberClient } from "./runtime-client.js";
+import { clientOptions, deploymentClient, GateRefusal, universeClient } from "./runtime-client.js";
 import { ADMIN_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
-import { deleteManagedUniverse, listUniverseAccesses, renameManagedUniverse, universeForRuntimeReference, updateUniverseLifecycle } from "./routes/universes.js";
+import { deleteManagedUniverse, listUniverseAccesses, renameManagedUniverse, universeForRequest, updateUniverseLifecycle } from "./routes/universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 const MAX_POLICY_BODY = 1024 * 1024;
@@ -36,33 +36,31 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       const connection = await deploymentClient(ctx.env).call("initialize", {}, { signal: c.req.raw.signal });
       if (connection.contractRevision !== HTTP_CONTRACT_REVISION || connection.runtime !== "runtime") return problem(c, 502, "invalidRequest", "runtime API contract does not match Platform");
       if (NATIVE_OPERATIONS.has(spec.operationId)) return nativeOperation(ctx, c, spec.operationId, connection);
-      const options = clientOptions(ctx.env, undefined, { "x-lightspeed-actor": auth.actorId });
+      const options = clientOptions(ctx.env, { "x-lightspeed-actor": auth.actorId });
       const url = new URL(options.endpoint);
       const incoming = new URL(c.req.url);
       let upstreamPath: string = spec.path;
       let params: Record<string, unknown> = {};
       const reference = c.req.param("universe");
       if (MEMBER_OPERATIONS.has(spec.operationId)) {
-        const access = await universeForRuntimeReference(ctx, c, reference ?? "");
+        const access = await universeForRequest(ctx, c, reference ?? "");
         if (!access) throw new GateRefusal(404, "universe not found");
         enforceRestrictions(auth, { operation: spec.operationId, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
-        // Recheck the stored destination too; no database value can redirect the token.
-        clientOptions(ctx.env, access.universe.gatewayUrl, {});
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
-        const member = memberClient(ctx.env, access.universe, access.member);
+        const client = universeClient(ctx.env, access.universe, access.caller);
         for (const field of spec.pathFields) setField(params, field.field, c.req.param(field.parameter));
         let body: string | undefined;
-        if (member.needsPolicyBody(spec.operationId)) {
+        if (client.needsPolicyBody(spec.operationId)) {
           const parsed = await policyBody(c.req.raw);
           if (spec.pathFields.some(field => ownsField(parsed, field.field))) return problem(c, 400, "invalidRequest", "path-owned field must not appear in the body");
           params = { ...parsed, ...params };
-          const decision = await member.authorizeOperation(spec.operationId, params, { signal: c.req.raw.signal });
+          const decision = await client.authorizeOperation(spec.operationId, params, { signal: c.req.raw.signal });
           if (decision.response !== undefined) return c.json(decision.response);
           const authorized = decision.params;
           for (const field of spec.pathFields) deleteField(authorized, field.field);
           body = JSON.stringify(authorized);
         } else {
-          const decision = await member.authorizeOperation(spec.operationId, params, { signal: c.req.raw.signal });
+          const decision = await client.authorizeOperation(spec.operationId, params, { signal: c.req.raw.signal });
           if (decision.response !== undefined) return c.json(decision.response);
           const authorized = decision.params;
           if (spec.operationId === "session/list" && authorized.visibleTo) incoming.searchParams.set("visibleTo", String(authorized.visibleTo));
@@ -74,7 +72,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
         if (spec.operationId === "universe/watch") {
           const kinds = incoming.searchParams.getAll("kinds");
           if (kinds.some(kind => !["session", "bot", "environment", "workspace"].includes(kind))) return problem(c, 400, "invalidRequest", "invalid watch kind");
-          const watch = member.authorizeWatch({ ...(kinds.length ? { kinds: kinds as UniverseWatchParams["kinds"] } : {}), visibleTo: incoming.searchParams.get("visibleTo") });
+          const watch = client.authorizeWatch({ ...(kinds.length ? { kinds: kinds as UniverseWatchParams["kinds"] } : {}), visibleTo: incoming.searchParams.get("visibleTo") });
           incoming.searchParams.delete("kinds");
           for (const kind of watch.kinds ?? []) incoming.searchParams.append("kinds", kind);
           incoming.searchParams.delete("visibleTo");
@@ -90,7 +88,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
       if (!reference && (auth.credential.restrictions.accountIds || auth.credential.restrictions.universeIds)) throw new GateRefusal(403, "deployment operation is outside credential resource scope");
       // Deployment routes with a universe still resolve a Platform-owned resource.
       if (reference) {
-        const access = await universeForRuntimeReference(ctx, c, reference);
+        const access = await universeForRequest(ctx, c, reference);
         if (!access) throw new GateRefusal(404, "universe not found");
         enforceRestrictions(auth, { operation: spec.operationId, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: spec.method !== "GET" });
         upstreamPath = upstreamPath.replace("{universe}", encodeURIComponent(access.universe.lightspeedUniverseId));
@@ -201,7 +199,7 @@ async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string
     const admitted = await listAccountsForPrincipal(ctx, auth);
     const accounts = admitted.map(({ account, role }) => ({ id: account.id, name: account.name, role }));
     const selected = auth.credential.restrictions.universeIds;
-    const defaultUniverse = selected?.length === 1 && await universeForRuntimeReference(ctx, c, selected[0]!) ? selected[0] : undefined;
+    const defaultUniverse = selected?.length === 1 && await universeForRequest(ctx, c, selected[0]!) ? selected[0] : undefined;
     const platform: PlatformConnectionDetails = { principal: { kind: principal.kind, id: principal.id, name: principal.kind === "user" ? principal.user.name : principal.application.name, platformAdmin: principal.platformAdmin }, credential: { kind: auth.credential.kind, id: auth.credential.id }, accounts, restrictions: auth.credential.restrictions };
     return c.json({ ...connection, defaultUniverse, runtime: "platform", caller: { single: false }, platform });
   }
@@ -218,7 +216,7 @@ async function nativeOperation(ctx: AppContext, c: ApiContext, operation: string
     const allowed = new Set((await listUniverseAccesses(ctx, auth)).map(access => access.universe.lightspeedUniverseId));
     return c.json({ universes: (listed.universes ?? []).filter(universe => allowed.has(universe.universeId)) });
   }
-  const access = await universeForRuntimeReference(ctx, c, c.req.param("universe") ?? "", operation === "deployment/universes/delete");
+  const access = await universeForRequest(ctx, c, c.req.param("universe") ?? "", operation === "deployment/universes/delete");
   if (!access) throw new GateRefusal(404, "universe not found");
   enforceRestrictions(auth, { operation, accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: operation !== "deployment/universes/read" });
   if (operation === "deployment/universes/read") return c.json(await client.call(operation, { universe: access.universe.lightspeedUniverseId }));

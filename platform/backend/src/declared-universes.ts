@@ -1,4 +1,4 @@
-import { eq, or, isNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import type { AppContext } from "./context.js";
@@ -13,7 +13,7 @@ export async function syncDeclaredUniverses(ctx: AppContext): Promise<{ adopted:
     if (!locked.rows[0]?.locked) return { adopted: 0, updated: 0 };
     const client = deploymentClient(ctx.env);
     const inventory = (await client.call("deployment/universes/list", {}, { signal: AbortSignal.timeout(10000) })).universes ?? [];
-    const rows = await tx.select().from(schema.universes).where(or(isNull(schema.universes.gatewayUrl), eq(schema.universes.gatewayUrl, ctx.env.lightspeedApiUrl!)));
+    const rows = await tx.select().from(schema.universes);
     const current = new Map(inventory.map(universe => [universe.universeId, universe]));
     const updates: Array<{ row: typeof rows[number]; runtime: typeof inventory[number] }> = [];
     for (const row of rows) {

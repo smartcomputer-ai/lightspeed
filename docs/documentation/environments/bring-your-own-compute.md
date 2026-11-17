@@ -13,7 +13,7 @@ Kubernetes or under systemd, continue with
 
 ## Prepare the machine
 
-You need a running Lightspeed installation and an Operator or Admin account in
+You need a running Lightspeed installation and Operator or Owner access in
 the universe. The [local quickstart](../getting-started/quickstart.md)
 provides both. For a deployed installation, the operator must expose the
 environment registration routes described in

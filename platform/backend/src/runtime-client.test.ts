@@ -2,12 +2,12 @@ import { decodeHttpRequest, problemResponse } from "../../test/http-fixture.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LightspeedApiError, OPERATIONS } from "@lightspeed-ai/sdk";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";
-import { deploymentClient, GateRefusal, memberClient } from "./runtime-client.js";
+import { deploymentClient, GateRefusal, universeClient } from "./runtime-client.js";
 import { METHOD_ROLES, UNMEMBERED_OPERATIONS } from "./routes/method-roles.js";
 import type { ServerEnv } from "./env.js";
 
 const env = { lightspeedApiUrl: "https://core.example/api/v1", lightspeedApiToken: "lsr_fixture" } as ServerEnv;
-const universe = { lightspeedUniverseId: "11111111-1111-4111-8111-111111111111", gatewayUrl: null };
+const universe = { lightspeedUniverseId: "11111111-1111-4111-8111-111111111111" };
 const integration = { version: 1, tools: [] };
 afterEach(() => vi.unstubAllGlobals());
 
@@ -32,7 +32,7 @@ function core(sessions: Record<string, Access> = {}) {
   return calls;
 }
 
-const as = (role: UniverseRole, userId = "alice") => memberClient(env, universe, { userId, role });
+const as = (role: UniverseRole, actorId = "alice") => universeClient(env, universe, { actorId, role });
 const refusal = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => error);
 
 describe("method roles", () => {
@@ -154,13 +154,12 @@ describe("lists and transport", () => {
     expect(calls[1]!.headers.get("x-lightspeed-actor")).toBeNull();
   });
 
-  it("keep the key on the configured runtime", () => {
-    for (const gatewayUrl of ["https://other.example/api/v1", "https://core.example/other", "https://user:password@core.example/api/v1"]) {
-      expect(() => memberClient(env, { ...universe, gatewayUrl }, { userId: "alice", role: "owner" })).toThrow("runtime endpoint");
-      expect(() => deploymentClient(env, gatewayUrl)).toThrow("runtime endpoint");
-    }
+  it("requires a configured runtime token and refuses credentials in its URL", () => {
+    expect(() => deploymentClient({ ...env, lightspeedApiUrl: "https://user:password@core.example/api/v1" })).toThrow("runtime endpoint");
     expect(() => deploymentClient({ ...env, lightspeedApiToken: null })).toThrow("runtime endpoint");
+    expect(() => universeClient({ ...env, lightspeedApiToken: null }, universe, { actorId: "alice", role: "owner" })).toThrow("runtime endpoint");
   });
+
 });
 
 
@@ -284,7 +283,7 @@ describe("session lifecycle permissions", () => {
 
 describe("feature switches", () => {
   const within = (features: unknown, role: UniverseRole = "owner") =>
-    memberClient(env, { ...universe, features }, { userId: "alice", role });
+    universeClient(env, { ...universe, features }, { actorId: "alice", role });
   const featureMethods = (prefix: string) =>
     (Object.keys(METHOD_ROLES) as (typeof OPERATIONS)[number][]).filter((method) => method.startsWith(prefix));
 
@@ -356,7 +355,7 @@ describe("feature switches", () => {
 
 describe("trigger secrets", () => {
   const within = (role: UniverseRole) =>
-    memberClient(env, { ...universe, features: { bots: true, channels: true } }, { userId: "alice", role });
+    universeClient(env, { ...universe, features: { bots: true, channels: true } }, { actorId: "alice", role });
   const target = { botId: "triage", triggerId: "github" };
 
   it("let every member read a trigger and only operators read its secrets", async () => {
@@ -392,9 +391,9 @@ it("gates watch collections and forces the member's session visibility", async (
     calls.push({ params: decodeHttpRequest(_url as string | Request | URL, init).params, headers: new Headers(init.headers) });
     return new Response("event: watch/reset\ndata: {}\n\n", { headers: { "content-type": "text/event-stream" } });
   }));
-  const viewer = memberClient(env, { ...universe, features: { bots: false } }, { userId: "alice", role: "viewer" });
+  const viewer = universeClient(env, { ...universe, features: { bots: false } }, { actorId: "alice", role: "viewer" });
   await (await viewer.openWatch({ visibleTo: "bob" })).body!.cancel();
-  await (await memberClient(env, { ...universe, features: { bots: true } }, { userId: "carol", role: "owner" }).openWatch()).body!.cancel();
+  await (await universeClient(env, { ...universe, features: { bots: true } }, { actorId: "carol", role: "owner" }).openWatch()).body!.cancel();
   expect(calls[0]!.params).toEqual({ kinds: ["session", "environment", "workspace"], visibleTo: "alice" });
   expect(calls[1]!.params).toEqual({ kinds: ["session", "bot", "environment", "workspace"] });
   expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");

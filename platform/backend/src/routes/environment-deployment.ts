@@ -7,8 +7,8 @@ import type {
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";
-import { parseBody } from "../http.js";
-import { deploymentClientFor, withGateway } from "./gateway.js";
+import { parseBody, withApiErrors } from "../http.js";
+import { deploymentClient } from "../runtime-client.js";
 
 const providerPutSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
@@ -48,16 +48,15 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
     await next();
   });
 
-  app.get("/environment-providers", (c) => withGateway(c, async () => {
-    const response = await deploymentClientFor(ctx).call("deployment/environment-providers/list", {});
+  app.get("/environment-providers", (c) => withApiErrors(c, async () => {
+    const response = await deploymentClient(ctx.env).call("deployment/environment-providers/list", {});
     return c.json(response.providers);
   }));
 
   /// Deployment-wide binding inventory: every platform universe on the
-  /// default deployment with its provider bindings, so admins can see which
-  /// universes may provision from which provider. Universes on another
-  /// gateway are reported without bindings.
-  app.get("/environment-provider-bindings", (c) => withGateway(c, async () => {
+  /// deployment with its provider bindings, so admins can see which
+  /// universes may provision from which provider.
+  app.get("/environment-provider-bindings", (c) => withApiErrors(c, async () => {
     const rows = await ctx.db.select().from(schema.universes);
     const universes = await Promise.all(rows.map(async (row) => {
       const base = {
@@ -66,11 +65,8 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
         name: row.name,
         status: row.status,
       };
-      if (row.gatewayUrl) {
-        return { ...base, bindings: [], error: "universe lives on another deployment" };
-      }
       try {
-        const response = await deploymentClientFor(ctx).call(
+        const response = await deploymentClient(ctx.env).call(
           "deployment/environment-provider-bindings/list",
           { universe: row.lightspeedUniverseId },
         );
@@ -89,12 +85,12 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
   app.put("/environment-providers/:providerId", async (c) => {
     const body = await parseBody(c, providerPutSchema);
     if (!body.ok) return body.response;
-    return withGateway(c, async () => {
+    return withApiErrors(c, async () => {
       const params: DeploymentEnvironmentProviderPutParams = {
         providerId: c.req.param("providerId"),
         ...body.data,
       };
-      const response = await deploymentClientFor(ctx).call(
+      const response = await deploymentClient(ctx.env).call(
         "deployment/environment-providers/put",
         params,
       );
@@ -102,8 +98,8 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
     });
   });
 
-  app.delete("/environment-providers/:providerId", (c) => withGateway(c, async () => {
-    const response = await deploymentClientFor(ctx).call(
+  app.delete("/environment-providers/:providerId", (c) => withApiErrors(c, async () => {
+    const response = await deploymentClient(ctx.env).call(
       "deployment/environment-providers/delete",
       { providerId: c.req.param("providerId") },
     );
@@ -113,13 +109,13 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
   app.put("/universes/:universeId/environment-provider-bindings/:providerId", async (c) => {
     const body = await parseBody(c, bindingPutSchema);
     if (!body.ok) return body.response;
-    return withGateway(c, async () => {
+    return withApiErrors(c, async () => {
       const params: DeploymentProviderBindingPutParams = {
         universe: c.req.param("universeId"),
         providerId: c.req.param("providerId"),
         enabled: body.data.enabled,
       };
-      const response = await deploymentClientFor(ctx).call(
+      const response = await deploymentClient(ctx.env).call(
         "deployment/environment-providers/bindings/put",
         params,
       );
@@ -128,8 +124,8 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
   });
 
   app.delete("/universes/:universeId/environment-provider-bindings/:providerId", (c) =>
-    withGateway(c, async () => {
-      const response = await deploymentClientFor(ctx).call(
+    withApiErrors(c, async () => {
+      const response = await deploymentClient(ctx.env).call(
         "deployment/environment-providers/bindings/delete",
         {
           universe: c.req.param("universeId"),

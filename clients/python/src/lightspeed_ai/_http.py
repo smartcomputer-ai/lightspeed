@@ -6354,7 +6354,7 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                  'upload is idempotent. Admission refreshes '
                                  "the blob's collection grace period.",
                   'events': None,
-                  'group': 'session',
+                  'group': 'blobs/put',
                   'method': 'PUT',
                   'operationId': 'blobs/upload',
                   'parameters': [{'in': 'path',

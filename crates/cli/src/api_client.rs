@@ -57,34 +57,18 @@ use api::{
 use serde::{Serialize, de::DeserializeOwned};
 
 pub(crate) struct HttpAgentApi {
-    endpoint: String,
     client: reqwest::Client,
     connection: crate::connection::ResolvedConnection,
 }
 
 impl HttpAgentApi {
-    pub(crate) fn new(endpoint: impl Into<String>) -> Self {
-        let endpoint = endpoint.into();
-        let connection = crate::connection::ACTIVE.get().cloned().unwrap_or_else(|| {
-            crate::connection::ResolvedConnection {
-                name: None,
-                endpoint,
-                secret: std::env::var("LIGHTSPEED_API_TOKEN")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty()),
-                universe: std::env::var("LIGHTSPEED_UNIVERSE")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty()),
-                caller: None,
-                ..Default::default()
-            }
-        });
-        Self::with_connection(connection)
+    /// Build a command client from the connection already resolved by the CLI.
+    pub(crate) fn from_active() -> Self {
+        Self::with_connection(crate::connection::active().clone())
     }
 
     pub(crate) fn with_connection(connection: crate::connection::ResolvedConnection) -> Self {
         Self {
-            endpoint: connection.endpoint.clone(),
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(std::time::Duration::from_secs(10))
@@ -726,7 +710,7 @@ impl HttpAgentApi {
         headers: reqwest::header::HeaderMap,
     ) -> anyhow::Result<reqwest::Response> {
         let endpoint = crate::connection::endpoint_with_policy(
-            &self.endpoint,
+            &self.connection.endpoint,
             self.connection.allow_insecure_http,
         )?;
         let base = endpoint.trim_end_matches('/');

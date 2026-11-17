@@ -6,10 +6,10 @@ Rust and a source checkout if you choose the development launcher.
 
 ## Before you start
 
-To configure a model, you need an OpenAI or Anthropic API key and an Operator
-or Admin account. If your operator has already connected a model, a Contributor
-account is enough to start a session. Creating a universe requires a Platform
-administrator. See
+To configure a model, you need an OpenAI or Anthropic API key and Operator or
+Owner access. If your operator has already connected a model, Contributor
+access is enough to start a session. Creating a universe requires Creator or
+Admin authority in its account, or Platform administration authority. See
 [People and roles](../access-and-security/people-and-roles.md).
 
 If someone has already deployed Lightspeed for you, open that installation
@@ -131,7 +131,7 @@ session. A saved key needs access to the model you will select.
 the conversation.*
 
 Select the model explicitly for this walkthrough. Alternatively, an Operator
-or Admin can choose **Agent runs** under **Models → Defaults** and leave
+or Owner can choose **Agent runs** under **Models → Defaults** and leave
 **Universe default** selected in session setup. Adding a credential alone
 does not select that default. If neither the session nor its profile supplies
 a model and the universe has no default, session creation fails.

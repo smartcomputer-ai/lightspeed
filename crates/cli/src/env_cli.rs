@@ -92,8 +92,6 @@ enum RegistrationKeyCommand {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyCreateArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     /// persistent: environments wait for their daemon to reconnect;
@@ -110,8 +108,6 @@ struct RegistrationKeyCreateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyPutArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     registration_key_id: String,
@@ -177,8 +173,6 @@ impl RegistrationKeyPolicyArgs {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyUpdateArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     registration_key_id: String,
@@ -194,8 +188,6 @@ enum IdentityModeArg {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyResourceArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     registration_key_id: String,
@@ -240,8 +232,6 @@ impl From<PowerArg> for api::EnvironmentPowerStateView {
 
 #[derive(Args, Debug, Clone)]
 struct ResourceArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
 }
@@ -281,8 +271,6 @@ struct EnvUpdateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct EnvironmentResourceArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     environment_id: String,
@@ -307,8 +295,6 @@ enum CredentialCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialListArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     environment_id: String,
@@ -376,7 +362,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
         ),
         RegistrationKeyCommand::Create(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
                     registration_key_id: args.registration_key_id,
                     display_name: args.policy.display_name,
@@ -395,7 +381,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
         }
         RegistrationKeyCommand::Put(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .put_environment_registration_key(api::EnvironmentRegistrationKeyPutParams {
                     registration_key_id: args.registration_key_id,
                     display_name: args.policy.display_name,
@@ -425,7 +411,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
         }
         RegistrationKeyCommand::Update(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .update_environment_registration_key(api::EnvironmentRegistrationKeyUpdateParams {
                     registration_key_id: args.registration_key_id,
                     display_name: args.policy.display_name,
@@ -442,7 +428,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             })
         }
         RegistrationKeyCommand::Rotate(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .rotate_environment_registration_key(api::EnvironmentRegistrationKeyRotateParams {
                     registration_key_id: args.registration_key_id,
                 })
@@ -453,7 +439,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             })
         }
         RegistrationKeyCommand::List(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .list_environment_registration_keys(api::EnvironmentRegistrationKeyListParams {})
                 .await
                 .map_err(crate::api_client::api_error)?;
@@ -467,7 +453,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             })
         }
         RegistrationKeyCommand::Read(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .read_environment_registration_key(api::EnvironmentRegistrationKeyReadParams {
                     registration_key_id: args.registration_key_id,
                 })
@@ -478,7 +464,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             })
         }
         RegistrationKeyCommand::Revoke(args) => {
-            let response = HttpAgentApi::new(args.common.api_url)
+            let response = HttpAgentApi::from_active()
                 .revoke_environment_registration_key(api::EnvironmentRegistrationKeyRevokeParams {
                     registration_key_id: args.common.registration_key_id,
                     close_environments: args.close_environments,
@@ -512,7 +498,7 @@ fn print_registration_secret(key: &api::EnvironmentRegistrationKeyView, secret: 
 }
 
 async fn power(args: PowerArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .put_environment_power(api::EnvironmentPowerPutParams {
             environment_id: args.common.environment_id,
             power: args.power.into(),
@@ -530,7 +516,7 @@ async fn power(args: PowerArgs) -> Result<()> {
 }
 
 async fn update(args: EnvUpdateArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .update_environment(api::EnvironmentUpdateParams {
             environment_id: args.common.environment_id,
             display_name: args.display_name,
@@ -542,7 +528,7 @@ async fn update(args: EnvUpdateArgs) -> Result<()> {
 }
 
 async fn list(args: EnvListArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .list_environments(api::EnvironmentListParams {
             metadata: args.metadata.map(),
             provider_id: args.provider,
@@ -575,7 +561,7 @@ async fn list(args: EnvListArgs) -> Result<()> {
 }
 
 async fn read(args: EnvironmentResourceArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.api_url)
+    let response = HttpAgentApi::from_active()
         .read_environment(api::EnvironmentReadParams {
             environment_id: args.environment_id,
         })
@@ -584,7 +570,7 @@ async fn read(args: EnvironmentResourceArgs) -> Result<()> {
 }
 
 async fn close(args: EnvironmentResourceArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.api_url)
+    let response = HttpAgentApi::from_active()
         .close_environment(api::EnvironmentCloseParams {
             environment_id: args.environment_id,
         })
@@ -616,7 +602,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
                 }
                 _ => anyhow::bail!("specify exactly one of --grant and --provider-id"),
             };
-            let response = HttpAgentApi::new(args.common.api_url)
+            let response = HttpAgentApi::from_active()
                 .bind_environment_credential(api::EnvironmentCredentialBindParams {
                     environment_id: args.common.environment_id,
                     env_name: args.env_name,
@@ -629,7 +615,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
             })
         }
         CredentialCommand::List(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .list_environment_credentials(api::EnvironmentCredentialListParams {
                     environment_id: args.environment_id,
                 })
@@ -645,7 +631,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
             })
         }
         CredentialCommand::Unbind(args) => {
-            let response = HttpAgentApi::new(args.common.api_url)
+            let response = HttpAgentApi::from_active()
                 .unbind_environment_credential(api::EnvironmentCredentialUnbindParams {
                     environment_id: args.common.environment_id,
                     env_name: args.env_name,
@@ -801,7 +787,7 @@ struct IngressArgs {
     disable: bool,
 }
 async fn create(args: CreateArgs) -> Result<()> {
-    let response: api::EnvironmentCreateResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentCreateResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_CREATE,
             api::EnvironmentCreateParams {
@@ -827,7 +813,7 @@ async fn register(args: RegisterArgs) -> Result<()> {
             .any(|scheme| args.endpoint.starts_with(scheme)),
         "envd endpoint must use ws://, wss:// or unix://"
     );
-    let response: api::EnvironmentExternalCreateResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentExternalCreateResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_EXTERNAL_CREATE,
             api::EnvironmentExternalCreateParams {
@@ -842,7 +828,7 @@ async fn register(args: RegisterArgs) -> Result<()> {
     crate::output::show(args.common.json, &response.environment)
 }
 async fn declare(args: DeclareArgs) -> Result<()> {
-    let response: api::EnvironmentRegisteredPutResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentRegisteredPutResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_REGISTERED_PUT,
             api::EnvironmentRegisteredPutParams {
@@ -870,7 +856,7 @@ async fn declare(args: DeclareArgs) -> Result<()> {
     Ok(())
 }
 async fn release(args: EnvironmentResourceArgs) -> Result<()> {
-    let response: api::EnvironmentRegisteredReleaseResponse = HttpAgentApi::new(args.api_url)
+    let response: api::EnvironmentRegisteredReleaseResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_REGISTERED_RELEASE,
             api::EnvironmentRegisteredReleaseParams {
@@ -894,7 +880,7 @@ async fn release(args: EnvironmentResourceArgs) -> Result<()> {
     Ok(())
 }
 async fn binding(args: BindingArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
         BindingCommand::Put {
             provider_id,
@@ -958,7 +944,7 @@ async fn binding(args: BindingArgs) -> Result<()> {
     }
 }
 async fn template(args: TemplateArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
         TemplateCommand::List { provider, json } => {
             let response: api::EnvironmentTemplateListResponse = client
@@ -1004,7 +990,7 @@ async fn template(args: TemplateArgs) -> Result<()> {
     }
 }
 async fn ingress(args: IngressArgs) -> Result<()> {
-    let response: api::EnvironmentIngressPutResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentIngressPutResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_INGRESS_PUT,
             api::EnvironmentIngressPutParams {
@@ -1087,7 +1073,7 @@ enum ProviderCommand {
     },
 }
 async fn provider(args: ProviderArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
         ProviderCommand::List { json } => {
             let response: api::DeploymentEnvironmentProviderListResponse = client

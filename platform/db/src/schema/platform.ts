@@ -39,8 +39,6 @@ export const universes = pgTable("universes", {
   runtimeConfiguration: jsonb("runtime_configuration").$type<Record<string, unknown>>().default({}).notNull(),
   icon: text("icon").default("orbit").notNull(),
   iconColor: text("icon_color").default("default").notNull(),
-  /// Runtime HTTP API base; null = the deployment default from env.
-  gatewayUrl: text("gateway_url"),
   status: text("status", { enum: ["provisioning", "active", "archived", "deleting"] })
     .default("active")
     .notNull(),
@@ -100,12 +98,11 @@ export const credentialBindings = pgTable("credential_bindings", {
 ]);
 
 export type UniverseSetupState = {
-  previous?: { applicationId?: string; credentialId?: string; grantId?: string; serverId?: string; profileId?: string };
+  previous?: { applicationId?: string; credentialId?: string; grantId?: string; serverId?: string };
   applicationId?: string;
   credentialId?: string;
   grantId?: string;
   serverId?: string;
-  profileId?: string;
 };
 
 /// Provenance for platform-managed, multi-resource universe setups. Engine

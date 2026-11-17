@@ -98,6 +98,7 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireColumn(pool, "universes", "access_policy");
   await requireColumn(pool, "organization", "membership_policy");
   await requireColumn(pool, "universes", "lightspeed_universe_id");
+  await requireColumn(pool, "universes", "gateway_url", false);
   await requireColumn(pool, "universes", "icon");
   await requireColumn(pool, "universes", "icon_color");
   for (const table of [
@@ -213,7 +214,7 @@ async function requireNoTable(pool: pg.Pool, table: string): Promise<void> {
   }
 }
 
-async function requireColumn(pool: pg.Pool, table: string, column: string): Promise<void> {
+async function requireColumn(pool: pg.Pool, table: string, column: string, expected = true): Promise<void> {
   const result = await pool.query<{ present: boolean }>(
     `select exists (
        select 1
@@ -222,8 +223,8 @@ async function requireColumn(pool: pg.Pool, table: string, column: string): Prom
      ) as present`,
     [table, column],
   );
-  if (result.rows[0]?.present !== true) {
-    throw new Error(`migration did not create public.${table}.${column}`);
+  if (result.rows[0]?.present !== expected) {
+    throw new Error(`migration ${expected ? "did not create" : "did not remove"} public.${table}.${column}`);
   }
 }
 

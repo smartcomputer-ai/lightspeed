@@ -355,8 +355,9 @@ lightspeed model defaults set speech-to-text --provider openai --api-kind openai
 lightspeed model defaults clear speech-to-text
 ```
 
-Use a model supported by the configured provider. These commands require the
-`models` method group. `set` and `clear` write whatever the current defaults
+Use a model supported by the configured provider. Through Platform, reading
+requires universe access; `set` and `clear` require Operator or Owner authority
+and a credential that permits configuration writes. They write the current defaults
 are; pass `--expected-revision REVISION` to have the write refused if the
 defaults changed since the revision you read. All three commands support
 `--json`.
@@ -392,8 +393,8 @@ page to update the cached URLs. There is no periodic or background handle refres
 A failed sync reports an error and preserves the cache; universes missing from
 the runtime are reported as skipped for review. During runtime outages,
 the cached universe list remains available for membership administration.
-Linked universes across different runtime deployments must have distinct handles
-within one Platform.
+All linked universes use Platform's configured runtime endpoint and have
+distinct handles within that deployment.
 
 IDs, profiles and sessions stay in the runtime; Platform records the containing
 account and explicit universe grants. This

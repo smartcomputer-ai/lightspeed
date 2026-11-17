@@ -12,9 +12,7 @@ use sqlx::{
 };
 use store_pg::PgStore;
 use temporal_runtime::config::RuntimeTokens;
-use temporal_runtime::gateway::authentication::{
-    ACTOR_HEADER, request_context_for_universe, resolve_caller,
-};
+use temporal_runtime::gateway::authentication::{ACTOR_HEADER, request_context, resolve_caller};
 use temporal_runtime::gateway::request_context::RequestContext;
 use uuid::Uuid;
 
@@ -81,7 +79,7 @@ async fn authenticate(
         ),
         None => None,
     };
-    request_context_for_universe(caller, method, universe)
+    request_context(caller, method, universe)
 }
 async fn exercise(pool: &sqlx::PgPool) {
     PgStore::migrate(pool).await.unwrap();

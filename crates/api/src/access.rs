@@ -74,7 +74,7 @@ pub enum MethodGroup {
     /// Destructive session operations and deletion retention.
     #[serde(rename = "session/delete")]
     SessionDelete,
-    /// `blobs/put` alone, so connectors can upload attachments without
+    /// `blobs/put` and `blobs/upload`, so connectors can upload attachments without
     /// reading sessions.
     #[serde(rename = "blobs/put")]
     BlobsPut,
@@ -181,46 +181,49 @@ impl MethodGroup {
     /// The group a method belongs to, from its name. `None` for
     /// `initialize`, `universe/watch`, and names outside the contract.
     pub fn of(method: &str) -> Option<MethodGroup> {
+        method_access(method)?;
         let group = |prefix: &str| method.starts_with(prefix);
-        Some(if method == "blobs/put" {
-            Self::BlobsPut
-        } else if matches!(method, "session/delete" | "session/retention/put") {
-            Self::SessionDelete
-        } else if group("deployment/sessions/") {
-            Self::DeploymentSessions
-        } else if group("session/") || group("blobs/") {
-            Self::Session
-        } else if group("transcriptions/") {
-            Self::Transcriptions
-        } else if group("vfs/") {
-            Self::Vfs
-        } else if group("profiles/") {
-            Self::Profiles
-        } else if group("models/") {
-            Self::Models
-        } else if group("mcp/") {
-            Self::Mcp
-        } else if group("environments/") {
-            Self::Environments
-        } else if group("bots/") {
-            Self::Bots
-        } else if group("channels/inbound/") {
-            Self::ChannelsInbound
-        } else if group("channels/") {
-            Self::Channels
-        } else if method == "credentials/grants/lease" {
-            Self::CredentialsLease
-        } else if group("credentials/") {
-            Self::Credentials
-        } else if group("deployment/universes/") {
-            Self::DeploymentUniverses
-        } else if group("deployment/environment-provider") {
-            Self::DeploymentEnvironmentProviders
-        } else if group("deployment/channels/") {
-            Self::DeploymentChannels
-        } else {
-            return None;
-        })
+        Some(
+            if matches!(method, METHOD_BLOBS_PUT | METHOD_BLOBS_UPLOAD) {
+                Self::BlobsPut
+            } else if matches!(method, "session/delete" | "session/retention/put") {
+                Self::SessionDelete
+            } else if group("deployment/sessions/") {
+                Self::DeploymentSessions
+            } else if group("session/") || group("blobs/") {
+                Self::Session
+            } else if group("transcriptions/") {
+                Self::Transcriptions
+            } else if group("vfs/") {
+                Self::Vfs
+            } else if group("profiles/") {
+                Self::Profiles
+            } else if group("models/") {
+                Self::Models
+            } else if group("mcp/") {
+                Self::Mcp
+            } else if group("environments/") {
+                Self::Environments
+            } else if group("bots/") {
+                Self::Bots
+            } else if group("channels/inbound/") {
+                Self::ChannelsInbound
+            } else if group("channels/") {
+                Self::Channels
+            } else if method == "credentials/grants/lease" {
+                Self::CredentialsLease
+            } else if group("credentials/") {
+                Self::Credentials
+            } else if group("deployment/universes/") {
+                Self::DeploymentUniverses
+            } else if group("deployment/environment-provider") {
+                Self::DeploymentEnvironmentProviders
+            } else if group("deployment/channels/") {
+                Self::DeploymentChannels
+            } else {
+                return None;
+            },
+        )
     }
 }
 
@@ -448,6 +451,7 @@ pub fn method_access(method: &str) -> Option<MethodAccess> {
 
 /// The session a method acts on: every `session/` method but the list.
 pub fn method_target(method: &str) -> Option<MethodTarget> {
+    method_access(method)?;
     (method.starts_with("session/") && method != METHOD_SESSION_LIST)
         .then_some(MethodTarget::SessionId)
 }
@@ -515,6 +519,7 @@ mod tests {
             ("blobs/read", Some(MethodGroup::Session)),
             ("blobs/has", Some(MethodGroup::Session)),
             ("blobs/put", Some(MethodGroup::BlobsPut)),
+            ("blobs/upload", Some(MethodGroup::BlobsPut)),
             ("vfs/workspaces/create", Some(MethodGroup::Vfs)),
             ("profiles/put", Some(MethodGroup::Profiles)),
             ("models/list", Some(MethodGroup::Models)),
@@ -547,6 +552,9 @@ mod tests {
             ("initialize", None),
             ("deployment/identity/apply", None),
             ("access/policy/put", None),
+            ("session/unknown", None),
+            ("blobs/unknown", None),
+            ("deployment/universes/unknown", None),
         ] {
             assert_eq!(MethodGroup::of(method), group, "{method}");
         }
@@ -674,5 +682,6 @@ mod tests {
         assert_eq!(method_target(METHOD_SESSION_LIST), None);
         assert_eq!(method_target(METHOD_BLOBS_READ), None);
         assert_eq!(method_target(METHOD_BOTS_LIST), None);
+        assert_eq!(method_target("session/unknown"), None);
     }
 }

@@ -302,7 +302,7 @@ export class DemoStore {
         protected: false,
         expiresAtMs: null,
         handle: init.handle,
-        gatewayUrl: null,
+
         status: "active",
         createdAt,
         role,

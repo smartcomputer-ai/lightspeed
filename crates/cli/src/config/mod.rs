@@ -22,7 +22,7 @@ use self::{
     document::Format,
     plan::{Action, DocumentPlan, Step},
 };
-use crate::{api_client::HttpAgentApi, connection::ResolvedConnection};
+use crate::connection::ResolvedConnection;
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ConfigArgs {
@@ -112,7 +112,7 @@ pub(crate) struct ExportArgs {
 }
 
 fn base_connection() -> ResolvedConnection {
-    HttpAgentApi::new("").connection().clone()
+    crate::connection::active().clone()
 }
 
 async fn plan_all(

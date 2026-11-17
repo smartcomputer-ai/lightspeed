@@ -11,8 +11,7 @@ lets a project keep its source material and working conventions together.
 
 This guide extends the `release-notes` workspace from
 [Build your first agent](../getting-started/first-agent.md). Contributors can
-create and edit workspaces. Creating the profiles in this guide requires an
-Operator or Admin account.
+create and edit workspaces. Creating the profiles in this guide requires Operator or Owner access.
 
 ## Attach files to a session
 

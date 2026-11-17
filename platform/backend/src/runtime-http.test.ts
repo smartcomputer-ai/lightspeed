@@ -8,13 +8,13 @@ import { runtimeHttpRoutes } from "./runtime-http.js";
 import { ADMIN_OPERATIONS, DENIED_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
 
 const mocks = vi.hoisted(() => ({ access: vi.fn(), create: vi.fn(), remove: vi.fn(), handle: vi.fn() }));
-vi.mock("./routes/universes.js", () => ({ universeForRuntimeReference: mocks.access, listUniverseAccesses: vi.fn(async () => []), deleteManagedUniverse: mocks.remove, renameManagedUniverse: vi.fn(), updateUniverseLifecycle: vi.fn() }));
+vi.mock("./routes/universes.js", () => ({ universeForRequest: mocks.access, listUniverseAccesses: vi.fn(async () => []), deleteManagedUniverse: mocks.remove, renameManagedUniverse: vi.fn(), updateUniverseLifecycle: vi.fn() }));
 vi.mock("./universe-handles.js", () => ({ requireAvailableCachedHandle: mocks.handle }));
 vi.mock("./account-access.js", () => ({ listAccountsForPrincipal: vi.fn(async () => []) }));
 const runtimeUniverse = "00000000-0000-0000-0000-000000000001";
 const token = "platform-test-token-12345678901234567890";
 const connection = { runtime: "runtime", contractRevision: "1", caller: { single: false, tokenName: "platform" }, serverInfo: { name: "Lightspeed", version: "1" } };
-const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, gatewayUrl: null, features: {} }, handle: "acme", role, member: { userId: "alice", role } });
+const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, features: {} }, handle: "acme", role, caller: { actorId: "alice", role } });
 
 function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false, options: { auth?: AuthContext; accountRole?: "admin" | "creator" | "member" } = {}) {
   const auth = options.auth ?? userSubject("alice", platformAdmin);

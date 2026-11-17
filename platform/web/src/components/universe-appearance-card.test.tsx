@@ -26,7 +26,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", handle: "test",
-    gatewayUrl: null, status: "active", createdAt: "2026-01-01", role: "owner",
+    status: "active", createdAt: "2026-01-01", role: "owner",
     features: { bots: true, channels: true }, icon: "orbit", iconColor: "default" };
   mocks.api.mockReset().mockImplementation(async (_method, _path, fields) => ({ ...mocks.universe, ...fields }));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });

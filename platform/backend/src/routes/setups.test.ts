@@ -4,18 +4,18 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ApiVariables, AppContext } from "../context.js";
 import { CONFIGURATOR_OPERATIONS, setupRoutes } from "./setups.js";
-import { universeForSession } from "./universes.js";
+import { universeForRequest } from "./universes.js";
 
-vi.mock("./universes.js", () => ({ universeForSession: vi.fn() }));
+vi.mock("./universes.js", () => ({ universeForRequest: vi.fn() }));
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 /// The setup routes for a member holding `role`; the universe has no
 /// installation yet, and nothing reaches the runtime.
 function routes(role: UniverseRole) {
-  const universe = { id: "platform-universe", lightspeedUniverseId: "33333333-3333-4333-8333-333333333333", gatewayUrl: null };
-  vi.mocked(universeForSession).mockResolvedValue({
-    universe, handle: "test", role, member: { userId: "platform-user", role },
-  } as unknown as Awaited<ReturnType<typeof universeForSession>>);
+  const universe = { id: "platform-universe", lightspeedUniverseId: "33333333-3333-4333-8333-333333333333" };
+  vi.mocked(universeForRequest).mockResolvedValue({
+    universe, handle: "test", role, caller: { actorId: "platform-user", role },
+  } as unknown as Awaited<ReturnType<typeof universeForRequest>>);
   const runtime = vi.fn();
   vi.stubGlobal("fetch", runtime);
   const writes = vi.fn();

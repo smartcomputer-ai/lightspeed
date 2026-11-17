@@ -36,7 +36,7 @@ export function platformRoutes(store: DemoStore): Hono {
       platform: [...store.universes.values()].map((state) => ({
         id: state.universe.id,
         lightspeedUniverseId: state.universe.lightspeedUniverseId,
-        engine: state.universe.gatewayUrl ? "unchecked" : "ok",
+        engine: "ok",
       })),
       orphans: store.orphanEngineUniverses,
     }),
@@ -116,7 +116,7 @@ export function platformRoutes(store: DemoStore): Hono {
   app.patch("/universes/:id", async (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
-    const body = await readBody<Partial<Pick<Universe, "name" | "status" | "gatewayUrl"> & { features: unknown }>>(c);
+    const body = await readBody<Partial<Pick<Universe, "name" | "status"> & { features: unknown }>>(c);
     const parsed = universeUpdateSchema.safeParse(body);
     if (!parsed.success) return badRequest(c, "invalid universe settings");
     if (parsed.data.icon !== undefined) state.universe.icon = parsed.data.icon;
@@ -129,7 +129,6 @@ export function platformRoutes(store: DemoStore): Hono {
     }
     if (typeof body.name === "string" && body.name.trim()) state.universe.name = body.name.trim();
     if (body.status === "active" || body.status === "archived") state.universe.status = body.status;
-    if (body.gatewayUrl !== undefined) state.universe.gatewayUrl = body.gatewayUrl || null;
     return c.json(state.universe);
   });
 

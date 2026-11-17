@@ -2025,7 +2025,7 @@ Streams bytes into immutable universe storage. The path is the expected content 
 - Path input fields: `blobRef` → `blobRef`
 - Request body: `application/octet-stream`; `Content-Length` required
 - Access: `{"action":"useResource","kind":"universe"}`
-- Group: `session`
+- Group: `blobs/put`
 - Role: `contributor`
 
 

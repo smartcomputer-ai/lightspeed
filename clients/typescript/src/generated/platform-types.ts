@@ -710,7 +710,6 @@ export interface PlatformUniversesAdoptResult {
     };
     icon: string;
     iconColor: string;
-    gatewayUrl: string | null;
     runtimeConfiguration: {
       [k: string]: unknown;
     };
@@ -759,7 +758,6 @@ export interface PlatformUniversesCreateResult {
     };
     icon: string;
     iconColor: string;
-    gatewayUrl: string | null;
     runtimeConfiguration: {
       [k: string]: unknown;
     };
@@ -803,7 +801,6 @@ export interface PlatformUniversesUpdateResult {
     };
     icon: string;
     iconColor: string;
-    gatewayUrl: string | null;
     runtimeConfiguration: {
       [k: string]: unknown;
     };

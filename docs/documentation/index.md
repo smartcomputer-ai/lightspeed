@@ -27,7 +27,7 @@ profiles, bots, workspaces, and environments.
 
 Sign in with the account and universe supplied by your operator. A Contributor
 can start sessions using existing resources; configuring models and profiles
-requires an Operator or Admin. [People and roles](access-and-security/people-and-roles.md)
+requires an Operator or Owner. [People and roles](access-and-security/people-and-roles.md)
 explains how an administrator grants access.
 
 Start with [Sessions and runs](using-lightspeed/sessions-and-runs.md) for

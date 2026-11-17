@@ -540,7 +540,6 @@ class Universe(TypedDict):
     features: dict[str, bool]
     icon: str
     iconColor: str
-    gatewayUrl: str | None
     runtimeConfiguration: dict[str, Any]
     createdAt: str
     updatedAt: str

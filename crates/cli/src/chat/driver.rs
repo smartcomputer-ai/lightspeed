@@ -92,9 +92,6 @@ pub(crate) struct ChatArgs {
         requires = "workspace_source"
     )]
     workspace_access: crate::vfs_cli::WorkspaceAccessArg,
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Show tool call arguments and results in the TUI.
     #[arg(long)]
     show_tool_details: bool,
@@ -110,12 +107,12 @@ pub(crate) struct ChatArgs {
 
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     if args.list {
-        return super::recent::list(&HttpAgentApi::new(args.api_url), args.json).await;
+        return super::recent::list(&HttpAgentApi::from_active(), args.json).await;
     }
     let draft = draft_settings(&args)?;
     let profile = profile_source_from_args(args.profile.as_deref(), args.profile_json.as_deref())?;
     let session_id = if args.resume {
-        super::recent::resume_id(&HttpAgentApi::new(args.api_url.clone())).await?
+        super::recent::resume_id(&HttpAgentApi::from_active()).await?
     } else if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session.as_ref() {
@@ -128,7 +125,7 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let options = ChatSessionDriverOptions {
         session_id,
         draft_settings: draft,
-        api: Arc::new(HttpAgentApi::new(args.api_url)),
+        api: Arc::new(HttpAgentApi::from_active()),
         profile,
     };
     let (mut driver, mut initial_events) = if args.resume {
@@ -3182,7 +3179,6 @@ mod tests {
             workspace: None,
             workspace_path: "/workspace".into(),
             workspace_access: crate::vfs_cli::WorkspaceAccessArg::Edit,
-            api_url: "http://127.0.0.1:18080/api/v1".into(),
             show_tool_details: false,
             show_stats: false,
             json: false,

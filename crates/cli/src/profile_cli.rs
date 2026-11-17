@@ -24,9 +24,6 @@ pub(crate) struct ProfilesArgs {
     /// Emit machine-readable JSON (export always writes JSON).
     #[arg(long = "json", global = true)]
     output_json: bool,
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     #[command(subcommand)]
     command: ProfilesCommand,
 }
@@ -194,7 +191,7 @@ impl ValidationReport {
 }
 
 pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     match args.command {
         ProfilesCommand::List => {
             let response = api
@@ -1204,7 +1201,7 @@ pub(crate) async fn session_profile(args: SessionProfileArgs) -> Result<()> {
         json,
     } = args.command;
     let profile = profile_source_from_args(profile.as_deref(), profile_json.as_deref())?;
-    let response = HttpAgentApi::new("")
+    let response = HttpAgentApi::from_active()
         .apply_profile(ProfileApplyParams {
             session_id,
             profile,

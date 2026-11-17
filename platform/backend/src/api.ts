@@ -6,7 +6,7 @@ import { credentialRoutes } from "./credential-routes.js";
 import { sessionRoutes } from "./session-routes.js";
 import { HTTPException } from "hono/http-exception";
 import { sessionAdminRoutes } from "./routes/session-admin.js";
-import { withGateway } from "./routes/gateway.js";
+import { withApiErrors } from "./http.js";
 import { Hono } from "hono";
 import { desc } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
@@ -28,7 +28,7 @@ export function buildApp(ctx: AppContext) {
   app.onError((error, c) => {
     if (error instanceof CredentialRateLimit) return error.response();
     if (error instanceof HTTPException) return c.req.path.startsWith("/api/v1/") ? problem(c, error.status, error.status === 401 ? "unauthenticated" : "forbidden", error.message) : c.json({ error: error.message }, error.status);
-    return withGateway(c, async () => { throw error; });
+    return withApiErrors(c, async () => { throw error; });
   });
 
   app.get("/health", (c) => c.json({ ok: true }));

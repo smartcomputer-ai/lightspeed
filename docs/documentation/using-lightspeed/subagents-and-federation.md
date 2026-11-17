@@ -17,7 +17,7 @@ bot owns its inbox, routing, conversations, and future work.
 | Ask another bot to handle work on its own schedule and report later | Federation with a requested reply receipt. |
 
 Enable sub-agents in the parent profile, and bot messaging in the sending
-and receiving bots' settings. Use an Operator or Admin account to configure
+and receiving bots' settings. Use Operator or Owner access to configure
 them. These settings determine the agent's tools;
 [Agent and tool access](../access-and-security/agent-and-tool-access.md) explains
 the runtime boundaries.

@@ -5,9 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
 import { gatewayRoutes } from "./gateway.js";
 const auth = vi.hoisted(() => ({ role: "contributor" }));
-vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
-  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/api/v1" },
-  handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
+vi.mock("./universes.js", () => ({ universeForRequest: vi.fn(async (_ctx, _c, id: string) => ({
+  universe: { lightspeedUniverseId: id },
+  handle: "test", role: auth.role, caller: { actorId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "contributor"; });
 afterEach(() => vi.unstubAllGlobals());

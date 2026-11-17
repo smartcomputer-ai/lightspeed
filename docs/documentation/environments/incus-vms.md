@@ -2,7 +2,7 @@
 
 The included Incus provider creates and manages virtual machines for Lightspeed
 environments. An operator supplies trusted images and templates; a universe
-receives access through a provider binding. Universe Operators and Admins
+receives access through a provider binding. Universe Operators and Owners
 create machines from those templates, then attach them to sessions or profiles.
 
 The provider runs as a separate process. It talks to Incus using an HTTPS
@@ -43,7 +43,7 @@ browser endpoints. [Networking and ingress](networking-and-ingress.md)
 describes the separate authenticated runtime route and optional public app edge.
 
 A Platform administrator registers the physical provider and binds universes.
-Universe Operators and Admins can then create environments from the enabled
+Universe Operators and Owners can then create environments from the enabled
 offerings.
 
 ## Build the provider and guest image

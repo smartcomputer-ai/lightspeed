@@ -10,7 +10,7 @@ For example, `openai` identifies the built-in OpenAI connection, while
 a model available on that connection. An OpenAI-compatible service can use
 the same wire format under its own provider ID and endpoint.
 
-Provider connections belong to a universe. Use an Operator or Admin account
+Provider connections belong to a universe. Use Operator or Owner access
 to configure them on the **Models** page. Once connected, select the model in
 a [profile](profiles-and-instructions.md) or session setup.
 
@@ -142,7 +142,7 @@ model name while refusing an incompatible parameter.
 
 ## Choose universe defaults
 
-Under **Models → Defaults**, an Operator or Admin can choose, change, or clear
+Under **Models → Defaults**, an Operator or Owner can choose, change, or clear
 two independent defaults:
 
 | Default | Used for |

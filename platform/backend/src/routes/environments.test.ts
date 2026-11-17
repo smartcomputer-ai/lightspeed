@@ -5,13 +5,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ApiVariables, AppContext } from "../context.js";
 import { environmentDeploymentRoutes } from "./environment-deployment.js";
 import { gatewayRoutes } from "./gateway.js";
-import { universeForSession } from "./universes.js";
+import { universeForRequest } from "./universes.js";
 
 vi.mock("./universes.js", () => ({
-  universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
+  universeForRequest: vi.fn(async () => ({
+    universe: { lightspeedUniverseId: "universe" },
     role: "operator",
-    member: { userId: "user", role: "operator" },
+    caller: { actorId: "user", role: "operator" },
   })),
 }));
 
@@ -251,11 +251,11 @@ it.each([
   ["POST", "/universes/u/environments/build-01/release", undefined],
   ["POST", "/universes/u/environment-registration-keys", { identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci" }],
 ] as const)("keeps %s %s with operators", async (method, path, body) => {
-  const access = (await universeForSession(ctx, undefined as never, "u"))!;
-  vi.mocked(universeForSession).mockResolvedValueOnce({
+  const access = (await universeForRequest(ctx, undefined as never, "u"))!;
+  vi.mocked(universeForRequest).mockResolvedValueOnce({
     ...access,
     role: "contributor",
-    member: { ...access.member, role: "contributor" },
+    caller: { ...access.caller, role: "contributor" },
   });
   const response = await request(method, path, body);
   expect(response.status).toBe(403);

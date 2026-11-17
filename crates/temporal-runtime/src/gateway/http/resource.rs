@@ -339,7 +339,7 @@ async fn context_for_path(
                 ),
                 None => None,
             };
-            Ok(authentication::request_context_for_universe(
+            Ok(authentication::request_context(
                 *caller, operation, universe,
             )?)
         }

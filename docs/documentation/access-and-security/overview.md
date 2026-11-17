@@ -21,10 +21,10 @@ Each part answers a different question:
 | --- | --- |
 | Universe | Which team's resources a request addresses. Each universe belongs to one Platform account; an account can have many universes. |
 | Account and membership | A personal or shared group of universes, with Admin, Creator, or Member roles and separate universe grants. Better Auth organizations store accounts. |
-| Role | Which operations a person may request: Viewer, Contributor, Operator, or Admin. |
+| Role | Which operations a person may request: Viewer, Contributor, Operator, or Owner. |
 | Runtime token | Full deployment authority for a trusted component or operator. |
 | Actor | Who a trusted client says requested an operation. The Platform supplies the authenticated user or application's ID. |
-| Session visibility | Whether a session is private to its creator and admins, or shared with the universe through the Platform. |
+| Session visibility | Whether a session is private to its creator and universe Owners, or shared with the universe through the Platform. |
 
 An actor is attribution, not a role or an execution identity. Core stores the
 identifier without looking up a person. It can compare that identifier when

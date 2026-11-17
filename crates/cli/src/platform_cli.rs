@@ -290,7 +290,7 @@ fn require_platform() -> Result<()> {
 }
 async fn call(operation: &str, params: Value) -> Result<Value> {
     require_platform()?;
-    Ok(HttpAgentApi::new("")
+    Ok(HttpAgentApi::from_active()
         .call_platform(operation, params)
         .await?)
 }
@@ -462,7 +462,7 @@ pub(crate) async fn api(args: ApiArgs) -> Result<()> {
         .transpose()?
         .unwrap_or_else(|| json!({}));
     let file = args.output.prepare(issues_secret(&args.operation))?;
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     let response: Value = if args.operation.starts_with("platform/") {
         require_platform()?;
         client.call_platform(&args.operation, params).await?

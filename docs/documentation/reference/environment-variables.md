@@ -74,10 +74,11 @@ universes explicitly through the deployment API or `lightspeed-runtime universe
 create`.
 
 In authenticated mode, a token authenticates a trusted component with full
-deployment authority. Universe/service methods require `x-lightspeed-universe`
-as a UUID or handle; deployment methods and `initialize` omit it. Any token
-may supply `x-lightspeed-actor` for attribution. Single mode rejects credential,
-universe and actor headers. See
+deployment authority. Universe resources select their UUID or handle in
+`/api/v1/universes/{universe}/…`; connection discovery and deployment resources
+use their own paths. The HTTP API rejects `x-lightspeed-universe`. Any token
+may supply `x-lightspeed-actor` for attribution. Single mode rejects credential
+and actor headers and only serves its configured universe. See
 [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
 
 ### Temporal connection security
@@ -422,9 +423,26 @@ See [CLI connections](../using-lightspeed/cli.md) and
 
 ## Connector host
 
-Channel connector startup is disabled during the access-model transition.
-The launcher gives no runtime token to a connector. Existing connector source
-remains for separate channel removal work; its old API keys no longer authenticate.
+The standalone host is a trusted runtime/Temporal bridge. Start it with
+`npm run start --workspace @lightspeed-ai/connectors`; the development launcher
+does not start it or supply its runtime token. The token has full deployment
+authority and must not be installed for an agent. The host shares the
+`TEMPORAL_*` connection settings above.
+
+| Variable | Requirement/default | Purpose |
+| --- | --- | --- |
+| `LIGHTSPEED_API_URL` | Required | Direct runtime HTTP API base URL. |
+| `LIGHTSPEED_CONNECTOR_API_TOKEN` | Required | A configured runtime token, at least 32 printable non-whitespace ASCII characters. |
+| `LIGHTSPEED_CONNECTOR_PROVIDERS` | `telegram,whatsapp` | Comma-separated providers to serve. |
+| `LIGHTSPEED_CONNECTOR_ACCOUNTS` | All discovered accounts | Optional comma-separated `<universeId>/<accountId>` selectors. Partition these across hosts to avoid duplicate ingress ownership. |
+| `LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS` | `30000` | Positive interval between account discovery passes. |
+| `LIGHTSPEED_CONNECTOR_INGRESS_MAX_PER_MINUTE` | `120` | Positive per-minute inbound rate limit. |
+| `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` | Required when serving WhatsApp | Persistent provider session-state directory. |
+| `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY` | Required when serving WhatsApp | 32-byte key encoded as base64 for sealed media locators. |
+| `LIGHTSPEED_CONNECTOR_HEALTH_HOST` | `0.0.0.0` | Health listener host. |
+| `LIGHTSPEED_CONNECTOR_HEALTH_PORT` | `8090` | Health listener port. |
+| `LIGHTSPEED_CONNECTOR_METRICS_HOST` | `0.0.0.0` | Metrics listener host. |
+| `LIGHTSPEED_CONNECTOR_METRICS_PORT` | `9090` | Metrics listener port. |
 
 ## Configurator MCP
 
@@ -455,7 +473,7 @@ Never reuse their credentials in a deployed environment.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_AUTH_MODE` | `authenticated` | Both `full` and `runtime` configure a CLI token and connection handoff; full also configures a Platform token when needed. Explicit `single` remains supported for runtime-only local use. |
-| `LIGHTSPEED_CHANNELS_CONNECTORS` | Disabled | Connector startup is disabled; no runtime token is supplied to channel connectors. |
+| `LIGHTSPEED_CHANNELS_CONNECTORS` | Disabled | The launcher refuses a nonempty selection; standalone connector hosts require explicit configuration. |
 | `PORT` | `3000` | Platform backend port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Configurator uses restricted Platform application keys. |

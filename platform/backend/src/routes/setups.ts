@@ -8,8 +8,9 @@ import { getAuth, requireCredentialManagement } from "../auth-context.js";
 import { requireAccountAdmin } from "../account-access.js";
 import { createApplicationCredential, revokeApplicationCredential } from "../credential-routes.js";
 import { auditAsSubject } from "../identity-audit.js";
-import { engineClientFor, withGateway } from "./gateway.js";
-import { universeForSession } from "./universes.js";
+import { withApiErrors } from "../http.js";
+import { universeClient } from "../runtime-client.js";
+import { universeForRequest } from "./universes.js";
 
 /** Configuration only: no session execution, credential management, account
  * administration or universe lifecycle. New operations require explicit review. */
@@ -29,7 +30,7 @@ const definition = { id: SETUP_ID, name: "Configurator", version: VERSION,
 export function setupRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.get("/:id/setups", async c => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access || !["owner", "operator"].includes(access.role)) return c.json({ error: "not found" }, 404);
     const [installation] = await ctx.db.select().from(schema.universeSetupInstallations)
       .where(and(eq(schema.universeSetupInstallations.universeId, access.universe.id), eq(schema.universeSetupInstallations.setupId, SETUP_ID)));
@@ -49,7 +50,7 @@ export function setupRoutes(ctx: AppContext) {
         resources: { grantId: installation.state.grantId, serverId: installation.state.serverId } } : {}) }]);
   });
   app.post("/:id/setups/configurator/install", async c => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     if (access.role !== "owner") return c.json({ error: "universe owner required" }, 403);
     const auth = getAuth(c);
@@ -81,7 +82,7 @@ export function setupRoutes(ctx: AppContext) {
         details: { setupId: SETUP_ID, accountId: account.id } });
       return reserved!;
     });
-    return withGateway(c, async () => {
+    return withApiErrors(c, async () => {
       let keyId: string | undefined;
       try {
         const issued = await createApplicationCredential(ctx, auth, access.account.id, installation.state.applicationId!, {
@@ -89,7 +90,7 @@ export function setupRoutes(ctx: AppContext) {
             operations: [...CONFIGURATOR_OPERATIONS], allowUniverseCreation: false },
         });
         keyId = issued.credential.id;
-        const client = engineClientFor(ctx, access);
+        const client = universeClient(ctx.env, access.universe, access.caller);
         await client.call("credentials/grants/import", { grantId: installation.state.grantId!, displayName: "Configurator Platform credential",
           token: issued.secret, exposure: "brokered", expiresAtMs: new Date(issued.credential.expiresAt).getTime() }, { signal: AbortSignal.timeout(20_000) });
         await ctx.db.transaction(async tx => {
@@ -125,7 +126,7 @@ export function setupRoutes(ctx: AppContext) {
             let restored = !previous;
             if (previous?.grantId) {
               try {
-                await engineClientFor(ctx, access).call("mcp/servers/put", { server: {
+                await universeClient(ctx.env, access.universe, access.caller).call("mcp/servers/put", { server: {
                   serverId: "configurator", defaultServerLabel: "configurator", displayName: "Configurator",
                   serverUrl: ctx.env.configuratorMcpUrl!, authPolicy: { type: "requiredBearer" },
                   credential: { type: "authGrant", grantId: previous.grantId }, execution: "runtime", approval: "always",

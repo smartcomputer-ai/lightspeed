@@ -18,7 +18,7 @@ to read it. Only two kinds of source can be bound: a credential created as
 is one whose value never leaves the runtime, so it cannot be bound. See
 [Choose a credential source](#choose-a-credential-source).
 
-Use an Operator or Admin account for these setup steps. Contributors can use
+Use Operator or Owner access for these setup steps. Contributors can use
 the resulting environment in sessions they control, including its injected
 credentials. Start with [an environment you can use](using-environments.md).
 

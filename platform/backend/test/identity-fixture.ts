@@ -12,7 +12,7 @@ export const identityEnv: ServerEnv = {
   baseUrl: "http://localhost:3030", trustedOrigins: [], port: 3030,
   adminEmail: "emergency@example.test", adminPassword: "emergency-test-password",
   github: null, lightspeedApiUrl: null, configuratorMcpUrl: null,
-  configuratorMcpAllowPrivateNetwork: false, configuratorMcpInternalTrustedHeader: false,
+  configuratorMcpAllowPrivateNetwork: false,
   channelsHealthUrls: [], devEnvdEndpoint: null,
   oidc: {
     issuer: "https://identity.example.test", discoveryUrl: "https://identity.example.test/.well-known/openid-configuration",

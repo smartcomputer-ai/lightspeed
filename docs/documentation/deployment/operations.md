@@ -179,7 +179,7 @@ Session closure, soft deletion, permanent deletion, blob collection, Temporal
 history retention, and machine cleanup are separate operations. Closing a session
 keeps its history. If the root session has a `deleteAfterCloseMs` policy,
 it owns the later soft-deletion deadline; otherwise there is no automatic
-deletion deadline. In Platform, setting deletion retention requires an Admin.
+deletion deadline. In Platform, setting deletion retention requires an Owner.
 
 Delegated descendants share that retained root. Automatic soft deletion waits until
 the deadline and until the entire retained tree is closed. An open descendant therefore

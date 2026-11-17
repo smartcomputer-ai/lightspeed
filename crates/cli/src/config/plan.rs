@@ -1182,7 +1182,7 @@ mod tests {
     /// deployment. Nothing is sent.
     fn target(deployment: bool) -> Target {
         Target {
-            api: HttpAgentApi::new(""),
+            api: HttpAgentApi::with_connection(Default::default()),
             universe_id: (!deployment).then(|| uuid::Uuid::nil().to_string()),
             deployment,
         }

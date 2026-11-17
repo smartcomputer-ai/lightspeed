@@ -19,7 +19,6 @@ export const universeUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   icon: universeIconSchema.optional(),
   iconColor: universeIconColorSchema.optional(),
-  gatewayUrl: z.union([z.url(), z.null()]).optional(),
   status: z.enum(["active", "archived"]).optional(),
   /// Switches to change; others keep what they were.
   features: z.lazy(() => featureOverridesSchema).optional(),

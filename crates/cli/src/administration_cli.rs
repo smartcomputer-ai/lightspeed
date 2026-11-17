@@ -108,7 +108,7 @@ fn expiry_after(duration: u64) -> Result<u64> {
 
 pub async fn universe(args: UniverseArgs) -> Result<()> {
     let active = connection::ACTIVE.get().context("no connection")?;
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
         UniverseCommand::Access(args) => crate::platform_cli::access(args).await?,
         UniverseCommand::Use { target } => {
@@ -518,7 +518,7 @@ pub async fn models(args: ModelsArgs) -> Result<()> {
         ModelsCommand::Provider(args) => return crate::credentials_cli::model(args).await,
         ModelsCommand::List { json, all } => (json, all),
     };
-    let response = HttpAgentApi::new("")
+    let response = HttpAgentApi::from_active()
         .list_models(api::ModelListParams {
             selectable_only: !all,
         })

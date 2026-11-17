@@ -67,6 +67,8 @@ lists the API URL, bind address, host and origin allowlists, request-size limit,
 and timeouts. Host and origin checks supplement authentication; they grant no
 universe access. An authenticated operator uses Streamable HTTP with an
 `Authorization: Bearer <runtime-token>` header and `x-lightspeed-universe`.
+The latter selects Configurator's request context; Configurator puts that
+universe in the upstream resource URL rather than forwarding the header.
 Do not configure an agent client with that token.
 
 Configurator is stateless and retains no MCP session ID. It has no stdio,
@@ -97,9 +99,9 @@ resource, preserve the intended fields, and submit the complete replacement
 with its expected revision. A session configuration put replaces the sparse
 document; omitted features are revoked.
 
-Successful tool results contain one text block holding the public API outcome
-as JSON. Its `result` is the method response and `notifications` contains any
-returned notifications. A tool result marked `isError: true` contains the
+Successful tool results contain one text block holding the public API response
+as JSON. Binary reads return a JSON object with `encoding: "base64"`, `data`,
+and `bytes`. A tool result marked `isError: true` contains the
 runtime error; MCP transport success does not establish operation success.
 
 Run submission returns after admission, before model completion. Keep a stable

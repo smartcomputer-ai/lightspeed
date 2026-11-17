@@ -4,13 +4,14 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ModelDefaults } from "@lightspeed-ai/sdk";
 import type { ApiVariables, AppContext } from "../context.js";
-import { gatewayRoutes, withGateway } from "./gateway.js";
+import { withApiErrors } from "../http.js";
+import { gatewayRoutes } from "./gateway.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 
 const auth = vi.hoisted(() => ({ role: "operator" }));
-vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({
-  universe: { lightspeedUniverseId: id, gatewayUrl: "https://engine.example/api/v1" },
-  handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
+vi.mock("./universes.js", () => ({ universeForRequest: vi.fn(async (_ctx, _c, id: string) => ({
+  universe: { lightspeedUniverseId: id },
+  handle: "test", role: auth.role, caller: { actorId: "member", role: auth.role },
 })) }));
 beforeEach(() => { auth.role = "operator"; });
 afterEach(() => vi.unstubAllGlobals());
@@ -70,7 +71,7 @@ it.each([
 
 it("preserves the typed missing-default error for web clients", async () => {
   const app = new Hono();
-  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "Choose a model", detail: "Choose a model", status: 409, kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }); }));
+  app.get("/", (c) => withApiErrors(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "Choose a model", detail: "Choose a model", status: 409, kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" }); }));
   const response = await app.request("/");
   expect(response.status).toBe(400);
   expect(await response.json()).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "agentRun" });
@@ -78,7 +79,7 @@ it("preserves the typed missing-default error for web clients", async () => {
 
 it("tells web clients a held request is pending and which id to retry with", async () => {
   const app = new Hono();
-  app.get("/", (c) => withGateway(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "still held", detail: "still held", status: 409, kind: "operationPending", submissionId: "submission" }); }));
+  app.get("/", (c) => withApiErrors(c, async () => { throw new LightspeedApiError({ type: "about:blank", title: "still held", detail: "still held", status: 409, kind: "operationPending", submissionId: "submission" }); }));
   const response = await app.request("/");
   expect(response.status).toBe(409);
   expect(await response.json()).toMatchObject({ kind: "operationPending", submissionId: "submission" });

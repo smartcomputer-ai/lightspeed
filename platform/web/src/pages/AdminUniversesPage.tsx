@@ -315,7 +315,7 @@ function DeleteUniverseDialog({ name, handle, protected: protectedValue, onDelet
   </AlertDialog>;
 }
 
-function EngineBadge({ status }: { status: "ok" | "missing" | "unchecked" | "deleting" | undefined }) {
+function EngineBadge({ status }: { status: "ok" | "missing" | "deleting" | undefined }) {
   if (!status) {
     return <span className="text-muted-foreground">—</span>;
   }
@@ -323,16 +323,9 @@ function EngineBadge({ status }: { status: "ok" | "missing" | "unchecked" | "del
   if (status === "ok") {
     return <Badge variant="secondary">ok</Badge>;
   }
-  if (status === "missing") {
-    return (
-      <Badge variant="outline" className="border-destructive/50 text-destructive">
-        missing
-      </Badge>
-    );
-  }
   return (
-    <Badge variant="outline" title="Custom gateway URL — not checked here">
-      unchecked
+    <Badge variant="outline" className="border-destructive/50 text-destructive">
+      missing
     </Badge>
   );
 }

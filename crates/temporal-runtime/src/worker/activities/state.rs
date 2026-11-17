@@ -316,24 +316,16 @@ impl ActivityState {
         let secrets: Arc<dyn SecretResolver> =
             Arc::new(BrokerSecretResolver::new(broker, mcp_servers.clone()));
         let private_networks = McpPrivateNetworkPolicy::from_env().map_err(anyhow::Error::msg)?;
-        let trusted_header =
-            crate::gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy::from_env()
-                .map_err(anyhow::Error::msg)?;
-        let universe_id = store.config().universe_id;
         let inventory = Arc::new(RuntimeMcpInventoryResolver::new(
             mcp_servers.clone(),
             secrets.clone(),
             private_networks.clone(),
-            trusted_header.clone(),
-            universe_id,
         ));
         self.tools.runtime_mcp = Some(Arc::new(RuntimeMcpExecutor::new(
             mcp_servers,
             secrets,
             inventory,
             private_networks,
-            trusted_header,
-            universe_id,
         )));
         Ok(self)
     }
@@ -347,16 +339,10 @@ impl ActivityState {
             mcp_servers.clone(),
         ));
         let private_networks = McpPrivateNetworkPolicy::from_env().map_err(anyhow::Error::msg)?;
-        let trusted_header =
-            crate::gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy::from_env()
-                .map_err(anyhow::Error::msg)?;
-        let universe_id = store.config().universe_id;
         let runtime_inventory = Arc::new(RuntimeMcpInventoryResolver::new(
             mcp_servers.clone(),
             secrets.clone(),
             private_networks.clone(),
-            trusted_header.clone(),
-            universe_id,
         ));
         let inventory: Arc<dyn McpInventoryResolver> = runtime_inventory.clone();
         let runtime_mcp = Arc::new(RuntimeMcpExecutor::new(
@@ -364,8 +350,6 @@ impl ActivityState {
             secrets.clone(),
             runtime_inventory,
             private_networks,
-            trusted_header,
-            universe_id,
         ));
         let provider_keys = stored_provider_key_resolver(store.clone(), broker);
         let transcriber = default_audio_transcriber(provider_keys.clone())?;
@@ -405,16 +389,10 @@ impl ActivityState {
             mcp_servers.clone(),
         ));
         let private_networks = McpPrivateNetworkPolicy::from_env().map_err(anyhow::Error::msg)?;
-        let trusted_header =
-            crate::gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy::from_env()
-                .map_err(anyhow::Error::msg)?;
-        let universe_id = store.config().universe_id;
         let runtime_inventory = Arc::new(RuntimeMcpInventoryResolver::new(
             mcp_servers.clone(),
             secrets.clone(),
             private_networks.clone(),
-            trusted_header.clone(),
-            universe_id,
         ));
         let inventory: Arc<dyn McpInventoryResolver> = runtime_inventory.clone();
         let runtime_mcp = Arc::new(RuntimeMcpExecutor::new(
@@ -422,8 +400,6 @@ impl ActivityState {
             secrets.clone(),
             runtime_inventory,
             private_networks,
-            trusted_header,
-            universe_id,
         ));
         let provider_keys = stored_provider_key_resolver(store.clone(), broker);
         let transcriber: Arc<dyn AudioTranscriber> = Arc::new(OpenAiAudioTranscriber::new(

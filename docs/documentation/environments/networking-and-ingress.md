@@ -8,8 +8,7 @@ Lightspeed's runtime API.
 
 Deployment operators configure these routes. The connection path depends on
 whether the environment is registered, externally attached, or provisioned.
-The application publishing procedure later in this guide needs an Operator
-or Admin account in the universe.
+The application publishing procedure later in this guide needs Operator or Owner access in the universe.
 
 ## Follow an environment operation
 

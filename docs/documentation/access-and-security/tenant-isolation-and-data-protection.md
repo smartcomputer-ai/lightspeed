@@ -24,7 +24,7 @@ The universe remains a data partition inside that trusted zone.
 
 | Layer | How resources remain separate |
 | --- | --- |
-| Runtime API | Configured-token authentication admits trusted components; the universe header selects the resource partition. |
+| Runtime API | Configured-token authentication admits trusted components; the universe in the URL selects the resource partition. |
 | PostgreSQL | Universe-bound queries and composite keys/foreign keys associate tenant records with `universe_id`. |
 | Content-addressed storage | The blob catalog includes the universe in its key. External objects live under `<prefix>/universes/<uuid>/cas/…`. |
 | Blob cache | Cache lookups include both the universe UUID and blob reference. |
@@ -46,7 +46,7 @@ narrower property than isolation between tenants.
 PostgreSQL isolation uses application queries and schema constraints, not
 PostgreSQL row-level security policies. Database and storage administrators
 remain able to access the infrastructure they operate. The Platform also gives
-its administrators Admin access in every universe. These are trusted
+its administrators Owner access in every universe. These are trusted
 administrative boundaries, not accounts constrained by an ordinary member's
 session visibility.
 

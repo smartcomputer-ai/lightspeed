@@ -12,7 +12,9 @@ import type {
   ModelProviderDiscovery,
   SecretGrant,
   SecretProvider,
+  UniverseSetup,
 } from "@/api";
+import { mcpServer } from "../fixtures/builders";
 import { base64ToText, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, parseRequestHeaders, readBody, universeFor } from "./common";
 
@@ -22,7 +24,10 @@ const ENVIRONMENT_SECRET_PROVIDER_ID = "environment-secret";
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 /// `claude setup-token` mints one-year tokens.
 const CLAUDE_CODE_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;
-const INSTALL_DELAY_MS = 2_000;
+const CONFIGURATOR_SETUP = {
+  id: "configurator", name: "Configurator", version: 6, available: true,
+  description: "Configure profiles, MCP servers, models and bots using an application restricted to this universe.",
+} as const;
 
 /// Installations GitHub would report for any registered App.
 /// Installations come from the universe's own GitHub App grants (what the
@@ -648,18 +653,34 @@ export function secretRoutes(store: DemoStore): Hono {
     return c.json(universe.modelDefaults);
   });
 
-  /// Operators see the templates; installing stays with Owners.
+  /// Operators may inspect setup state; account administrators manage its credential.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
     const role = universe?.universe.role;
     if (!universe || (role !== "owner" && role !== "operator")) return notFound(c);
-    return c.json([{ id: "configurator", name: "Configurator", description: "Configurator setup is temporarily unavailable.", version: 5, available: false, status: "unavailable" }]);
+    return c.json(universe.setups.length ? universe.setups : [{ ...CONFIGURATOR_SETUP, status: "available" }]);
   });
   app.post("/:id/setups/configurator/install", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     if (universe.universe.role !== "owner") return c.json({ error: "universe Owner required" }, 403);
-    return c.json({ error: "Configurator setup is temporarily unavailable" }, 503);
+    if (store.currentUser.role !== "admin" && universe.universe.accountRole !== "admin") return c.json({ error: "account admin required" }, 403);
+    const previous = universe.setups.find(setup => setup.id === CONFIGURATOR_SETUP.id);
+    const grant = mintGrant(store, universe, { providerId: "static-token", providerKind: "staticToken", displayName: "Configurator Platform credential" });
+    const now = Date.now();
+    universe.mcpServers.set("configurator", mcpServer({ serverId: "configurator", displayName: "Configurator",
+      serverUrl: "https://configurator.demo.invalid/mcp", authPolicy: { type: "requiredBearer" }, status: "active",
+      credential: { type: "authGrant", grantId: grant.grantId }, execution: "runtime", approval: "always",
+      createdAtMs: now, updatedAtMs: now,
+    }));
+    if (previous?.resources?.grantId) {
+      const priorGrant = findGrant(universe, previous.resources.grantId);
+      if (priorGrant) revokeGrant(priorGrant);
+    }
+    const ready: UniverseSetup = { ...CONFIGURATOR_SETUP, status: "ready", installedVersion: CONFIGURATOR_SETUP.version,
+      resources: { serverId: "configurator", grantId: grant.grantId } };
+    universe.setups = [ready];
+    return c.json(ready);
   });
   return app;
 }

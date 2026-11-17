@@ -56,7 +56,7 @@ impl From<Slot> for api::ModelDefaultSlot {
 }
 
 pub async fn run(args: ModelDefaultsArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     let defaults = match args.command {
         ModelDefaultsCommand::Read => read(&client).await?,
         ModelDefaultsCommand::Set {

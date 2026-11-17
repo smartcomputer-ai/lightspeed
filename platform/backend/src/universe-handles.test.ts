@@ -7,7 +7,7 @@ afterEach(() => vi.unstubAllGlobals());
 function fixture(cached: string[], actual: string[]) {
   const updates: string[] = [];
   const rows = cached.map((handle, index) => ({ handle, universe: {
-    id: `universe-${index}`, organizationId: `org-${index}`, lightspeedUniverseId: `uuid-${index}`, gatewayUrl: null,
+    id: `universe-${index}`, organizationId: `org-${index}`, lightspeedUniverseId: `uuid-${index}`,
   } }));
   const chain = { from: () => chain, innerJoin: async () => rows };
   const tx = { update: () => ({ set: ({ handle }: { handle: string }) => ({ where: async () => { updates.push(handle); } }) }) };

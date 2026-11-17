@@ -499,7 +499,7 @@ describe("demo router", () => {
     expect((await call("PUT", path, { principal, role: "deployment_admin" })).status).toBe(400);
   });
 
-  it("shows the unavailable setup without allowing installation", async () => {
+  it("installs and rotates the Configurator setup only for account administrators", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = `/api/ui/universes/${state.universe.id}/setups`;
@@ -511,9 +511,18 @@ describe("demo router", () => {
     expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
     state.universe.role = "owner";
-    expect((await call("POST", `${base}/configurator/install`, {})).status).toBe(503);
-    expect((await call("POST", `${base}/configurator/install`, { key: { kind: "current" } })).json)
-      .toMatchObject({ error: "Configurator setup is temporarily unavailable" });
+    store.currentUser.role = "user";
+    state.universe.accountRole = "creator";
+    expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
+    state.universe.accountRole = "admin";
+    const installed = await call("POST", `${base}/configurator/install`);
+    expect(installed.status).toBe(200);
+    expect(installed.json).toMatchObject({ status: "ready", resources: { serverId: "configurator" } });
+    const firstGrant = state.mcpServers.get("configurator")!.credential!.grantId;
+    expect((await call("GET", base)).json).toMatchObject([{ status: "ready" }]);
+    expect((await call("POST", `${base}/configurator/install`)).status).toBe(200);
+    expect(state.mcpServers.get("configurator")!.credential!.grantId).not.toBe(firstGrant);
+    expect(state.secrets.grants.find(grant => grant.grantId === firstGrant)?.status).toBe("revoked");
   });
 
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {

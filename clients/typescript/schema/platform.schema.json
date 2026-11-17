@@ -2352,12 +2352,6 @@
             "iconColor": {
               "type": "string"
             },
-            "gatewayUrl": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "runtimeConfiguration": {
               "type": "object",
               "propertyNames": {
@@ -2391,7 +2385,6 @@
             "features",
             "icon",
             "iconColor",
-            "gatewayUrl",
             "runtimeConfiguration",
             "createdAt",
             "updatedAt"
@@ -2567,12 +2560,6 @@
             "iconColor": {
               "type": "string"
             },
-            "gatewayUrl": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "runtimeConfiguration": {
               "type": "object",
               "propertyNames": {
@@ -2606,7 +2593,6 @@
             "features",
             "icon",
             "iconColor",
-            "gatewayUrl",
             "runtimeConfiguration",
             "createdAt",
             "updatedAt"
@@ -2758,12 +2744,6 @@
             "iconColor": {
               "type": "string"
             },
-            "gatewayUrl": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
             "runtimeConfiguration": {
               "type": "object",
               "propertyNames": {
@@ -2797,7 +2777,6 @@
             "features",
             "icon",
             "iconColor",
-            "gatewayUrl",
             "runtimeConfiguration",
             "createdAt",
             "updatedAt"

@@ -73,8 +73,8 @@ from an authorized administrator account for account management.
 
 When sign-in works but a page fails, distinguish a Platform permission denial
 from an upstream runtime error. Viewers can read visible work, Contributors can
-run work, Operators can configure shared resources, and Admins manage membership
-and universe settings. Admins can access every session; other members see their own private
+run work, Operators can configure shared resources, and Owners manage membership
+and universe settings. Owners can access every session; other members see their own private
 sessions and sessions shared with the universe. A private session outside that
 audience appears absent. See [People and roles](../access-and-security/people-and-roles.md)
 for the permission matrix.
@@ -87,8 +87,8 @@ Every valid runtime token has full authority; method-group checks are gone.
 
 The Platform uses `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE` form and names
 the actor for attribution. It sends the universe UUID, not the handle in the
-browser URL. Direct clients must send `x-lightspeed-universe` as a UUID or
-handle for universe methods and omit it for `initialize` and deployment methods.
+browser URL. Direct clients select the universe UUID or handle in
+`/api/v1/universes/{universe}/…`; the HTTP API rejects `x-lightspeed-universe`.
 See [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
 for request authentication, and [People and roles](../access-and-security/people-and-roles.md)
 for membership changes and offboarding.

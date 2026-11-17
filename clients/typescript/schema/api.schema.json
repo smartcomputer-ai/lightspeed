@@ -10626,7 +10626,7 @@
         },
         {
           "const": "blobs/put",
-          "description": "`blobs/put` alone, so connectors can upload attachments without\nreading sessions.",
+          "description": "`blobs/put` and `blobs/upload`, so connectors can upload attachments without\nreading sessions.",
           "type": "string"
         },
         {

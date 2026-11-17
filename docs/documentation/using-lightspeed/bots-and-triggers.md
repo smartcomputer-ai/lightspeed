@@ -14,16 +14,16 @@ This walkthrough builds `release-watch`, which reviews the Acorn release
 files from [Build your first agent](../getting-started/first-agent.md). First
 create the read-only `release-reviewer` profile from
 [Profiles and instructions](profiles-and-instructions.md#create-a-profile-for-a-job).
-Use an Operator or Admin account to create and configure the bot. Contributors
+Use Operator or Owner access to create and configure the bot. Contributors
 can invoke an existing bot. The deployment must run the bot controller role
 as well as the gateway and session workers;
 the local full stack includes it.
 
 Bots are a feature each universe switches on. A new universe starts with
-**Bots** and **Channels** off: a universe Admin turns them on under
+**Bots** and **Channels** off: a universe Owner turns them on under
 **Settings → General → Features**, and Channels need Bots. While a switch is
 off, the Platform hides the feature's pages and refuses its requests from
-every member, Admins included. The switch governs what people do through the
+every member, Owners included. The switch governs what people do through the
 Platform. It does not stop a bot that is already running, and a caller holding
 a runtime token retains full authority. Pause or
 close bots before switching the feature off if they should stop.
@@ -75,14 +75,14 @@ event admission as **Send a test event**.
 
 Bots, their conversations, and their sub-agents are always shared with the
 universe. Every member can inspect them. Contributors and above can invoke a
-bot and control work in its conversations; Operators and Admins can configure
+bot and control work in its conversations; Operators and Owners can configure
 it, manage triggers, replay events, reset conversations, and close or delete
 the bot.
 
 A trigger has two values that let an outsider reach the bot: a webhook's ingest
 URL, whose token admits events, and a chat trigger's pairing code, which
 connects a conversation. Neither is part of a trigger as members read or list
-it. Operators and Admins read them on the trigger row, which asks for them
+it. Operators and Owners read them on the trigger row, which asks for them
 through a separate bot-management method (`bots/triggers/secrets/read`), and
 creating or replacing a trigger answers with them. Viewers and Contributors
 see that a trigger exists and how it is configured, not these values.
@@ -127,7 +127,7 @@ work wait, while a schedule produces new bot events.
 
 Add a **Webhook** trigger when another system can POST an event. The trigger
 row supplies an ingest URL that already identifies the bot and trigger; it is
-shown to Operators and Admins only.
+shown to Operators and Owners only.
 The default **URL token only** verification makes that URL a bearer secret:
 keep it in the sending system's protected webhook configuration. The token
 stays the same when the trigger is edited; to replace it, delete the trigger

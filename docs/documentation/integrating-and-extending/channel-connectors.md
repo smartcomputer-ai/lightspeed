@@ -1,9 +1,10 @@
 # Implement a channel connector
 
-Connector startup is disabled during the runtime access cutover. The retained
-package and contracts below describe the existing implementation for development;
-they are not an active deployment path. Do not give the connector a full-authority
-runtime token. Channel removal is separate work.
+The development launcher does not start channel connectors. The standalone
+connector host runs as a trusted infrastructure component with a configured
+runtime token and Temporal access. Its runtime token has full deployment
+authority; it is not a user or application key and must not be passed to agents.
+The host selects the universe explicitly for each account operation.
 
 A channel connector translates between a chat provider and Lightspeed. It
 receives provider messages, normalizes their identity and
@@ -107,10 +108,8 @@ show how different provider payloads map into the common contract.
 ## Resolve credentials in the connector
 
 An account's `credentialGrantId` points to a stored retrievable grant. The
-retained service client leases it through `credentials/grants/lease` in the account's
-universe. This path remains inactive while the host is disabled. Provider tokens
-are not ordinary account
-settings or workflow arguments.
+service client leases it through `credentials/grants/lease` in the account's
+universe. Provider tokens are not ordinary account settings or workflow arguments.
 
 The existing grant lease cache retains a credential for at most five minutes,
 or less when expiry is near, and can be invalidated after provider authentication
@@ -233,7 +232,7 @@ intended lifecycle.
 | Symptom | What to inspect |
 | --- | --- |
 | The new provider never starts | Host allowlist, factory, configured selection, and discovered account record. |
-| Host cannot authenticate | Connector startup is disabled; the retired caller-key model no longer works. |
+| Host cannot authenticate | Check `LIGHTSPEED_API_URL` and `LIGHTSPEED_CONNECTOR_API_TOKEN` against the runtime's configured tokens. Platform user/application keys do not authenticate directly to the runtime. |
 | Inbound works but no replies arrive | Derived activity queue, registered contract names, worker readiness, and provider delivery errors. |
 | Reconnect repeats messages | Provider acknowledgment/cursor handling and stable message IDs. |
 | Removed accounts keep receiving work | Runner shutdown, subscriptions/timers, and duplicate host ownership. |

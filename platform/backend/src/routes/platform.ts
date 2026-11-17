@@ -93,7 +93,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
           const universes = await tx.select().from(schema.universes).where(eq(schema.universes.organizationId, accountId));
           for (const universe of universes) {
             if (universe.status === "deleting") throw new GateRefusal(409, "wait for universe deletion before requiring protection");
-            const state = universe.status === "provisioning" ? universe.runtimeConfiguration : (await deploymentClient(ctx.env, universe.gatewayUrl).call("deployment/universes/read", { universe: universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(30000) })).universe;
+            const state = universe.status === "provisioning" ? universe.runtimeConfiguration : (await deploymentClient(ctx.env).call("deployment/universes/read", { universe: universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(30000) })).universe;
             if (state.protected !== true || state.expiresAtMs != null) throw new GateRefusal(409, "protect every universe and clear expiry before requiring account protection");
           }
         }

@@ -13,16 +13,13 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
   const rows = await ctx.db.select({ universe: schema.universes, handle: schema.universes.handle })
     .from(schema.universes).innerJoin(schema.organization, eq(schema.organization.id, schema.universes.organizationId));
   if (!rows.length) return { updated: 0, skipped: 0 };
-  const endpoints = [...new Set(rows.map(row => row.universe.gatewayUrl ?? ctx.env.lightspeedApiUrl))];
-  const inventories = new Map(await Promise.all(endpoints.map(async endpoint => {
-    const response = await deploymentClient(ctx.env, endpoint).call("deployment/universes/list", {});
-    return [endpoint, new Map((response.universes ?? []).map(universe => [universe.universeId, universe]))] as const;
-  })));
+  const response = await deploymentClient(ctx.env).call("deployment/universes/list", {});
+  const inventory = new Map((response.universes ?? []).map(universe => [universe.universeId, universe]));
   const seen = new Set<string>();
   const changes: { universeId: string; handle: string }[] = [];
   const deletions: { id: string; configuration: Record<string, unknown> }[] = [];
   for (const row of rows) {
-    const runtime = inventories.get(row.universe.gatewayUrl ?? ctx.env.lightspeedApiUrl)?.get(row.universe.lightspeedUniverseId);
+    const runtime = inventory.get(row.universe.lightspeedUniverseId);
     // Keep the last known cache for a universe the runtime no longer has, so
     // admins can still reach reconciliation and explicitly repair it.
     if (!runtime) skipped += 1;

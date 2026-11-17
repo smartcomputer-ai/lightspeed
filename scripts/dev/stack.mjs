@@ -127,9 +127,6 @@ function parseCli(argv) {
   const help = removeFlag(args, "--help") || removeFlag(args, "-h");
   const planOnly = removeFlag(args, "--plan");
   removeFlag(args, "--debug");
-  // Accepted for compatibility; missing keys only warn since keys can be
-  // added per universe from the Platform UI (Models -> Add provider).
-  removeFlag(args, "--allow-missing-api-keys");
   const requireApiKeys = removeFlag(args, "--require-api-keys");
   const noEnvd = removeFlag(args, "--no-envd");
   const noTokenBootstrap = removeFlag(args, "--no-token-bootstrap");
@@ -490,7 +487,7 @@ async function runDevelopmentAction(options, env) {
     // An explicit reset invalidates the saved keys along with their database records.
     // Only clear them after success; ordinary startup must still require existing keys.
     rmSync(path.join(repoRoot, ".lightspeed", "cli"), { recursive: true, force: true });
-    console.log("[reset] Cleared saved development credentials. Start ./dev.sh to provision keys, then run lightspeed connect dev to refresh the CLI connection.");
+    console.log("[reset] Cleared saved development credentials. Start ./dev.sh to provision runtime tokens, then run lightspeed connect dev to refresh the CLI connection.");
     return;
   }
   const supervisor = readSupervisorState();

@@ -78,7 +78,6 @@ describe("platform environment", () => {
     expect(env.trustedOrigins).toEqual(["https://app.example", "https://admin.example"]);
     expect(env.configuratorMcpAllowPrivateNetwork).toBe(false);
     expect(env.devSeed).toBe(false);
-    expect(env.configuratorMcpInternalTrustedHeader).toBe(false);
   });
 
   test("loads the Configurator MCP private-network opt-in", () => {

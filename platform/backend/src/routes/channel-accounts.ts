@@ -15,11 +15,11 @@ import {
 } from "../channel-connections.js";
 import { readChannelsStatus } from "../channels-status.js";
 import type { AppContext, ApiVariables } from "../context.js";
-import { parseBody } from "../http.js";
+import { parseBody, withApiErrors } from "../http.js";
 import { isPlatformAdmin } from "../context.js";
 import { featureRefusal } from "../runtime-client.js";
-import { engineClientFor, deploymentClientFor, withGateway } from "./gateway.js";
-import { universeForSession } from "./universes.js";
+import { universeClient, deploymentClient } from "../runtime-client.js";
+import { universeForRequest } from "./universes.js";
 
 /// Channel accounts are universe resources in the core (`channels/*`): a
 /// provider account (a Telegram bot token, a WhatsApp number)
@@ -64,8 +64,8 @@ export function channelAccountAdminRoutes(ctx: AppContext) {
     if (!isPlatformAdmin(c.get("session"))) {
       return c.json({ error: "platform admin required" }, 403);
     }
-    return withGateway(c, async () => {
-      const client = deploymentClientFor(ctx);
+    return withApiErrors(c, async () => {
+      const client = deploymentClient(ctx.env);
       const response = await client.call("deployment/channels/accounts/list", {
         includeDisabled: true,
       });
@@ -82,7 +82,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/:id/channel-status", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -105,12 +105,12 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/channel-accounts", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/accounts/list", {
         provider: c.req.query("provider"),
       } as unknown as ChannelAccountListParams);
@@ -119,7 +119,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/channel-accounts", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -128,8 +128,8 @@ export function channelUniverseRoutes(ctx: AppContext) {
     if (!body || typeof account !== "object" || account === null) {
       return c.json({ error: "invalid body" }, 400);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/accounts/create", {
         account,
       } as unknown as ChannelAccountCreateParams);
@@ -138,7 +138,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/channel-accounts/connect", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -150,8 +150,8 @@ export function channelUniverseRoutes(ctx: AppContext) {
     const input = body.data;
     if (input.provider === "whatsapp") {
       const displayName = input.displayName ?? input.phoneNumber;
-      return withGateway(c, async () => {
-        const client = engineClientFor(ctx, access);
+      return withApiErrors(c, async () => {
+        const client = universeClient(ctx.env, access.universe, access.caller);
         const response = await client.call("channels/accounts/create", {
           account: {
             accountId: whatsAppChannelAccountId(input.phoneNumber),
@@ -183,8 +183,8 @@ export function channelUniverseRoutes(ctx: AppContext) {
     }
     const accountId = telegramChannelAccountId(identity.username);
     const displayName = input.displayName ?? identity.firstName;
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const grantParams: CredentialGrantImportParams = {
         providerId: "telegram",
         exposure: "retrievable",
@@ -216,12 +216,12 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/channel-accounts/:accountId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/accounts/read", {
         accountId: c.req.param("accountId"),
       });
@@ -230,7 +230,7 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.put("/:id/channel-accounts/:accountId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -239,8 +239,8 @@ export function channelUniverseRoutes(ctx: AppContext) {
     if (!body || typeof account !== "object" || account === null) {
       return c.json({ error: "invalid body" }, 400);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/accounts/put", {
         account: { ...account, accountId: c.req.param("accountId") },
         expectedRevision: body.expectedRevision,
@@ -250,12 +250,12 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/channel-accounts/:accountId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/accounts/delete", {
         accountId: c.req.param("accountId"),
       });
@@ -264,12 +264,12 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/channel-pairings", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/pairings/list", {
         accountId: c.req.query("accountId"),
         botId: c.req.query("botId"),
@@ -279,12 +279,12 @@ export function channelUniverseRoutes(ctx: AppContext) {
   });
 
   app.delete("/:id/channel-pairings/:accountId/:chatId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("channels/pairings/delete", {
         accountId: c.req.param("accountId"),
         chatId: c.req.param("chatId"),

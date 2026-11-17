@@ -10,7 +10,7 @@ needs VFS access to read its source and save a document. If it later needs to
 check an issue tracker, connect that tracker through MCP and grant the relevant
 tools. That keeps the agent's access understandable as its job grows.
 
-Use an Operator or Admin account to register MCP servers and configure
+Use Operator or Owner access to register MCP servers and configure
 profiles. A Contributor can change tools in an idle session they can control
 under **Session settings**. See
 [Agent and tool access](../access-and-security/agent-and-tool-access.md) for

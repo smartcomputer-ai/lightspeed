@@ -14,6 +14,12 @@ use uuid::Uuid;
 
 pub static ACTIVE: OnceLock<ResolvedConnection> = OnceLock::new();
 
+pub(crate) fn active() -> &'static ResolvedConnection {
+    ACTIVE
+        .get()
+        .expect("online commands resolve their connection before dispatch")
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CredentialKind {
@@ -59,15 +65,13 @@ struct PlatformCredential {
     kind: String,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedConnection {
     pub endpoint: String,
     pub single: bool,
-    #[serde(default)]
     pub credential_kind: CredentialKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub server_kind: Option<ServerKind>,
+    pub server_kind: ServerKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
     #[serde(default)]
@@ -421,18 +425,35 @@ pub(crate) fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<Reso
     if !saved.single && saved.credential_file.is_none() {
         bail!("authenticated connection has no credential");
     }
+    if (saved.credential_kind == CredentialKind::None) != saved.single {
+        bail!("saved credential kind does not match its authentication mode");
+    }
+    if (saved.server_kind == ServerKind::Runtime)
+        != matches!(
+            saved.credential_kind,
+            CredentialKind::None | CredentialKind::RuntimeToken
+        )
+    {
+        bail!("saved credential kind does not match the deployment kind");
+    }
+    if saved.server_kind == ServerKind::Runtime && saved.account_id.is_some() {
+        bail!("a direct runtime connection cannot select a Platform account");
+    }
+    if saved
+        .credential_file
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        bail!("saved credential path must be absolute");
+    }
     Ok(ResolvedConnection {
         name: Some(name.to_owned()),
         endpoint: endpoint_with_policy(&saved.endpoint, saved.allow_insecure_http)?,
-        credential_kind: if saved.credential_kind == CredentialKind::None && !saved.single {
-            CredentialKind::RuntimeToken
-        } else {
-            saved.credential_kind
-        },
+        credential_kind: saved.credential_kind,
         credential_file: saved.credential_file.clone(),
         owned_credential: saved.owned_credential,
         account_id: saved.account_id.clone(),
-        server_kind: saved.server_kind,
+        server_kind: Some(saved.server_kind),
         principal: None,
         allow_insecure_http: saved.allow_insecure_http,
         secret: saved
@@ -452,6 +473,16 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
         .await?;
     if response.contract_revision != api::HTTP_CONTRACT_REVISION {
         bail!("deployment HTTP contract revision is incompatible with this CLI");
+    }
+    let discovered_kind = match response.runtime {
+        api::RuntimeKind::Runtime => ServerKind::Runtime,
+        api::RuntimeKind::Platform => ServerKind::Platform,
+    };
+    if connection
+        .server_kind
+        .is_some_and(|saved| saved != discovered_kind)
+    {
+        bail!("saved connection does not match the deployment kind");
     }
     connection.server_kind = Some(match response.runtime {
         api::RuntimeKind::Runtime => {
@@ -784,7 +815,9 @@ pub async fn handle(
                     endpoint: verified.endpoint,
                     single,
                     credential_kind: verified.credential_kind,
-                    server_kind: verified.server_kind,
+                    server_kind: verified
+                        .server_kind
+                        .context("verified connection has no deployment kind")?,
                     account_id: verified.account_id,
                     allow_insecure_http,
                     credential_file: file,
@@ -813,7 +846,9 @@ pub async fn handle(
                 .get_mut(&name)
                 .expect("selected connection exists");
             saved.credential_kind = verified.credential_kind;
-            saved.server_kind = verified.server_kind;
+            saved.server_kind = verified
+                .server_kind
+                .context("verified connection has no deployment kind")?;
             config.selected = Some(name.clone());
             save_at(&dir, &config)?;
             if json {
@@ -923,7 +958,9 @@ pub async fn handle(
             let verified = verify(saved_resolved(&name, &saved)?).await?;
             saved.universe = verified.universe;
             saved.credential_kind = verified.credential_kind;
-            saved.server_kind = verified.server_kind;
+            saved.server_kind = verified
+                .server_kind
+                .context("verified connection has no deployment kind")?;
             config.connections.insert(name.clone(), saved);
             config.selected = Some(name.clone());
             save_at(&dir, &config)?;
@@ -1063,10 +1100,13 @@ mod tests {
                 SavedConnection {
                     endpoint: "http://localhost/api/v1".into(),
                     single: false,
+                    credential_kind: CredentialKind::RuntimeToken,
+                    server_kind: ServerKind::Runtime,
                     credential_file: Some(file),
                     owned_credential: true,
+                    account_id: None,
+                    allow_insecure_http: false,
                     universe: None,
-                    ..Default::default()
                 },
             )]),
         };
@@ -1081,6 +1121,34 @@ mod tests {
             Some("test")
         );
     }
+    #[test]
+    fn saved_connections_require_explicit_matching_credential_metadata() {
+        let valid = serde_json::json!({
+            "endpoint": "http://localhost/api/v1",
+            "single": true,
+            "credentialKind": "none",
+            "serverKind": "runtime"
+        });
+        let saved: SavedConnection = serde_json::from_value(valid.clone()).unwrap();
+        assert!(saved_resolved("local", &saved).is_ok());
+        for field in ["credentialKind", "serverKind"] {
+            let mut incomplete = valid.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<SavedConnection>(incomplete).is_err());
+        }
+        for (field, value) in [
+            ("credentialKind", serde_json::json!("runtimeToken")),
+            ("serverKind", serde_json::json!("platform")),
+            ("accountId", serde_json::json!("account")),
+            ("credentialFile", serde_json::json!("relative-token")),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            let saved: SavedConnection = serde_json::from_value(invalid).unwrap();
+            assert!(saved_resolved("local", &saved).is_err(), "{field}");
+        }
+    }
+
     #[test]
     fn endpoint_validation_prevents_credential_urls_and_remote_plaintext() {
         for url in [

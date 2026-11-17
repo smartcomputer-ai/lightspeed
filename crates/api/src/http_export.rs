@@ -194,9 +194,25 @@ pub(crate) fn export_http_contract() -> (Value, Value) {
         for status in [
             400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 500, 503, 504,
         ] {
-            responses.insert(status.to_string(),json!({"description":"Request or service failure","content":{"application/problem+json":{"schema":problem}}}));
+            responses.insert(
+                status.to_string(),
+                json!({
+                    "description": "Request or service failure",
+                    "content": {"application/problem+json": {"schema": problem}},
+                }),
+            );
         }
-        let mut operation = json!({"operationId":spec.method,"summary":spec.summary,"description":description,"parameters":parameters,"responses":responses,"security":[{"runtimeToken":[]}],"x-lightspeed-access":spec.access,"x-lightspeed-scope":spec.scope.as_str(),"x-lightspeed-transfer":binding.transfer});
+        let mut operation = json!({
+            "operationId": spec.method,
+            "summary": spec.summary,
+            "description": description,
+            "parameters": parameters,
+            "responses": responses,
+            "security": [{"runtimeToken": []}],
+            "x-lightspeed-access": spec.access,
+            "x-lightspeed-scope": spec.scope.as_str(),
+            "x-lightspeed-transfer": binding.transfer,
+        });
         operation["x-lightspeed-success"] = match binding.success {
             HttpSuccess::CreatedFlag => {
                 json!({"kind":"createdFlag", "field":"created", "true":201, "false":200})
@@ -220,15 +236,32 @@ pub(crate) fn export_http_contract() -> (Value, Value) {
                     ((*name).to_owned(), variant["properties"]["params"].clone())
                 })
                 .collect();
-            operation["x-lightspeed-sse"] = json!({"events":events,"terminalEvent":"watch/end","terminalSchema":{"type":"object","properties":{},"additionalProperties":false},"resumable":false});
+            operation["x-lightspeed-sse"] = json!({
+                "events": events,
+                "terminalEvent": "watch/end",
+                "terminalSchema": {
+                    "type": "object", "properties": {}, "additionalProperties": false,
+                },
+                "resumable": false,
+            });
         }
         if has_body {
             let required = body["required"].as_array().is_some_and(|a| !a.is_empty());
             operation["requestBody"] =
                 json!({"required":required,"content":{"application/json":{"schema":body}}});
         } else if binding.transfer == HttpTransfer::BinaryUpload {
-            operation["requestBody"] = json!({"required":true,"content":{"application/octet-stream":{"schema":{"type":"string","format":"binary"}}}});
-            operation["parameters"].as_array_mut().unwrap().push(json!({"name":"Content-Length","in":"header","required":true,"schema":{"type":"integer","minimum":0}}));
+            operation["requestBody"] = json!({
+                "required": true,
+                "content": {"application/octet-stream": {"schema": {
+                    "type": "string", "format": "binary",
+                }}},
+            });
+            operation["parameters"].as_array_mut().unwrap().push(json!({
+                "name": "Content-Length",
+                "in": "header",
+                "required": true,
+                "schema": {"type": "integer", "minimum": 0},
+            }));
         }
         paths
             .entry(binding.path)
@@ -239,7 +272,33 @@ pub(crate) fn export_http_contract() -> (Value, Value) {
                 binding.verb.as_str().to_ascii_lowercase(),
                 operation.clone(),
             );
-        let mut descriptor = json!({"params":{"type":spec.params_type,"schema":logical_params},"result":if binding.transfer == HttpTransfer::BinaryDownload { json!({"type":"bytes","schema":{"type":"string","format":"binary"}}) } else { json!({"type":spec.result_type,"schema":logical_result}) },"operationId":spec.method,"method":binding.verb,"path":binding.path,"scope":spec.scope.as_str(),"access":spec.access,"group":MethodGroup::of(spec.method),"role":spec.access.recommended_role(),"target":method_target(spec.method),"pathFields":binding.path_fields,"queryFields":binding.query_fields,"parameters":operation["parameters"],"body":if has_body {body}else{Value::Null},"transfer":binding.transfer,"success":binding.success,"responses":responses,"events":operation["x-lightspeed-sse"],"summary":spec.summary,"description":description});
+        let result = if binding.transfer == HttpTransfer::BinaryDownload {
+            json!({"type": "bytes", "schema": {"type": "string", "format": "binary"}})
+        } else {
+            json!({"type": spec.result_type, "schema": logical_result})
+        };
+        let mut descriptor = json!({
+            "params": {"type": spec.params_type, "schema": logical_params},
+            "result": result,
+            "operationId": spec.method,
+            "method": binding.verb,
+            "path": binding.path,
+            "scope": spec.scope.as_str(),
+            "access": spec.access,
+            "group": MethodGroup::of(spec.method),
+            "role": spec.access.recommended_role(),
+            "target": method_target(spec.method),
+            "pathFields": binding.path_fields,
+            "queryFields": binding.query_fields,
+            "parameters": operation["parameters"],
+            "body": if has_body { body } else { Value::Null },
+            "transfer": binding.transfer,
+            "success": binding.success,
+            "responses": responses,
+            "events": operation["x-lightspeed-sse"],
+            "summary": spec.summary,
+            "description": description,
+        });
         if binding.transfer == HttpTransfer::Sse {
             descriptor
                 .as_object_mut()
@@ -249,8 +308,21 @@ pub(crate) fn export_http_contract() -> (Value, Value) {
         operations.push(descriptor);
     }
     let definitions = generator.take_definitions(true);
-    let mut openapi = json!({"openapi":"3.1.1","jsonSchemaDialect":"https://json-schema.org/draft/2020-12/schema","info":{"title":"Lightspeed resource HTTP API","version":env!("CARGO_PKG_VERSION")},"paths":paths,"components":{"schemas":definitions,"securitySchemes":{"runtimeToken":{"type":"http","scheme":"bearer"}}}});
-    let mut manifest = json!({"contractRevision":HTTP_CONTRACT_REVISION,"operations":operations,"schemas":openapi["components"]["schemas"]});
+    let mut openapi = json!({
+        "openapi": "3.1.1",
+        "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "info": {"title": "Lightspeed resource HTTP API", "version": env!("CARGO_PKG_VERSION")},
+        "paths": paths,
+        "components": {
+            "schemas": definitions,
+            "securitySchemes": {"runtimeToken": {"type": "http", "scheme": "bearer"}},
+        },
+    });
+    let mut manifest = json!({
+        "contractRevision": HTTP_CONTRACT_REVISION,
+        "operations": operations,
+        "schemas": openapi["components"]["schemas"],
+    });
     rewrite_refs(&mut openapi, "#/$defs/", "#/components/schemas/");
     rewrite_refs(&mut manifest, "#/$defs/", "#/schemas/");
     (manifest, openapi)

@@ -7,10 +7,10 @@ import { gatewayRoutes } from "./gateway.js";
 
 const access = vi.hoisted(() => ({ role: "contributor", owner: "user" }));
 vi.mock("./universes.js", () => ({
-  universeForSession: vi.fn(async () => ({
-    universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
+  universeForRequest: vi.fn(async () => ({
+    universe: { lightspeedUniverseId: "universe" },
     role: access.role,
-    member: { userId: "user", role: access.role },
+    caller: { actorId: "user", role: access.role },
   })),
 }));
 let requests: Array<{ method: string; params: unknown }>;

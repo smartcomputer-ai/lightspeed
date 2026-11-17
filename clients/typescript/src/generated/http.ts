@@ -19319,7 +19319,7 @@ export const HTTP_OPERATIONS = {
     },
     "description": "Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.",
     "events": null,
-    "group": "session",
+    "group": "blobs/put",
     "method": "PUT",
     "parameters": [
       {

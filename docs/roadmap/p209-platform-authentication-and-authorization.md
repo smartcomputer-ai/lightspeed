@@ -559,6 +559,23 @@ broader request auditing remain follow-up work.
 
 ## Validation and progress
 
+- 2026-11-17: cleanup audit removed per-universe `gatewayUrl` from the active
+  schema and public API; Platform schema revision 8 drops its unused column.
+  Every universe uses the configured deployment runtime. Removed obsolete
+  routing branches and tests, centralized runtime-client factories and HTTP
+  error mapping, and replaced human-only caller naming with actor attribution.
+  Configurator's existing application-key installation is exposed in the web
+  and demo setup UI again, with account administration checks and credential
+  rotation. Retired trusted-header configuration still fails closed at startup
+  without an inert policy object threaded through the runtime. The standalone
+  connector host remains a trusted runtime/Temporal bridge; only automatic
+  development-launcher startup is disabled, which the current guides now state
+  accurately. Fresh and upgrade migration checks passed, as did the complete
+  backend suite and web suite. The live full-stack check installed and rotated
+  the managed Configurator application credential and discovered tools through
+  the runtime's stored brokered grant. Cross-SDK renewal, restrictions,
+  revocation and a paid model run passed again after cleanup.
+
 - 2026-11-17: completed broad and live authentication validation with the
   user's authorization. Backend 495, web 1,510, database 15, Configurator 25
   and connector 74 tests passed, alongside SDK suites and production builds.

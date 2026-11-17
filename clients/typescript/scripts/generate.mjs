@@ -1,5 +1,5 @@
 import { generatePlatform } from "./generate-platform.mjs";
-import { copyFile, rm, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compileFromFile } from "json-schema-to-typescript";
@@ -333,6 +333,5 @@ await copyFile(
 );
 await copyFile(workflowManifestPath, path.join(schemaOutDir, "workflow.json"));
 
-await rm(path.join(generatedDir, "methods.ts"), { force: true });
 
 await generatePlatform();

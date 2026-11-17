@@ -111,7 +111,7 @@ it("syncs cached handles only when the administrator requests it", async () => {
 });
 
 it("uses the returned handle for the cached universe and navigates to its new URL", async () => {
-  const universe: Universe = { id: "platform-id", lightspeedUniverseId: "runtime-id", name: "Name", handle: "old-handle", gatewayUrl: null, status: "active", createdAt: "2026-01-01", features: { bots: true, channels: true } };
+  const universe: Universe = { id: "platform-id", lightspeedUniverseId: "runtime-id", name: "Name", handle: "old-handle", status: "active", createdAt: "2026-01-01", features: { bots: true, channels: true } };
   client.setQueryData(["universes"], [universe]);
   api.mockResolvedValue({ ...universe, handle: "new-handle" });
   function Location() { return <output data-location>{useLocation().pathname}</output>; }

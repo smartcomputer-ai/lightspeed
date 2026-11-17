@@ -53,7 +53,6 @@ pub fn unknown_method() -> AgentApiError {
 #[derive(Clone, Debug)]
 pub struct Caller {
     token_name: String,
-    universe: Option<Uuid>,
     actor: Option<String>,
 }
 
@@ -80,17 +79,22 @@ pub fn resolve_caller(
     }
     Ok(Caller {
         token_name: token_name.to_owned(),
-        universe: None,
         actor: actor.map(str::to_owned),
     })
 }
 
-/// Validate the address for the method, without applying caller permissions.
-pub fn request_context(caller: Caller, method: &str) -> Result<RequestContext, AgentApiError> {
+/// Bind an authenticated caller to the resource route's resolved target,
+/// without applying caller permissions. Universe selection never comes from
+/// authentication headers.
+pub fn request_context(
+    caller: Caller,
+    method: &str,
+    universe: Option<Uuid>,
+) -> Result<RequestContext, AgentApiError> {
     let method_scope = api::method_access(method)
         .ok_or_else(unknown_method)?
         .scope();
-    let scope = match (method_scope, caller.universe) {
+    let scope = match (method_scope, universe) {
         (MethodScope::Connection | MethodScope::Deployment, None) => AccessScope::Deployment,
         (MethodScope::Universe | MethodScope::Service, Some(universe_id)) => {
             AccessScope::Universe { universe_id }
@@ -111,17 +115,6 @@ pub fn request_context(caller: Caller, method: &str) -> Result<RequestContext, A
         token_name: Some(caller.token_name),
         actor: caller.actor,
     })
-}
-
-/// A resource route supplies its resolved universe after authenticating the
-/// caller. The HTTP adapter rejects caller-supplied universe headers.
-pub fn request_context_for_universe(
-    mut caller: Caller,
-    method: &str,
-    universe: Option<Uuid>,
-) -> Result<RequestContext, AgentApiError> {
-    caller.universe = universe;
-    request_context(caller, method)
 }
 
 #[cfg(test)]
@@ -156,7 +149,7 @@ mod tests {
             &headers(&[("authorization", &auth), (ACTOR_HEADER, "alice")]),
         )
         .unwrap();
-        let context = request_context(caller, "initialize").unwrap();
+        let context = request_context(caller, "initialize", None).unwrap();
         assert_eq!(context.token_name.as_deref(), Some("platform"));
         assert_eq!(
             context.attribution(),
@@ -182,12 +175,11 @@ mod tests {
     fn all_tokens_reach_all_methods_and_actors_change_only_attribution() {
         for token_name in ["platform", "operator"] {
             for actor in [None, Some("alice".into()), Some("bob".into())] {
-                let make = |universe| Caller {
+                let make = || Caller {
                     token_name: token_name.into(),
-                    universe,
                     actor: actor.clone(),
                 };
-                let context = request_context(make(Some(Uuid::nil())), "session/read").unwrap();
+                let context = request_context(make(), "session/read", Some(Uuid::nil())).unwrap();
                 assert_eq!(
                     context.scope,
                     AccessScope::Universe {
@@ -203,12 +195,14 @@ mod tests {
                         |id| Attribution::Actor { id }
                     )
                 );
-                assert!(request_context(make(None), "deployment/universes/list").is_ok());
-                assert!(request_context(make(Some(Uuid::nil())), "transcriptions/read").is_ok());
-                assert!(request_context(make(Some(Uuid::nil())), "transcriptions/cancel").is_ok());
-                assert!(request_context(make(None), "session/read").is_err());
-                assert!(request_context(make(Some(Uuid::nil())), "initialize").is_err());
-                assert!(request_context(make(None), "deployment/api-keys/create").is_err());
+                assert!(request_context(make(), "deployment/universes/list", None).is_ok());
+                assert!(request_context(make(), "transcriptions/read", Some(Uuid::nil())).is_ok());
+                assert!(
+                    request_context(make(), "transcriptions/cancel", Some(Uuid::nil())).is_ok()
+                );
+                assert!(request_context(make(), "session/read", None).is_err());
+                assert!(request_context(make(), "initialize", Some(Uuid::nil())).is_err());
+                assert!(request_context(make(), "deployment/api-keys/create", None).is_err());
             }
         }
     }

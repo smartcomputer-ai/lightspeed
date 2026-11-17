@@ -18,21 +18,26 @@ use crate::{
     deployment_method_manifest, method_manifest,
 };
 
-/// Every dispatchable method across both scope classes: the universe-scoped
-/// manifest followed by the deployment-scoped one. The wire contract is one
-/// document; `scope` on each entry tells clients which target class a
-/// method belongs to (deployment methods never carry the universe header).
+/// Every public operation: universe and deployment services, plus the binary
+/// upload handled by the HTTP transport. Each entry declares its URL target
+/// class so clients can address it without separate operation tables.
 pub fn full_method_manifest() -> Vec<MethodSpec> {
     let mut methods = method_manifest();
     methods.extend(deployment_method_manifest());
     methods.push(MethodSpec {
-        method: METHOD_BLOBS_UPLOAD, notifications:&[], scope:MethodScope::Universe,
-        access:MethodAccess::Universe(UniverseAction::UseResource),
-        summary:"Upload a content-addressed blob",
-        description:"Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.",
-        params_type:"BlobUploadParams", result_type:"BlobPutResult".into(),
-        http:blob_upload_binding(),
-        register_schemas: |g|MethodSchemas {params:g.subschema_for::<BlobUploadParams>(),result:g.subschema_for::<BlobPutResult>()},
+        method: METHOD_BLOBS_UPLOAD,
+        notifications: &[],
+        scope: MethodScope::Universe,
+        access: MethodAccess::Universe(UniverseAction::UseResource),
+        summary: "Upload a content-addressed blob",
+        description: "Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.",
+        params_type: "BlobUploadParams",
+        result_type: "BlobPutResult".into(),
+        http: blob_upload_binding(),
+        register_schemas: |generator| MethodSchemas {
+            params: generator.subschema_for::<BlobUploadParams>(),
+            result: generator.subschema_for::<BlobPutResult>(),
+        },
     });
     methods
 }

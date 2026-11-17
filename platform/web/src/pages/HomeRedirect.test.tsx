@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (handle: string, overrides: Record<string, unknown> = {}) => ({
-  id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, gatewayUrl: null, status: "active",
+  id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, status: "active",
   createdAt: "2026-01-01T00:00:00Z", role: "viewer", features: { bots: true, channels: true }, ...overrides,
 });
 

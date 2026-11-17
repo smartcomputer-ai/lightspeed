@@ -57,8 +57,6 @@ export interface ServerEnv {
   /// Permit the installed Configurator MCP record to reach a private network.
   /// This is intended for explicit local/internal deployments only.
   configuratorMcpAllowPrivateNetwork: boolean;
-  /// Retired configuration field, always false; true is rejected at startup.
-  configuratorMcpInternalTrustedHeader: boolean;
   /// Internal connector health endpoints aggregated for platform admins.
   channelsHealthUrls: string[];
   /// Development convenience: a directly attached `lightspeed-envd` endpoint
@@ -79,7 +77,7 @@ function required(name: string): string {
 
 export function loadEnv(): ServerEnv {
   if (booleanEnv("LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER", false)) {
-    throw new Error("Configurator trusted-header authentication is retired; setup is temporarily unavailable");
+    throw new Error("Configurator trusted-header authentication is retired; install a restricted Platform application credential instead");
   }
   const token = process.env.LIGHTSPEED_PLATFORM_API_TOKEN;
   const tokenFile = process.env.LIGHTSPEED_PLATFORM_API_TOKEN_FILE;
@@ -133,10 +131,6 @@ export function loadEnv(): ServerEnv {
     configuratorMcpUrl: process.env.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? null,
     configuratorMcpAllowPrivateNetwork: booleanEnv(
       "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK",
-      false,
-    ),
-    configuratorMcpInternalTrustedHeader: booleanEnv(
-      "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER",
       false,
     ),
     channelsHealthUrls: csv(process.env.LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS),

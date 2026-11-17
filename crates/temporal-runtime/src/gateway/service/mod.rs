@@ -59,9 +59,7 @@ use github_api::{
 };
 use input::{context_entry_input_from_api, refuse_oversized_text, run_input_from_api};
 use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_server_record};
-use mcp_discovery::{
-    ConfiguratorTrustedHeaderPolicy, HttpMcpToolDiscoverer, McpDiscoveryGate, McpToolDiscoverer,
-};
+use mcp_discovery::{HttpMcpToolDiscoverer, McpDiscoveryGate, McpToolDiscoverer};
 pub(crate) use models_api::ModelDiscoveryService;
 use models_api::stored_provider_key_resolver;
 use oauth_api::{
@@ -586,16 +584,6 @@ impl GatewayAgentApiBuilder {
         self
     }
 
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn with_provider_controller_connector(
-        mut self,
-        connector: Arc<dyn ProviderControllerConnector>,
-    ) -> Self {
-        self.provider_controller_connector = connector;
-        self
-    }
-
     pub fn with_environment_gateway(
         mut self,
         gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
@@ -635,9 +623,7 @@ impl GatewayAgentApiBuilder {
 
     pub fn build(self) -> GatewayAgentApi {
         let mcp_private_networks = crate::worker::mcp::McpPrivateNetworkPolicy::from_env()
-            .expect("parse LIGHTSPEED_MCP_PRIVATE_NETWORKS");
-        let configurator_trusted_header = ConfiguratorTrustedHeaderPolicy::from_env()
-            .expect("parse LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL");
+            .expect("validate MCP environment configuration");
         let metadata_client = self
             .oauth_metadata_client
             .unwrap_or_else(|| Arc::new(mcp_private_networks.oauth_http_client()));
@@ -727,7 +713,6 @@ impl GatewayAgentApiBuilder {
             mcp_oauth,
             mcp_tool_discoverer,
             mcp_private_networks,
-            configurator_trusted_header,
             mcp_discovery_gate,
             github_api,
             model_discovery: Arc::new(model_discovery),
@@ -755,7 +740,6 @@ pub struct GatewayAgentApi {
     mcp_oauth: McpOAuthDriver,
     mcp_tool_discoverer: Arc<dyn McpToolDiscoverer>,
     mcp_private_networks: crate::worker::mcp::McpPrivateNetworkPolicy,
-    configurator_trusted_header: ConfiguratorTrustedHeaderPolicy,
     mcp_discovery_gate: Arc<McpDiscoveryGate>,
     github_api: Arc<dyn GitHubApiClient>,
     model_discovery: Arc<ModelDiscoveryService>,
@@ -3966,13 +3950,8 @@ impl AgentApiService for GatewayAgentApi {
             .map_err(AgentApiError::rejected)?;
         let discovery_started = Instant::now();
 
-        let trusted_universe = self
-            .configurator_trusted_header
-            .permits(server_id.as_str(), &record.server_url)
-            .then_some(self.store.config().universe_id);
-        let bearer = match (trusted_universe, record.auth_grant_id.as_ref()) {
-            (Some(_), _) => None,
-            (None, Some(grant_id)) => match self
+        let bearer = match record.auth_grant_id.as_ref() {
+            Some(grant_id) => match self
                 .auth_token_broker
                 .bearer_token(
                     grant_id,
@@ -4001,7 +3980,7 @@ impl AgentApiService for GatewayAgentApi {
                     ));
                 }
             },
-            (None, None) => None,
+            None => None,
         };
         let header_secrets = crate::worker::BrokerSecretResolver::new(
             self.auth_token_broker.clone(),
@@ -4030,7 +4009,6 @@ impl AgentApiService for GatewayAgentApi {
             .discover_tools(
                 &record.server_url,
                 &request_auth,
-                trusted_universe,
                 self.mcp_private_networks
                     .access(&record.server_url, record.allow_private_network),
                 mcp::McpToolDiscoveryLimits::default(),

@@ -53,7 +53,7 @@ export const platformUniverseViewSchema = z.object({
   id, accountId: id, lightspeedUniverseId: id, name, handle: id,
   role: universeRole, accountRole: accountRoleSchema.nullable(), status: z.enum(["provisioning", "active", "archived", "deleting"]),
   protected: z.boolean(), expiresAtMs: z.number().nullable(), createdBy: z.string().nullable(),
-  features: z.record(z.string(), z.boolean()), icon: z.string(), iconColor: z.string(), gatewayUrl: z.string().nullable(),
+  features: z.record(z.string(), z.boolean()), icon: z.string(), iconColor: z.string(),
   runtimeConfiguration: z.record(z.string(), z.unknown()), createdAt: timestamp, updatedAt: timestamp,
 });
 const ok = z.object({ ok: z.literal(true) });

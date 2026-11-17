@@ -8,10 +8,9 @@ import type { AppContext, ApiVariables } from "../context.js";
 import { enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
 import { accountForPrincipal, listAccountsForPrincipal, declaredPrincipalRole, declaredUniverseRole, resourceScopeAllowed } from "../account-access.js";
 import { auditAsSubject } from "../identity-audit.js";
-import { deploymentClient, GateRefusal, type Member } from "../runtime-client.js";
+import { deploymentClient, GateRefusal, type UniverseCaller } from "../runtime-client.js";
 import { requireAvailableCachedHandle, syncUniverseHandles } from "../universe-handles.js";
-import { parseBody } from "../http.js";
-import { withGateway } from "./gateway.js";
+import { parseBody, withApiErrors } from "../http.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 type UniverseRow = typeof schema.universes.$inferSelect;
@@ -22,7 +21,7 @@ export interface UniverseAccess {
   accountRole: AccountRole;
   account: typeof schema.organization.$inferSelect;
   auth: AuthContext;
-  member: Member;
+  caller: UniverseCaller;
 }
 
 export function universeView(access: UniverseAccess) {
@@ -32,7 +31,7 @@ export function universeView(access: UniverseAccess) {
     name: universe.name, handle: access.handle, role, accountRole, status: universe.status,
     protected: configuration.protected === true, expiresAtMs: typeof configuration.expiresAtMs === "number" ? configuration.expiresAtMs : null,
     createdBy: universe.createdBy, deletion: configuration.deletion, features: effectiveFeatures(universe.features),
-    icon: universe.icon, iconColor: universe.iconColor, gatewayUrl: universe.gatewayUrl, createdAt: universe.createdAt, updatedAt: universe.updatedAt,
+    icon: universe.icon, iconColor: universe.iconColor, createdAt: universe.createdAt, updatedAt: universe.updatedAt,
     runtimeConfiguration: role === "owner" ? configuration : { displayName: configuration.displayName, protected: configuration.protected, expiresAtMs: configuration.expiresAtMs },
   };
 }
@@ -54,10 +53,9 @@ export async function universeForPrincipal(ctx: AppContext, auth: AuthContext, r
     if (auth.principal.kind === "user") role = declaredUniverseRole(universe.accessPolicy, auth.principal.user, role);
   }
   if (!role) return null;
-  return { universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, accountRole: account.role, account: account.account, auth, member: { userId: auth.actorId, role } };
+  return { universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, accountRole: account.role, account: account.account, auth, caller: { actorId: auth.actorId, role } };
 }
-export async function universeForSession(ctx: AppContext, c: ApiContext, reference: string, allowDeleting = false) { return universeForPrincipal(ctx, getAuth(c), reference, allowDeleting); }
-export const universeForRuntimeReference = universeForSession;
+export async function universeForRequest(ctx: AppContext, c: ApiContext, reference: string, allowDeleting = false) { return universeForPrincipal(ctx, getAuth(c), reference, allowDeleting); }
 
 /** Accounts, candidates and explicit grants are each loaded once, regardless of
  * deployment size. A Creator's account membership alone never exposes rows. */
@@ -76,7 +74,7 @@ export async function listUniverseAccesses(ctx: AppContext, auth: AuthContext, a
     let role: UniverseRole | undefined = account.role === "admin" ? "owner" : grantRoles.get(universe.id);
     if (account.role !== "admin" && auth.principal.kind === "user") role = declaredUniverseRole(universe.accessPolicy, auth.principal.user, role);
     if (!role) return [];
-    return [{ universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, accountRole: account.role, account: account.account, auth, member: { userId: auth.actorId, role } }];
+    return [{ universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, accountRole: account.role, account: account.account, auth, caller: { actorId: auth.actorId, role } }];
   });
 }
 export async function listAccessibleUniverses(ctx: AppContext, auth: AuthContext) { return (await listUniverseAccesses(ctx, auth, true)).map(universeView); }
@@ -209,7 +207,7 @@ export async function updateUniverseLifecycle(ctx: AppContext, access: UniverseA
     if (!account?.enabled || !currentAccess) throw new GateRefusal(404, "universe not found");
     if (currentAccess.role !== "owner") throw new GateRefusal(403, "universe Owner required");
     if (input.protected === false && (currentAccess.accountRole !== "admin" || account.requireProtected)) throw new GateRefusal(403, account.requireProtected ? "account policy requires deletion protection" : "only an account admin can clear deletion protection");
-    const client = deploymentClient(ctx.env, access.universe.gatewayUrl);
+    const client = deploymentClient(ctx.env);
     const options = { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) };
     const current = await client.call("deployment/universes/read", { universe: access.universe.lightspeedUniverseId }, options);
     const protectedValue = input.protected ?? current.universe.protected;
@@ -223,7 +221,7 @@ export async function updateUniverseLifecycle(ctx: AppContext, access: UniverseA
   });
 }
 
-export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAccess, _actorId?: string) {
+export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAccess) {
   enforceRestrictions(access.auth, { operation: "deployment/universes/delete", accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: true });
   return ctx.db.transaction(async tx => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(731845920114)`);
@@ -233,7 +231,7 @@ export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAcc
     const current = await universeForPrincipal(scopedContext, access.auth, access.universe.id, true);
     if (!current || !account?.enabled) throw new GateRefusal(404, "universe not found");
     if (current.role !== "owner") throw new GateRefusal(403, "universe Owner required");
-    const client = deploymentClient(ctx.env, current.universe.gatewayUrl);
+    const client = deploymentClient(ctx.env);
     if (current.universe.status === "provisioning") {
       try { await client.call("deployment/universes/read", { universe: current.universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(30000) }); }
       catch (error) {
@@ -244,7 +242,7 @@ export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAcc
       }
     }
     if (account.requireProtected) throw new GateRefusal(409, "account policy requires deletion protection");
-    const result = await deploymentClient(ctx.env, current.universe.gatewayUrl).call("deployment/universes/delete", { universe: current.universe.lightspeedUniverseId }, { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) });
+    const result = await deploymentClient(ctx.env).call("deployment/universes/delete", { universe: current.universe.lightspeedUniverseId }, { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) });
     await auditAsSubject(tx, access.auth, { action: "universe.delete", targetId: current.universe.lightspeedUniverseId, universeId: current.universe.id });
     if (result.state === "deleted") await tx.delete(schema.universes).where(eq(schema.universes.id, current.universe.id));
     else await tx.update(schema.universes).set({ status: "deleting", handle: `_deleting-${current.universe.lightspeedUniverseId}`, runtimeConfiguration: { ...current.universe.runtimeConfiguration, deletionHandle: current.handle } }).where(eq(schema.universes.id, current.universe.id));
@@ -256,7 +254,7 @@ export async function renameManagedUniverse(ctx: AppContext, access: UniverseAcc
   enforceRestrictions(access.auth, { operation: "deployment/universes/handle/put", accountId: access.account.id, universeId: access.universe.lightspeedUniverseId, write: true });
   if (access.role !== "owner") throw new GateRefusal(403, "universe Owner required");
   await requireAvailableCachedHandle(ctx, handle, access.universe.id);
-  const result = await deploymentClient(ctx.env, access.universe.gatewayUrl).call("deployment/universes/handle/put", { universe: access.universe.lightspeedUniverseId, handle }, { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) });
+  const result = await deploymentClient(ctx.env).call("deployment/universes/handle/put", { universe: access.universe.lightspeedUniverseId, handle }, { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) });
   const [updated] = await ctx.db.update(schema.universes).set({ handle: result.universe.handle }).where(eq(schema.universes.id, access.universe.id)).returning();
   await auditAsSubject(ctx.db, access.auth, { action: "universe.handle.put", targetId: access.universe.lightspeedUniverseId, universeId: access.universe.id });
   return { result, view: universeView({ ...access, universe: updated!, handle: result.universe.handle }) };
@@ -265,34 +263,34 @@ export async function renameManagedUniverse(ctx: AppContext, access: UniverseAcc
 /** Browser composition uses the same account, Owner and lifecycle services. */
 export function universeRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
-  app.get("/", c => withGateway(c, async () => c.json(await listAccessibleUniverses(ctx, getAuth(c)))));
-  app.post("/sync-handles", c => withGateway(c, async () => { if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required"); return c.json(await syncUniverseHandles(ctx)); }));
-  app.post("/", c => withGateway(c, async () => {
+  app.get("/", c => withApiErrors(c, async () => c.json(await listAccessibleUniverses(ctx, getAuth(c)))));
+  app.post("/sync-handles", c => withApiErrors(c, async () => { if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required"); return c.json(await syncUniverseHandles(ctx)); }));
+  app.post("/", c => withApiErrors(c, async () => {
     const body = await parseBody(c, accountUniverseCreateSchema.extend({ accountId: z.string().min(1) }));
     if (!body.ok) return body.response;
     return c.json(await createManagedUniverse(ctx, getAuth(c), body.data.accountId, body.data), 201);
   }));
-  app.get("/reconcile", c => withGateway(c, async () => {
+  app.get("/reconcile", c => withApiErrors(c, async () => {
     if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
     const rows = await ctx.db.select().from(schema.universes);
     const listed = (await deploymentClient(ctx.env).call("deployment/universes/list", {})).universes ?? [];
     const index = new Map(listed.map(universe => [universe.universeId, universe]));
     const linked = new Set(rows.map(row => row.lightspeedUniverseId));
-    return c.json({ platform: rows.map(row => ({ id: row.id, accountId: row.organizationId, lightspeedUniverseId: row.lightspeedUniverseId, engine: row.gatewayUrl && row.gatewayUrl !== ctx.env.lightspeedApiUrl ? "unchecked" : index.has(row.lightspeedUniverseId) ? index.get(row.lightspeedUniverseId)?.deletion ? "deleting" : "ok" : "missing", deletion: index.get(row.lightspeedUniverseId)?.deletion })), orphans: listed.filter(universe => !universe.deletion && !linked.has(universe.universeId)) });
+    return c.json({ platform: rows.map(row => ({ id: row.id, accountId: row.organizationId, lightspeedUniverseId: row.lightspeedUniverseId, engine: index.has(row.lightspeedUniverseId) ? index.get(row.lightspeedUniverseId)?.deletion ? "deleting" : "ok" : "missing", deletion: index.get(row.lightspeedUniverseId)?.deletion })), orphans: listed.filter(universe => !universe.deletion && !linked.has(universe.universeId)) });
   }));
-  app.post("/adopt", c => withGateway(c, async () => {
+  app.post("/adopt", c => withApiErrors(c, async () => {
     const body = await parseBody(c, accountUniverseAdoptSchema.extend({ accountId: z.string().min(1) })); if (!body.ok) return body.response;
     return c.json(await adoptManagedUniverse(ctx, getAuth(c), body.data.accountId, body.data), 201);
   }));
-  app.post("/:id/engine", c => withGateway(c, async () => {
+  app.post("/:id/engine", c => withApiErrors(c, async () => {
     const auth = getAuth(c); if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
-    const access = await universeForSession(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found");
+    const access = await universeForRequest(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found");
     return ctx.db.transaction(async tx => {
       await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, access.account.id)).for("update");
       await tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.id, access.universe.id)).for("update");
       const current = await universeForPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, true);
       if (!current) throw new GateRefusal(404, "universe not found");
-      const client = deploymentClient(ctx.env, current.universe.gatewayUrl);
+      const client = deploymentClient(ctx.env);
       const configuration = current.universe.runtimeConfiguration;
       const protectedValue = current.account.requireProtected || configuration.protected === true;
       const options = { headers: { "x-lightspeed-actor": auth.actorId }, signal: AbortSignal.timeout(30000) };
@@ -303,7 +301,7 @@ export function universeRoutes(ctx: AppContext) {
       return c.json({ created: created.created });
     });
   }));
-  app.delete("/engine/:lightspeedUniverseId", c => withGateway(c, async () => {
+  app.delete("/engine/:lightspeedUniverseId", c => withApiErrors(c, async () => {
     const auth = getAuth(c); if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
     const runtimeId = c.req.param("lightspeedUniverseId");
     const [linked] = await ctx.db.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, runtimeId)).limit(1);
@@ -315,17 +313,16 @@ export function universeRoutes(ctx: AppContext) {
     await auditAsSubject(ctx.db, auth, { action: "universe.orphan.delete", targetId: runtimeId });
     return c.json({ ok: true, purge: result });
   }));
-  app.get("/:id", c => withGateway(c, async () => { const access = await universeForSession(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found"); return c.json(universeView(access)); }));
-  app.delete("/:id", c => withGateway(c, async () => { const access = await universeForSession(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found"); return c.json({ ok: true, purge: await deleteManagedUniverse(ctx, access) }); }));
-  app.put("/:id/handle", c => withGateway(c, async () => { const access = await universeForSession(ctx, c, c.req.param("id")); if (!access) throw new GateRefusal(404, "universe not found"); const body = await c.req.json() as { handle?: unknown }; const handle = universeHandleSchema.parse(body.handle); return c.json((await renameManagedUniverse(ctx, access, handle)).view); }));
-  app.patch("/:id", c => withGateway(c, async () => {
-    const access = await universeForSession(ctx, c, c.req.param("id")); if (!access) throw new GateRefusal(404, "universe not found");
+  app.get("/:id", c => withApiErrors(c, async () => { const access = await universeForRequest(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found"); return c.json(universeView(access)); }));
+  app.delete("/:id", c => withApiErrors(c, async () => { const access = await universeForRequest(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found"); return c.json({ ok: true, purge: await deleteManagedUniverse(ctx, access) }); }));
+  app.put("/:id/handle", c => withApiErrors(c, async () => { const access = await universeForRequest(ctx, c, c.req.param("id")); if (!access) throw new GateRefusal(404, "universe not found"); const body = await c.req.json() as { handle?: unknown }; const handle = universeHandleSchema.parse(body.handle); return c.json((await renameManagedUniverse(ctx, access, handle)).view); }));
+  app.patch("/:id", c => withApiErrors(c, async () => {
+    const access = await universeForRequest(ctx, c, c.req.param("id")); if (!access) throw new GateRefusal(404, "universe not found");
     if (access.role !== "owner") throw new GateRefusal(403, "universe Owner required");
     const body = await parseBody(c, universeUpdateSchema); if (!body.ok) return body.response;
-    const { name, gatewayUrl, ...fields } = body.data;
-    if (gatewayUrl !== undefined && gatewayUrl !== null && gatewayUrl !== ctx.env.lightspeedApiUrl) throw new GateRefusal(400, "universe must use the configured runtime");
+    const { name, ...fields } = body.data;
     if (name !== undefined) await updateUniverseLifecycle(ctx, access, { name });
-    const [updated] = await ctx.db.update(schema.universes).set({ ...fields, ...(gatewayUrl !== undefined ? { gatewayUrl } : {}), ...(fields.features ? { features: mergeFeatureOverrides(access.universe.features, fields.features) } : {}) }).where(eq(schema.universes.id, access.universe.id)).returning();
+    const [updated] = await ctx.db.update(schema.universes).set({ ...fields, ...(fields.features ? { features: mergeFeatureOverrides(access.universe.features, fields.features) } : {}) }).where(eq(schema.universes.id, access.universe.id)).returning();
     return c.json(universeView({ ...access, universe: updated! }));
   }));
   return app;

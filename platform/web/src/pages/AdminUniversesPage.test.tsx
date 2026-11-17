@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (id: string, overrides: Partial<Universe> = {}): Universe => ({
-  id, lightspeedUniverseId: `core-${id}`, name: id, handle: id, gatewayUrl: null, status: "active",
+  id, lightspeedUniverseId: `core-${id}`, name: id, handle: id, status: "active",
   createdAt: "2026-01-01T00:00:00Z", role: null, features: { bots: true, channels: true }, ...overrides,
 });
 const orphan = (universeId: string, overrides: Partial<EngineUniverse> = {}): EngineUniverse => ({
@@ -35,7 +35,7 @@ beforeEach(() => {
     platform: [
       { id: "zeta", lightspeedUniverseId: "core-zeta", engine: "ok" },
       { id: "mid", lightspeedUniverseId: "core-mid", engine: "missing" },
-      { id: "alpha", lightspeedUniverseId: "core-alpha", engine: "unchecked" },
+      { id: "alpha", lightspeedUniverseId: "core-alpha", engine: "ok" },
     ],
     orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
@@ -88,7 +88,7 @@ const writes = () => mocks.api.mock.calls.filter(([method]) => method !== "GET")
 it("lists every universe by name with its status, engine link, and role", async () => {
   await show();
   expect(rows().map((node) => cells(node).slice(0, 4))).toEqual([
-    ["Alphaalpha", "archived", "unchecked", "—"],
+    ["Alphaalpha", "archived", "ok", "—"],
     ["Midmid", "active", "missing", "—"],
     ["Zetazeta", "active", "ok", "owner"],
   ]);

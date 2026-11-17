@@ -149,7 +149,7 @@ The current implementation includes:
 
 - [x] **Encrypted secrets**: credentials are encrypted at rest, with automatic OAuth token refresh
 - [x] **Credential injection**: environments and jobs receive secrets without exposing them to the model
-- [x] **Role based access**: give users different responsibilities in the same universe: admin, AI operator, contributor, and viewer
+- [x] **Role based access**: give users different responsibilities in the same universe: owner, operator, contributor, and viewer
 - [x] **Multi-tenant by default**: isolate tenants in universes on one deployment or run dedicated per-tenant deployments
 
 ## Design
@@ -190,7 +190,7 @@ for focused checks, replay coverage, live-test prerequisites, and model evaluati
 - [Local development](docs/documentation/development/local-development.md)
 - [Environment variables](docs/documentation/reference/environment-variables.md)
 - [Access and security](docs/documentation/access-and-security/overview.md)
-- [JSON-RPC API reference](crates/api/contract/api-reference.md)
+- [HTTP API reference](crates/api/contract/api-reference.md)
 - [Contributing and releasing](docs/documentation/development/contributing-and-releasing.md)
 
 Preview the Starlight manual with `./dev.sh docs`.

@@ -50,6 +50,13 @@
       "when": 1794868278049,
       "tag": "0006_colorful_sersi",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794895693710,
+      "tag": "0007_single_runtime",
+      "breakpoints": true
     }
   ]
 }

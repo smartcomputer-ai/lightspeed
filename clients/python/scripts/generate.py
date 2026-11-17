@@ -342,12 +342,11 @@ def main() -> None:
     entries = [{**entry, "method": entry["operationId"], "streaming": entry["transfer"] == "sse", "notifications": list((entry.get("events") or {}).get("events", {}))} for entry in contract["operations"]]
     manifest = {"methods": entries, "notifications": list(dict.fromkeys(event for entry in entries for event in entry["notifications"]))}
     schema = json.loads((CONTRACT / "api.schema.json").read_text())["definitions"]
-    http_contract = json.loads((CONTRACT / "http.json").read_text())
     http_operations = {
         operation["operationId"]: {
             key: value for key, value in operation.items() if key not in ("body", "responses")
         }
-        for operation in http_contract["operations"]
+        for operation in contract["operations"]
     }
     generated = {
         "platform_types.py": BANNER + model_types(PLATFORM_CONTRACT / "platform.schema.json"),
@@ -358,7 +357,7 @@ def main() -> None:
         "workflow_types.py": BANNER + model_types(WORKFLOW_CONTRACT / "workflow.schema.json"),
         "_workflow_manifest.py": render_workflow_manifest(),
         "_http.py": BANNER + "from typing import Any\n\n"
-        + f"HTTP_CONTRACT_REVISION = {http_contract['contractRevision']!r}\n"
+        + f"HTTP_CONTRACT_REVISION = {contract['contractRevision']!r}\n"
         + "HTTP_OPERATIONS: dict[str, Any] = " + pprint.pformat(http_operations, sort_dicts=False) + "\n",
     }
     readme = PACKAGE / "README.md"

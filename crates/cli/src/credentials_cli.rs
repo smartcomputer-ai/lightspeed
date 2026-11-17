@@ -51,9 +51,6 @@ enum CredentialModelCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
 struct CredentialModelPutArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
@@ -112,7 +109,6 @@ struct CredentialModelPutArgs {
 impl std::fmt::Debug for CredentialModelPutArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialModelPutArgs")
-            .field("api_url", &self.api_url)
             .field("provider_id", &self.provider_id)
             .field("api_key_file", &self.api_key_file)
             .field("api_key_env", &self.api_key_env)
@@ -123,9 +119,6 @@ impl std::fmt::Debug for CredentialModelPutArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialModelListArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
     json: bool,
@@ -133,9 +126,6 @@ struct CredentialModelListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialModelRemoveArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
     json: bool,
@@ -181,9 +171,6 @@ enum CredentialGithubAppCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("private_key_source").required(true)))]
 struct CredentialGithubAppAddArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
     json: bool,
@@ -213,7 +200,6 @@ struct CredentialGithubAppAddArgs {
 impl std::fmt::Debug for CredentialGithubAppAddArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialGithubAppAddArgs")
-            .field("api_url", &self.api_url)
             .field("provider_id", &self.provider_id)
             .field("app_id", &self.app_id)
             .field("private_key_file", &self.private_key_file)
@@ -226,9 +212,6 @@ impl std::fmt::Debug for CredentialGithubAppAddArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubAppListArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
     json: bool,
@@ -236,9 +219,6 @@ struct CredentialGithubAppListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubAppReadArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the provider as JSON.
     #[arg(long)]
     json: bool,
@@ -248,9 +228,6 @@ struct CredentialGithubAppReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubAppRemoveArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
     json: bool,
@@ -274,9 +251,6 @@ enum CredentialGithubInstallationCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubInstallationListArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit installations as JSON.
     #[arg(long)]
     json: bool,
@@ -287,9 +261,6 @@ struct CredentialGithubInstallationListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGithubInstallationGrantArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
     json: bool,
@@ -337,9 +308,6 @@ enum CredentialGrantCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct CredentialGrantPutArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
@@ -385,7 +353,6 @@ struct CredentialGrantPutArgs {
 impl std::fmt::Debug for CredentialGrantPutArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialGrantPutArgs")
-            .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
             .field("token_file", &self.token_file)
             .field("token_env", &self.token_env)
@@ -398,9 +365,6 @@ impl std::fmt::Debug for CredentialGrantPutArgs {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct CredentialGrantReplaceArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the updated grant as JSON.
     #[arg(long)]
     json: bool,
@@ -424,7 +388,6 @@ struct CredentialGrantReplaceArgs {
 impl std::fmt::Debug for CredentialGrantReplaceArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialGrantReplaceArgs")
-            .field("api_url", &self.api_url)
             .field("grant_id", &self.grant_id)
             .field("token_file", &self.token_file)
             .field("token_env", &self.token_env)
@@ -435,9 +398,6 @@ impl std::fmt::Debug for CredentialGrantReplaceArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGrantListArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit grants as JSON.
     #[arg(long)]
     json: bool,
@@ -448,9 +408,6 @@ struct CredentialGrantListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGrantReadArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
     json: bool,
@@ -460,9 +417,6 @@ struct CredentialGrantReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialGrantRevokeArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the revoked grant as JSON.
     #[arg(long)]
     json: bool,
@@ -512,9 +466,6 @@ enum CredentialClientCommand {
 #[derive(Args, Clone)]
 #[command(group(ArgGroup::new("client_secret_source")))]
 struct CredentialClientAddArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the created client as JSON.
     #[arg(long)]
     json: bool,
@@ -573,7 +524,6 @@ struct CredentialClientAddArgs {
 impl std::fmt::Debug for CredentialClientAddArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CredentialClientAddArgs")
-            .field("api_url", &self.api_url)
             .field("client_id", &self.client_id)
             .field("kind", &self.kind)
             .field("remote_client_id", &self.remote_client_id)
@@ -602,9 +552,6 @@ impl std::fmt::Debug for CredentialClientAddArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialClientListArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit clients as JSON.
     #[arg(long)]
     json: bool,
@@ -612,9 +559,6 @@ struct CredentialClientListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialClientReadArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the client as JSON.
     #[arg(long)]
     json: bool,
@@ -624,9 +568,6 @@ struct CredentialClientReadArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialClientRemoveArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the removed client as JSON.
     #[arg(long)]
     json: bool,
@@ -636,9 +577,6 @@ struct CredentialClientRemoveArgs {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialLoginArgs {
-    /// Resource HTTP API base URL.
-    #[arg(skip)]
-    api_url: String,
     /// Emit the final flow status as JSON.
     #[arg(long)]
     json: bool,
@@ -802,7 +740,7 @@ async fn grant_put(args: CredentialGrantPutArgs) -> Result<()> {
         args.token_env.as_ref(),
         args.token_stdin,
     )?;
-    let response = HttpAgentApi::new(args.api_url.clone())
+    let response = HttpAgentApi::from_active()
         .put_credential_grant(api::CredentialGrantPutParams {
             grant_id: args.grant_id.clone(),
             provider_id: args.provider_id.clone(),
@@ -829,7 +767,7 @@ async fn grant_replace(args: CredentialGrantReplaceArgs) -> Result<()> {
         args.token_env.as_ref(),
         args.token_stdin,
     )?;
-    let api = HttpAgentApi::new(args.api_url.clone());
+    let api = HttpAgentApi::from_active();
     let current = api
         .read_credential_grant(api::CredentialGrantReadParams {
             grant_id: args.grant_id.clone(),
@@ -883,7 +821,7 @@ fn print_put(response: &api::CredentialGrantPutResponse, dry_run: bool, json: bo
 }
 
 async fn grant_list(args: CredentialGrantListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .list_credential_grants(api::CredentialGrantListParams {
             status: args.status.map(Into::into),
@@ -908,7 +846,7 @@ async fn grant_list(args: CredentialGrantListArgs) -> Result<()> {
 }
 
 async fn grant_read(args: CredentialGrantReadArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .read_credential_grant(api::CredentialGrantReadParams {
             grant_id: args.grant_id,
@@ -924,7 +862,7 @@ async fn grant_read(args: CredentialGrantReadArgs) -> Result<()> {
 }
 
 async fn grant_revoke(args: CredentialGrantRevokeArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .revoke_credential_grant(api::CredentialGrantRevokeParams {
             grant_id: args.grant_id,
@@ -967,7 +905,7 @@ fn resolve_client_secret(args: &CredentialClientAddArgs) -> Result<Option<String
 
 async fn client_add(args: CredentialClientAddArgs) -> Result<()> {
     let client_secret = resolve_client_secret(&args)?;
-    let api = HttpAgentApi::new(args.api_url.clone());
+    let api = HttpAgentApi::from_active();
     let response = api
         .create_credential_client(api::CredentialClientCreateParams {
             client_id: args.client_id.clone(),
@@ -999,7 +937,7 @@ async fn client_add(args: CredentialClientAddArgs) -> Result<()> {
 }
 
 async fn client_list(args: CredentialClientListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .list_credential_clients(api::CredentialClientListParams {})
         .await
@@ -1021,7 +959,7 @@ async fn client_list(args: CredentialClientListArgs) -> Result<()> {
 }
 
 async fn client_read(args: CredentialClientReadArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .read_credential_client(api::CredentialClientReadParams {
             client_id: args.client_id,
@@ -1037,7 +975,7 @@ async fn client_read(args: CredentialClientReadArgs) -> Result<()> {
 }
 
 async fn client_remove(args: CredentialClientRemoveArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .delete_credential_client(api::CredentialClientDeleteParams {
             client_id: args.client_id,
@@ -1055,7 +993,7 @@ async fn client_remove(args: CredentialClientRemoveArgs) -> Result<()> {
 const LOGIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
 async fn login(args: CredentialLoginArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url.clone());
+    let api = HttpAgentApi::from_active();
     let started = api
         .start_credential_flow(api::CredentialFlowStartParams {
             exposure: exposure(args.retrievable),
@@ -1213,7 +1151,7 @@ async fn model_put(args: CredentialModelPutArgs) -> Result<()> {
     } else {
         api::CredentialProviderConfigInput::ModelApiKey { endpoint }
     };
-    let response: api::CredentialProviderPutResponse = HttpAgentApi::new(args.api_url.clone())
+    let response: api::CredentialProviderPutResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_CREDENTIALS_PROVIDERS_PUT,
             api::CredentialProviderPutParams {
@@ -1247,7 +1185,7 @@ async fn model_put(args: CredentialModelPutArgs) -> Result<()> {
 }
 
 async fn model_list(args: CredentialModelListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .list_credential_providers(api::CredentialProviderListParams {})
         .await
@@ -1281,7 +1219,7 @@ async fn model_list(args: CredentialModelListArgs) -> Result<()> {
 }
 
 async fn model_read(args: CredentialModelRemoveArgs) -> Result<()> {
-    let provider = read_model_provider(&HttpAgentApi::new(args.api_url), &args.provider_id).await?;
+    let provider = read_model_provider(&HttpAgentApi::from_active(), &args.provider_id).await?;
     crate::output::show(args.json, &provider)
 }
 async fn read_model_provider(
@@ -1307,7 +1245,7 @@ async fn read_model_provider(
 }
 
 async fn model_remove(args: CredentialModelRemoveArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     read_model_provider(&api, &args.provider_id).await?;
     let response = api
         .delete_credential_provider(api::CredentialProviderDeleteParams {
@@ -1325,7 +1263,7 @@ async fn model_remove(args: CredentialModelRemoveArgs) -> Result<()> {
 
 async fn github_app_add(args: CredentialGithubAppAddArgs) -> Result<()> {
     let private_key = resolve_private_key(&args)?;
-    let api = HttpAgentApi::new(args.api_url.clone());
+    let api = HttpAgentApi::from_active();
     let response = api
         .create_credential_provider(api::CredentialProviderCreateParams {
             provider_id: args.provider_id.clone(),
@@ -1347,7 +1285,7 @@ async fn github_app_add(args: CredentialGithubAppAddArgs) -> Result<()> {
 }
 
 async fn github_app_list(args: CredentialGithubAppListArgs) -> Result<()> {
-    let providers = HttpAgentApi::new(args.api_url)
+    let providers = HttpAgentApi::from_active()
         .list_credential_providers(api::CredentialProviderListParams {})
         .await?
         .providers;
@@ -1376,7 +1314,7 @@ async fn github_app_list(args: CredentialGithubAppListArgs) -> Result<()> {
 }
 
 async fn github_app_read(args: CredentialGithubAppReadArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let current = api
         .read_credential_provider(api::CredentialProviderReadParams {
             provider_id: args.provider_id.clone(),
@@ -1406,7 +1344,7 @@ async fn github_app_read(args: CredentialGithubAppReadArgs) -> Result<()> {
 }
 
 async fn github_app_remove(args: CredentialGithubAppRemoveArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let current = api
         .read_credential_provider(api::CredentialProviderReadParams {
             provider_id: args.provider_id.clone(),
@@ -1436,7 +1374,7 @@ async fn github_app_remove(args: CredentialGithubAppRemoveArgs) -> Result<()> {
 }
 
 async fn github_installation_list(args: CredentialGithubInstallationListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .list_github_installations(api::CredentialGitHubInstallationListParams {
             provider_id: args.provider_id,
@@ -1459,7 +1397,7 @@ async fn github_installation_list(args: CredentialGithubInstallationListArgs) ->
 }
 
 async fn github_installation_grant(args: CredentialGithubInstallationGrantArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
+    let api = HttpAgentApi::from_active();
     let response = api
         .grant_github_installation(api::CredentialGitHubInstallationGrantParams {
             exposure: exposure(args.retrievable),

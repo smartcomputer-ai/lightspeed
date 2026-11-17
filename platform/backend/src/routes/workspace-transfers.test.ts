@@ -13,14 +13,14 @@ import { gatewayRoutes } from "./gateway.js";
 
 const identity = vi.hoisted(() => ({ role: "contributor" }));
 vi.mock("./universes.js", () => ({
-  universeForSession: vi.fn(async () => ({
+  universeForRequest: vi.fn(async () => ({
     universe: {
       lightspeedUniverseId: "universe",
-      gatewayUrl: "https://engine.example/api/v1",
+
     },
     handle: "test",
     role: identity.role,
-    member: { userId: "member", role: identity.role },
+    caller: { actorId: "member", role: identity.role },
   })),
 }));
 

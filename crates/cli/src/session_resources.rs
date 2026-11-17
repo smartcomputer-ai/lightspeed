@@ -11,7 +11,7 @@ pub(crate) struct ReadArgs {
 }
 
 pub(crate) async fn read(args: ReadArgs) -> Result<()> {
-    let session = load(&HttpAgentApi::new(""), &args.session_id).await?;
+    let session = load(&HttpAgentApi::from_active(), &args.session_id).await?;
     if args.json {
         return output::show(true, &session);
     }
@@ -49,7 +49,7 @@ enum ConfigCommand {
     },
 }
 pub(crate) async fn config(args: ConfigArgs) -> Result<()> {
-    let api = HttpAgentApi::new("");
+    let api = HttpAgentApi::from_active();
     match args.command {
         ConfigCommand::Read(args) => {
             output::show(args.json, &load(&api, &args.session_id).await?.config)

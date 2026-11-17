@@ -183,7 +183,6 @@ pub(crate) trait McpToolDiscoverer: Send + Sync {
         &self,
         server_url: &str,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure>;
@@ -206,28 +205,6 @@ pub(crate) struct HttpMcpToolDiscoverer {
 pub(crate) struct McpToolCallRequest {
     pub tool_name: String,
     pub arguments: serde_json::Map<String, Value>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ConfiguratorTrustedHeaderPolicy;
-
-impl ConfiguratorTrustedHeaderPolicy {
-    pub(crate) fn from_env() -> Result<Self, String> {
-        Self::parse(
-            std::env::var("LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL")
-                .ok()
-                .as_deref(),
-        )
-    }
-    fn parse(value: Option<&str>) -> Result<Self, String> {
-        if value.is_some_and(|v| !v.trim().is_empty()) {
-            return Err("Configurator trusted-header authentication is retired; install a scoped service key".into());
-        }
-        Ok(Self)
-    }
-    pub(crate) fn permits(&self, _server_id: &str, _server_url: &str) -> bool {
-        false
-    }
 }
 
 #[derive(Clone)]
@@ -690,7 +667,6 @@ impl HttpMcpToolDiscoverer {
         client: &reqwest::Client,
         endpoint: &Url,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         max_response_bytes: usize,
         operation: ResponseOperation,
     ) -> Result<(McpClientService, TransportDiagnostics), McpToolDiscoveryFailure> {
@@ -698,7 +674,6 @@ impl HttpMcpToolDiscoverer {
             client,
             endpoint,
             auth,
-            trusted_universe,
             max_response_bytes,
             operation,
             client_lifecycle(),
@@ -715,7 +690,6 @@ impl HttpMcpToolDiscoverer {
                     client,
                     endpoint,
                     auth,
-                    trusted_universe,
                     max_response_bytes,
                     operation,
                     ClientLifecycleMode::Initialize,
@@ -731,7 +705,6 @@ impl HttpMcpToolDiscoverer {
         &self,
         server_url: &str,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
         request: McpToolCallRequest,
@@ -754,7 +727,6 @@ impl HttpMcpToolDiscoverer {
                     &client,
                     &endpoint,
                     auth,
-                    trusted_universe,
                     limits.max_tool_call_response_bytes,
                     ResponseOperation::ToolCall,
                 )
@@ -783,7 +755,6 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
         &self,
         server_url: &str,
         auth: &McpRequestAuth,
-        trusted_universe: Option<uuid::Uuid>,
         private_access: PrivateNetworkAccess,
         limits: McpToolDiscoveryLimits,
     ) -> Result<DiscoveredMcpInventory, McpToolDiscoveryFailure> {
@@ -806,7 +777,6 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
                     &client,
                     &endpoint,
                     auth,
-                    trusted_universe,
                     limits.max_response_bytes,
                     ResponseOperation::Discovery,
                 )
@@ -845,7 +815,6 @@ async fn start_service_once(
     client: &reqwest::Client,
     endpoint: &Url,
     auth: &McpRequestAuth,
-    trusted_universe: Option<uuid::Uuid>,
     max_response_bytes: usize,
     operation: ResponseOperation,
     lifecycle: ClientLifecycleMode,
@@ -853,11 +822,7 @@ async fn start_service_once(
     let mut config = StreamableHttpClientTransportConfig::with_uri(endpoint.as_str())
         .max_sse_event_size(max_response_bytes)
         .reinit_on_expired_session(false);
-    config =
-        transport_auth(config, auth, trusted_universe).map_err(|failure| StartServiceFailure {
-            failure,
-            retry_legacy: false,
-        })?;
+    config = transport_auth(config, auth);
     let client = BoundedReqwestClient::new(client.clone(), max_response_bytes, operation);
     let diagnostics = client.diagnostics.clone();
     let transport = StreamableHttpClientTransport::with_client(client, config);
@@ -881,30 +846,16 @@ async fn start_service_once(
 fn transport_auth(
     mut config: StreamableHttpClientTransportConfig,
     auth: &McpRequestAuth,
-    trusted_universe: Option<uuid::Uuid>,
-) -> Result<StreamableHttpClientTransportConfig, McpToolDiscoveryFailure> {
-    if auth.bearer.is_some() && trusted_universe.is_some() {
-        return Err(failure(
-            FailureKind::InvalidResponse,
-            "MCP transport cannot combine bearer and trusted-header authentication",
-        ));
-    }
+) -> StreamableHttpClientTransportConfig {
     if let Some(token) = &auth.bearer {
         config = config.auth_header(token.expose());
     }
     // Configured header names exclude transport, auth and `x-lightspeed-*`
     // names, so nothing here overrides what the transport sets itself.
-    let mut headers = auth.headers.clone();
-    if let Some(universe_id) = trusted_universe {
-        headers.insert(
-            HeaderName::from_static("x-lightspeed-universe"),
-            HeaderValue::from_str(&universe_id.to_string()).expect("UUID is a valid header value"),
-        );
+    if !auth.headers.is_empty() {
+        config = config.custom_headers(auth.headers.clone());
     }
-    if !headers.is_empty() {
-        config = config.custom_headers(headers);
-    }
-    Ok(config)
+    config
 }
 
 fn client_lifecycle() -> ClientLifecycleMode {
@@ -1480,42 +1431,19 @@ mod tests {
     }
 
     #[test]
-    fn retired_trusted_header_policy_fails_closed() {
-        assert!(
-            ConfiguratorTrustedHeaderPolicy::parse(Some("http://127.0.0.1:18081/mcp")).is_err()
+    fn transport_auth_sends_only_the_configured_bearer_and_headers() {
+        let mut auth = McpRequestAuth::bearer("configured-token");
+        auth.headers.insert(
+            HeaderName::from_static("x-tool-version"),
+            HeaderValue::from_static("current"),
         );
-        assert!(
-            !ConfiguratorTrustedHeaderPolicy
-                .permits("lightspeed-configurator", "http://127.0.0.1:18081/mcp")
-        );
-    }
-
-    #[test]
-    fn trusted_header_transport_auth_excludes_bearer() {
-        let universe_id = uuid::Uuid::from_u128(7);
         let config = transport_auth(
             StreamableHttpClientTransportConfig::with_uri("http://127.0.0.1:18081/mcp"),
-            &McpRequestAuth::none(),
-            Some(universe_id),
-        )
-        .expect("trusted header config");
-        let expected = universe_id.to_string();
-        assert_eq!(
-            config
-                .custom_headers
-                .get(&HeaderName::from_static("x-lightspeed-universe"))
-                .and_then(|value| value.to_str().ok()),
-            Some(expected.as_str())
+            &auth,
         );
-        assert!(config.auth_header.is_none());
-        assert!(
-            transport_auth(
-                StreamableHttpClientTransportConfig::with_uri("http://127.0.0.1:18081/mcp"),
-                &McpRequestAuth::bearer("not-sent"),
-                Some(universe_id),
-            )
-            .is_err()
-        );
+        assert_eq!(config.auth_header.as_deref(), Some("configured-token"));
+        assert_eq!(config.custom_headers, auth.headers);
+        assert!(!config.custom_headers.contains_key("x-lightspeed-universe"));
     }
 
     #[test]
@@ -1727,7 +1655,6 @@ mod tests {
                 .discover_tools(
                     &endpoint,
                     &auth,
-                    None,
                     PrivateNetworkAccess::Any,
                     McpToolDiscoveryLimits::default(),
                 )
@@ -1891,7 +1818,6 @@ mod tests {
             .discover_tools(
                 &endpoint,
                 &auth,
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -1901,7 +1827,6 @@ mod tests {
             .call_tool(
                 &endpoint,
                 &auth,
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
@@ -1949,7 +1874,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -1985,7 +1909,6 @@ mod tests {
             .call_tool(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
@@ -2025,7 +1948,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -2061,7 +1983,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::none(),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits {
                     max_response_bytes: 1024,
@@ -2097,7 +2018,6 @@ mod tests {
             .discover_tools(
                 &format!("http://{address}/mcp"),
                 &McpRequestAuth::bearer("expired-token"),
-                None,
                 PrivateNetworkAccess::Any,
                 McpToolDiscoveryLimits::default(),
             )
@@ -2133,7 +2053,6 @@ mod tests {
         .discover_tools(
             &format!("http://{address}/mcp"),
             &McpRequestAuth::none(),
-            None,
             PrivateNetworkAccess::Any,
             McpToolDiscoveryLimits::default(),
         )
@@ -2172,7 +2091,6 @@ mod tests {
                     .discover_tools(
                         &endpoint,
                         &McpRequestAuth::none(),
-                        None,
                         access,
                         McpToolDiscoveryLimits::default(),
                     )

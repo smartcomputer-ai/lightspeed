@@ -13,7 +13,7 @@ function setup(role: string, stored: Record<string, boolean>) {
     id: "platform-universe",
     organizationId: "org",
     lightspeedUniverseId: "33333333-3333-4333-8333-333333333333",
-    gatewayUrl: null,
+
     features: stored,
   };
   const sets: Record<string, unknown>[] = [];

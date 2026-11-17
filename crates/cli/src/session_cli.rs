@@ -49,8 +49,6 @@ enum SessionCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CommonArgs {
-    #[arg(skip)]
-    api_url: String,
     /// Print the API response as JSON.
     #[arg(long)]
     json: bool,
@@ -265,7 +263,7 @@ async fn start(args: StartArgs) -> Result<()> {
         })
         .transpose()
         .map_err(|error| anyhow::anyhow!("invalid profile id: {error}"))?;
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .start_session(api::SessionStartParams {
             session_id: args.session_id,
             display_name: args.display_name,
@@ -288,7 +286,7 @@ async fn start(args: StartArgs) -> Result<()> {
 }
 
 async fn list(args: ListArgs) -> Result<()> {
-    let client = HttpAgentApi::new(args.common.api_url);
+    let client = HttpAgentApi::from_active();
     let sessions = collect_sessions(
         &client,
         Selection {
@@ -312,7 +310,7 @@ async fn list(args: ListArgs) -> Result<()> {
 }
 
 async fn put_metadata(args: MetadataPutArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .put_session_metadata(api::SessionMetadataPutParams {
             session_id: args.session_id,
             metadata: args.metadata.map(),
@@ -325,7 +323,7 @@ async fn put_metadata(args: MetadataPutArgs) -> Result<()> {
 }
 
 async fn list_context(args: ContextListArgs) -> Result<()> {
-    let session = HttpAgentApi::new(args.common.api_url)
+    let session = HttpAgentApi::from_active()
         .read_session(api::SessionReadParams {
             session_id: args.session_id,
             run_limit: Some(1),
@@ -385,7 +383,7 @@ async fn replace_context(args: ContextReplaceArgs) -> Result<()> {
 }
 
 async fn redact_context(args: ContextRedactArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.common.api_url.clone());
+    let api = HttpAgentApi::from_active();
     let context = api
         .read_session(api::SessionReadParams {
             session_id: args.session_id.clone(),
@@ -454,7 +452,7 @@ async fn send_replacements(
     session_id: String,
     entries: Vec<api::ContextReplaceEntry>,
 ) -> Result<()> {
-    let response = HttpAgentApi::new(common.api_url)
+    let response = HttpAgentApi::from_active()
         .replace_context(api::ContextReplaceParams {
             session_id,
             entries,
@@ -479,7 +477,7 @@ async fn send_replacements(
 }
 
 async fn put_retention(args: RetentionArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .put_session_retention(api::SessionRetentionPutParams {
             session_id: args.session_id,
             delete_after_close_ms: if args.off {
@@ -496,7 +494,7 @@ async fn put_retention(args: RetentionArgs) -> Result<()> {
 }
 
 async fn restart(args: RestartArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .restart_session(api::SessionRestartParams {
             session_id: args.session_id.clone(),
         })
@@ -513,7 +511,7 @@ async fn restart(args: RestartArgs) -> Result<()> {
 }
 
 async fn close(args: CloseArgs) -> Result<()> {
-    let client = HttpAgentApi::new(args.common.api_url);
+    let client = HttpAgentApi::from_active();
     let targets = select_targets(
         &client,
         args.session_id,
@@ -543,7 +541,7 @@ async fn close(args: CloseArgs) -> Result<()> {
 }
 
 async fn delete(args: DeleteArgs) -> Result<()> {
-    let client = HttpAgentApi::new(args.common.api_url);
+    let client = HttpAgentApi::from_active();
     let targets = select_targets(
         &client,
         args.session_id,

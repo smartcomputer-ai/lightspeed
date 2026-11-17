@@ -736,6 +736,30 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
 
 ## Progress
 
+- 2026-11-17: audited the complete transport/access cutover for dangling
+  implementation. Removed the inert Configurator trusted-header policy and
+  transport branches, mutable universe staging on authenticated callers,
+  unused per-command CLI URL fields, ignored constructor parameters and old
+  saved-credential inference. Commands use their resolved connection explicitly.
+  Removed obsolete generator cleanup and corrected blob-upload family metadata.
+  Platform now has one configured runtime endpoint throughout: removed the
+  unusable per-universe override from active storage, DTOs, clients and UI with
+  a forward migration. Extracted shared HTTP error mapping and runtime-client
+  factories from route modules to eliminate import cycles, and named caller
+  attribution for both users and applications. Restored the Configurator setup
+  UI to match its implemented application-credential backend. Deleted obsolete
+  tests and unused screenshots, renamed the runtime configuration test, and
+  corrected current guides. Genuine MCP/environment protocols, migration
+  history and historical release notes remain. Final checks passed: 3,384
+  workspace Rust tests, exact all-target Clippy and formatting; 495 backend,
+  1,513 web, 246 TypeScript SDK, 112 Python SDK, 15 database and 25 Configurator
+  tests; typechecks, generated consumers, production builds, documentation and
+  release checks. All 13 affected runtime live tests and three CLI configuration
+  live tests passed. Both single-mode and authenticated launcher startup passed;
+  the full-stack check verified managed Configurator installation and rotation,
+  stored-credential discovery, CLI login, cross-SDK renewal/binary/SSE/scope and
+  revocation, and a paid TypeScript-to-Python model run.
+
 - 2026-11-17: completed the authorized broad validation pass. The Rust
   workspace passed 3,383 tests and exact all-target Clippy; all 145 selected
   runtime live tests and 84 PostgreSQL live tests passed. TypeScript/Python
