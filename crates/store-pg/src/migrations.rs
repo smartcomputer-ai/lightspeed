@@ -22,6 +22,7 @@ const MIGRATION_ADVISORY_LOCK_ID: i64 = 0x4c53_5047_4d49_4752;
 const LIGHTSPEED_TABLES: &[&str] = &[
     "agent_profiles",
     "bot_events",
+    "bot_sessions",
     "bot_triggers",
     "bots",
     "cas_blob_edges",

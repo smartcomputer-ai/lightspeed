@@ -73,6 +73,20 @@ fn prefixed_event_columns(table: &'static str, prefix: &'static str) -> String {
 // ── Bots ────────────────────────────────────────────────────────────────────
 
 impl PgStore {
+    /// Retained session IDs seed routing across controller restarts and bot
+    /// recreation. Per-event sessions have their own IDs and need no seed.
+    pub async fn previous_bot_session_ids(&self, bot_id: &BotId) -> Result<Vec<String>, BotError> {
+        sqlx::query_scalar(
+            "SELECT root_session_id FROM bot_sessions
+             WHERE universe_id = $1 AND bot_id = $2 AND root_session_id NOT LIKE '%:e-%'",
+        )
+        .bind(self.config.universe_id)
+        .bind(bot_id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| bot_sql_error("read previous bot sessions", error))
+    }
+
     /// The roster, optionally only bots this actor created, each with the
     /// access summary its view carries: shared, and who created it.
     pub async fn list_bot_roster_for(
@@ -107,19 +121,22 @@ impl PgStore {
                 b.closed_sessions_json, b.created_at_ms, b.updated_at_ms,
                 tc.trigger_count,
                 pc.pending_count,
-                act.working,
-                act.waiting,
+                counts.active_count > 0 AS working,
+                counts.waiting,
                 counts.open_count, counts.active_count, b.controller_status_json AS status_json,
                 {last_event_columns},
                 b.created_by
             FROM bots b
             LEFT JOIN LATERAL (
                 SELECT count(*) FILTER (WHERE s.lifecycle_status <> 'closed') AS open_count,
-                       count(*) FILTER (WHERE a.activity <> 'idle') AS active_count
-                FROM sessions s
-                LEFT JOIN sessions r ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id)
+                       count(*) FILTER (WHERE a.activity <> 'idle') AS active_count,
+                       COALESCE(bool_or(a.activity = 'waiting'), false) AS waiting
+                FROM bot_sessions owner
+                JOIN sessions s ON s.universe_id = owner.universe_id
+                    AND COALESCE(s.origin_root_session_id, s.session_id) = owner.root_session_id
                 LEFT JOIN session_summary a ON a.universe_id=s.universe_id AND a.session_id=s.session_id
-                WHERE s.universe_id=b.universe_id AND s.deleted_at_ms IS NULL AND COALESCE(r.bot_id,s.bot_id)=b.bot_id
+                WHERE owner.universe_id = b.universe_id AND owner.bot_id = b.bot_id
+                  AND s.deleted_at_ms IS NULL
             ) counts ON true
             LEFT JOIN LATERAL (
                 SELECT count(*) AS trigger_count
@@ -139,16 +156,6 @@ impl PgStore {
                 ORDER BY e.received_at_ms DESC, e.seq DESC
                 LIMIT 1
             ) le ON true
-            LEFT JOIN LATERAL (
-                SELECT count(*) > 0 AS working, COALESCE(bool_or(a.activity = 'waiting'), false) AS waiting
-                FROM session_summary a
-                JOIN sessions s ON s.universe_id = a.universe_id AND s.session_id = a.session_id
-                LEFT JOIN sessions r ON r.universe_id = s.universe_id
-                    AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)
-                WHERE a.universe_id = b.universe_id AND a.activity <> 'idle'
-                  AND s.deleted_at_ms IS NULL
-                  AND COALESCE(r.bot_id, s.bot_id) = b.bot_id
-            ) act ON true
             WHERE b.universe_id = $1 AND ($2::text IS NULL OR {created_by_match}) AND ($3::text[] IS NULL OR b.bot_id=ANY($3))
             ORDER BY b.bot_id
             "#

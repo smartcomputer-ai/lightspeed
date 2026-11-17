@@ -76,12 +76,9 @@ CREATE TABLE sessions (
     head_seq bigint,
     revision bigint NOT NULL DEFAULT 1 CHECK (revision >= 0),
 
-    -- Attribution and audience are recorded on roots. Delegated children
-    -- inherit them, and a bot's session tree is shared with the universe.
+    -- Delegated children inherit attribution and audience from their root.
     created_by jsonb,
     visibility text CHECK (visibility IN ('universe', 'restricted')),
-    -- The owning bot of this root session, if any.
-    bot_id text,
 
     -- Projected lifecycle state, updated in the event append transaction.
     lifecycle_status text NOT NULL DEFAULT 'new',

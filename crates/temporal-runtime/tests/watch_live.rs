@@ -232,7 +232,6 @@ async fn committed_rows_reach_http_watch_across_connections() -> anyhow::Result<
                     id,
                     &api::Attribution::Actor { id: actor.into() },
                     Some(visibility),
-                    None,
                 )
                 .await?;
         }

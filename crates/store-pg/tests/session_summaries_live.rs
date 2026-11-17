@@ -649,15 +649,14 @@ async fn bot_status_and_counts_follow_persistent_idle_summaries_and_reject_old_o
     pg.create_session(create(id.as_str())).await.unwrap();
     let access = store_pg::PgAccessStore::new(pg.pool().clone()).with_changes(pg.changes().clone());
     access
-        .stamp_session(
+        .stamp_bot_session(
             universe,
             id.as_str(),
             &api::Attribution::Internal {
                 component: "bot".into(),
                 cause: "test".into(),
             },
-            None,
-            Some(bot_id.as_str()),
+            bot_id.as_str(),
         )
         .await
         .unwrap();
@@ -791,7 +790,6 @@ async fn catalog_changes_and_inherited_access_publish_visible_revisions() {
             "root",
             &api::Attribution::Actor { id: "alice".into() },
             Some(api::Visibility::Restricted),
-            None,
         )
         .await
         .unwrap();
@@ -1018,15 +1016,14 @@ async fn unopened_cleanup_preserves_children_and_invalidates_inherited_bot_count
     }
     let access = store_pg::PgAccessStore::new(pg.pool().clone()).with_changes(pg.changes().clone());
     access
-        .stamp_session(
+        .stamp_bot_session(
             pg.config().universe_id,
             root.as_str(),
             &api::Attribution::Internal {
                 component: "bot".into(),
                 cause: "test".into(),
             },
-            None,
-            Some("helper"),
+            "helper",
         )
         .await
         .unwrap();
@@ -1042,7 +1039,18 @@ async fn unopened_cleanup_preserves_children_and_invalidates_inherited_bot_count
     );
     assert!(!bot_changes.has_changed().unwrap());
     assert!(pg.discard_unopened_session(&fork).await.unwrap());
+    let bot_id = api::BotId::new("helper");
+    assert_eq!(
+        pg.previous_bot_session_ids(&bot_id).await.unwrap(),
+        [root.as_str()]
+    );
     assert!(pg.discard_unopened_session(&root).await.unwrap());
+    assert!(
+        pg.previous_bot_session_ids(&bot_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(bot_changes.has_changed().unwrap());
     assert!(memory.discard_unopened_session(&child).await.unwrap());
     assert!(!memory.discard_unopened_session(&root).await.unwrap());

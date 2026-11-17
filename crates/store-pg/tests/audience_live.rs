@@ -121,17 +121,11 @@ async fn exercise(pool: &sqlx::PgPool) {
     assert_eq!(access.audience.created_by, None);
     // The first stamp wins; a retry keeps it.
     store
-        .stamp_session(
-            universe,
-            "draft",
-            &alice,
-            Some(Visibility::Restricted),
-            None,
-        )
+        .stamp_session(universe, "draft", &alice, Some(Visibility::Restricted))
         .await
         .unwrap();
     store
-        .stamp_session(universe, "draft", &bob, Some(Visibility::Universe), None)
+        .stamp_session(universe, "draft", &bob, Some(Visibility::Universe))
         .await
         .unwrap();
     let access = store
@@ -157,27 +151,20 @@ async fn exercise(pool: &sqlx::PgPool) {
     // Bob's shared session and a bot's session.
     create(&sessions, "bob-shared", None).await;
     store
-        .stamp_session(
-            universe,
-            "bob-shared",
-            &bob,
-            Some(Visibility::Universe),
-            None,
-        )
+        .stamp_session(universe, "bob-shared", &bob, Some(Visibility::Universe))
         .await
         .unwrap();
     create(&sessions, "bot:v1:helper:main", None).await;
+    let controller = Attribution::Internal {
+        component: "controller".into(),
+        cause: "test".into(),
+    };
     store
-        .stamp_session(
-            universe,
-            "bot:v1:helper:main",
-            &Attribution::Internal {
-                component: "controller".into(),
-                cause: "test".into(),
-            },
-            None,
-            Some("helper"),
-        )
+        .stamp_bot_session(universe, "bot:v1:helper:main", &controller, "helper")
+        .await
+        .unwrap();
+    store
+        .stamp_bot_session(universe, "bot:v1:helper:main", &controller, "other")
         .await
         .unwrap();
     let bot_session = store
@@ -229,6 +216,14 @@ async fn exercise(pool: &sqlx::PgPool) {
     // Lifecycle-controlled work can be left out of a list or listed alone, and trees
     // listed by their roots; sub-agents follow their root either way.
     create(&sessions, "bot-child", Some("bot:v1:helper:main")).await;
+    let child = store
+        .session_access(universe, "bot-child")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(child.root, ResourceRef::Bot("helper".into()));
+    assert_eq!(child.audience.visibility, Visibility::Universe);
+    assert_eq!(child.audience.created_by, Some(controller));
     sqlx::query(
         "UPDATE sessions SET lifecycle_controlled = true WHERE session_id = 'bot:v1:helper:main'",
     )

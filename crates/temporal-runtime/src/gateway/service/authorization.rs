@@ -399,34 +399,35 @@ impl GatewayAgentApi {
         session: &SessionId,
         visibility: Option<Visibility>,
     ) -> Result<(), AgentApiError> {
-        let (created_by, visibility, bot) = match self.current_controller() {
+        match self.current_controller() {
             Some(controller) => match controller.actor {
-                ResourceRef::Bot(bot) => (
-                    Attribution::Internal {
-                        component: "controller".into(),
-                        cause: controller.cause,
-                    },
-                    None,
-                    Some(bot),
-                ),
-                _ => return Ok(()),
+                ResourceRef::Bot(bot) => {
+                    self.access_store()
+                        .stamp_bot_session(
+                            self.universe_id(),
+                            session.as_str(),
+                            &Attribution::Internal {
+                                component: "controller".into(),
+                                cause: controller.cause,
+                            },
+                            &bot,
+                        )
+                        .await
+                }
+                _ => Ok(()),
             },
-            None => (
-                self.caller()?.attribution(),
-                Some(visibility.unwrap_or(Visibility::Restricted)),
-                None,
-            ),
-        };
-        self.access_store()
-            .stamp_session(
-                self.universe_id(),
-                session.as_str(),
-                &created_by,
-                visibility,
-                bot.as_deref(),
-            )
-            .await
-            .map_err(access_error)
+            None => {
+                self.access_store()
+                    .stamp_session(
+                        self.universe_id(),
+                        session.as_str(),
+                        &self.caller()?.attribution(),
+                        Some(visibility.unwrap_or(Visibility::Restricted)),
+                    )
+                    .await
+            }
+        }
+        .map_err(access_error)
     }
 
     /// Record who created a bot, once its row exists.

@@ -99,6 +99,20 @@ COMMENT ON COLUMN bots.created_at_ms IS
 COMMENT ON COLUMN bots.updated_at_ms IS
     'Last document write in Unix milliseconds.';
 
+-- Routing history survives bot configuration deletion and ID reuse.
+CREATE TABLE bot_sessions (
+    universe_id uuid NOT NULL,
+    root_session_id text NOT NULL,
+    bot_id text NOT NULL,
+
+    PRIMARY KEY (universe_id, root_session_id),
+    FOREIGN KEY (universe_id, root_session_id)
+        REFERENCES sessions (universe_id, session_id) ON DELETE CASCADE
+);
+
+CREATE INDEX bot_sessions_by_bot_idx
+    ON bot_sessions (universe_id, bot_id, root_session_id);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- bot_triggers
 -- ═══════════════════════════════════════════════════════════════════════════
