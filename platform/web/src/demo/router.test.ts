@@ -54,7 +54,6 @@ const universeReads = [
   "credential-grants",
   "models",
   "models/defaults",
-  "setups",
   "bots",
   "channel-accounts",
   "channel-pairings",
@@ -559,33 +558,6 @@ describe("demo router", () => {
     const listed = (await call("GET", path)).json as { grants: { principal: { id: string }; role: string }[] };
     expect(listed.grants.find(g => g.principal.id === owner.userId)?.role).toBe("operator");
     expect((await call("PUT", path, { principal, role: "deployment_admin" })).status).toBe(400);
-  });
-
-  it("installs and rotates the Configurator setup only for organization administrators", async () => {
-    const { store, call } = await boot();
-    const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
-    const base = `/api/ui/universes/${state.universe.id}/setups`;
-    store.currentUser.role = "user";
-    state.universe.organizationRole = "member";
-    for (const role of ["viewer", "contributor"] as const) {
-      state.universe.role = role;
-      expect((await call("GET", base)).status, role).toBe(404);
-    }
-    state.universe.role = "operator";
-    expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
-    expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
-    state.universe.role = "owner";
-    state.universe.organizationRole = "creator";
-    expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
-    state.universe.organizationRole = "admin";
-    const installed = await call("POST", `${base}/configurator/install`);
-    expect(installed.status).toBe(200);
-    expect(installed.json).toMatchObject({ status: "ready", resources: { serverId: "configurator" } });
-    const firstGrant = state.mcpServers.get("configurator")!.credential!.grantId;
-    expect((await call("GET", base)).json).toMatchObject([{ status: "ready" }]);
-    expect((await call("POST", `${base}/configurator/install`)).status).toBe(200);
-    expect(state.mcpServers.get("configurator")!.credential!.grantId).not.toBe(firstGrant);
-    expect(state.secrets.grants.find(grant => grant.grantId === firstGrant)?.status).toBe("revoked");
   });
 
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {

@@ -20,7 +20,6 @@ export interface IconSet {
   ModelIcon: IconComponent;
   McpServerIcon: IconComponent;
   ProfileIcon: IconComponent;
-  TemplateIcon: IconComponent;
   ChannelIcon: IconComponent;
   CredentialIcon: IconComponent;
   ApiKeyIcon: IconComponent;

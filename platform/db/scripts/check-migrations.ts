@@ -103,12 +103,11 @@ async function checkLegacyLedger(connectionString: string): Promise<void> {
 }
 
 /// The platform database holds people and the universe mapping, nothing else:
-/// better-auth tables plus universes and setup installations. Bots, triggers,
+/// better-auth tables plus universes, grants and settings. Bots, triggers,
 /// events, channel accounts, and pairings are core tables in the Rust
 /// runtime's schema (crates/store-pg) and must never reappear here.
 async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireTable(pool, "universes");
-  await requireTable(pool, "universe_setup_installations");
   await requireTable(pool, "user");
   await requireTable(pool, "organization");
   await requireTable(pool, "member");

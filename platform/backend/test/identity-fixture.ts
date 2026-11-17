@@ -11,8 +11,7 @@ export const identityEnv: ServerEnv = {
   databaseUrl: "postgres://unused", authSecret: "identity-test-secret-at-least-thirty-two-characters",
   baseUrl: "http://localhost:3030", trustedOrigins: [], port: 3030,
   adminEmail: "emergency@example.test", adminPassword: "emergency-test-password",
-  github: null, lightspeedApiUrl: null, configuratorMcpUrl: null,
-  configuratorMcpAllowPrivateNetwork: false,
+  github: null, lightspeedApiUrl: null,
   channelsHealthUrls: [], devEnvdEndpoint: null,
   oidc: {
     issuer: "https://identity.example.test", discoveryUrl: "https://identity.example.test/.well-known/openid-configuration",

@@ -67,68 +67,6 @@ it("does not accept an unknown bearer through a valid cookie or expose plugin ke
   expect((await fixture.request("/api/auth/api-key/create", { name: "Unreviewed" }, cookie)).status).toBe(404);
 });
 
-it("installs only a service user Operator credential scoped to configuration in one universe", async () => {
-  const organizationId = crypto.randomUUID();
-  const universeId = crypto.randomUUID();
-  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Configurator", slug: organizationId, createdAt: new Date() });
-  const [universe] = await fixture.db.insert(schema.universes).values({ organizationId: organizationId, lightspeedUniverseId: universeId, handle: `config-${organizationId}`, name: "Configurable" }).returning();
-  fixture.env.configuratorMcpUrl = "https://configurator.example/mcp";
-  fixture.env.lightspeedApiUrl = "https://runtime.example/api/v1";
-  fixture.env.lightspeedApiToken = "lsr_infrastructure_only";
-  let issuedSecret: string | undefined;
-  let failInstallation = false;
-  vi.stubGlobal("fetch", vi.fn(async (input: string | Request | URL, init?: RequestInit) => {
-    const request = decodeHttpRequest(input, init);
-    expect(request.universe).toBe(universeId);
-    if (request.operation === "credentials/grants/import") {
-      issuedSecret = request.params.token;
-      expect(issuedSecret).toMatch(/^lsa_/);
-      expect(issuedSecret).not.toBe(fixture.env.lightspeedApiToken);
-      expect(request.params.exposure).toBe("brokered");
-      return Response.json({ grant: { grantId: request.params.grantId } });
-    }
-    if (request.operation === "mcp/servers/put") {
-      expect(request.params.server).toMatchObject({ authPolicy: { type: "requiredBearer" }, credential: { type: "authGrant" } });
-      if (failInstallation) { failInstallation = false; throw new Error("installation failure"); }
-      return Response.json({ server: request.params.server });
-    }
-    throw new Error(`Unexpected operation ${request.operation}`);
-  }));
-  try {
-    const path = `/api/ui/universes/${universe!.id}/setups/configurator/install`;
-    const installed = await fixture.request(path, {}, cookie);
-    expect(installed.status).toBe(200);
-    expect(await installed.text()).not.toContain(issuedSecret!);
-    const first = issuedSecret!;
-    const admissionResult = await admission(first);
-    expect(admissionResult?.auth.principal.kind).toBe("serviceUser");
-    const auth = admissionResult!.auth;
-    expect(auth.credential.restrictions).toMatchObject({ organizationIds: [organizationId], universeIds: [universeId], allowUniverseCreation: false });
-    const [serviceUser] = await fixture.db.select().from(schema.serviceUsers).where(eq(schema.serviceUsers.id, auth.principal.id));
-    expect(serviceUser?.role).toBe("member");
-    const [grant] = await fixture.db.select().from(schema.universeGrants).where(eq(schema.universeGrants.serviceUserId, auth.principal.id));
-    expect(grant?.role).toBe("operator");
-    expect(() => enforceRestrictions(auth, { operation: "profiles/put", organizationId, universeId, write: true })).not.toThrow();
-    expect(() => enforceRestrictions(auth, { operation: "session/start", organizationId, universeId, write: true })).toThrow();
-    expect(() => enforceRestrictions(auth, { operation: "profiles/read", organizationId, universeId: crypto.randomUUID() })).toThrow();
-    failInstallation = true;
-    expect((await fixture.request(path, {}, cookie)).status).toBeGreaterThanOrEqual(400);
-    expect(await admission(first)).not.toBeNull();
-    expect(await admission(issuedSecret!)).toBeNull();
-    const [retained] = await fixture.db.select().from(schema.universeSetupInstallations).where(eq(schema.universeSetupInstallations.universeId, universe!.id));
-    expect(retained?.status).toBe("ready");
-    expect(retained?.state.serviceUserId).toBe(auth.principal.id);
-    expect((await fixture.request(path, {}, cookie)).status).toBe(200);
-    expect(await admission(first)).toBeNull();
-    expect(await admission(issuedSecret!)).not.toBeNull();
-  } finally {
-    vi.unstubAllGlobals();
-    fixture.env.configuratorMcpUrl = null;
-    fixture.env.lightspeedApiUrl = null;
-    fixture.env.lightspeedApiToken = null;
-  }
-});
-
 it("bounds credential request bodies before JSON decoding", async () => {
   const response = await fixture.request("/api/v1/platform/credentials", { name: "x".repeat(300_000) }, cookie);
   expect(response.status).toBe(413);

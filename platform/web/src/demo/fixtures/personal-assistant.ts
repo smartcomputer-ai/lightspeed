@@ -6,7 +6,7 @@
 /// writes, delegates research to a second bot that runs sub-agents, and
 /// takes the Monday numbers from a metrics bot — the personal-agent pattern
 /// built from bots, triggers, workspaces, skills, and one Mac mini at home.
-import type { SecretGrant, UniverseSetup } from "@/api";
+import type { SecretGrant } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/sdk";
 import { appendExchange, appendScriptedRun, closeSession, newSession, refreshDemoCompactionView } from "../engine";
 import { type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
@@ -1182,19 +1182,6 @@ function seedIntegrations(universe: UniverseState): void {
     ],
   };
 
-  const configurator: UniverseSetup = {
-    id: "configurator",
-    name: "Configurator",
-    description: "An MCP server that lets a coding agent configure this universe — profiles, MCP servers, environments, bots — with a scoped Platform token. Ada set the assistant up through it from her laptop.",
-    version: 4,
-    available: false,
-    status: "unavailable",
-    installedVersion: 4,
-    resources: {
-      serverId: "configurator",
-    },
-  };
-  universe.setups.push(configurator);
 }
 
 // ---------------------------------------------------------------------------

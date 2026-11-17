@@ -22,7 +22,6 @@ import type {
   SessionSummary,
   SessionView,
   Universe,
-  UniverseSetup,
   WorkspaceRow,
   WorkspaceTree,
 } from "@/api";
@@ -194,7 +193,6 @@ export interface UniverseState {
   githubApps: GitHubApp[];
   models: ModelListResponse;
   modelDefaults: ModelDefaults;
-  setups: UniverseSetup[];
   bots: Map<string, BotRecord>;
   /// Universe channel accounts (core wire shape), keyed by `accountId`.
   channelAccounts: Map<string, ChannelAccountView>;
@@ -330,7 +328,6 @@ export class DemoStore {
       githubApps: [],
       models: { models: [], providers: [] },
       modelDefaults: { revision: 0, agentRun: null, speechToText: null },
-      setups: [],
       bots: new Map(),
       channelAccounts: new Map(),
       channelPairings: [],

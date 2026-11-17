@@ -34,7 +34,7 @@ const icons: IconSet = tagAll(library.icons, "data-icon-role");
 // Every role in IconSet, in the order roles.ts declares them.
 export const {
   SessionIcon, WorkspaceIcon, EnvironmentIcon, EnvironmentProviderIcon, ModelIcon, McpServerIcon, ProfileIcon,
-  TemplateIcon, ChannelIcon, CredentialIcon, ApiKeyIcon, MemberIcon, UserAdminIcon, AuditLogIcon, UniversesIcon,
+  ChannelIcon, CredentialIcon, ApiKeyIcon, MemberIcon, UserAdminIcon, AuditLogIcon, UniversesIcon,
   SettingsIcon, FeatureOffIcon, BotIcon, BotAvatarIcon, UserIcon, SecurityIcon, SecretIcon, AppearanceIcon,
   AdminIcon, ManagedIcon, PrivateIcon, SharedIcon, SignInIcon, SignOutIcon, RevokeIcon, DisconnectIcon,
   LightThemeIcon, DarkThemeIcon, SystemThemeIcon, ReducedMotionOnIcon, ReducedMotionOffIcon, ReducedMotionSystemIcon, GitHubLogo, OpenAiLogo, AnthropicLogo, CompatibleProviderLogo,

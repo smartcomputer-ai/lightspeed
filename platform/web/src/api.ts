@@ -157,21 +157,6 @@ export interface Member {
   createdAt: string;
 }
 
-export interface UniverseSetup {
-  id: string;
-  name: string;
-  description: string;
-  version: number;
-  available: boolean;
-  status: "available" | "installing" | "ready" | "failed" | "unavailable";
-  installedVersion?: number;
-  error?: string;
-  resources?: {
-    grantId?: string;
-    serverId?: string;
-  };
-}
-
 /// Gateway passthrough shapes (the engine owns the full documents).
 export interface ProfileSummary {
   profileId: string;

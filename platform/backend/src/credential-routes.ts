@@ -176,14 +176,6 @@ async function revokeCredential(ctx: AppContext, auth: AuthContext, owner: Owner
   return { revoked: true as const };
 }
 
-/** Internal callers use the same browser/organization authorization as native routes. */
-export async function createServiceUserCredential(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string, input: Create) {
-  const owner = await serviceUserOwner(ctx, auth, organizationId, serviceUserId);
-  return createCredential(ctx, auth, owner, credentialCreateSchema.parse(input));
-}
-export async function revokeServiceUserCredential(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string, keyId: string) {
-  return revokeCredential(ctx, auth, await serviceUserOwner(ctx, auth, organizationId, serviceUserId), keyId);
-}
 /** Who may declare a service user's key with a supplied secret: a person's
  * session, or a key created to declare them (`allowServiceUserKeys`), within
  * its other restrictions. Every other key operation stays with people, so an

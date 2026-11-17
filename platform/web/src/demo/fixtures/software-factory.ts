@@ -6,7 +6,7 @@
 /// steers a CI failure into the running task, pr-reviewer reviews, and
 /// release-scribe drafts the changelog. Everything the universe pages show
 /// is seeded here, with timestamps hung off boot time.
-import type { Environment, GitHubApp, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
+import type { Environment, GitHubApp, SecretGrant, SessionOrigin } from "@/api";
 import type { BotEventOutcome, ModelConfig, SessionSummaryView } from "@lightspeed-ai/sdk";
 import { activeRun, appendExchange, appendScriptedRun, closeSession, hurryRun, newSession, refreshDemoCompactionView, startRun } from "../engine";
 import { type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
@@ -1317,7 +1317,7 @@ function seedEnvironments(universe: UniverseState): void {
 }
 
 // ---------------------------------------------------------------------------
-// MCP servers, secrets, GitHub App, models, setups
+// MCP servers, secrets, GitHub App, models
 // ---------------------------------------------------------------------------
 
 function seedIntegrations(universe: UniverseState): void {
@@ -1530,19 +1530,6 @@ function seedIntegrations(universe: UniverseState): void {
     ],
   };
 
-  const configurator: UniverseSetup = {
-    id: "configurator",
-    name: "Configurator",
-    description: "An MCP server that lets coding agents configure this universe: profiles, MCP servers, environments, and bots, with a scoped Platform token.",
-    version: 4,
-    available: false,
-    status: "unavailable",
-    installedVersion: 4,
-    resources: {
-      serverId: "configurator",
-    },
-  };
-  universe.setups.push(configurator);
 }
 
 // ---------------------------------------------------------------------------

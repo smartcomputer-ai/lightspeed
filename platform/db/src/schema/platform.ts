@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { apikey, organization, user } from "./auth.js";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -112,63 +112,10 @@ export const credentialBindings = pgTable("credential_bindings", {
   index("credential_bindings_service_user_idx").on(table.serviceUserId),
 ]);
 
-export type UniverseSetupState = {
-  previous?: { serviceUserId?: string; credentialId?: string; grantId?: string; serverId?: string };
-  serviceUserId?: string;
-  credentialId?: string;
-  grantId?: string;
-  serverId?: string;
-};
-
-/// Provenance for platform-managed, multi-resource universe setups. Engine
-/// registries remain authoritative; this row only records which resources an
-/// installation owns so retries can repair safely without persisting secrets.
-export const universeSetupInstallations = pgTable(
-  "universe_setup_installations",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    universeId: uuid("universe_id")
-      .notNull()
-      .references(() => universes.id, { onDelete: "cascade" }),
-    setupId: text("setup_id").notNull(),
-    installedVersion: integer("installed_version").default(0).notNull(),
-    status: text("status", { enum: ["installing", "ready", "failed"] })
-      .default("installing")
-      .notNull(),
-    state: jsonb("state").$type<UniverseSetupState>().default({}).notNull(),
-    error: text("error"),
-    installedByUserId: text("installed_by_user_id").references(() => user.id, {
-      onDelete: "set null",
-    }),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    uniqueIndex("universe_setup_installations_universe_setup_idx").on(
-      t.universeId,
-      t.setupId,
-    ),
-  ],
-);
-
-export const universesRelations = relations(universes, ({ one, many }) => ({
+export const universesRelations = relations(universes, ({ one }) => ({
   organization: one(organization, {
     fields: [universes.organizationId],
     references: [organization.id],
   }),
-  setupInstallations: many(universeSetupInstallations),
 }));
 
-export const universeSetupInstallationsRelations = relations(
-  universeSetupInstallations,
-  ({ one }) => ({
-    universe: one(universes, {
-      fields: [universeSetupInstallations.universeId],
-      references: [universes.id],
-    }),
-    installedBy: one(user, {
-      fields: [universeSetupInstallations.installedByUserId],
-      references: [user.id],
-    }),
-  }),
-);

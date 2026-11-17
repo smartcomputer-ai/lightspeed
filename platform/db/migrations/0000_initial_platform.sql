@@ -186,19 +186,6 @@ CREATE TABLE "universe_grants" (
 	CONSTRAINT "universe_grants_one_principal" CHECK (("universe_grants"."user_id" IS NOT NULL) <> ("universe_grants"."service_user_id" IS NOT NULL))
 );
 --> statement-breakpoint
-CREATE TABLE "universe_setup_installations" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"universe_id" uuid NOT NULL,
-	"setup_id" text NOT NULL,
-	"installed_version" integer DEFAULT 0 NOT NULL,
-	"status" text DEFAULT 'installing' NOT NULL,
-	"state" jsonb DEFAULT '{}'::jsonb NOT NULL,
-	"error" text,
-	"installed_by_user_id" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "universes" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" text NOT NULL,
@@ -233,8 +220,6 @@ ALTER TABLE "service_users" ADD CONSTRAINT "service_users_organization_id_organi
 ALTER TABLE "universe_grants" ADD CONSTRAINT "universe_grants_universe_id_universes_id_fk" FOREIGN KEY ("universe_id") REFERENCES "public"."universes"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "universe_grants" ADD CONSTRAINT "universe_grants_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "universe_grants" ADD CONSTRAINT "universe_grants_service_user_id_service_users_id_fk" FOREIGN KEY ("service_user_id") REFERENCES "public"."service_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "universe_setup_installations" ADD CONSTRAINT "universe_setup_installations_universe_id_universes_id_fk" FOREIGN KEY ("universe_id") REFERENCES "public"."universes"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "universe_setup_installations" ADD CONSTRAINT "universe_setup_installations_installed_by_user_id_user_id_fk" FOREIGN KEY ("installed_by_user_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "universes" ADD CONSTRAINT "universes_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "account_userId_idx" ON "account" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "apikey_config_idx" ON "apikey" USING btree ("config_id");--> statement-breakpoint
@@ -257,5 +242,4 @@ CREATE INDEX "identity_audit_created_idx" ON "identity_audit" USING btree ("crea
 CREATE INDEX "service_users_organization_idx" ON "service_users" USING btree ("organization_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "service_users_organization_name_idx" ON "service_users" USING btree ("organization_id","name");--> statement-breakpoint
 CREATE UNIQUE INDEX "universe_grants_user_idx" ON "universe_grants" USING btree ("universe_id","user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "universe_grants_service_user_idx" ON "universe_grants" USING btree ("universe_id","service_user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "universe_setup_installations_universe_setup_idx" ON "universe_setup_installations" USING btree ("universe_id","setup_id");
+CREATE UNIQUE INDEX "universe_grants_service_user_idx" ON "universe_grants" USING btree ("universe_id","service_user_id");

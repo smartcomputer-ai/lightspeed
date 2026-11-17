@@ -401,16 +401,11 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` | Unset | GitHub login client ID. GitHub login is enabled only when both GitHub variables are present and OIDC is absent. |
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET` | Unset | GitHub login client secret. |
 | `LIGHTSPEED_API_URL` | Unset | Runtime endpoint used with the Platform API token. Per-universe overrides must match it exactly. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` | Unset | Configurator MCP endpoint installed by the organization-admin setup flow. Set this to enable the template. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK` | `false` | Permit the installed Configurator MCP connection to reach a private endpoint. Enabled by the local development launcher. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` | `33554432` (32 MiB) | Total file content one workspace upload may carry, from 1 byte to 256 MiB. The request body limit follows at 1.5 times this value (at least 1 MiB) for base64 and paths. The web UI reads the effective value, so browser and server agree. An upload is held in memory while it is stored, so raising this raises the Platform's peak memory per upload. Each file reaches the runtime in its own request: a single file above about 47 MiB also needs a larger `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` on the runtime. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES` | `10000` | Files and folders one workspace upload may contain, from 1 to 1,000,000. |
 | `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` | Empty list | Comma-separated internal connector-host health base URLs (`/healthz` reports every served account) aggregated for Platform administrators. |
 | `LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT` | unset | Development only: `lightspeed-envd` endpoint offered as the default when registering an external environment. Set by `./dev.sh`; never in deployed configuration. |
 | `LIGHTSPEED_PLATFORM_DEV_SEED` | `false` (`true` in the authenticated full dev profile) | Development only: ensure the Test universe and Admin, Operator, Contributor, Viewer logins at startup. New logins share the bootstrap Admin password; existing passwords are preserved. |
-
-Remove the retired `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER`
-from Platform configuration. Setting it to `true` prevents startup.
 
 ### Platform settings
 
@@ -462,8 +457,8 @@ authority and must not be installed for an agent. The host shares the
 
 ## Configurator MCP
 
-Platform Configurator setup uses a restricted service-user key. The full and
-platform development profiles start Configurator in authenticated mode against
+Clients connect to Configurator with a restricted Platform API key. The full
+and platform development profiles start Configurator in authenticated mode against
 Platform at port 3000. Do not give an agent a runtime infrastructure token.
 The defaults below describe standalone service startup.
 

@@ -59,26 +59,6 @@ for (const suffix of ["a", "b"]) {
 }
 const [a, b] = created;
 assert(a && b);
-// Exercise the managed installation path, including credential rotation and
-// discovery using the brokered grant stored on the runtime MCP server.
-const setupPath = `/api/ui/universes/${a.id}/setups`;
-const adminRuntime = new LightspeedClient({ endpoint: origin, headers: { cookie: admin.cookie, origin }, universe: a.lightspeedUniverseId });
-let previousGrant: string | undefined;
-for (let attempt = 0; attempt < 2; attempt += 1) {
-  const installed = await (await expectStatus(await request(`${setupPath}/configurator/install`, { cookie: admin.cookie, method: "POST" }), 200)).json() as { status: string; resources: { grantId: string; serverId: string } };
-  assert.equal(installed.status, "ready");
-  assert.deepEqual(Object.keys(installed).sort(), ["available", "description", "id", "installedVersion", "name", "resources", "status", "version"].sort());
-  assert.equal(installed.resources.serverId, "configurator");
-  assert.deepEqual(Object.keys(installed.resources).sort(), ["grantId", "serverId"]);
-  assert.notEqual(installed.resources.grantId, previousGrant);
-  previousGrant = installed.resources.grantId;
-  const listed = await (await expectStatus(await request(setupPath, { cookie: admin.cookie }), 200)).json() as Array<{ status: string }>;
-  assert.equal(listed[0]?.status, "ready");
-}
-// Discover after rotation, respecting the runtime's per-server discovery cooldown.
-const discovered = await adminRuntime.call("mcp/servers/tools/discover", { serverId: "configurator" });
-assert.equal(discovered.status, "success", "the rotated managed credential must authenticate actual MCP discovery");
-if (discovered.status === "success") assert(discovered.tools.some(tool => tool.name === "lightspeed_profiles_list"));
 const readOnly = await operatorApi.platform.createPersonalApiKey({ name: `${prefix}-sdk`, restrictions: { readOnly: true, organizationIds: [organization.id], universeIds: [a.lightspeedUniverseId] } });
 const scoped = new LightspeedClient({ endpoint: origin, token: readOnly.secret, universe: a.lightspeedUniverseId });
 assert.equal((await scoped.initialize()).runtime, "platform");

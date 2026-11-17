@@ -966,15 +966,6 @@ function seedIntegrations(universe: UniverseState): void {
     ],
   };
 
-  universe.setups.push({
-    id: "configurator",
-    name: "Configurator",
-    description:
-      "Creates a dedicated credential, registers the Configurator MCP server, and adds a ready-to-use profile for managing this universe.",
-    version: 3,
-    available: false,
-    status: "unavailable",
-  });
 }
 
 // ---------------------------------------------------------------------------

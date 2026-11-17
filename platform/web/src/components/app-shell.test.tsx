@@ -83,11 +83,11 @@ it.each(["viewer", "contributor"])("shows a %s the work, the setup and readable 
   });
 });
 
-it("adds credentials, channels and templates for an Operator", async () => {
+it("adds credentials and channels for an Operator", async () => {
   expect(await sidebarFor("operator")).toEqual({
     "": WORK,
     Setup: [...SETUP, "Credentials"],
-    Settings: ["Channels", "Templates"],
+    Settings: ["Channels"],
   });
 });
 
@@ -95,25 +95,25 @@ it("gives an Owner the universe's own settings and members in its menu", async (
   expect(await sidebarFor("owner")).toEqual({
     "": WORK,
     Setup: [...SETUP, "Credentials"],
-    Settings: ["General", "Members", "Channels", "Templates"],
+    Settings: ["General", "Members", "Channels"],
   });
 });
 
 it("keeps settings and members out of an Operator's menu", async () => {
-  expect(await sidebarFor("operator")).toMatchObject({ Settings: ["Channels", "Templates"] });
+  expect(await sidebarFor("operator")).toMatchObject({ Settings: ["Channels"] });
 });
 
 it("leaves switched-off channels out of the menu", async () => {
   expect(await sidebarFor("owner", { bots: true, channels: false })).toMatchObject({
     "": WORK,
-    Settings: ["General", "Members", "Templates"],
+    Settings: ["General", "Members"],
   });
 });
 
 it("leaves bots, and the channels they need, out of the menu", async () => {
   expect(await sidebarFor("owner", { bots: false, channels: false })).toMatchObject({
     "": ["Sessions", "Workspaces"],
-    Settings: ["General", "Members", "Templates"],
+    Settings: ["General", "Members"],
   });
 });
 
@@ -148,7 +148,7 @@ it("links each page at its flat route", async () => {
     "/u/test/bots", "/u/test/sessions", "/u/test/workspaces",
     "/u/test/profiles", "/u/test/environments", "/u/test/mcp-servers", "/u/test/models",
     "/u/test/credentials",
-    "/u/test/settings/general", "/u/test/settings/members", "/u/test/settings/channels", "/u/test/settings/templates",
+    "/u/test/settings/general", "/u/test/settings/members", "/u/test/settings/channels",
   ]);
 });
 

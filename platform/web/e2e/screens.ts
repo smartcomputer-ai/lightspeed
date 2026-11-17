@@ -31,7 +31,6 @@ export const SCREENS: Screen[] = [
   { id: "members", path: `${factory}/members` },
   { id: "settings-general", path: `${factory}/settings/general` },
   { id: "settings-channels", path: `${factory}/settings/channels` },
-  { id: "settings-templates", path: `${factory}/settings/templates` },
   { id: "admin-users", path: "admin/users" },
   { id: "admin-audit", path: "admin/audit" },
   { id: "admin-universes", path: "admin/universes" },

@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, TemplateIcon, WorkspaceIcon } from "@/icons";
+import { BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, MemberIcon, ModelIcon, ProfileIcon, SessionIcon, SettingsIcon, WorkspaceIcon } from "@/icons";
 import { Navigate } from "react-router-dom";
 import type { FeatureKey, FeatureStates } from "@lightspeed-ai/platform-shared";
 import type { UniverseAction } from "@lightspeed-ai/platform-shared";
@@ -36,7 +36,6 @@ const SETTINGS_NAV: UniverseNavItem[] = [
   { path: "settings/general", label: "General", icon: SettingsIcon, action: "administer" },
   { path: "settings/members", label: "Members", icon: MemberIcon, action: "administer" },
   { path: "settings/channels", label: "Channels", icon: ChannelIcon, action: "configureResource", feature: "channels" },
-  { path: "settings/templates", label: "Templates", icon: TemplateIcon, action: "configureResource" },
 ];
 
 /// The work itself, the setup agents use (including outbound credentials),

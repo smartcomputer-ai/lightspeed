@@ -16,7 +16,6 @@ import { botRoutes } from "./routes/bots.js";
 import { channelAccountAdminRoutes, channelUniverseRoutes } from "./routes/channel-accounts.js";
 import { environmentDeploymentRoutes } from "./routes/environment-deployment.js";
 import { gatewayRoutes } from "./routes/gateway.js";
-import { setupRoutes } from "./routes/setups.js";
 import { universeRoutes } from "./routes/universes.js";
 import { registerWebApp } from "./static.js";
 import { sessionAllows } from "./context.js";
@@ -103,7 +102,6 @@ export function buildApp(ctx: AppContext) {
   });
 
   api.route("/universes", universeRoutes(ctx));
-  api.route("/universes", setupRoutes(ctx));
   api.route("/universes", gatewayRoutes(ctx));
   api.route("/universes", botRoutes(ctx));
   api.route("/universes", channelUniverseRoutes(ctx));

@@ -37,7 +37,6 @@ import { ModelsPage } from "@/pages/ModelsPage";
 import { SettingsPage, SettingsRedirect } from "@/pages/SettingsPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SessionsPage } from "@/pages/SessionsPage";
-import { SetupsPage } from "@/pages/SetupsPage";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
@@ -166,10 +165,6 @@ export function App() {
         <Route
           path="u/:handle/settings/channels"
           element={<FeatureGate feature="channels"><ChannelsPage /></FeatureGate>}
-        />
-        <Route
-          path="u/:handle/settings/templates"
-          element={<SetupsPage />}
         />
         <Route element={<AdminGate />}>
           <Route path="admin" element={<AdminIndexRedirect />} />

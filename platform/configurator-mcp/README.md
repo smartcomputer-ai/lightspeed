@@ -8,9 +8,8 @@ exposed.
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),
 covers the service and its current availability.
 
-The Platform setup installs a universe-scoped service-user key and a managed
-MCP server connection. `./dev.sh platform` and `./dev.sh full` start the
-facade with Platform as its upstream. Keep direct runtime credentials for
+Clients connect with a Platform API key. `./dev.sh platform` and
+`./dev.sh full` start the facade with Platform as its upstream. Keep direct runtime credentials for
 trusted infrastructure: a runtime token has full deployment authority.
 
 `tool-filter.json` contains the exact universe methods and params omitted from
@@ -18,9 +17,8 @@ generation. The default surface excludes the `integration` param of `session/sta
 environment jobs, environment registration keys, and the redundant Lightspeed
 connection probe and binary upload operation.
 Edit that file and run `npm run generate` to tune the advertised surface.
-External clients see the generated tool set. The managed Platform setup
-restricts the tools an agent sees separately from the operations its key can
-call.
+Clients see the generated tool set; the key's restrictions decide which
+calls succeed.
 Tool descriptions come from the canonical Rust operation catalog and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.
@@ -60,10 +58,8 @@ is kept here for service-local convenience.
 | `LIGHTSPEED_CONFIGURATOR_MCP_UPSTREAM_TIMEOUT_MS` | `60000` | Per-probe and per-tool upstream timeout |
 | `LIGHTSPEED_CONFIGURATOR_MCP_SHUTDOWN_TIMEOUT_MS` | `10000` | Grace period before open HTTP connections are closed |
 
-For managed use, configure the Platform `/api/v1` URL as the upstream and
-set `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` on Platform to the facade's
-`/mcp` URL. In the universe's **Settings → Templates**, an Organization Admin
-or Platform Admin can install **Configurator** and rotate its key.
+With Platform, configure its `/api/v1` URL as the upstream and connect
+clients with Platform API keys.
 
 Authenticated requests send the upstream credential as a bearer token.
 Configurator verifies it through the upstream's `/connection` endpoint before
