@@ -98,6 +98,10 @@ await adminApi.platform.putUniverseGrant({ universe: a.id, principal: { kind: "u
 await adminApi.platform.removeOrganizationMember({ organizationId: organization.id, userId: operator.id });
 await expectStatus(await request(`/api/v1/universes/${a.lightspeedUniverseId}/profiles`, { token: writer.secret }), 404);
 await adminApi.platform.putOrganizationMember({ organizationId: organization.id, userId: operator.id, role: "creator" });
+// Removing the member clears their grants. Restore them for the SDK upload and isolation checks.
+for (const universe of created) {
+  await adminApi.platform.putUniverseGrant({ universe: universe.id, principal: { kind: "user", id: operator.id }, role: "owner" });
+}
 
 // ServiceUser creation authority is organization-bound and stops when disabled.
 const serviceUser = (await adminApi.platform.createServiceUser({ organizationId: organization.id, name: `${prefix}-app`, role: "creator" })).serviceUser;
