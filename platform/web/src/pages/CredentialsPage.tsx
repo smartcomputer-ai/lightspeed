@@ -152,7 +152,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
     <>
       <PageHeader
         title="Credentials"
-        description="Reusable tokens and secrets owned by this universe. A brokered credential never leaves Lightspeed, which attaches it to its own requests to MCP servers. A retrievable credential can also be assigned to an environment, whose processes receive its value, and leased by trusted services."
+        description="Tokens and secrets that agents in this universe use to connect to external services. Manage keys for accessing Lightspeed under Your profile → Personal API keys, or Admin → API keys. A brokered credential stays in Lightspeed; a retrievable credential can also be assigned to an environment or leased by trusted services."
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>

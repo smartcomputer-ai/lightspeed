@@ -21,7 +21,7 @@ the local full stack includes it.
 
 Bots are a feature each universe switches on. A new universe starts with
 **Bots** and **Channels** off: a universe Owner turns them on under
-**Settings → General → Features**, and Channels need Bots. While a switch is
+**Admin → Universes → select universe → Settings and lifecycle → Features**, and Channels need Bots. While a switch is
 off, the Platform hides the feature's pages and refuses its requests from
 every member, Owners included. The switch governs what people do through the
 Platform. It does not stop a bot that is already running, and a caller holding

@@ -8,7 +8,8 @@ import type { EngineUniverse, Universe, UniverseReconcile } from "@/api";
 import { AdminUniversesPage } from "./AdminUniversesPage";
 import { waitForUi } from "@/test/wait-for-ui";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), platformAdmin: true }));
+vi.mock("@/lib/permissions", () => ({ usePlatformAdmin: () => mocks.platformAdmin }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (id: string, overrides: Partial<Universe> = {}): Universe => ({
@@ -26,6 +27,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
+  mocks.platformAdmin = true;
   universes = [
     universe("zeta", { name: "Zeta", role: "owner" }),
     universe("alpha", { name: "Alpha", status: "archived" }),
@@ -203,4 +205,17 @@ it("keeps protected universes unavailable for direct administrative deletion", a
   universes[0]!.protected = true;
   await show();
   expect(buttonIn(row("Zeta"), "Delete")?.disabled).toBe(true);
+});
+
+
+it("shows only manageable universes and avoids deployment endpoints for an Owner", async () => {
+  mocks.platformAdmin = false;
+  await show();
+  expect(rows()).toHaveLength(1);
+  expect(row("Zeta")).toBeDefined();
+  expect(buttonIn(container, "Sync from runtime")).toBeUndefined();
+  expect(buttonIn(row("Zeta"), "Deleted sessions")).toBeUndefined();
+  expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
+  await act(async () => buttonIn(row("Zeta"), "Manage")!.click());
+  await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/admin/universes/zeta/access"));
 });

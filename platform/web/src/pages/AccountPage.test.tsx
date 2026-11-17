@@ -83,7 +83,8 @@ it("leaves a company-managed profile read-only and hides the password form", asy
   expect(input("account-name")!.disabled).toBe(true);
   expect(button("Save")!.disabled).toBe(true);
   expect(container.textContent).toContain("managed by your company");
-  expect(container.querySelector("#security")).toBeNull();
+  expect(container.querySelector("#security")!.textContent).toContain("managed by your company");
+  expect(input("current-password")).toBeNull();
 });
 
 it("refuses mismatched new passwords without calling the server", async () => {
@@ -126,5 +127,17 @@ it.each([
 ] as const)("offers the password form only where it applies: $name", async ({ config, user, shown }) => {
   mocks.config = { ...mocks.config, ...config };
   await show(user);
-  expect(container.querySelector("#security") !== null).toBe(shown);
+  expect(container.querySelector("#security")).not.toBeNull();
+  expect(input("current-password") !== null).toBe(shown);
+});
+
+
+it("exposes a selectable user ID for account membership without making it editable", async () => {
+  await show();
+  const id = input("account-user-id")!;
+  expect(id.value).toBe(local.id);
+  expect(id.readOnly).toBe(true);
+  await act(async () => id.focus());
+  expect(id.selectionStart).toBe(0);
+  expect(id.selectionEnd).toBe(local.id.length);
 });

@@ -18,14 +18,16 @@ export function memberships(universes: Universe[] | undefined): Universe[] {
   return (universes ?? []).filter((u) => u.role != null && u.status === "active");
 }
 
-/// Resolves the /u/:handle path segment against the loaded list, from a page
-/// or from the shell around it.
+/// Resolves the working or administrative universe route against the same
+/// authorized inventory.
 export function useActiveUniverse(): {
   universe: Universe | undefined;
   handle: string | undefined;
   isLoading: boolean;
 } {
-  const handle = useMatch("/u/:handle/*")?.params.handle;
+  const work = useMatch("/u/:handle/*");
+  const admin = useMatch("/admin/universes/:handle/*");
+  const handle = work?.params.handle ?? admin?.params.handle;
   const universes = useUniverses();
   return {
     universe: handle ? universes.data?.find((u) => u.status !== "deleting" && u.handle === handle) : undefined,

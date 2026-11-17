@@ -69,7 +69,7 @@ Restart the affected process to apply an environment-file change.
 Session logs can include `universe_id`, `session_id`, `workflow_id`,
 `temporal_run_id`, `lightspeed_run_id`, and `session_head_seq`. A session's
 Temporal workflow ID is `<universe-uuid>/<session-id>`. Use the runtime UUID,
-which is visible in **Settings → General → Identifiers**, rather than the
+which is visible in **Admin → Universes → select universe → Settings and lifecycle → Identifiers**, rather than the
 handle in the Platform URL.
 
 The Temporal execution ID and Lightspeed run ID identify different things.

@@ -218,7 +218,7 @@ and the Platform refuses bot and channel requests from members while a switch
 is off, where it used to only hide the pages. The new default applies to
 existing universes too: after the upgrade, a universe that never stored its
 own choice has both features off, and its bot and channel pages stay hidden
-until an Owner turns them on under **Settings → General → Features**. Do that
+until an Owner turns them on under **Admin → Universes → select universe → Settings and lifecycle → Features**. Do that
 in every universe that uses bots or chat channels. Bots that are already
 running keep running in the runtime during that time, because the switch
 governs only what members do through the Platform. A deployment that uses

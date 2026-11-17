@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Universe } from "@/api";
 import { DEFAULT_UNIVERSE_ICON, RETIRED_UNIVERSE_ICONS, UNIVERSE_ICON_REPLACEMENTS, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
+import { AdminUniverseSettingsPage } from "@/pages/AdminUniverseSettingsPage";
 import { UniverseAppearanceCard, label } from "./universe-appearance-card";
 import { UNIVERSE_ILLUSTRATIONS, offeredUniverseIcon } from "./universe-illustrations";
 import { waitForUi } from "@/test/wait-for-ui";
@@ -127,14 +127,14 @@ it("saves without a save or reset button, and not for the current choice", async
 
 it.each(["viewer", "contributor", "operator"] as const)("hides General settings from a %s", async role => {
   mocks.universe.role = role;
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><GeneralSettingsPage admin={false} /></PermissionIdentityProvider>);
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><AdminUniverseSettingsPage admin={false} /></PermissionIdentityProvider>);
   expect(container.textContent).not.toContain("Appearance");
   expect(container.querySelector("form")).toBeNull();
 });
 
 it.each([false, true])("offers appearance on General settings for an authorized admin (platform admin: %s)", async platformAdmin => {
   mocks.universe.role = platformAdmin ? null : "owner";
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><GeneralSettingsPage admin={platformAdmin} /></PermissionIdentityProvider>);
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><AdminUniverseSettingsPage admin={platformAdmin} /></PermissionIdentityProvider>);
   expect(container.textContent).toContain("Appearance");
   expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`)).toBeDefined();
 });

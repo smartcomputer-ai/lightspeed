@@ -24,7 +24,7 @@ For sign-in and membership, see [People and roles](../access-and-security/people
 Creators and Account Admins create universes using **New universe**, selecting
 an account and an initial Owner. Platform Admins can provision for any account
 with an explicit initial Owner. Creation observes the account quota and
-protection policy. Owners grant existing account members access on **Members**.
+protection policy. Owners grant existing account members access on **Admin → Universes → Access**.
 Creating a runtime universe directly through the API or server CLI creates
 only the runtime record; use **Adopt** to connect it to the Platform. Adoption
 keeps the universe's handle. The handle is chosen at creation, or derived from
@@ -38,7 +38,7 @@ records the association in the Platform database. Because these are separate
 systems, an interrupted operation or a partial restore can leave one side
 without the other.
 
-**Platform admin → Universes** reconciles the configured runtime inventory.
+**Admin → Universes** reconciles the configured runtime inventory.
 **Adopt** connects an existing runtime universe to a selected account with an
 explicit initial Owner, without replacing its contents. **Create in engine** creates an empty missing runtime
 universe. It cannot restore deleted sessions or files, or recreate a universe whose
@@ -60,7 +60,7 @@ step, not an access-revocation or shutdown mechanism.
 
 Deletion does not require archiving, closing sessions, stopping bots, or closing
 environments first. Retain any content you need before proceeding. A Platform
-administrator selects **Delete** under **Platform admin → Universes** and types
+administrator selects **Delete** under **Admin → Universes** and types
 the universe's handle to confirm. Through the CLI:
 
 ```bash

@@ -72,7 +72,7 @@ The Platform also keeps a durable access history for company admission and
 admin-status changes, emergency sign-ins, suspension, session revocation,
 local membership edits and successful permanent session
 deletion through Platform routes. Platform admins can view the latest 100 records
-under **Platform admin → Audit log**. Records contain identifiers, action, time,
+under **Admin → Audit log**. Records contain identifiers, action, time,
 outcome and safe details; permanent deletion includes the actor, universe, target
 session and all removed session IDs. Records survive deletion of users and
 sessions. Provider tokens and passwords are never included.

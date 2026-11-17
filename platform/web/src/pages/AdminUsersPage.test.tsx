@@ -22,7 +22,7 @@ async function settle() { for (let i = 0; i < 5; i++) await act(async () => { aw
 it("shows company access and provides suspension without local role or password changes", async () => {
   await act(async () => root.render(<QueryClientProvider client={client}><AdminUsersPage currentUser={{ id: "admin", name: "Admin", email: "admin@example.test" }} /></QueryClientProvider>));
   await settle();
-  expect(container.textContent).toContain("Company account");
+  expect(container.textContent).toContain("Company sign-in");
   expect(container.textContent).not.toContain("Recent audit events");
   expect(container.textContent).toContain("Last company check");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit user@example.test"]')!.click());
@@ -30,6 +30,8 @@ it("shows company access and provides suspension without local role or password 
   const dialog = document.querySelector('[role="dialog"]')!;
   expect(dialog.textContent).toContain("managed by the company");
   expect(dialog.querySelector<HTMLInputElement>("#edit-user-email")!.disabled).toBe(true);
+  expect(dialog.querySelector<HTMLInputElement>("#edit-user-id")!.value).toBe("company-user");
+  expect(dialog.querySelector<HTMLInputElement>("#edit-user-id")!.readOnly).toBe(true);
   expect(dialog.querySelector('input[type="password"]')).toBeNull();
   const suspend = [...dialog.querySelectorAll("button")].find((b) => b.textContent?.includes("Suspend access"))!;
   await act(async () => suspend.click());

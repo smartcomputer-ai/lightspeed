@@ -559,6 +559,38 @@ broader request auditing remain follow-up work.
 
 ## Validation and progress
 
+- 2026-11-17: unified administrative navigation under **Admin**, above the
+  working universe. Accounts and application-key management are scoped to
+  administered accounts; Universe Owners can administer their universes without
+  deployment privileges. Deployment-wide pages remain Platform Admin-only.
+  Universe grants and lifecycle/settings moved to `/admin/universes/:handle`,
+  with the old Members and General settings routes removed. Accounts use an
+  explicit inventory/detail flow rather than an implicit active account. Add,
+  edit and revocation workflows use viewport-bounded scrolling dialogs; existing
+  Admin creation dialogs were bounded as well. Application-key inventory is
+  filtered by an explicitly selected account and optionally an application,
+  reusing existing APIs. Personal keys stay with the user's profile.
+  The full web suite passed (1,552 tests), followed by focused checks for final
+  dialog refinements. Type checking, production and demo builds, and documentation
+  validation passed. Live browser checks covered application/key creation,
+  revocation, universe grant add/remove, account scoping and denied deployment
+  access, plus dialog and page scrolling at 390×500. Temporary keys/grants were
+  removed and the test application disabled after validation.
+
+- 2026-11-17: reviewed the authentication UI against the account model.
+  Personal keys live under Your profile, application keys under their named
+  account application, and universe Access manages people/application grants.
+  Outbound Credentials now sits under Setup. Added named account/universe key
+  restrictions, accurate expiry/disabled states, one-time secret dismissal
+  without query or mutation caching, account deep links, and working profile
+  anchors for local and company-managed users. Account and universe role copy
+  distinguishes explicit grants from administrative and configured-policy
+  access. Platform admin now distinguishes users from accounts and exposes user
+  IDs for membership management. All 1,528 web tests, web type checking, production build and documentation
+  checks passed. Live browser checks cover personal/application key creation and
+  revocation, application disabling, account links, non-admin controls, and desktop
+  and mobile layouts. Disposable keys were revoked after validation.
+
 - 2026-11-17: cleanup audit removed per-universe `gatewayUrl` from the active
   schema and public API; Platform schema revision 8 drops its unused column.
   Every universe uses the configured deployment runtime. Removed obsolete

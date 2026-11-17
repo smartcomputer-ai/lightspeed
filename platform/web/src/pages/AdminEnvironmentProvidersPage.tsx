@@ -209,7 +209,7 @@ export function AdminEnvironmentProvidersPage() {
                       <DeleteIcon />
                       Delete
                     </AlertDialogTrigger>
-                    <AlertDialogContent>
+                    <AlertDialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
                       <AlertDialogHeader>
                         <AlertDialogTitle>
                           Delete provider {provider.displayName ?? provider.providerId}?
@@ -319,7 +319,7 @@ function BindingRow({
           >
             Delete
           </AlertDialogTrigger>
-          <AlertDialogContent>
+          <AlertDialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
             <AlertDialogHeader>
               <AlertDialogTitle>Unbind {universe.name}?</AlertDialogTitle>
               <AlertDialogDescription>
@@ -402,7 +402,7 @@ function ProviderDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {editing ? `Edit ${provider.displayName ?? provider.providerId}` : "Register environment provider"}
@@ -561,7 +561,7 @@ function BindUniverseDialog({
 
   return (
     <Dialog open={provider !== null} onOpenChange={(next) => { onOpenChange(next); if (!next) reset(); }}>
-      <DialogContent>
+      <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Bind a universe to {provider?.displayName ?? provider?.providerId}</DialogTitle>
           <DialogDescription>

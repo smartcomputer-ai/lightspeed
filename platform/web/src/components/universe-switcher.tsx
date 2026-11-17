@@ -260,7 +260,7 @@ export function NewUniverseDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent starscape warp={dialogWarp.warp}>
+      <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto" starscape warp={dialogWarp.warp}>
         <DialogHeader>
           <DialogTitle>New universe</DialogTitle>
           <DialogDescription>

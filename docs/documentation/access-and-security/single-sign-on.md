@@ -131,7 +131,7 @@ The provider may sign them in silently using an existing company session.
 Emergency password sessions have the same limit. A provider outage does not
 extend sessions or stop unexpired sessions from working.
 
-Under **Platform admin → Users**, admins can suspend a person, reinstate them,
+Under **Admin → Users**, admins can suspend a person, reinstate them,
 or sign out all their sessions. Suspension blocks new sign-ins and subsequent
 requests immediately and persists until an admin lifts it. Reinstatement
 requires a fresh login; it does not revive old sessions. Users shows identity
@@ -166,7 +166,7 @@ Before opening access, test the actual provider registration:
 1. Sign in with ordinary access, admin access alone, and neither entitlement.
    The first two succeed with the corresponding Platform role; the third is
    refused. An ordinary user starts without universe memberships.
-2. Add the ordinary user to a universe on **Members**, change their role, and
+2. Add the ordinary user to a universe on **Admin → Universes → Access**, change their role, and
    sign in again. The local role applies on the next request and survives
    company sign-in.
 3. Verify internal sign-in and any supported external credentials/MFA flow.
@@ -182,7 +182,7 @@ Before opening access, test the actual provider registration:
    outage. Verify the separate secret-rotation procedure for any runtime token
    held by an offboarded operator.
 
-Platform admins can inspect **Platform admin → Audit log** for company
+Platform admins can inspect **Admin → Audit log** for company
 admission and admin-status changes, emergency sign-ins, suspension, session
 revocation and membership edits. Historical key-operation entries remain in
 the log after key management is removed. This small durable
@@ -202,6 +202,6 @@ entitlements, also check the JWT audience and subject. A valid company login
 without an application entitlement is still refused. An email already used by
 a local account must be resolved explicitly; email-based linking is disabled.
 
-If login succeeds but no universes appear, add the person through **Members**.
-Application admission grants no universe membership. A local suspension must
+If login succeeds but the expected universe does not appear, confirm the person
+belongs to its account under **Admin → Accounts**, then grant a role under **Admin → Universes → Access**. Sign-in admission alone does not grant access to shared universes. A local suspension must
 be lifted by a Platform admin even after the provider restores access.

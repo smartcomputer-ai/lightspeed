@@ -1,3 +1,5 @@
+import { AdminGate, AdminIndexRedirect } from "@/components/admin/admin-gate";
+import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
 import { AccountsPage } from "@/pages/AccountsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
@@ -20,13 +22,13 @@ import { BotsPage } from "@/pages/BotsPage";
 import { ChannelsPage } from "@/pages/ChannelsPage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
-import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
+import { AdminUniverseSettingsPage } from "@/pages/AdminUniverseSettingsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { LoginPage } from "@/pages/LoginPage";
 import { DevicePage } from "@/pages/DevicePage";
 import { deviceLoginPath, loginReturnPath } from "@/lib/login-return";
 import { McpServersPage } from "@/pages/McpServersPage";
-import { MembersPage } from "@/pages/MembersPage";
+import { AdminUniverseAccessPage } from "@/pages/AdminUniverseAccessPage";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { PreferencesPage } from "@/pages/PreferencesPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
@@ -119,7 +121,6 @@ export function App() {
         </UserPreferencesProvider>
       }>
         <Route index element={<HomeRedirect admin={admin} />} />
-        <Route path="accounts" element={<AccountsPage />} />
         <Route path="u/:handle" element={<UniverseIndexRedirect />} />
         <Route path="u/:handle/sessions" element={<SessionsPage admin={admin} />} />
         <Route
@@ -154,13 +155,8 @@ export function App() {
         <Route path="u/:handle/models" element={<ModelsPage admin={admin} />} />
         <Route path="u/:handle/environments" element={<EnvironmentsPage admin={admin} />} />
         <Route path="u/:handle/mcp-servers" element={<McpServersPage admin={admin} />} />
-        <Route path="u/:handle/members" element={<MembersPage admin={admin} />} />
         <Route path="u/:handle/credentials" element={<CredentialsPage admin={admin} />} />
         <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
-        <Route
-          path="u/:handle/settings/general"
-          element={<GeneralSettingsPage admin={admin} />}
-        />
         <Route
           path="u/:handle/settings/channels"
           element={<FeatureGate feature="channels"><ChannelsPage admin={admin} /></FeatureGate>}
@@ -169,16 +165,27 @@ export function App() {
           path="u/:handle/settings/templates"
           element={<SetupsPage admin={admin} />}
         />
-        {admin && (
-          <>
-            <Route path="admin" element={<Navigate to="/admin/users" replace />} />
+        <Route element={<AdminGate />}>
+          <Route path="admin" element={<AdminIndexRedirect />} />
+          <Route element={<AdminGate scope="accounts" />}>
+            <Route path="admin/accounts" element={<AccountsPage />} />
+          </Route>
+          <Route element={<AdminGate scope="keys" />}>
+            <Route path="admin/api-keys" element={<AdminApiKeysPage />} />
+          </Route>
+          <Route element={<AdminGate scope="universes" />}>
+            <Route path="admin/universes" element={<AdminUniversesPage />} />
+            <Route path="admin/universes/:handle" element={<Navigate to="access" replace />} />
+            <Route path="admin/universes/:handle/access" element={<AdminUniverseAccessPage admin={admin} />} />
+            <Route path="admin/universes/:handle/settings" element={<AdminUniverseSettingsPage admin={admin} />} />
+          </Route>
+          <Route element={<AdminGate scope="platform" />}>
             <Route path="admin/audit" element={<AdminAuditPage />} />
             <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
-            <Route path="admin/universes" element={<AdminUniversesPage />} />
             <Route path="admin/channels" element={<AdminChannelsPage />} />
             <Route path="admin/environment-providers" element={<AdminEnvironmentProvidersPage />} />
-          </>
-        )}
+          </Route>
+        </Route>
         <Route path="account" element={<AccountPage user={user} />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="login" element={<Navigate to="/" replace />} />

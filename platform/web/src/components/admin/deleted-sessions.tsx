@@ -83,7 +83,7 @@ function DeletedSessionsContent({ universe, onClose }: { universe: Universe; onC
     setConfirmation({ ids: selectedIds, all: false });
   };
   return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
-    <DialogContent>
+    <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
       <DialogHeader><DialogTitle>Deleted sessions · {universe.name}</DialogTitle>
         <DialogDescription>These sessions are hidden from everyone in the universe. Select sessions to purge, or purge all deleted sessions in this universe.</DialogDescription>
       </DialogHeader>

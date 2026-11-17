@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { AdminIcon, DarkThemeIcon, LightThemeIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
+import { AdminIcon, DarkThemeIcon, LightThemeIcon, SecurityIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
 import type { SessionUser } from "@/auth";
 import { authClient } from "@/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -36,7 +36,7 @@ function initials(name: string): string {
   );
 }
 
-export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean }) {
+export function UserMenu({ user, canAdmin }: { user: SessionUser; canAdmin: boolean }) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
 
@@ -71,7 +71,10 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
               <UserIcon />
               Your profile
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/accounts")}><UserIcon />Accounts</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/account#api-keys")}>
+              <SecurityIcon />
+              Personal API keys
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate("/preferences")}>
               <SettingsIcon />
               Preferences
@@ -99,12 +102,12 @@ export function UserMenu({ user, admin }: { user: SessionUser; admin: boolean })
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            {admin && (
+            {canAdmin && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/admin/users")}>
+                <DropdownMenuItem onClick={() => navigate("/admin")}>
                   <AdminIcon />
-                  Platform admin
+                  Admin
                 </DropdownMenuItem>
               </>
             )}

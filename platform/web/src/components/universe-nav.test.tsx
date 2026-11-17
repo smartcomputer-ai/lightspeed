@@ -25,7 +25,7 @@ const DESTINATIONS: [string, string][] = [
   ["viewer", "/u/test/bots"],
   ["contributor", "/u/test/bots"],
   ["operator", "/u/test/settings/channels"],
-  ["owner", "/u/test/settings/general"],
+  ["owner", "/u/test/settings/channels"],
 ];
 
 it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {

@@ -18,11 +18,26 @@ export function AccountPage({ user }: { user: SessionUser }) {
   const config = useLoginConfig();
   return (
     <>
-      <PageHeader title="Your profile" description="Your profile, password, and personal API keys." />
+      <PageHeader title="Your profile" description="Your identity, sign-in settings, and personal API keys." />
       <div className="grid gap-6">
         <ProfileCard user={user} />
+        {user.identitySource !== "company" && config.data && config.data.password !== "off" && (!config.data.sso || user.emergencyAdmin) ? <PasswordCard /> : (
+          <Card id="security" className="scroll-mt-6">
+            <CardHeader>
+              <CardTitle>Sign-in</CardTitle>
+              <CardDescription>
+                {user.identitySource === "company"
+                  ? "Your profile and sign-in are managed by your company. Change your password with your identity provider."
+                  : config.error
+                    ? "Sign-in settings could not be loaded. Reload this page to try again."
+                    : !config.data
+                      ? "Loading sign-in settings…"
+                      : "Password changes are not available for your sign-in method on this deployment."}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
         <ApiKeysCard />
-        {user.identitySource === "company" ? <p className="text-sm text-muted-foreground">Your profile and sign-in are managed by your company.</p> : config.data?.password !== "off" && (!config.data?.sso || user.emergencyAdmin) && <PasswordCard />}
       </div>
     </>
   );
@@ -68,6 +83,11 @@ function ProfileCard({ user }: { user: SessionUser }) {
               onChange={(e) => setName(e.target.value)}
               required
             />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="account-user-id">User ID</FieldLabel>
+            <Input id="account-user-id" value={user.id} readOnly onFocus={(event) => event.currentTarget.select()} />
+            <FieldDescription>Share this ID with an account admin when they add you to an account.</FieldDescription>
           </Field>
           {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
           {save.isSuccess && <p className="text-sm text-muted-foreground">Saved.</p>}
@@ -124,8 +144,8 @@ function PasswordCard() {
   return (
     <Card id="security" className="scroll-mt-6">
       <CardHeader>
-        <CardTitle>Password</CardTitle>
-        <CardDescription>Other sessions are signed out after a change.</CardDescription>
+        <CardTitle>Sign-in</CardTitle>
+        <CardDescription>Change your password. Other sessions are signed out after a change.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={submit} className="grid max-w-md gap-4">

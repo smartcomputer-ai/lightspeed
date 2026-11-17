@@ -1,3 +1,5 @@
+import { DeleteUniverseDialog } from "@/components/admin/delete-universe-dialog";
+import { usePlatformAdmin } from "@/lib/permissions";
 import { platformApi, useAccounts } from "@/lib/platform-api";
 import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
 import { ReadError } from "@/components/read-error";
@@ -12,17 +14,6 @@ import {
   type UniverseReconcile,
   type UniverseHandleSyncResult,
 } from "@/api";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +50,9 @@ import { universeHome, useUniverses } from "@/lib/universes";
 /// updating cached runtime handles requires the explicit sync action.
 export function AdminUniversesPage() {
   const universes = useUniverses();
+  const platformAdmin = usePlatformAdmin();
+  const accounts = useAccounts();
+  const canCreate = platformAdmin || accounts.data?.accounts.some(account => account.enabled && (account.role === "admin" || account.role === "creator"));
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [deletedUniverse, setDeletedUniverse] = useState<Universe | null>(null);
@@ -67,6 +61,7 @@ export function AdminUniversesPage() {
 
   const reconcile = useQuery({
     queryKey: ["universes-reconcile"],
+    enabled: platformAdmin,
     queryFn: () => api<UniverseReconcile>("GET", "/api/ui/universes/reconcile"),
     refetchInterval: 5000,
   });
@@ -104,31 +99,32 @@ export function AdminUniversesPage() {
   });
 
   const rows = (universes.data ?? [])
+    .filter(universe => platformAdmin || universe.role === "owner")
     .map(universe => {
       const deletion = reconcile.data?.platform.find(row => row.id === universe.id)?.deletion ?? universe.deletion;
       return deletion ? { ...universe, deletion, status: "deleting" as const } : universe;
     })
     .sort((a, b) => a.name.localeCompare(b.name));
-  const orphans = reconcile.data?.orphans ?? [];
+  const orphans = platformAdmin ? reconcile.data?.orphans ?? [] : [];
 
   return (
     <>
       <PageHeader
         title="Universes"
-        description="Every universe on this deployment, including archived universes and deletions in progress."
+        description={platformAdmin ? "Every universe on this deployment, including archived universes and deletions in progress." : "Universes you administer as an Owner or Account Admin."}
         actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
+          <div className="flex flex-wrap items-center gap-2">
+            {platformAdmin && <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
               {syncHandles.isPending ? "Syncing…" : "Sync from runtime"}
-            </Button>
-            <Button onClick={() => setCreateOpen(true)}>
+            </Button>}
+            {canCreate && <Button onClick={() => setCreateOpen(true)}>
               <AddIcon data-icon="inline-start" />
               New universe
-            </Button>
+            </Button>}
           </div>
         }
       />
-      <DeletedSessionsDialog universe={deletedUniverse} onClose={() => setDeletedUniverse(null)} />
+      {platformAdmin && <DeletedSessionsDialog universe={deletedUniverse} onClose={() => setDeletedUniverse(null)} />}
       <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
       {syncHandles.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncHandles.error.message}</p>}
       {syncHandles.data && !syncHandles.isPending && !syncHandles.error && (
@@ -142,17 +138,18 @@ export function AdminUniversesPage() {
       {universes.error && (
         <ReadError error={universes.error} loading={!universes.data} />
       )}
-      {reconcile.error && (
+      {platformAdmin && reconcile.error && (
         <ReadError error={reconcile.error} loading={!reconcile.data} prefix="Engine reconciliation unavailable" className="mb-4 text-muted-foreground" />
       )}
-      {universes.data && (
+      {universes.data && rows.length === 0 && <p className="text-sm text-muted-foreground">You do not administer any universes yet.</p>}
+      {universes.data && rows.length > 0 && (
         <TableCard>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Universe</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Engine</TableHead>
+                {platformAdmin && <TableHead>Engine</TableHead>}
                 <TableHead>Your role</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-0" />
@@ -170,9 +167,9 @@ export function AdminUniversesPage() {
                     </Badge>
                     {universe.deletion && <p className="mt-1 text-xs text-muted-foreground">{universe.deletion.step}{universe.deletion.detail ? `: ${universe.deletion.detail}` : ""}</p>}
                   </TableCell>
-                  <TableCell>
+                  {platformAdmin && <TableCell>
                     <EngineBadge status={engineStatus.get(universe.id)} />
-                  </TableCell>
+                  </TableCell>}
                   <TableCell className="text-muted-foreground">
                     {universe.role ?? "—"}
                   </TableCell>
@@ -181,8 +178,9 @@ export function AdminUniversesPage() {
                   </TableCell>
                   <TableActionsCell>
                     {universe.status !== "deleting" && <>
-                      <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>
-                      {engineStatus.get(universe.id) === "missing" && (
+                      <Button variant="outline" size="sm" onClick={() => navigate(`/admin/universes/${encodeURIComponent(universe.handle)}/access`)}>Manage</Button>
+                      {platformAdmin && <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>}
+                      {platformAdmin && engineStatus.get(universe.id) === "missing" && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -280,7 +278,7 @@ export function AdminUniversesPage() {
           </TableCard>
         </section>
       )}
-      <AdoptDialog
+      {platformAdmin && <AdoptDialog
         key={adopting?.universeId ?? "closed"}
         orphan={adopting}
         onOpenChange={(open) => {
@@ -289,31 +287,11 @@ export function AdminUniversesPage() {
           }
         }}
         onAdopted={refresh}
-      />
+      />}
     </>
   );
 }
 
-function DeleteUniverseDialog({ name, handle, protected: protectedValue, onDelete }: { name: string; handle: string; protected?: boolean; onDelete: () => void }) {
-  const [confirmation, setConfirmation] = useState("");
-  return <AlertDialog onOpenChange={() => setConfirmation("")}>
-    <AlertDialogTrigger render={<Button variant="ghost" size="sm" className="text-destructive" disabled={protectedValue} title={protectedValue ? "Clear deletion protection in universe settings first" : undefined} />}>Delete</AlertDialogTrigger>
-    <AlertDialogContent>
-      <AlertDialogHeader>
-        <AlertDialogTitle>Permanently delete {name}?</AlertDialogTitle>
-        <AlertDialogDescription>Stops this universe immediately and removes its resources, members and stored content in the background. This cannot be undone.</AlertDialogDescription>
-      </AlertDialogHeader>
-      <Field>
-        <FieldLabel htmlFor={`delete-${handle}`}>Type {handle} to confirm</FieldLabel>
-        <Input id={`delete-${handle}`} value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" />
-      </Field>
-      <AlertDialogFooter>
-        <AlertDialogCancel>Cancel</AlertDialogCancel>
-        <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" disabled={confirmation !== handle} onClick={onDelete}>Delete permanently</AlertDialogAction>
-      </AlertDialogFooter>
-    </AlertDialogContent>
-  </AlertDialog>;
-}
 
 function EngineBadge({ status }: { status: "ok" | "missing" | "deleting" | undefined }) {
   if (!status) {
@@ -377,7 +355,7 @@ export function AdoptDialog({
 
   return (
     <Dialog open={orphan !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Adopt engine universe</DialogTitle>
           <DialogDescription>

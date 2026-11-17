@@ -65,11 +65,15 @@ to local users by matching email. Company identity and group claims refresh
 at sign-in. See [Company sign-in](single-sign-on.md).
 
 Without company sign-in, public signup is disabled. A Platform Admin creates
-users under **Platform admin → Users**. The first administrator comes from
+users under **Admin → Users**. The first administrator comes from
 [the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
-Users manage their profile, password, and personal keys under **Your profile**.
+Users manage their profile, sign-in settings, and personal keys under **Your profile**.
+The read-only **User ID** there can be shared with an account admin when joining
+an account. Platform Admins can also copy it from **Admin → Users → Edit user**.
+Company-managed users change their identity and password with their
+company identity provider.
 
-Under **Accounts**, select a personal or shared account. Account Admins add
+Under **Admin → Accounts**, select a personal or shared account. Account Admins add
 existing users by user ID, assign Member, Creator, or Admin, and manage
 applications. New shared members default to Member. Shared account creation
 is restricted to Platform Admins by default; deployments can explicitly
@@ -82,16 +86,27 @@ accounts, configurable by deployment and account policy. Shared universes are
 protected by default; personal and development universes are not. Account
 policy may require protection. Handles remain unique across the deployment.
 
-On a universe's **Members** page, assign existing account users or applications
+Under **Admin → Universes → select universe → Access**, assign existing account users or applications
 one of the four universe roles. Membership changes apply on the next admitted
 request. Requests already admitted and work already running can continue;
 cancel that work separately if necessary.
+
+The **Admin** area sits above universes and shows only the administration
+available to the signed-in person. Account Admins see their administered
+accounts and universes; universe Owners see only their administered universes.
+Platform Admins see all accounts and universes, plus deployment-wide user,
+connector, audit, and provider controls. Personal API keys remain under
+**Your profile**. Account and universe access checks still run on the server.
+
+Account and application creation, membership changes, and new key issuance use
+explicit add/edit dialogs. Opening a different account changes only that page's
+context; there is no implicit deployment-wide active account.
 
 ## Applications and API keys
 
 Applications are account records with their own role and universe grants.
 They have no fake email address or human session. Account Admins create and
-manage them under **Accounts → Applications**. Disabling an application blocks
+manage them under **Admin → Accounts → select account → Applications**. Disabling an application blocks
 its keys without deleting its universes.
 
 A personal key represents the user; an application key represents the

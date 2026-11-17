@@ -17,7 +17,7 @@ deliberately combine conversations.
 Start with a working bot from [Bots and triggers](bots-and-triggers.md) and a
 model suited to its tasks. Use Operator or Owner access to manage channel
 accounts and bot triggers. The universe needs both **Bots** and **Channels**
-switched on under **Settings → General → Features**; a new universe starts
+switched on under **Admin → Universes → select universe → Settings and lifecycle → Features**; a new universe starts
 with them off, and until an Owner turns them on the **Channels** page is
 hidden and its requests are refused.
 

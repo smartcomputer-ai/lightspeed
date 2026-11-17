@@ -4,9 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PermissionIdentityProvider } from "@/lib/permissions";
 import { NewUniverseDialog } from "./universe-switcher";
 import { AdminUniversesPage, AdoptDialog } from "@/pages/AdminUniversesPage";
-import { HandleCard } from "@/pages/GeneralSettingsPage";
+import { HandleCard } from "@/pages/AdminUniverseSettingsPage";
 import type { Universe } from "@/api";
 import { universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
 
@@ -101,7 +102,7 @@ it("syncs cached handles only when the administrator requests it", async () => {
     if (method === "POST" && path === "/api/ui/universes/sync-handles") return { updated: 2, skipped: 1 };
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
-  await render(<AdminUniversesPage />);
+  await render(<PermissionIdentityProvider userId="user" platformAdmin><AdminUniversesPage /></PermissionIdentityProvider>);
   expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   const button = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Sync from runtime")!;
   await act(async () => button.click());
@@ -118,7 +119,7 @@ it("uses the returned handle for the cached universe and navigates to its new UR
   await render(<><HandleCard universe={universe} /><Location /></>);
   await input("universe-handle", "new-handle");
   await submit();
-  await vi.waitFor(() => expect(container.querySelector("[data-location]")?.textContent).toBe("/u/new-handle/settings/general"));
+  await vi.waitFor(() => expect(container.querySelector("[data-location]")?.textContent).toBe("/admin/universes/new-handle/settings"));
   expect(api).toHaveBeenCalledWith("PUT", "/api/ui/universes/platform-id/handle", { handle: "new-handle" });
   expect(client.getQueryData<Universe[]>(["universes"])?.[0]).toMatchObject({ id: "platform-id", lightspeedUniverseId: "runtime-id", handle: "new-handle" });
 });

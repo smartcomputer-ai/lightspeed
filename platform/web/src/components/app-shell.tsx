@@ -1,3 +1,4 @@
+import { useAdminAccess } from "@/lib/admin-access";
 import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
@@ -38,16 +39,15 @@ import { rememberUniverse, useUniverses } from "@/lib/universes";
 /// *above* the universe structure — the header becomes a deliberately
 /// generic "Back" (naming no universe) and the content is the mode's own
 /// menu, if it has one.
-type ShellMode = "universe" | "admin" | "account" | "accounts" | "preferences";
+type ShellMode = "universe" | "admin" | "account" | "preferences";
 
-const ADMIN_TITLE = "Platform admin";
+const ADMIN_TITLE = "Admin";
 const ACCOUNT_TITLE = "Your profile";
 const PREFERENCES_TITLE = "Preferences";
 
 const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
   admin: ADMIN_TITLE,
   account: ACCOUNT_TITLE,
-  accounts: "Accounts",
   preferences: PREFERENCES_TITLE,
 };
 
@@ -55,15 +55,17 @@ const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
 /// universes.
 function shellMode(pathname: string): ShellMode {
   const first = pathname.split("/")[1];
-  return first === "admin" || first === "account" || first === "accounts" || first === "preferences" ? first : "universe";
+  return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
 }
 
-const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
-  { to: "/admin/users", icon: UserAdminIcon, label: "Users" },
-  { to: "/admin/universes", icon: UniversesIcon, label: "Universes" },
-  { to: "/admin/channels", icon: ChannelIcon, label: "Channels" },
-  { to: "/admin/audit", icon: AuditLogIcon, label: "Audit log" },
-  { to: "/admin/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
+const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string; scope: "accounts" | "universes" | "keys" | "platform" }> = [
+  { to: "/admin/accounts", icon: UserIcon, label: "Accounts", scope: "accounts" },
+  { to: "/admin/universes", icon: UniversesIcon, label: "Universes", scope: "universes" },
+  { to: "/admin/api-keys", icon: SecurityIcon, label: "API keys", scope: "keys" },
+  { to: "/admin/users", icon: UserAdminIcon, label: "Users", scope: "platform" },
+  { to: "/admin/channels", icon: ChannelIcon, label: "Channels", scope: "platform" },
+  { to: "/admin/audit", icon: AuditLogIcon, label: "Audit log", scope: "platform" },
+  { to: "/admin/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", scope: "platform" },
 ];
 
 /// The part of the page title the route alone determines, most specific
@@ -72,6 +74,8 @@ const ADMIN_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
 export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
   const mode = shellMode(pathname);
   if (mode === "admin") {
+    const detail = matchPath("/admin/universes/:handle/:section", pathname);
+    if (detail) return [detail.params.section === "access" ? "Access" : "Settings and lifecycle", universeName ?? detail.params.handle!, "Admin"];
     const item = ADMIN_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
     return item ? [item.label, ADMIN_TITLE] : [ADMIN_TITLE];
   }
@@ -137,8 +141,8 @@ function ModeHeader({ title }: { title: string }) {
 const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label: string; icon: ComponentType; shown?: () => boolean }>> = {
   account: [
     { id: "profile", label: "Profile", icon: UserIcon },
-    { id: "security", label: "Security", icon: SecurityIcon },
-    { id: "api-keys", label: "API keys", icon: SecurityIcon },
+    { id: "security", label: "Sign-in", icon: SecurityIcon },
+    { id: "api-keys", label: "Personal API keys", icon: SecurityIcon },
   ],
   preferences: [
     { id: "appearance", label: "Appearance", icon: AppearanceIcon },
@@ -152,22 +156,29 @@ function scrollToSection(id: string) {
 
 export function AppShell({ user, admin }: { user: SessionUser; admin: boolean }) {
   const universes = useUniverses();
+  const adminAccess = useAdminAccess();
   const match = useMatch("/u/:handle/*");
-  const activeHandle = match?.params.handle;
+  const adminMatch = useMatch("/admin/universes/:handle/*");
+  const activeHandle = match?.params.handle ?? adminMatch?.params.handle;
   const active = activeHandle
     ? universes.data?.find((u) => u.handle === activeHandle)
     : undefined;
   const permissions = useActionPermissions(active?.id);
   const location = useLocation();
   const mode = shellMode(location.pathname);
+  useEffect(() => {
+    if (mode !== "account" && mode !== "preferences") return;
+    const section = PAGE_SECTIONS[mode].find((item) => `#${item.id}` === location.hash);
+    if (section) scrollToSection(section.id);
+  }, [location.hash, location.pathname, mode]);
   // Creating dialogs open on a starscape drawn ahead, after the page has loaded.
   useDialogStarscapeWarmth();
 
   useEffect(() => {
-    if (active) {
+    if (active && mode === "universe") {
       rememberUniverse(active.handle);
     }
-  }, [active]);
+  }, [active, mode]);
 
   // The main menu's width can be dragged, and dragged narrow enough it
   // folds to icons; both are kept per account.
@@ -245,7 +256,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
               <SidebarGroupLabel>{ADMIN_TITLE}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {ADMIN_NAV.map((item) => (
+                  {ADMIN_NAV.filter(item => adminAccess[item.scope]).map((item) => (
                     <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} />
                   ))}
                 </SidebarMenu>
@@ -259,7 +270,12 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                 <SidebarMenu>
                   {PAGE_SECTIONS[mode].filter((section) => section.shown?.() ?? true).map((section) => (
                     <SidebarMenuItem key={section.id}>
-                      <SidebarMenuButton onClick={() => scrollToSection(section.id)} tooltip={section.label}>
+                      <SidebarMenuButton
+                        render={<Link to={`#${section.id}`} />}
+                        onClick={() => scrollToSection(section.id)}
+                        isActive={location.hash === `#${section.id}`}
+                        tooltip={section.label}
+                      >
                         <section.icon />
                         <span>{section.label}</span>
                       </SidebarMenuButton>
@@ -271,7 +287,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           )}
         </SidebarContent>
         <SidebarFooter>
-          <UserMenu user={user} admin={admin} />
+          <UserMenu user={user} canAdmin={adminAccess.any} />
         </SidebarFooter>
         <ResizeHandle label="Resize menu" handle={sidebarResize.handle} />
       </Sidebar>

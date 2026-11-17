@@ -7,8 +7,9 @@ standalone runtime needs its own trusted gateway or a trusted network.
 
 ## Platform API keys
 
-Create personal keys under **Your profile → API keys** and application keys
-under **Accounts → Applications → API keys**. Better Auth stores hashed keys,
+Create personal keys under **Your profile → Personal API keys** and application keys
+under **Admin → API keys**, selecting the account and application.
+**Admin → Accounts → Applications** links to the same key management view. Better Auth stores hashed keys,
 checks expiry and revocation, and maintains usage counters. The Platform
 binds each key to its user or application and applies current permissions.
 Application keys use Better Auth organization ownership, but the application
@@ -35,6 +36,13 @@ saved credential per request and renew CLI-owned session credentials without
 starting login or rewriting externally managed secret files. The selected
 account remains explicit in native helper parameters. See
 [Reuse a saved CLI connection](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
+
+In the web app, choose accounts and universes by name under **Restrict access**.
+Operation IDs are an advanced restriction. The existing-key list shows status,
+expiry, and restrictions. A universe-specific key still belongs to its user or
+application; **Admin → Universes → Access** manages universe roles, not keys. Universe
+**Setup → Credentials** holds outbound secrets for agents connecting to external
+services, separate from keys for accessing Lightspeed.
 
 Optional account IDs, universe UUIDs, operation IDs, and read-only restrictions
 narrow a key's authority. They never grant permissions its principal lacks.

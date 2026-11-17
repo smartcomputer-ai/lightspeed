@@ -374,7 +374,7 @@ are kept until deleted, whatever their profile sets.
 
 Within Platform, only Platform admins can permanently delete retained session
 history. In the delete dialog, select **Also permanently delete retained history** to soft-delete
-and then purge. For already deleted sessions, open **Platform admin → Universes →
+and then purge. For already deleted sessions, open **Admin → Universes →
 Deleted sessions**, select sessions and choose **Purge selected…**, or use
 **Purge all…**, then confirm removal of their deleted history trees. There is
 no automatic purge or restore action.

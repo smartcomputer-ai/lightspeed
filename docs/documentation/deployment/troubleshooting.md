@@ -68,7 +68,7 @@ termination and forwarded host/scheme handling. Retain the Platform's
 authentication secret across restarts.
 
 The administrator bootstrap variables apply only while the users table is
-empty. They cannot reset an existing password. Use **Platform admin → Users**
+empty. They cannot reset an existing password. Use **Admin → Users**
 from an authorized administrator account for account management.
 
 When sign-in works but a page fails, distinguish a Platform permission denial

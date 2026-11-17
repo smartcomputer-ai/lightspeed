@@ -60,7 +60,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
     <>
       <PageHeader
         title="Users"
-        description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage universe roles on Members." : "Platform accounts. Signup is closed — accounts are created here."}
+        description={config.data?.sso ? "Company users appear after their first admitted sign-in. Manage account membership in Admin → Accounts and universe roles in Admin → Universes → Access." : "People who can sign in to this deployment. Create local users here; manage account membership in Admin → Accounts."}
         actions={
           config.data && config.data.password !== "off" && <Button onClick={() => setCreateOpen(true)}>
             <AddIcon data-icon="inline-start" />
@@ -86,7 +86,7 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
+                <TableHead>Platform role</TableHead>
                 <TableHead>Access</TableHead>
                 <TableHead>Last company check</TableHead>
                 <TableHead>Created</TableHead>
@@ -100,13 +100,13 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
                   <TableCell>{user.email}</TableCell>
                   <TableCell>
                     {user.role?.split(",").includes("admin") ? (
-                      <Badge variant="secondary">admin</Badge>
+                      <Badge variant="secondary">Platform Admin</Badge>
                     ) : (
-                      <span className="text-muted-foreground">user</span>
+                      <span className="text-muted-foreground">User</span>
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {user.banned ? "Suspended" : user.identitySource === "company" ? user.companyAdmitted ? "Company account" : "Company access absent" : user.emergencyAdmin ? "Emergency admin" : "Local account"}
+                    {user.banned ? "Suspended" : user.identitySource === "company" ? user.companyAdmitted ? "Company sign-in" : "Company access absent" : user.emergencyAdmin ? "Emergency admin" : "Local sign-in"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {user.providerCheckedAt ? new Date(user.providerCheckedAt).toLocaleString() : "—"}
@@ -207,7 +207,7 @@ function EditUserDialog({
       if (nextName !== user.name) data.name = nextName;
       if (nextEmail !== user.email.toLowerCase()) {
         data.email = nextEmail;
-        // Platform accounts are provisioned and maintained by a trusted admin.
+        // Local users are provisioned and maintained by a trusted admin.
         data.emailVerified = true;
       }
       if (!isCurrentUser && role !== currentRole) data.role = role;
@@ -274,7 +274,7 @@ function EditUserDialog({
         <DialogHeader>
           <DialogTitle>Edit user</DialogTitle>
           <DialogDescription>
-            {company ? `Identity and platform role for ${user?.email} are managed by the company. Universe roles are managed on Members.` : `Update the platform account for ${user?.email}. A password reset signs the user out of every session.`}
+            {company ? `Identity and platform role for ${user?.email} are managed by the company. Universe roles are managed in Admin → Universes → Access.` : `Update the user profile for ${user?.email}. A password reset signs the user out of every session.`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-5">
@@ -305,6 +305,11 @@ function EditUserDialog({
               </FieldDescription>
             </Field>
             <Field>
+              <FieldLabel htmlFor="edit-user-id">User ID</FieldLabel>
+              <Input id="edit-user-id" value={user?.id ?? ""} readOnly onFocus={(event) => event.currentTarget.select()} />
+              <FieldDescription>Use this ID to add this person to an account under Admin → Accounts.</FieldDescription>
+            </Field>
+            <Field>
               <FieldLabel htmlFor="edit-user-role">Platform role</FieldLabel>
               <Select
                 value={role}
@@ -315,8 +320,8 @@ function EditUserDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user">user</SelectItem>
-                  <SelectItem value="admin">admin</SelectItem>
+                  <SelectItem value="user">User</SelectItem>
+                  <SelectItem value="admin">Platform Admin</SelectItem>
                 </SelectContent>
               </Select>
               {isCurrentUser && (
@@ -441,11 +446,11 @@ function CreateUserDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) reset(); }}>
-      <DialogContent>
+      <DialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{sso ? "Create emergency admin" : "Create user"}</DialogTitle>
           <DialogDescription>
-            {sso ? "Creates a separate local administrator for emergency access. Use an email distinct from company sign-in accounts and store the password securely." : "Creates a platform account. Share the password out of band — users can change it under Account."}
+            {sso ? "Creates a separate local administrator for emergency access. Use an email distinct from company sign-in accounts and store the password securely." : "Creates a local user. Share the password out of band — users can change it under Your profile → Sign-in."}
           </DialogDescription>
         </DialogHeader>
           <form onSubmit={submit} className="grid gap-4">
@@ -482,14 +487,14 @@ function CreateUserDialog({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="user-role">Role</FieldLabel>
+                <FieldLabel htmlFor="user-role">Platform role</FieldLabel>
                 <Select value={sso ? "admin" : role} disabled={sso} onValueChange={(value) => setRole(value as string)}>
                   <SelectTrigger id="user-role" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="user">user</SelectItem>
-                    <SelectItem value="admin">admin</SelectItem>
+                    <SelectItem value="user">User</SelectItem>
+                    <SelectItem value="admin">Platform Admin</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
