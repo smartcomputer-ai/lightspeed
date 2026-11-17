@@ -1,5 +1,7 @@
 import {
   deploymentActions,
+  PLATFORM_SETTINGS,
+  type PlatformOperationResult,
   organizationActions,
   organizationRoleSchema,
   universeActions,
@@ -42,4 +44,11 @@ export function demoUniverseView(store: DemoStore, state: UniverseState) {
     actions: [...demoUniverseActions(store, state)],
     organizationActions: [...demoOrganizationActions(store, state.universe.organizationRole)],
   };
+}
+
+/// An organization's universe limit: its own, or the deployment default for its kind.
+export function demoUniverseQuota(store: DemoStore, organization: PlatformOperationResult<"platform/organizations/read">["organization"]): number {
+  if (organization.universeQuotaSource === "organization") return organization.universeQuota;
+  const key = organization.personal ? "personalUniverseQuota" : "sharedUniverseQuota";
+  return Number(store.platformSettings.get(key) ?? PLATFORM_SETTINGS[key].defaultValue);
 }

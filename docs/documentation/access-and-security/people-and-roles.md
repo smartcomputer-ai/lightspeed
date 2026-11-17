@@ -120,9 +120,11 @@ membership policy. Only a membership an admin added can be removed there. New sh
 organizations. There is no email invitation or SCIM workflow yet.
 
 **New universe** selects an organization where the caller is a Creator or Admin.
-Creating from an organization's Admin page fixes that destination. The initial
-quotas are 25 universes for personal organizations and 100 for shared ones,
-configurable by deployment and by Platform Admins per organization. Universes
+Creating from an organization's Admin page fixes that destination. An
+organization may hold 25 universes if it is personal and 100 if it is shared.
+Platform Admins change these defaults under **Admin → Platform → Settings**,
+and can give one organization its own limit in its settings; **Use the
+default** returns it to the deployment's. Universes
 in shared organizations are protected by default; personal ones are not.
 Organization policy may change that default or require protection. Handles remain unique across the deployment.
 

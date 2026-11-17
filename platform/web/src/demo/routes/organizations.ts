@@ -1,7 +1,7 @@
 /** Demo organization state stays in memory; it cannot issue usable credentials. */
 import { Hono } from "hono";
-import { demoDeploymentAllows, demoOrganizationActions, demoUniverseView } from "../access";
-import { organizationCreateSchema, organizationUpdateSchema, organizationMemberPutSchema, serviceUserCreateSchema, serviceUserUpdateSchema, organizationUniverseCreateSchema, universeGrantPutSchema, universeLifecycleUpdateSchema, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
+import { demoDeploymentAllows, demoOrganizationActions, demoUniverseQuota, demoUniverseView } from "../access";
+import { PLATFORM_SETTINGS, platformSettingPutSchema, type PlatformSettingKey, organizationCreateSchema, organizationUpdateSchema, organizationMemberPutSchema, serviceUserCreateSchema, serviceUserUpdateSchema, organizationUniverseCreateSchema, universeGrantPutSchema, universeLifecycleUpdateSchema, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type { DemoStore } from "../store";
 type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
 type ServiceUser = PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number];
@@ -10,19 +10,36 @@ export function organizationRoutes(store: DemoStore) {
   const app = new Hono();
   const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
   if (!organizations.has("demo-organization")) {
-    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
+    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, universeQuotaSource: "deployment", baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
     memberships.set("demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"])));
   }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
   app.use("/organizations/:organizationId/*", async (c, next) => { if (!organizations.has(c.req.param("organizationId")!)) return c.json({ error: "Organization not found" }, 404); await next(); });
-  const view = (organization: Organization): Organization => ({ ...organization, actions: [...demoOrganizationActions(store, organization.role)], universeCount: [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length });
+  // An organization without its own limit follows the deployment default for its kind.
+  const setting = (key: PlatformSettingKey) => store.platformSettings.get(key) ?? PLATFORM_SETTINGS[key].defaultValue;
+  const quota = (organization: Organization) => demoUniverseQuota(store, organization);
+  const view = (organization: Organization): Organization => ({ ...organization, universeQuota: quota(organization), actions: [...demoOrganizationActions(store, organization.role)], universeCount: [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length });
+  app.get("/settings", c => {
+    if (!demoDeploymentAllows(store, "configureDeployment")) return c.json({ error: "deployment permission required: configureDeployment" }, 403);
+    return c.json({ settings: (Object.keys(PLATFORM_SETTINGS) as PlatformSettingKey[]).map(settingView) });
+  });
+  app.put("/settings/:key", async c => {
+    if (!demoDeploymentAllows(store, "configureDeployment")) return c.json({ error: "deployment permission required: configureDeployment" }, 403);
+    const parsed = platformSettingPutSchema.safeParse({ ...await c.req.json(), key: c.req.param("key") }); if (!parsed.success) return c.json({ error: "Invalid setting" }, 400);
+    const { key, value } = parsed.data;
+    if (value === null) store.platformSettings.delete(key);
+    else if (PLATFORM_SETTINGS[key].schema.safeParse(value).success) store.platformSettings.set(key, value);
+    else return c.json({ error: `invalid value for ${key}` }, 400);
+    return c.json({ setting: settingView(key) });
+  });
+  const settingView = (key: PlatformSettingKey) => ({ key, value: setting(key), source: store.platformSettings.has(key) ? "platform" as const : "default" as const, defaultValue: PLATFORM_SETTINGS[key].defaultValue, environmentVariable: PLATFORM_SETTINGS[key].environmentVariable, updatedAt: null });
   app.get("/organizations", c => c.json({ organizations: [...organizations.values()].map(view), canCreate: demoDeploymentAllows(store, "createOrganization") }));
   app.post("/organizations", async c => {
     const parsed = organizationCreateSchema.safeParse(await c.req.json()); if (!parsed.success) return c.json({ error: "Invalid organization" }, 400);
     if ([...organizations.values()].some(a => a.slug === parsed.data.slug)) return c.json({ error: "Organization handle already exists" }, 409);
     const { initialAdminUserId = store.currentUser.id, ...input } = parsed.data;
     if (!store.users.has(initialAdminUserId)) return c.json({ error: "User not found" }, 404);
-    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", actions: [], universeQuota: input.universeQuota ?? 100, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
+    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", actions: [], universeQuota: input.universeQuota ?? 0, universeQuotaSource: input.universeQuota == null ? "deployment" : "organization", baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
     organizations.set(organization.id, organization); memberships.set(organization.id, new Map([[initialAdminUserId, "admin"]])); return c.json({ organization: view(organization) }, 201);
   });
   app.get("/organizations/:organizationId", c => { const organization = organizations.get(c.req.param("organizationId")); return organization ? c.json({ organization: view(organization) }) : c.json({ error: "Organization not found" }, 404); });
@@ -53,7 +70,10 @@ export function organizationRoutes(store: DemoStore) {
   app.patch("/organizations/:organizationId", async c => {
     const organization = organizations.get(c.req.param("organizationId")); if (!organization) return c.json({ error: "Organization not found" }, 404);
     const parsed = organizationUpdateSchema.safeParse(await c.req.json()); if (!parsed.success) return c.json({ error: "Invalid organization" }, 400);
-    Object.assign(organization, parsed.data); return c.json({ organization: view(organization) });
+    const { universeQuota, ...rest } = parsed.data;
+    Object.assign(organization, rest);
+    if (universeQuota !== undefined) Object.assign(organization, universeQuota === null ? { universeQuotaSource: "deployment" } : { universeQuota, universeQuotaSource: "organization" });
+    return c.json({ organization: view(organization) });
   });
   app.post("/organizations/:organizationId/universes", async c => {
     const organization = organizations.get(c.req.param("organizationId"))!;
@@ -65,7 +85,7 @@ export function organizationRoutes(store: DemoStore) {
     if (organization.requireProtected && !protectedValue) return c.json({ error: "Organization requires protection" }, 403);
     if (protectedValue && input.expiresAtMs != null) return c.json({ error: "Protected universes cannot expire" }, 409);
     if (input.expiresAtMs != null && input.expiresAtMs <= Date.now()) return c.json({ error: "Expiry must be in the future" }, 400);
-    if ([...store.universes.values()].filter(s => s.universe.organizationId === organization.id).length >= organization.universeQuota) return c.json({ error: "Organization universe quota reached" }, 409);
+    if ([...store.universes.values()].filter(s => s.universe.organizationId === organization.id).length >= quota(organization)) return c.json({ error: "Organization universe quota reached" }, 409);
     const handle = input.handle ?? input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     if (store.universeByHandle(handle)) return c.json({ error: "Handle already exists" }, 409);
     const state = store.addUniverse({ name: input.name, handle, role: "owner", lightspeedUniverseId: input.universeId });

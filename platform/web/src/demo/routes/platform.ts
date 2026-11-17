@@ -2,7 +2,7 @@
 /// configuration. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { demoDeploymentAllows, demoUniverseView } from "../access";
+import { demoDeploymentAllows, demoUniverseQuota, demoUniverseView } from "../access";
 import { effectiveFeatures, featureOverridesSchema, mergeFeatureOverrides, organizationUniverseAdoptSchema, universeHandleFromName, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
 import { z } from "zod";
 import type { EngineUniverse, Universe } from "@/api";
@@ -68,7 +68,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const orphan = store.orphanEngineUniverses[orphanIndex] as EngineUniverse;
     const handle = orphan.handle;
     if (store.universeByHandle(handle)) return conflict(c, "universe handle is already in use");
-    if ([...store.universes.values()].filter(state => state.universe.organizationId === organizationId).length >= organization.universeQuota) return conflict(c, "Organization universe quota reached");
+    if ([...store.universes.values()].filter(state => state.universe.organizationId === organizationId).length >= demoUniverseQuota(store, organization)) return conflict(c, "Organization universe quota reached");
     store.orphanEngineUniverses.splice(orphanIndex, 1);
     const state = store.addUniverse({
       handle,

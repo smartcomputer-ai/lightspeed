@@ -123,7 +123,9 @@ export const organization = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     metadata: text("metadata"),
     personalUserId: text("personal_user_id").unique().references(() => user.id, { onDelete: "set null" }),
-    universeQuota: integer("universe_quota").default(100).notNull(),
+    /// The organization's own universe limit; null follows the deployment
+    /// default for its kind (personal or shared).
+    universeQuota: integer("universe_quota"),
     /// The default universe access: the universe role every member person
     /// holds on each universe of the organization; null limits members to
     /// their explicit grants.

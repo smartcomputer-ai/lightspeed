@@ -12,6 +12,8 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listServiceUserApiKeys": "platform/service-users/credentials/list",
   "createServiceUserApiKey": "platform/service-users/credentials/create",
   "revokeServiceUserApiKey": "platform/service-users/credentials/revoke",
+  "listPlatformSettings": "platform/settings/list",
+  "putPlatformSetting": "platform/settings/put",
   "listOrganizations": "platform/organizations/list",
   "createOrganization": "platform/organizations/create",
   "readOrganization": "platform/organizations/read",
@@ -59,6 +61,12 @@ export class PlatformHelpers {
   }
   revokeServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/revoke">> {
     return this.client.call("platform/service-users/credentials/revoke", params, options);
+  }
+  listPlatformSettings(params: PlatformOperationParams<"platform/settings/list"> = {}, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/settings/list">> {
+    return this.client.call("platform/settings/list", params, options);
+  }
+  putPlatformSetting(params: PlatformOperationParams<"platform/settings/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/settings/put">> {
+    return this.client.call("platform/settings/put", params, options);
   }
   listOrganizations(params: PlatformOperationParams<"platform/organizations/list"> = {}, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/list">> {
     return this.client.call("platform/organizations/list", params, options);

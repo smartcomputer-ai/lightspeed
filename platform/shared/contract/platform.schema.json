@@ -1080,6 +1080,216 @@
       ],
       "additionalProperties": false
     },
+    "PlatformSettingsListParams": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "PlatformSettingsListResult": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "enum": [
+                  "personalOrganizations",
+                  "personalUniverseQuota",
+                  "sharedUniverseQuota"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                ],
+                "description": "The value in effect."
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "environment",
+                  "platform",
+                  "default"
+                ],
+                "description": "Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default."
+              },
+              "defaultValue": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "environmentVariable": {
+                "type": "string",
+                "description": "The environment variable that sets this value for the whole deployment."
+              },
+              "updatedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "When the value set here was last changed."
+              }
+            },
+            "required": [
+              "key",
+              "value",
+              "source",
+              "defaultValue",
+              "environmentVariable",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSettingsPutParams": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "enum": [
+            "personalOrganizations",
+            "personalUniverseQuota",
+            "sharedUniverseQuota"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The new value; null returns the setting to its default."
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformSettingsPutResult": {
+      "type": "object",
+      "properties": {
+        "setting": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "enum": [
+                "personalOrganizations",
+                "personalUniverseQuota",
+                "sharedUniverseQuota"
+              ]
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ],
+              "description": "The value in effect."
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "environment",
+                "platform",
+                "default"
+              ],
+              "description": "Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default."
+            },
+            "defaultValue": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              ]
+            },
+            "environmentVariable": {
+              "type": "string",
+              "description": "The environment variable that sets this value for the whole deployment."
+            },
+            "updatedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "When the value set here was last changed."
+            }
+          },
+          "required": [
+            "key",
+            "value",
+            "source",
+            "defaultValue",
+            "environmentVariable",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "setting"
+      ],
+      "additionalProperties": false
+    },
     "PlatformOrganizationsListParams": {
       "type": "object",
       "properties": {},
@@ -1142,7 +1352,16 @@
               "universeQuota": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 9007199254740991
+                "maximum": 9007199254740991,
+                "description": "How many universes the organization may hold."
+              },
+              "universeQuotaSource": {
+                "type": "string",
+                "enum": [
+                  "organization",
+                  "deployment"
+                ],
+                "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
               },
               "universeCount": {
                 "type": "integer",
@@ -1281,6 +1500,7 @@
               "role",
               "actions",
               "universeQuota",
+              "universeQuotaSource",
               "baseUniverseRole",
               "defaultProtected",
               "requireProtected",
@@ -1316,9 +1536,17 @@
           "minLength": 1
         },
         "universeQuota": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100000
+          "description": "The organization's own universe limit; omitted or null follows the deployment default.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "baseUniverseRole": {
           "anyOf": [
@@ -1404,7 +1632,16 @@
             "universeQuota": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "How many universes the organization may hold."
+            },
+            "universeQuotaSource": {
+              "type": "string",
+              "enum": [
+                "organization",
+                "deployment"
+              ],
+              "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
             },
             "universeCount": {
               "type": "integer",
@@ -1543,6 +1780,7 @@
             "role",
             "actions",
             "universeQuota",
+            "universeQuotaSource",
             "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
@@ -1624,7 +1862,16 @@
             "universeQuota": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "How many universes the organization may hold."
+            },
+            "universeQuotaSource": {
+              "type": "string",
+              "enum": [
+                "organization",
+                "deployment"
+              ],
+              "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
             },
             "universeCount": {
               "type": "integer",
@@ -1763,6 +2010,7 @@
             "role",
             "actions",
             "universeQuota",
+            "universeQuotaSource",
             "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
@@ -1785,9 +2033,17 @@
           "maxLength": 120
         },
         "universeQuota": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100000
+          "description": "The organization's own universe limit; null returns it to the deployment default.",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "baseUniverseRole": {
           "anyOf": [
@@ -1971,7 +2227,16 @@
             "universeQuota": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 9007199254740991,
+              "description": "How many universes the organization may hold."
+            },
+            "universeQuotaSource": {
+              "type": "string",
+              "enum": [
+                "organization",
+                "deployment"
+              ],
+              "description": "Whether the organization has its own universe limit, or follows the deployment default for its kind."
             },
             "universeCount": {
               "type": "integer",
@@ -2110,6 +2375,7 @@
             "role",
             "actions",
             "universeQuota",
+            "universeQuotaSource",
             "baseUniverseRole",
             "defaultProtected",
             "requireProtected",

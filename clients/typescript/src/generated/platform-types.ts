@@ -380,6 +380,74 @@ export interface PlatformServiceUsersCredentialsRevokeResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformSettingsListParams".
+ */
+export interface PlatformSettingsListParams {}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformSettingsListResult".
+ */
+export interface PlatformSettingsListResult {
+  settings: {
+    key: "personalOrganizations" | "personalUniverseQuota" | "sharedUniverseQuota";
+    /**
+     * The value in effect.
+     */
+    value: boolean | number;
+    /**
+     * Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default.
+     */
+    source: "environment" | "platform" | "default";
+    defaultValue: boolean | number;
+    /**
+     * The environment variable that sets this value for the whole deployment.
+     */
+    environmentVariable: string;
+    /**
+     * When the value set here was last changed.
+     */
+    updatedAt: string | null;
+  }[];
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformSettingsPutParams".
+ */
+export interface PlatformSettingsPutParams {
+  key: "personalOrganizations" | "personalUniverseQuota" | "sharedUniverseQuota";
+  /**
+   * The new value; null returns the setting to its default.
+   */
+  value: (boolean | number) | null;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformSettingsPutResult".
+ */
+export interface PlatformSettingsPutResult {
+  setting: {
+    key: "personalOrganizations" | "personalUniverseQuota" | "sharedUniverseQuota";
+    /**
+     * The value in effect.
+     */
+    value: boolean | number;
+    /**
+     * Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default.
+     */
+    source: "environment" | "platform" | "default";
+    defaultValue: boolean | number;
+    /**
+     * The environment variable that sets this value for the whole deployment.
+     */
+    environmentVariable: string;
+    /**
+     * When the value set here was last changed.
+     */
+    updatedAt: string | null;
+  };
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformOrganizationsListParams".
  */
 export interface PlatformOrganizationsListParams {}
@@ -401,7 +469,14 @@ export interface PlatformOrganizationsListResult {
      * What the caller may do in the organization: the union of every role it holds there.
      */
     actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
+    /**
+     * How many universes the organization may hold.
+     */
     universeQuota: number;
+    /**
+     * Whether the organization has its own universe limit, or follows the deployment default for its kind.
+     */
+    universeQuotaSource: "organization" | "deployment";
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
@@ -445,7 +520,10 @@ export interface PlatformOrganizationsCreateParams {
   name: string;
   slug: string;
   initialAdminUserId?: string;
-  universeQuota?: number;
+  /**
+   * The organization's own universe limit; omitted or null follows the deployment default.
+   */
+  universeQuota?: number | null;
   baseUniverseRole?: ("viewer" | "contributor" | "operator" | "owner") | null;
   defaultProtected?: boolean;
   requireProtected?: boolean;
@@ -468,7 +546,14 @@ export interface PlatformOrganizationsCreateResult {
      * What the caller may do in the organization: the union of every role it holds there.
      */
     actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
+    /**
+     * How many universes the organization may hold.
+     */
     universeQuota: number;
+    /**
+     * Whether the organization has its own universe limit, or follows the deployment default for its kind.
+     */
+    universeQuotaSource: "organization" | "deployment";
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
@@ -528,7 +613,14 @@ export interface PlatformOrganizationsReadResult {
      * What the caller may do in the organization: the union of every role it holds there.
      */
     actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
+    /**
+     * How many universes the organization may hold.
+     */
     universeQuota: number;
+    /**
+     * Whether the organization has its own universe limit, or follows the deployment default for its kind.
+     */
+    universeQuotaSource: "organization" | "deployment";
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
@@ -569,7 +661,10 @@ export interface PlatformOrganizationsReadResult {
  */
 export interface PlatformOrganizationsUpdateParams {
   name?: string;
-  universeQuota?: number;
+  /**
+   * The organization's own universe limit; null returns it to the deployment default.
+   */
+  universeQuota?: number | null;
   baseUniverseRole?: ("viewer" | "contributor" | "operator" | "owner") | null;
   defaultProtected?: boolean;
   requireProtected?: boolean;
@@ -617,7 +712,14 @@ export interface PlatformOrganizationsUpdateResult {
      * What the caller may do in the organization: the union of every role it holds there.
      */
     actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
+    /**
+     * How many universes the organization may hold.
+     */
     universeQuota: number;
+    /**
+     * Whether the organization has its own universe limit, or follows the deployment default for its kind.
+     */
+    universeQuotaSource: "organization" | "deployment";
     universeCount?: number;
     /**
      * The universe role every member person holds on every universe in the organization; null gives members access only through grants.

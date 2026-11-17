@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import type { BaseUniverseRole, PlatformOperationParams, PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import { platformApi } from "@/lib/platform-api";
 import { useDeploymentPermissions } from "@/lib/permissions";
@@ -22,7 +23,7 @@ export function OrganizationSettings({ organization }: { organization: Organizat
   return (
     <div className="grid gap-6">
       {!organization.personal && <NameCard organization={organization} />}
-      <UniversesCard organization={organization} />
+      <UniversesCard key={`${organization.universeQuotaSource}:${organization.universeQuota}`} organization={organization} />
       {!organization.personal && <DefaultUniverseAccessCard organization={organization} />}
       <ProtectionCard organization={organization} />
     </div>
@@ -70,10 +71,13 @@ function NameCard({ organization }: { organization: Organization }) {
   );
 }
 
-/// Usage is visible to the organization's administrators; the quota is a
-/// deployment limit, so only those who may set it can change it here.
+/// Usage is visible to the organization's administrators; the limit is a
+/// deployment matter, so only those who may set it can change it here. An
+/// organization follows the deployment default until it gets its own limit.
 function UniversesCard({ organization }: { organization: Organization }) {
-  const canSetQuota = useDeploymentPermissions().can("setUniverseQuota");
+  const permissions = useDeploymentPermissions();
+  const canSetQuota = permissions.can("setUniverseQuota");
+  const kind = organization.personal ? "personal" : "shared";
   const [quota, setQuota] = useState(String(organization.universeQuota));
   const update = useOrganizationUpdate(organization);
   const value = Number(quota);
@@ -89,19 +93,34 @@ function UniversesCard({ organization }: { organization: Organization }) {
         <CardDescription>
           <span className="tabular-nums">{organization.universeCount ?? 0} of {organization.universeQuota}</span> used.
           {" "}Universes being created or deleted count until they are gone.
-          {!canSetQuota && " A Platform Admin sets the quota."}
+          {!canSetQuota && " A Platform Admin sets the limit."}
         </CardDescription>
       </CardHeader>
       {canSetQuota && (
         <CardContent className="grid gap-2">
           <form onSubmit={submit} className="flex max-w-md flex-wrap items-end gap-3">
             <Field className="flex-1">
-              <FieldLabel htmlFor="organization-quota">Universe quota</FieldLabel>
+              <FieldLabel htmlFor="organization-quota">Universe limit</FieldLabel>
               <Input id="organization-quota" type="number" min={0} max={100000} step={1} value={quota}
                 onChange={(event) => setQuota(event.target.value)} required />
             </Field>
             <SaveButton type="submit" dirty={valid && value !== organization.universeQuota} saving={update.isPending} error={update.isError} />
           </form>
+          {organization.universeQuotaSource === "deployment" ? (
+            <p className="text-sm text-muted-foreground">
+              Follows the default for {kind} organizations
+              {permissions.can("configureDeployment")
+                ? <>, set in <Link className="underline" to="/admin/platform/settings">Platform settings</Link>.</>
+                : "."}
+              {" "}Saving a number gives this organization its own limit.
+            </p>
+          ) : (
+            <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+              <span>This organization has its own limit.</span>
+              <Button variant="link" size="sm" className="h-auto p-0" disabled={update.isPending}
+                onClick={() => update.mutate({ universeQuota: null })}>Use the default for {kind} organizations</Button>
+            </p>
+          )}
           <SaveError error={update.error} />
         </CardContent>
       )}

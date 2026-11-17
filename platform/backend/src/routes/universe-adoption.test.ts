@@ -138,3 +138,12 @@ it("archives and restores the Platform presentation without deleting runtime dat
   await fixture.asUser("creator");
   expect((await fixture.request(`/universes/${id}`, "PATCH", { status: "archived" })).status).toBe(403);
 });
+
+it("holds an organization without its own limit to the deployment default", async () => {
+  await fixture.db.update(schema.organization).set({ universeQuota: null }).where(eq(schema.organization.id, "organization-a"));
+  await fixture.db.insert(schema.platformSettings).values({ key: "sharedUniverseQuota", value: 1 });
+  await fixture.asUser("creator");
+  const response = await fixture.request("/organizations/organization-a/universes", "POST", { universeId: newId, name: "Over the default" });
+  expect(response.status).toBe(409);
+  expect(await response.text()).toContain("quota reached");
+});

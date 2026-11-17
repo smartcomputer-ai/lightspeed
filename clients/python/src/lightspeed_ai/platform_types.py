@@ -309,6 +309,51 @@ class PlatformServiceUsersCredentialsRevokeResult(TypedDict):
     revoked: Literal[True]
 
 
+class PlatformSettingsListParams(TypedDict):
+    pass
+
+
+class Setting(TypedDict):
+    key: Literal[
+        'personalOrganizations', 'personalUniverseQuota', 'sharedUniverseQuota'
+    ]
+    value: bool | int
+    """
+    The value in effect.
+    """
+    source: Literal['environment', 'platform', 'default']
+    """
+    Where the value comes from: the deployment's environment (which cannot be changed here), a value set here, or the built-in default.
+    """
+    defaultValue: bool | int
+    environmentVariable: str
+    """
+    The environment variable that sets this value for the whole deployment.
+    """
+    updatedAt: str | None
+    """
+    When the value set here was last changed.
+    """
+
+
+class PlatformSettingsListResult(TypedDict):
+    settings: list[Setting]
+
+
+class PlatformSettingsPutParams(TypedDict):
+    key: Literal[
+        'personalOrganizations', 'personalUniverseQuota', 'sharedUniverseQuota'
+    ]
+    value: bool | int | None
+    """
+    The new value; null returns the setting to its default.
+    """
+
+
+class PlatformSettingsPutResult(TypedDict):
+    setting: Setting
+
+
 class PlatformOrganizationsListParams(TypedDict):
     pass
 
@@ -357,6 +402,13 @@ class Organization1(TypedDict):
     What the caller may do in the organization: the union of every role it holds there.
     """
     universeQuota: int
+    """
+    How many universes the organization may hold.
+    """
+    universeQuotaSource: Literal['organization', 'deployment']
+    """
+    Whether the organization has its own universe limit, or follows the deployment default for its kind.
+    """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
     """
@@ -377,7 +429,10 @@ class PlatformOrganizationsCreateParams(TypedDict):
     name: str
     slug: str
     initialAdminUserId: NotRequired[str]
-    universeQuota: NotRequired[int]
+    universeQuota: NotRequired[int | None]
+    """
+    The organization's own universe limit; omitted or null follows the deployment default.
+    """
     baseUniverseRole: NotRequired[
         Literal['viewer', 'contributor', 'operator', 'owner'] | None
     ]
@@ -423,6 +478,13 @@ class Organization2(TypedDict):
     What the caller may do in the organization: the union of every role it holds there.
     """
     universeQuota: int
+    """
+    How many universes the organization may hold.
+    """
+    universeQuotaSource: Literal['organization', 'deployment']
+    """
+    Whether the organization has its own universe limit, or follows the deployment default for its kind.
+    """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
     """
@@ -480,6 +542,13 @@ class Organization3(TypedDict):
     What the caller may do in the organization: the union of every role it holds there.
     """
     universeQuota: int
+    """
+    How many universes the organization may hold.
+    """
+    universeQuotaSource: Literal['organization', 'deployment']
+    """
+    Whether the organization has its own universe limit, or follows the deployment default for its kind.
+    """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
     """
@@ -513,7 +582,10 @@ class MembershipPolicy3(TypedDict):
 
 class PlatformOrganizationsUpdateParams(TypedDict):
     name: NotRequired[str]
-    universeQuota: NotRequired[int]
+    universeQuota: NotRequired[int | None]
+    """
+    The organization's own universe limit; null returns it to the deployment default.
+    """
     baseUniverseRole: NotRequired[
         Literal['viewer', 'contributor', 'operator', 'owner'] | None
     ]
@@ -561,6 +633,13 @@ class Organization4(TypedDict):
     What the caller may do in the organization: the union of every role it holds there.
     """
     universeQuota: int
+    """
+    How many universes the organization may hold.
+    """
+    universeQuotaSource: Literal['organization', 'deployment']
+    """
+    Whether the organization has its own universe limit, or follows the deployment default for its kind.
+    """
     universeCount: NotRequired[int]
     baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
     """

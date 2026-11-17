@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   loading: false,
   empty: false,
   personal: false,
+  quotaSource: "deployment",
 }));
 vi.mock("@/lib/platform-api", () => ({
   platformApi: mocks.api,
@@ -34,6 +35,7 @@ vi.mock("@/lib/platform-api", () => ({
                   personal: mocks.personal,
                   role: mocks.role, actions: [...organizationActions(mocks.platformAdmin ? [mocks.role as never, "admin"] : [mocks.role as never])], baseUniverseRole: "viewer",
                   universeQuota: 100,
+                  universeQuotaSource: mocks.quotaSource,
                   universeCount: 3,
                   defaultProtected: true,
                   requireProtected: false,
@@ -44,6 +46,7 @@ vi.mock("@/lib/platform-api", () => ({
                   personal: false,
                   role: mocks.role, actions: [...organizationActions(mocks.platformAdmin ? [mocks.role as never, "admin"] : [mocks.role as never])], baseUniverseRole: "viewer",
                   universeQuota: 200,
+                  universeQuotaSource: "organization",
                   defaultProtected: false,
                   requireProtected: false,
                 },
@@ -70,6 +73,7 @@ beforeEach(() => {
   mocks.loading = false;
   mocks.empty = false;
   mocks.personal = false;
+  mocks.quotaSource = "deployment";
   mocks.api
     .mockReset()
     .mockImplementation(async (operation) =>
@@ -132,11 +136,25 @@ it("saves a changed universe quota only when its own Save is pressed", async () 
   );
 });
 
+it("says an organization follows the deployment default, and returns one with its own limit to it", async () => {
+  await show("/admin/organizations/team/settings", true);
+  expect(container.textContent).toContain("Follows the default for shared organizations, set in Platform settings.");
+  expect(container.querySelector('a[href="/admin/platform/settings"]')).not.toBeNull();
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  mocks.quotaSource = "organization";
+  await show("/admin/organizations/team/settings", true);
+  expect(container.textContent).toContain("This organization has its own limit.");
+  const reset = [...container.querySelectorAll("button")].find((node) => node.textContent === "Use the default for shared organizations")!;
+  await act(async () => reset.click());
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", universeQuota: null }));
+});
+
 it("shows an Organization Admin the usage but leaves the quota to Platform Admins", async () => {
   mocks.role = "admin";
   await show("/admin/organizations/team/settings");
   expect(container.textContent).toContain("3 of 100 used");
-  expect(container.textContent).toContain("A Platform Admin sets the quota.");
+  expect(container.textContent).toContain("A Platform Admin sets the limit.");
   expect(container.querySelector("#organization-quota")).toBeNull();
 });
 

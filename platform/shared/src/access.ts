@@ -119,7 +119,7 @@ export const DEPLOYMENT_ACTIONS = [
   /// Create, suspend and assign the Platform role of users.
   "manageUsers",
   "readAudit",
-  /// Channel connectors, environment providers and handle reconciliation.
+  /// Platform settings, channel connectors and environment providers.
   "configureDeployment",
   /// List, adopt, relink and delete runtime universes Platform does not hold.
   "manageUnclaimedUniverses",

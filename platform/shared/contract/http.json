@@ -91,6 +91,26 @@
       "result": "PlatformServiceUsersCredentialsRevokeResult"
     },
     {
+      "operationId": "platform/settings/list",
+      "helper": {
+        "name": "listPlatformSettings"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/settings",
+      "params": "PlatformSettingsListParams",
+      "result": "PlatformSettingsListResult"
+    },
+    {
+      "operationId": "platform/settings/put",
+      "helper": {
+        "name": "putPlatformSetting"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/settings/{key}",
+      "params": "PlatformSettingsPutParams",
+      "result": "PlatformSettingsPutResult"
+    },
+    {
       "operationId": "platform/organizations/list",
       "helper": {
         "name": "listOrganizations"

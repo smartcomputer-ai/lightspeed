@@ -379,9 +379,14 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Seeds an emergency local admin with the password when the users table is empty. Also designates an existing local password admin as emergency access, without elevating roles or resetting its password. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN` | `break-glass` with OIDC; `local` without | `break-glass` permits only designated local emergency admins; `off` disables password sign-in and changes. `local` is rejected with OIDC. |
-| `LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS` | `true` | Provision one personal organization for each admitted user. Can be disabled in shared-organization deployments. |
-| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | `25` | Default personal-organization universe quota; a Platform Admin can override it per organization. |
-| `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | `100` | Default shared-organization universe quota. |
+| `LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS` | Unset (on) | Platform setting. Provision one personal organization for each admitted user. Can be disabled in shared-organization deployments. |
+| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | Unset (`25`) | Platform setting. Universe limit for personal organizations without their own limit. |
+| `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | Unset (`100`) | Platform setting. Universe limit for shared organizations without their own limit. |
+
+Variables marked *Platform setting* can also be changed by a Platform Admin under
+**Admin → Platform → Settings**. When the variable is set, it wins: the page
+shows the setting locked, with the variable's name. When it is unset, a value
+saved on the page applies, and otherwise the default in parentheses.
 | `LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS` | `365` | Default user/service-user key lifetime, capped by the maximum. |
 | `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | Unset | Maximum key lifetime. Unset means no maximum, and keys may be created without expiry when chosen explicitly; set, it also refuses keys without expiry. Both expiry settings accept 1–3650 days. |
 | `LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS` | `30` | Local browser session inactivity lifetime. Company sign-in retains its separate bounded admission window. |

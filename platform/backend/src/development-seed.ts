@@ -20,7 +20,7 @@ export async function seedDevelopment(db: Db, env: ServerEnv): Promise<void> {
   const [admin] = await db.select().from(schema.user).where(eq(schema.user.email, env.adminEmail)).limit(1);
   if (!admin) throw new Error("development seeding requires an existing bootstrap admin login");
   const [organization] = await db.select().from(schema.organization).where(eq(schema.organization.id, developmentOrganizationId)).limit(1);
-  if (!organization) await db.insert(schema.organization).values({ id: developmentOrganizationId, name: "Development", slug: "development", defaultProtected: false, requireProtected: false, universeQuota: env.sharedOrganizationUniverseQuota ?? 100, createdAt: new Date() });
+  if (!organization) await db.insert(schema.organization).values({ id: developmentOrganizationId, name: "Development", slug: "development", defaultProtected: false, requireProtected: false, createdAt: new Date() });
   const client = deploymentClient(env);
   const created = await client.call("deployment/universes/create", { universeId: testUniverseId, handle: "test" });
   const [prior] = await db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, testUniverseId)).limit(1);

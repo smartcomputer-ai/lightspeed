@@ -117,9 +117,10 @@ export function loadEnv(): ServerEnv {
     devSeed: booleanEnv("LIGHTSPEED_PLATFORM_DEV_SEED", false),
     browserSessionIdleDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS", 30, 1, 365),
     browserSessionMaxDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS", 90, 1, 3650),
-    personalOrganizations: booleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS", true),
-    personalOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 25, 0, 1000000),
-    sharedOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 100, 0, 1000000),
+    // Platform settings: set here, they win over a Platform Admin's value.
+    personalOrganizations: optionalBooleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS"),
+    personalOrganizationUniverseQuota: optionalIntegerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 0, 100000),
+    sharedOrganizationUniverseQuota: optionalIntegerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 0, 100000),
     apiKeyDefaultExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS", 365, 1, 3650),
     apiKeyMaxExpiryDays: optionalIntegerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 1, 3650),
     github,
@@ -201,6 +202,10 @@ function loadOidc(): OidcConfig | null {
     resource: process.env[`${prefix}RESOURCE`] || undefined,
     audience: claimsToken === "access" ? required(`${prefix}AUDIENCE`) : undefined,
   };
+}
+
+function optionalBooleanEnv(name: string): boolean | undefined {
+  return process.env[name]?.trim() ? booleanEnv(name, false) : undefined;
 }
 
 function booleanEnv(name: string, fallback: boolean): boolean {

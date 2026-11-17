@@ -2,11 +2,12 @@ import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { and, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
-import { ORGANIZATION_ROLES, PLATFORM_OPERATIONS, type OrganizationRole, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
+import { ORGANIZATION_ROLES, PLATFORM_OPERATIONS, type OrganizationRole, type PlatformSettings, type PlatformOperationId, type PlatformOperationParams, type PrincipalRef } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
 import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, refusePersonalOrganization, requireOrganizationAction, withOwnerNames, type OrganizationAccess } from "../organization-access.js";
 import { auditAsSubject } from "../identity-audit.js";
+import { effectiveUniverseQuota, listPlatformSettings, platformSettings, putPlatformSetting } from "../platform-settings.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import { policyBody, problem } from "../runtime-http.js";
@@ -14,7 +15,7 @@ import { activeGrantIds, adoptManagedUniverse, createManagedUniverse, requireOrg
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 /** Usage and policy are administration details: only a caller who may manage the organization's policy sees them. */
-function organizationView(organization: typeof schema.organization.$inferSelect, access: Pick<OrganizationAccess, "role" | "actions">, universeCount: number) { return { id: organization.id, name: organization.name, slug: organization.slug, personal: organization.personalUserId !== null, role: access.role, actions: [...access.actions], universeQuota: organization.universeQuota, baseUniverseRole: organization.baseUniverseRole, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(access.actions.has("managePolicy") ? { universeCount, membershipPolicy: organization.membershipPolicy } : {}) }; }
+function organizationView(organization: typeof schema.organization.$inferSelect, access: Pick<OrganizationAccess, "role" | "actions">, universeCount: number, settings: PlatformSettings) { return { id: organization.id, name: organization.name, slug: organization.slug, personal: organization.personalUserId !== null, role: access.role, actions: [...access.actions], universeQuota: effectiveUniverseQuota(organization, settings), universeQuotaSource: organization.universeQuota === null ? "deployment" as const : "organization" as const, baseUniverseRole: organization.baseUniverseRole, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(access.actions.has("managePolicy") ? { universeCount, membershipPolicy: organization.membershipPolicy } : {}) }; }
 /** The same allocation the universe quota is enforced against: every row, including provisioning and deleting universes. */
 async function universeCounts(db: AppContext["db"], organizationIds: string[]) {
   if (!organizationIds.length) return new Map<string, number>();
@@ -58,9 +59,26 @@ export function platformRoutes(ctx: AppContext) {
   return app;
 }
 
+/** Deployment-wide settings: a Platform Admin with a credential not narrowed to some organizations or universes. */
+function requireSettingsAuthority(auth: AuthContext) {
+  if (!deploymentAllows(auth, "configureDeployment")) throw new GateRefusal(403, "deployment permission required: configureDeployment");
+  if (auth.credential.restrictions.organizationIds || auth.credential.restrictions.universeIds) throw new GateRefusal(403, "credential is limited to some organizations or universes");
+}
+
 async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformOperationId, params: Record<string, unknown>): Promise<unknown> {
   const organizationId = params.organizationId as string;
   switch (operation) {
+    case "platform/settings/list": {
+      requireSettingsAuthority(auth);
+      return { settings: await listPlatformSettings(ctx.db, ctx.env) };
+    }
+    case "platform/settings/put": {
+      requireSettingsAuthority(auth);
+      const { key, value } = params as PlatformOperationParams<"platform/settings/put">;
+      const setting = await putPlatformSetting(ctx.db, ctx.env, auth.actorId, key, value);
+      await auditAsSubject(ctx.db, auth, { action: "platform.setting.put", targetId: key, details: { value: value === null ? null : String(value) } });
+      return { setting };
+    }
     case "platform/organizations/list": {
       const accessible = await listOrganizationsForPrincipal(ctx, auth);
       const limits = auth.credential.restrictions;
@@ -68,7 +86,8 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
         && !limits.readOnly && !limits.organizationIds && !limits.universeIds && (!limits.operations || limits.operations.includes("platform/organizations/create"));
       const counts = await universeCounts(ctx.db, accessible.filter(access => access.actions.has("managePolicy")).map(access => access.organization.id));
       const named = await withOwnerNames(ctx.db, accessible.map(access => access.organization));
-      return { organizations: accessible.map((access, index) => organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0)), canCreate };
+      const settings = await platformSettings(ctx.db, ctx.env);
+      return { organizations: accessible.map((access, index) => organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0, settings)), canCreate };
     }
     case "platform/organizations/create": {
       if (!deploymentAllows(auth, "createOrganization")) throw new GateRefusal(403, "deployment permission required: createOrganization");
@@ -80,19 +99,19 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, adminId)).limit(1);
       if (!user || user.banned) throw new GateRefusal(400, "initial admin must be an active user");
       const organization = await ctx.db.transaction(async tx => {
-        const [created] = await tx.insert(schema.organization).values({ id: crypto.randomUUID(), name: input.name, slug: input.slug, createdAt: new Date(), universeQuota: input.universeQuota ?? ctx.env.sharedOrganizationUniverseQuota ?? 100, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false }).returning();
+        const [created] = await tx.insert(schema.organization).values({ id: crypto.randomUUID(), name: input.name, slug: input.slug, createdAt: new Date(), universeQuota: input.universeQuota ?? null, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false }).returning();
         await tx.insert(schema.member).values({ id: crypto.randomUUID(), organizationId: created!.id, userId: adminId, role: "admin", createdAt: new Date() });
         await auditAsSubject(tx, auth, { action: "organization.create", targetId: created!.id });
         return created!;
       });
       const access = await organizationForPrincipal(ctx, auth, organization.id);
       if (!access) throw new GateRefusal(403, "created organization is outside this credential's scope");
-      return { organization: organizationView(organization, access, 0) };
+      return { organization: organizationView(organization, access, 0, await platformSettings(ctx.db, ctx.env)) };
     }
     case "platform/organizations/read": {
       const access = await organizationForPrincipal(ctx, auth, organizationId); if (!access) throw new GateRefusal(404, "organization not found");
       const [named] = await withOwnerNames(ctx.db, [access.organization]);
-      return { organization: organizationView(named!, access, access.actions.has("managePolicy") ? await universeCount(ctx.db, organizationId) : 0) };
+      return { organization: organizationView(named!, access, access.actions.has("managePolicy") ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)) };
     }
     case "platform/organizations/update": {
       const access = await requireOrganizationAction(ctx, auth, organizationId, "managePolicy");
@@ -116,7 +135,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
         return updated!;
       });
       const [named] = await withOwnerNames(ctx.db, [organization]);
-      return { organization: organizationView(named!, access, await universeCount(ctx.db, organizationId)) };
+      return { organization: organizationView(named!, access, await universeCount(ctx.db, organizationId), await platformSettings(ctx.db, ctx.env)) };
     }
     case "platform/organizations/members/list": {
       await requireOrganizationDirectory(ctx, auth, organizationId);

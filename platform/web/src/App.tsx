@@ -3,6 +3,7 @@ import { OrganizationMembersPage } from "@/pages/OrganizationMembersPage";
 import { OrganizationApiKeysPage } from "@/pages/OrganizationApiKeysPage";
 import { OrganizationSettingsPage } from "@/pages/OrganizationSettingsPage";
 import { PlatformOrganizationsPage } from "@/pages/PlatformOrganizationsPage";
+import { PlatformSettingsPage } from "@/pages/PlatformSettingsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { lazy, Suspense, useEffect } from "react";
@@ -205,6 +206,7 @@ export function App() {
           <Route element={<AdminGate deploymentAction="configureDeployment" />}>
             <Route path="admin/platform/channels" element={<AdminChannelsPage />} />
             <Route path="admin/platform/environment-providers" element={<AdminEnvironmentProvidersPage />} />
+            <Route path="admin/platform/settings" element={<PlatformSettingsPage />} />
           </Route>
         </Route>
         <Route path="account" element={<AccountPage user={user} />} />

@@ -9,6 +9,15 @@ const updatedAt = () =>
     .$onUpdate(() => new Date())
     .notNull();
 
+/// Deployment-wide settings changed by a Platform Admin. Only values set here
+/// are stored; a setting without a row uses its environment value or default.
+export const platformSettings = pgTable("platform_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: updatedAt(),
+});
+
 // Attribution must survive deletion of the referenced identity or resource.
 export const identityAudit = pgTable("identity_audit", {
   id: uuid("id").primaryKey().defaultRandom(),

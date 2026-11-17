@@ -66,6 +66,7 @@ const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string; acti
   { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log", action: "readAudit" },
   { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", action: "configureDeployment" },
   { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes", action: "manageUnclaimedUniverses" },
+  { to: "/admin/platform/settings", icon: SettingsIcon, label: "Settings", action: "configureDeployment" },
 ];
 /// Universes has no action of its own: it opens for the organization's
 /// administrators and for Owners of any of its universes.

@@ -32,6 +32,12 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/service-users/credentials/revoke': {'method': 'DELETE',
                                                'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}',
                                                'helper': {'name': 'revokeServiceUserApiKey'}},
+ 'platform/settings/list': {'method': 'GET',
+                            'path': '/api/v1/platform/settings',
+                            'helper': {'name': 'listPlatformSettings'}},
+ 'platform/settings/put': {'method': 'PUT',
+                           'path': '/api/v1/platform/settings/{key}',
+                           'helper': {'name': 'putPlatformSetting'}},
  'platform/organizations/list': {'method': 'GET',
                                  'path': '/api/v1/platform/organizations',
                                  'helper': {'name': 'listOrganizations'}},
@@ -121,6 +127,12 @@ class PlatformApi:
 
     async def revoke_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsRevokeResult:
         return cast(Api.PlatformServiceUsersCredentialsRevokeResult, await self._invoke('platform/service-users/credentials/revoke', dict(params or {}), headers))
+
+    async def list_platform_settings(self, params: Api.PlatformSettingsListParams | None = None, *, headers: HeadersInput | None = None) -> Api.PlatformSettingsListResult:
+        return cast(Api.PlatformSettingsListResult, await self._invoke('platform/settings/list', dict(params or {}), headers))
+
+    async def put_platform_setting(self, params: Api.PlatformSettingsPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformSettingsPutResult:
+        return cast(Api.PlatformSettingsPutResult, await self._invoke('platform/settings/put', dict(params or {}), headers))
 
     async def list_organizations(self, params: Api.PlatformOrganizationsListParams | None = None, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsListResult:
         return cast(Api.PlatformOrganizationsListResult, await self._invoke('platform/organizations/list', dict(params or {}), headers))

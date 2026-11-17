@@ -8,6 +8,7 @@ import type { AppContext, ApiVariables } from "../context.js";
 import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
 import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, declaredUniverseRole, resourceScopeAllowed, type OrganizationAccess } from "../organization-access.js";
 import { auditAsSubject } from "../identity-audit.js";
+import { effectiveUniverseQuota, platformSettings } from "../platform-settings.js";
 import { deploymentClient, GateRefusal, type UniverseCaller } from "../runtime-client.js";
 import { requireAvailableCachedHandle } from "../universe-handles.js";
 import { parseBody, withApiErrors } from "../http.js";
@@ -172,7 +173,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
       return reserved;
     }
     const [allocation] = await tx.select({ total: count() }).from(schema.universes).where(eq(schema.universes.organizationId, organizationId));
-    if ((allocation?.total ?? 0) >= lockedOrganization.universeQuota) throw new GateRefusal(409, "organization universe quota reached");
+    if ((allocation?.total ?? 0) >= effectiveUniverseQuota(lockedOrganization, await platformSettings(tx, ctx.env))) throw new GateRefusal(409, "organization universe quota reached");
     const [universe] = await tx.insert(schema.universes).values({ organizationId: organizationId, lightspeedUniverseId: runtimeId, name: input.name, handle, createdBy: auth.actorId, status: "provisioning", runtimeConfiguration: { metadata: input.metadata ?? {}, protected: reservationProtected, expiresAtMs: input.expiresAtMs ?? null } }).returning();
     await tx.insert(schema.universeGrants).values({ universeId: universe!.id, role: "owner", ...(owner.kind === "user" ? { userId: owner.id } : { serviceUserId: owner.id }) });
     await auditAsSubject(tx, auth, { action: "universe.create", targetId: runtimeId, universeId: universe!.id, details: { organizationId } });
@@ -218,7 +219,7 @@ export async function adoptManagedUniverse(ctx: AppContext, auth: AuthContext, o
     const [locked] = await tx.select().from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
     if (!locked) throw new GateRefusal(404, "organization not found");
     const [allocation] = await tx.select({ total: count() }).from(schema.universes).where(eq(schema.universes.organizationId, organizationId));
-    if ((allocation?.total ?? 0) >= locked.universeQuota) throw new GateRefusal(409, "organization universe quota reached");
+    if ((allocation?.total ?? 0) >= effectiveUniverseQuota(locked, await platformSettings(tx, ctx.env))) throw new GateRefusal(409, "organization universe quota reached");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     await requireOrganizationPrincipal(scopedContext, organizationId, input.initialOwner);
     if (locked.requireProtected && !runtime.protected) await client.call("deployment/universes/configuration/put", { universe: runtime.universeId, protected: true }, { headers: { "x-lightspeed-actor": auth.actorId }, signal: AbortSignal.timeout(30000) });
