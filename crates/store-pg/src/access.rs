@@ -60,12 +60,8 @@ fn error(error: impl std::fmt::Display) -> AccessStoreError {
 /// leaves its tree unshared and created by no one.
 pub(crate) const SESSION_ROOT_JOIN: &str = "LEFT JOIN sessions r ON r.universe_id = s.universe_id AND r.deleted_at_ms IS NULL AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)";
 
-/// The bot whose worker controls session `s`'s tree, if any.
-const SESSION_BOT: &str = "COALESCE(r.bot_id, s.bot_id)";
-
-/// The visibility of session `s`'s root: a bot's tree is shared; a root
-/// without a recorded visibility reads as unshared.
-pub(crate) const SESSION_VISIBILITY: &str = "(CASE WHEN COALESCE(r.bot_id, s.bot_id) IS NOT NULL THEN 'universe' ELSE COALESCE(r.visibility, 'restricted') END)";
+/// A root without a recorded visibility reads as unshared.
+pub(crate) const SESSION_VISIBILITY: &str = "COALESCE(r.visibility, 'restricted')";
 
 /// The summary columns a session list selects, aliased so they never collide
 /// with the session's own.
@@ -118,9 +114,8 @@ impl AccessFilter {
         let clause = format!(
             "AND (${p}::text IS NULL OR {SESSION_VISIBILITY} = 'universe' OR {visible_to})
              AND (${root_kind}::text IS NULL OR {SESSION_VISIBILITY} = 'universe'
-                  OR (${root_kind} = 'session' AND {SESSION_BOT} IS NULL
-                      AND COALESCE(s.origin_root_session_id, s.session_id) = ${root_id})
-                  OR (${root_kind} = 'bot' AND {SESSION_BOT} = ${root_id}))",
+                  OR (${root_kind} = 'session'
+                      AND COALESCE(s.origin_root_session_id, s.session_id) = ${root_id}))",
             visible_to = actor_match("r.created_by", p),
             root_kind = p + 1,
             root_id = p + 2,
@@ -212,10 +207,37 @@ impl PgAccessStore {
         .map_err(error)
     }
 
-    /// Record who started a session, once: a retry, or a stamp racing it,
-    /// keeps the first. `visibility` is set on a request's root; `bot` on a
-    /// bot's session. A delegated child is never stamped.
+    /// Record who started a session and set its audience. The first stamp wins.
     pub async fn stamp_session(
+        &self,
+        universe: Uuid,
+        session: &str,
+        created_by: &Attribution,
+        visibility: Option<Visibility>,
+    ) -> Result<(), AccessStoreError> {
+        self.record_session_start(universe, session, created_by, visibility, None)
+            .await
+    }
+
+    /// Record the bot's ownership and the root session's shared audience together.
+    pub async fn stamp_bot_session(
+        &self,
+        universe: Uuid,
+        session: &str,
+        created_by: &Attribution,
+        bot: &str,
+    ) -> Result<(), AccessStoreError> {
+        self.record_session_start(
+            universe,
+            session,
+            created_by,
+            Some(Visibility::Universe),
+            Some(bot),
+        )
+        .await
+    }
+
+    async fn record_session_start(
         &self,
         universe: Uuid,
         session: &str,
@@ -224,9 +246,20 @@ impl PgAccessStore {
         bot: Option<&str>,
     ) -> Result<(), AccessStoreError> {
         let rows = sqlx::query_as::<_, (String, i64)>(
-            "WITH changed AS (UPDATE sessions SET created_by = $3, visibility = $4, bot_id = $5, revision=revision+1
-             WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND created_by IS NULL RETURNING session_id,revision),
-             children AS (UPDATE sessions SET revision=revision+1 WHERE universe_id=$1 AND origin_root_session_id IN (SELECT session_id FROM changed) AND deleted_at_ms IS NULL RETURNING session_id,revision)
+            "WITH changed AS (
+                UPDATE sessions SET created_by = $3, visibility = $4, revision = revision + 1
+                WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
+                  AND created_by IS NULL AND origin_root_session_id IS NULL
+                RETURNING session_id, revision
+             ), owner AS (
+                INSERT INTO bot_sessions (universe_id, root_session_id, bot_id)
+                SELECT $1, session_id, $5 FROM changed WHERE $5::text IS NOT NULL
+             ), children AS (
+                UPDATE sessions SET revision = revision + 1
+                WHERE universe_id = $1 AND origin_root_session_id IN (SELECT session_id FROM changed)
+                  AND deleted_at_ms IS NULL
+                RETURNING session_id, revision
+             )
              SELECT * FROM changed UNION ALL SELECT * FROM children",
         )
         .bind(universe)
@@ -237,8 +270,9 @@ impl PgAccessStore {
         .fetch_all(&self.pool)
         .await
         .map_err(error)?;
+        let changed = !rows.is_empty();
         self.publish_sessions(universe, rows);
-        if let Some(bot) = bot {
+        if changed && let Some(bot) = bot {
             self.changes.publish(crate::changes::Change::new(
                 universe,
                 crate::changes::ChangeKind::Bot,
@@ -272,8 +306,7 @@ impl PgAccessStore {
         Ok(())
     }
 
-    /// Who controls a session and the audience of its root, from its row;
-    /// `None` when it does not exist.
+    /// Who controls a session and the audience of its root.
     pub async fn session_access(
         &self,
         universe: Uuid,
@@ -282,8 +315,9 @@ impl PgAccessStore {
         let summary = session_summary_columns();
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT s.origin_parent_session_id, COALESCE(s.origin_root_session_id, s.session_id) AS root_session_id,
-                    {SESSION_BOT} AS root_bot_id, {summary}
+                    owner.bot_id AS root_bot_id, {summary}
              FROM sessions s {SESSION_ROOT_JOIN}
+             LEFT JOIN bot_sessions owner ON owner.universe_id = r.universe_id AND owner.root_session_id = r.session_id
              WHERE s.deleted_at_ms IS NULL AND s.universe_id = $1 AND s.session_id = $2"
         )))
         .bind(universe)
@@ -339,7 +373,7 @@ impl PgAccessStore {
         let rows = sqlx::query_as::<_, (String, i64)>(
             "WITH changed AS (UPDATE sessions SET visibility = 'universe', revision=revision+1
              WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND origin_root_session_id IS NULL
-               AND bot_id IS NULL AND COALESCE(visibility, 'restricted') = 'restricted' RETURNING session_id,revision),
+               AND COALESCE(visibility, 'restricted') = 'restricted' RETURNING session_id,revision),
              children AS (UPDATE sessions SET revision=revision+1 WHERE universe_id=$1 AND origin_root_session_id IN (SELECT session_id FROM changed) AND deleted_at_ms IS NULL RETURNING session_id,revision)
              SELECT * FROM changed UNION ALL SELECT * FROM children",
         )

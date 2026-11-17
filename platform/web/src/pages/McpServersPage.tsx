@@ -12,7 +12,7 @@ import { slugify } from "@lightspeed-ai/platform-shared";
 import { AddIcon, LoadingIcon, McpServerIcon, NewTabIcon, RetryIcon, SignInIcon, SuccessIcon } from "@/icons";
 import {
   api,
-  type AuthGrantOption,
+  type CredentialGrantOption,
   type McpOAuthFlow,
   type McpOAuthFlowStart,
   type McpServer,
@@ -61,7 +61,7 @@ const MCP_CREATE_STEPS = [
 /// U5a: the universe's MCP server registry — what the profile editor's
 /// server picker links against. Full-document saves mirror the engine's
 /// put-with-revision catalog semantics.
-export function McpServersPage({ admin: _admin }: { admin: boolean }) {
+export function McpServersPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
@@ -82,11 +82,11 @@ function ServerList({ universeId }: { universeId: string }) {
   const queryClient = useQueryClient();
   const servers = useQuery({
     queryKey: ["mcp-servers", universeId],
-    queryFn: () => api<McpServer[]>("GET", `/api/v1/universes/${universeId}/mcp-servers`),
+    queryFn: () => api<McpServer[]>("GET", `/api/ui/universes/${universeId}/mcp-servers`),
   });
-  const authGrants = useQuery({
-    queryKey: ["auth-grants", universeId],
-    queryFn: () => api<AuthGrantOption[]>("GET", `/api/v1/universes/${universeId}/auth-grants`),
+  const credentialGrants = useQuery({
+    queryKey: ["credential-grants", universeId],
+    queryFn: () => api<CredentialGrantOption[]>("GET", `/api/ui/universes/${universeId}/credential-grants`),
   });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["mcp-servers", universeId] });
   const [createOpen, setCreateOpen] = useState(false);
@@ -99,7 +99,7 @@ function ServerList({ universeId }: { universeId: string }) {
   );
   const changed = () => {
     void invalidate();
-    void queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
+    void queryClient.invalidateQueries({ queryKey: ["credential-grants", universeId] });
   };
 
   return (
@@ -108,7 +108,7 @@ function ServerList({ universeId }: { universeId: string }) {
         actions={writable && <Button onClick={() => setCreateOpen(true)}><AddIcon data-icon="inline-start" />Add server</Button>} />
       {servers.isLoading && <LoadingNote />}
       {servers.error && <ReadError error={servers.error} loading={!servers.data} prefix="MCP servers unavailable" />}
-      {authGrants.error && <ReadError error={authGrants.error} loading={!authGrants.data} prefix="Access credentials unavailable" />}
+      {credentialGrants.error && <ReadError error={credentialGrants.error} loading={!credentialGrants.data} prefix="Access credentials unavailable" />}
       {servers.data && rows.length === 0 && (
         <EmptyState icon={McpServerIcon} title="No MCP servers yet">
           Connect a remote tool server, then make its tools available to profiles and sessions.
@@ -137,12 +137,12 @@ function ServerList({ universeId }: { universeId: string }) {
         title={selected ? serverName(selected) : "MCP server"}
         description={selected?.description || "Connection settings and tool access."} finalFocus={detailsTriggerRef}>
         {selected && <ServerDetails key={selected.serverId} universeId={universeId} server={selected}
-          authGrants={authGrants.data ?? []} authGrantsLoading={authGrants.isLoading}
+          credentialGrants={credentialGrants.data ?? []} credentialGrantsLoading={credentialGrants.isLoading}
           onChanged={changed} onDeleted={() => setSelectedId(null)} />}
       </ResourceDetailsDialog>
       {writable && <ServerDialog key={createOpen ? "create-open" : "create-closed"}
         universeId={universeId} open={createOpen} server={null}
-        authGrants={authGrants.data ?? []} authGrantsLoading={authGrants.isLoading}
+        credentialGrants={credentialGrants.data ?? []} credentialGrantsLoading={credentialGrants.isLoading}
         onOpenChange={setCreateOpen} onDone={(server, connectOAuth) => {
           changed();
           if (connectOAuth) setOAuthServer(server);
@@ -157,11 +157,11 @@ function serverName(server: McpServer) {
   return server.displayName?.trim() || server.serverId;
 }
 
-function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onChanged, onDeleted }: {
+function ServerDetails({ universeId, server, credentialGrants, credentialGrantsLoading, onChanged, onDeleted }: {
   universeId: string;
   server: McpServer;
-  authGrants: AuthGrantOption[];
-  authGrantsLoading: boolean;
+  credentialGrants: CredentialGrantOption[];
+  credentialGrantsLoading: boolean;
   onChanged: () => void;
   onDeleted: () => void;
 }) {
@@ -169,10 +169,10 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [oauthOpen, setOAuthOpen] = useState(false);
   const remove = useMutation({
-    mutationFn: () => api("DELETE", `/api/v1/universes/${universeId}/mcp-servers/${encodeURIComponent(server.serverId)}`),
+    mutationFn: () => api("DELETE", `/api/ui/universes/${universeId}/mcp-servers/${encodeURIComponent(server.serverId)}`),
     onSuccess: () => { onChanged(); onDeleted(); },
   });
-  const grant = authGrants.find((candidate) => candidate.grantId === server.credential?.grantId);
+  const grant = credentialGrants.find((candidate) => candidate.grantId === server.credential?.grantId);
   return (
     <>
       <ResourceDetailsGrid>
@@ -181,7 +181,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
         <ResourceDetail label="URL" mono>{server.serverUrl}</ResourceDetail>
         <ResourceDetail label="Authentication">{mcpHasCredentialHeader(server.headers) && server.authPolicy.type === "none" ? "Credential in request headers" : authPolicyLabel(server.authPolicy.type)}</ResourceDetail>
         {server.authPolicy.type !== "none" && <ResourceDetail label="Credential">
-          {grant ? authGrantLabel(grant) : server.credential?.grantId ?? "No credential connected"}
+          {grant ? credentialGrantLabel(grant) : server.credential?.grantId ?? "No credential connected"}
         </ResourceDetail>}
         {Object.keys(server.headers ?? {}).length > 0 && <ResourceDetail label="Request headers">
           <ul className="grid gap-1">
@@ -191,7 +191,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
                 {": "}
                 {header.type === "literal"
                   ? <span className="font-mono">{header.value}</span>
-                  : <span>credential {headerGrantLabel(authGrants, header.grantId)}</span>}
+                  : <span>credential {headerGrantLabel(credentialGrants, header.grantId)}</span>}
               </li>
             ))}
           </ul>
@@ -226,7 +226,7 @@ function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onCh
       </ResourceActions>}
       <ServerDialog key={`edit-${editing?.serverId ?? "closed"}`} universeId={universeId}
         open={writable && editing !== null} server={writable ? editing : null}
-        authGrants={authGrants} authGrantsLoading={authGrantsLoading}
+        credentialGrants={credentialGrants} credentialGrantsLoading={credentialGrantsLoading}
         onOpenChange={(open) => { if (!open) setEditing(null); }} onDone={(_saved, connectOAuth) => {
           onChanged();
           if (connectOAuth) setOAuthOpen(true);
@@ -275,16 +275,16 @@ function ServerDialog({
   universeId,
   open,
   server,
-  authGrants,
-  authGrantsLoading,
+  credentialGrants,
+  credentialGrantsLoading,
   onOpenChange,
   onDone,
 }: {
   universeId: string;
   open: boolean;
   server: McpServer | null;
-  authGrants: AuthGrantOption[];
-  authGrantsLoading: boolean;
+  credentialGrants: CredentialGrantOption[];
+  credentialGrantsLoading: boolean;
   onOpenChange: (open: boolean) => void;
   onDone: (server: McpServer, connectOAuth: boolean) => void;
 }) {
@@ -333,15 +333,15 @@ function ServerDialog({
   const [error, setError] = useState<string | null>(null);
 
   const authKind = mcpAuthKind(authPolicy);
-  const compatibleGrants = authGrants
+  const compatibleGrants = credentialGrants
     .filter((grant) => mcpGrantCompatible(authPolicy, grant.providerKind))
     .slice()
-    .sort((left, right) => authGrantLabel(left).localeCompare(authGrantLabel(right)));
+    .sort((left, right) => credentialGrantLabel(left).localeCompare(credentialGrantLabel(right)));
   const boundGrantAvailable = compatibleGrants.some(
     (grant) => grant.grantId === credentialGrantId,
   );
   const currentOAuthScopes = oauthScopes.split(",").map((scope) => scope.trim()).filter(Boolean);
-  const headerGrants = headerCredentialOptions(authGrants);
+  const headerGrants = headerCredentialOptions(credentialGrants);
   const headerInput = requestHeadersInput(MCP_SERVER_HEADER_OWNER, headerRows);
   const connectionSettingsDirty = Boolean(server && (
     serverUrl.trim() !== server.serverUrl ||
@@ -363,7 +363,7 @@ function ServerDialog({
   const probe = useMutation({
     mutationFn: (url: string) => api<McpServerAuthDiscovery>(
       "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/discover-auth`,
+      `/api/ui/universes/${universeId}/mcp-servers/discover-auth`,
       { serverUrl: url },
     ),
     onSuccess: (result, url) => {
@@ -409,7 +409,7 @@ function ServerDialog({
         authorizationServer: oauthAuthorizationServer,
       });
       if (!editing) {
-        return api<McpServer>("POST", `/api/v1/universes/${universeId}/mcp-servers`, {
+        return api<McpServer>("POST", `/api/ui/universes/${universeId}/mcp-servers`, {
           serverId,
           serverUrl,
           defaultServerLabel: serverId,
@@ -428,7 +428,7 @@ function ServerDialog({
       }
       return api<McpServer>(
         "PUT",
-        `/api/v1/universes/${universeId}/mcp-servers/${server.serverId}`,
+        `/api/ui/universes/${universeId}/mcp-servers/${server.serverId}`,
         {
           serverId: server.serverId,
           serverUrl,
@@ -648,7 +648,7 @@ function ServerDialog({
       {authKind === "bearer" && (
         <CredentialSelect
           grants={compatibleGrants}
-          loading={authGrantsLoading}
+          loading={credentialGrantsLoading}
           value={credentialGrantId}
           boundAvailable={boundGrantAvailable}
           onChange={setCredentialGrantId}
@@ -658,7 +658,7 @@ function ServerDialog({
       {authKind === "oauth" && (
         <CredentialSelect
           grants={compatibleGrants}
-          loading={authGrantsLoading}
+          loading={credentialGrantsLoading}
           value={credentialGrantId}
           boundAvailable={boundGrantAvailable}
           onChange={setCredentialGrantId}
@@ -764,7 +764,7 @@ function ServerDialog({
             owner={MCP_SERVER_HEADER_OWNER}
             rows={headerRows}
             grants={headerGrants}
-            loading={authGrantsLoading}
+            loading={credentialGrantsLoading}
             onChange={(rows) => {
               setHeaderRows(rows);
               setError(null);
@@ -980,7 +980,7 @@ function CredentialSelect({
   emptyCopy,
   optional = false,
 }: {
-  grants: AuthGrantOption[];
+  grants: CredentialGrantOption[];
   loading: boolean;
   value: string;
   boundAvailable: boolean;
@@ -1005,7 +1005,7 @@ function CredentialSelect({
           )}
           {grants.map((grant) => (
             <SelectItem key={grant.grantId} value={grant.grantId}>
-              {authGrantLabel(grant)}
+              {credentialGrantLabel(grant)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -1042,7 +1042,7 @@ function OAuthDialog({
   const start = useMutation({
     mutationFn: () => api<McpOAuthFlowStart>(
       "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/start`,
+      `/api/ui/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/start`,
       {},
     ),
     onSuccess: (nextAttempt) => setAttempt(nextAttempt),
@@ -1052,14 +1052,14 @@ function OAuthDialog({
     enabled: Boolean(server && attempt),
     queryFn: () => api<McpOAuthFlow>(
       "GET",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${attempt!.flowId}`,
+      `/api/ui/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${attempt!.flowId}`,
     ),
     refetchInterval: (query) => query.state.data?.status === "pending" ? 1_500 : false,
   });
   const complete = useMutation({
     mutationFn: (flowId: string) => api<McpServer>(
       "POST",
-      `/api/v1/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${flowId}/complete`,
+      `/api/ui/universes/${universeId}/mcp-servers/${server!.serverId}/oauth/flows/${flowId}/complete`,
       { expectedRevision: attempt!.serverRevision },
     ),
     onSuccess: onDone,
@@ -1324,7 +1324,7 @@ export function mcpServerStatusForCredential(
 }
 
 
-function authGrantLabel(grant: AuthGrantOption): string {
+function credentialGrantLabel(grant: CredentialGrantOption): string {
   const name = grant.displayName || grant.subjectHint || grant.grantId;
   return `${name} (${grant.providerId})`;
 }
@@ -1339,7 +1339,7 @@ export function mcpHeadersExecutionError(
   return null;
 }
 
-function headerGrantLabel(grants: AuthGrantOption[], grantId: string): string {
+function headerGrantLabel(grants: CredentialGrantOption[], grantId: string): string {
   const grant = grants.find((candidate) => candidate.grantId === grantId);
-  return grant ? authGrantLabel(grant) : grantId;
+  return grant ? credentialGrantLabel(grant) : grantId;
 }

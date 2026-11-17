@@ -397,10 +397,13 @@ Registration runs the controller handshake. A refused upgrade, such as HTTP
 configured data route base that downgrades a `wss` controller, refuses the
 registration. A controller that cannot be reached yet is accepted.
 
-Create an enabled universe binding and inspect the templates. The
-[Incus setup guide](../environments/incus-vms.md) shows the registration and
-binding procedure; use your provider's controller URL, credential, and
-templates.
+New providers are available to all universes by default. To serve selected
+universes, set `availableToAllUniverses` to `false` and bind the provider to
+each permitted universe. A Platform Admin can set this under
+**Platform Admin → Environment Providers**. See the
+[Incus setup guide](../environments/incus-vms.md) for a registration example.
+In a universe that can use the provider, inspect its templates before trying
+to create a target.
 
 Create an environment, wait for it to open, read and write a disposable
 file, and run a harmless command. Exercise each advertised power state, let

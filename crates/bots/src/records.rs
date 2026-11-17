@@ -4,9 +4,9 @@
 //! implemented by `store-pg` and [`crate::memory`].
 
 use api::{
-    BotDocument, BotEventMedia, BotEventOutcome, BotEventReplyRef, BotEventView, BotId,
-    BotRoutedSessionView, BotTriggerDisabledReason, BotTriggerDocument, BotTriggerId,
-    BotTriggerKind, BotTriggerView, BotView, PollCursorState, ProfileId,
+    BotDocument, BotEventOutcome, BotEventReplyRef, BotEventView, BotId, BotRoutedSessionView,
+    BotTriggerDisabledReason, BotTriggerDocument, BotTriggerId, BotTriggerKind, BotTriggerView,
+    BotView, PollCursorState, ProfileId,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -124,9 +124,6 @@ pub struct BotTriggerSecrets {
     /// Webhook triggers: the URL path token (24 random bytes, hex).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webhook_token: Option<String>,
-    /// Chat triggers with `pairing: code`: the pairing code.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pairing_code: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,8 +157,7 @@ impl BotTriggerRecord {
     }
 
     /// The wire view. It never carries the trigger's secrets: reading a
-    /// trigger is open to every reader, and the ingest path and pairing
-    /// code let their holder reach the bot.
+    /// trigger is open to every reader, and the ingest path let their holder reach the bot.
     pub fn view(&self) -> BotTriggerView {
         BotTriggerView {
             bot_id: self.bot_id.clone(),
@@ -214,7 +210,7 @@ pub trait BotTriggerStore: Send + Sync {
     async fn list_bot_triggers(&self, bot_id: &BotId) -> Result<Vec<BotTriggerRecord>, BotError>;
 
     /// Every trigger of the universe with the given kind, ordered by bot id
-    /// then trigger id (schedule reconciliation, chat trigger candidates).
+    /// then trigger id (schedule reconciliation).
     async fn list_bot_triggers_by_kind(
         &self,
         kind: BotTriggerKind,
@@ -270,7 +266,7 @@ pub enum RoutedSessionClosePolicy {
     /// Inherit the bot's `routedSessionCloseAfterMs`.
     #[default]
     Inherit,
-    /// Never close (chat).
+    /// Never close.
     Never,
     After {
         ms: u64,
@@ -300,7 +296,7 @@ impl RoutedSession {
     }
 }
 
-/// Who admitted the event and hears back when its delivery finishes.
+/// The bot that requested a reply when the delivery finishes.
 /// Private to the runtime: never part of a view.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -309,17 +305,6 @@ impl RoutedSession {
     rename_all_fields = "camelCase"
 )]
 pub enum EventReceiver {
-    /// The admitting workflow (a chat conversation): signalled `started` /
-    /// `finished` delivery receipts with its token, and the owner of the
-    /// receiver-bound tool declarations (`message_*`) at `tools_ref` that
-    /// the routed session is created with.
-    Workflow {
-        workflow_id: String,
-        workflow_kind: String,
-        token: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        tools_ref: Option<String>,
-    },
     /// The asking bot of an addressed `bot_emit { reply: true }`: sent a
     /// `bot.reply` receipt at its logical session (base id, never a
     /// generation).
@@ -328,17 +313,6 @@ pub enum EventReceiver {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<RoutedSession>,
     },
-}
-
-impl EventReceiver {
-    /// CAS ref of the receiver-bound tool declarations, when the receiver
-    /// serves any.
-    pub fn tools_ref(&self) -> Option<&str> {
-        match self {
-            Self::Workflow { tools_ref, .. } => tools_ref.as_deref(),
-            Self::Bot { .. } => None,
-        }
-    }
 }
 
 /// One row of the bot's numbered event log. The groups mirror the
@@ -359,7 +333,7 @@ pub struct BotEventRecord {
     /// the trigger.
     pub trigger_id: Option<BotTriggerId>,
     /// Event kind as authored by the source (`github.push`,
-    /// `schedule.fire`, `chat.message`, `bot.reply`).
+    /// `schedule.fire`, `bot.reply`).
     pub kind: String,
     pub summary: String,
     /// When the source says it happened.
@@ -376,7 +350,6 @@ pub struct BotEventRecord {
     /// The routed session; `None` means the bot's main session.
     pub session: Option<RoutedSession>,
     /// Prepared attachments appended to the run input.
-    pub media: Vec<BotEventMedia>,
 
     // ── Federation ──
     /// Sending bot for bot-originated events; counted against the sender
@@ -405,18 +378,11 @@ impl BotEventRecord {
         self.outcome.is_none()
     }
 
-    /// CAS ref of the receiver-bound tool declarations the routed session
-    /// is created with (a chat conversation's `message_*` tools).
-    pub fn tools_ref(&self) -> Option<&str> {
-        self.receiver.as_ref().and_then(EventReceiver::tools_ref)
-    }
-
     /// The asking bot and its logical session when the event asked for a
     /// `bot.reply` receipt.
     pub fn reply_route(&self) -> Option<(&BotId, Option<&RoutedSession>)> {
         match self.receiver.as_ref()? {
             EventReceiver::Bot { bot_id, session } => Some((bot_id, session.as_ref())),
-            EventReceiver::Workflow { .. } => None,
         }
     }
 
@@ -432,7 +398,6 @@ impl BotEventRecord {
             document_ref: self.document_ref.clone(),
             prompt_ref: self.prompt_ref.clone(),
             session: self.session.as_ref().map(RoutedSession::view),
-            media: self.media.clone(),
             sender_bot_id: self.sender_bot_id.clone(),
             hops: self.hops,
             in_reply_to: self.in_reply_to.clone(),

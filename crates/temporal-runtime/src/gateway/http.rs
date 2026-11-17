@@ -2,15 +2,13 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use super::authentication::{self, Caller};
 use super::request_context::RequestContext;
+use crate::config::RuntimeTokens;
 use api::AccessScope;
-use api::{
-    AgentApiError, JsonRpcRequest, JsonRpcResponse, dispatch_deployment_json_rpc,
-    dispatch_json_rpc, is_deployment_method,
-};
+use api::AgentApiError;
 use axum::{
     Json, Router,
     extract::{
-        DefaultBodyLimit, FromRequest as _, Path, Query, Request, State, WebSocketUpgrade,
+        DefaultBodyLimit, Path, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, HeaderValue, StatusCode, header},
@@ -33,7 +31,6 @@ use environments::{
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
-use store_pg::PgApiKeyStore;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::watch,
@@ -46,6 +43,8 @@ use tokio_tungstenite::{
     },
 };
 use uuid::Uuid;
+
+mod resource;
 
 use crate::{
     config::GatewayAuthMode,
@@ -63,15 +62,15 @@ use super::{
 };
 
 pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
+pub const DEFAULT_PUBLIC_BIND: &str = "127.0.0.1:18082";
+pub const DEFAULT_ENVIRONMENT_GATEWAY_BIND: &str = "127.0.0.1:18083";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 pub use super::authentication::{ACTOR_HEADER, UNIVERSE_HEADER};
 
 /// Per-request universe resolution for the HTTP edge.
 ///
-/// The JSON-RPC API itself never carries a universe parameter: session-scoped
-/// methods reach the right universe because the resolved service instance is
-/// universe-bound, and registry/list methods implicitly scope to it.
+/// Resource URLs select the universe before invoking a universe-bound service.
 enum UniverseResolution {
     /// One injected service instance (tests, single-universe embeddings).
     /// Behaves like `single` mode: the universe header is rejected.
@@ -82,7 +81,6 @@ enum UniverseResolution {
         mode: GatewayAuthMode,
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
-        api_keys: PgApiKeyStore,
         deployment: Arc<GatewayDeploymentApi>,
     },
 }
@@ -93,7 +91,7 @@ pub struct GatewayState {
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
     /// The origins a daemon's registration signature may name: the
-    /// canonical origin of the public base URL and any configured
+    /// canonical origin of the environment public base URL and any configured
     /// registration URLs. Empty when none of them has a WebSocket origin;
     /// the connect route then refuses every daemon.
     registration_origins: Vec<CanonicalOrigin>,
@@ -103,21 +101,38 @@ pub struct GatewayState {
     peer_http: reqwest::Client,
 }
 
-/// Which route families one HTTP listener serves, derived from the
-/// process's roles: the `gateway` role owns the API surface, the
-/// `environment-gateway` role owns the environment data plane.
+/// Route families mounted on an HTTP listener. Runtime startup binds each
+/// family separately so public callbacks and machine traffic cannot expose the application API.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GatewayRoutes {
-    /// JSON-RPC, OAuth callbacks, and bot webhook ingest.
+    /// Resource HTTP API for trusted components and operators.
     pub api: bool,
-    /// Worker environment routes plus the public daemon connect and data
-    /// routes.
+    /// Public OAuth callbacks, client metadata, and bot webhook ingest.
+    pub public: bool,
+    /// Worker environment routes, daemon connections, and replica peers.
     pub environment: bool,
 }
 
 impl GatewayRoutes {
+    pub const API: Self = Self {
+        api: true,
+        public: false,
+        environment: false,
+    };
+    pub const PUBLIC: Self = Self {
+        api: false,
+        public: true,
+        environment: false,
+    };
+    pub const ENVIRONMENT: Self = Self {
+        api: false,
+        public: false,
+        environment: true,
+    };
+    /// Combined routes for embedded runtimes and integration fixtures.
     pub const ALL: Self = Self {
         api: true,
+        public: true,
         environment: true,
     };
 }
@@ -240,7 +255,6 @@ impl GatewayState {
         runtime: Arc<UniverseRuntime>,
         public_base_url: String,
     ) -> Self {
-        let api_keys = PgApiKeyStore::new(runtime.stores().pool().clone());
         let deployment = Arc::new(GatewayDeploymentApi::new(runtime.clone()));
         let registration_origins = registration_origin_of(&public_base_url)
             .into_iter()
@@ -252,7 +266,6 @@ impl GatewayState {
                 mode,
                 runtime,
                 public_base_url,
-                api_keys,
                 deployment,
             },
             registrations: Arc::new(RegisteredConnections::new()),
@@ -263,60 +276,22 @@ impl GatewayState {
         }
     }
 
-    /// Whom this gateway takes `/rpc` requests from.
-    fn rpc_admission(&self) -> RpcAdmission<'_> {
+    /// Who may call the runtime API.
+    fn api_admission(&self) -> ApiAdmission<'_> {
         match &self.resolution {
             UniverseResolution::Multi {
-                mode: GatewayAuthMode::Authenticated,
-                api_keys,
+                mode: GatewayAuthMode::Authenticated { tokens },
                 ..
-            } => RpcAdmission::Keyed(api_keys),
-            UniverseResolution::FixedApi { api } => RpcAdmission::Local {
+            } => ApiAdmission::Token { tokens },
+            UniverseResolution::FixedApi { api } => ApiAdmission::Local {
                 universe_id: api.universe_id(),
             },
             UniverseResolution::Multi {
                 mode: GatewayAuthMode::Single { universe_id },
                 ..
-            } => RpcAdmission::Local {
+            } => ApiAdmission::Local {
                 universe_id: *universe_id,
             },
-        }
-    }
-
-    async fn dispatch(&self, context: &RequestContext, request: JsonRpcRequest) -> JsonRpcResponse {
-        if request.method == api::METHOD_INITIALIZE {
-            let params = request.params.unwrap_or_else(|| serde_json::json!({}));
-            return match serde_json::from_value::<api::InitializeParams>(params) {
-                Ok(_) => JsonRpcResponse::success(
-                    request.id,
-                    serde_json::to_value(request_context::initialize_response(
-                        context.caller_access(),
-                    ))
-                    .expect("serializable handshake"),
-                ),
-                Err(error) => JsonRpcResponse::failure(
-                    request.id,
-                    AgentApiError::invalid_request(error.to_string()).into(),
-                ),
-            };
-        }
-        if is_deployment_method(&request.method) {
-            return match &self.resolution {
-                UniverseResolution::Multi { deployment, .. } => {
-                    dispatch_deployment_json_rpc(deployment.as_ref(), request).await
-                }
-                UniverseResolution::FixedApi { .. } => JsonRpcResponse::failure(
-                    request.id,
-                    AgentApiError::invalid_request(
-                        "deployment methods are not available on this gateway",
-                    )
-                    .into(),
-                ),
-            };
-        }
-        match self.api_for_request(context).await {
-            Ok(api) => dispatch_json_rpc(api.as_ref(), request).await,
-            Err(error) => JsonRpcResponse::failure(request.id, error.into()),
         }
     }
 
@@ -329,11 +304,19 @@ impl GatewayState {
         };
         match &self.resolution {
             UniverseResolution::FixedApi { api } => Ok(api.clone()),
-            UniverseResolution::Multi { runtime, .. } => runtime
-                .state_for(universe_id, false)
-                .await
-                .map(|state| state.api.clone())
-                .map_err(map_universe_error),
+            UniverseResolution::Multi { runtime, .. } => {
+                if !store_pg::universe_exists(runtime.stores().pool(), universe_id)
+                    .await
+                    .map_err(|error| AgentApiError::internal(error.to_string()))?
+                {
+                    return Err(AgentApiError::not_found("unknown universe"));
+                }
+                runtime
+                    .state_for(universe_id)
+                    .await
+                    .map(|state| state.api.clone())
+                    .map_err(map_universe_error)
+            }
         }
     }
 
@@ -348,11 +331,19 @@ impl GatewayState {
                 }
                 Ok(api.clone())
             }
-            UniverseResolution::Multi { runtime, .. } => runtime
-                .state_for(universe_id, false)
-                .await
-                .map(|state| state.api.clone())
-                .map_err(map_universe_error),
+            UniverseResolution::Multi { runtime, .. } => {
+                if !store_pg::universe_exists(runtime.stores().pool(), universe_id)
+                    .await
+                    .map_err(|error| AgentApiError::internal(error.to_string()))?
+                {
+                    return Err(AgentApiError::not_found("unknown universe"));
+                }
+                runtime
+                    .state_for(universe_id)
+                    .await
+                    .map(|state| state.api.clone())
+                    .map_err(map_universe_error)
+            }
         }
     }
 
@@ -372,22 +363,10 @@ impl GatewayState {
         }
     }
 
-    async fn environment_provider(
-        &self,
-        provider_id: &environments::EnvironmentProviderId,
-    ) -> Result<environments::EnvironmentProviderRecord, environments::EnvironmentRegistryError>
-    {
-        environments::EnvironmentProviderStore::read_provider(
-            self.deployment_store().as_ref(),
-            provider_id,
-        )
-        .await
-    }
-
     async fn environment_provider_credential(
         &self,
         provider_id: &environments::EnvironmentProviderId,
-    ) -> Result<Option<auth::SecretValue>, environments::EnvironmentRegistryError> {
+    ) -> Result<Option<credentials::SecretValue>, environments::EnvironmentRegistryError> {
         environments::EnvironmentProviderStore::read_provider_credential(
             self.deployment_store().as_ref(),
             provider_id,
@@ -422,15 +401,17 @@ fn registration_origin_of(public_base_url: &str) -> Option<CanonicalOrigin> {
 /// process refuses to start rather than reject every remote daemon. A URL
 /// without a WebSocket origin is a startup error.
 pub fn registration_origins(
-    public_base_url: Option<&str>,
+    environment_public_base_url: Option<&str>,
     registration_urls: &[String],
     bind: SocketAddr,
 ) -> anyhow::Result<Vec<CanonicalOrigin>> {
     let mut origins = Vec::new();
-    match public_base_url {
+    match environment_public_base_url {
         Some(public_base_url) => {
             origins.push(canonical_origin(public_base_url).map_err(|error| {
-                anyhow::anyhow!("LIGHTSPEED_PUBLIC_BASE_URL has no WebSocket origin: {error}")
+                anyhow::anyhow!(
+                    "LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL has no WebSocket origin: {error}"
+                )
             })?)
         }
         None if bind.ip().is_loopback() => {
@@ -454,7 +435,7 @@ pub fn registration_origins(
     }
     if origins.is_empty() {
         anyhow::bail!(
-            "LIGHTSPEED_PUBLIC_BASE_URL or LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS is required to serve \
+            "LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL or LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS is required to serve \
              environment registration on {bind}: daemons sign the gateway origin they dial, and only \
              those URLs name it"
         );
@@ -479,7 +460,12 @@ pub async fn prewarm_single_universe(
     runtime: &Arc<UniverseRuntime>,
 ) -> anyhow::Result<()> {
     if let GatewayAuthMode::Single { universe_id } = mode {
-        runtime.state_for(*universe_id, true).await?;
+        runtime
+            .stores()
+            .store_for(*universe_id)
+            .ensure_universe()
+            .await?;
+        runtime.state_for(*universe_id).await?;
     }
     Ok(())
 }
@@ -493,12 +479,17 @@ pub fn gateway_router(
         .route("/health", get(|| async { "ok" }))
         .route("/ready", get(readiness));
     if routes.api {
+        router = router.merge(resource::router(max_request_body_bytes));
+    }
+    if routes.public {
         router = router
-            .route("/rpc", post(rpc))
-            .route("/auth/callback", get(oauth_callback))
-            .route("/auth/client-metadata.json", get(cimd_document))
+            .route("/ingress/credentials/callback", get(oauth_callback))
             .route(
-                "/hooks/bots/{universe}/{bot}/{trigger}/{token}",
+                "/ingress/credentials/client-metadata.json",
+                get(cimd_document),
+            )
+            .route(
+                "/ingress/webhooks/bots/{universe}/{bot}/{trigger}/{token}",
                 post(bot_webhook_ingest),
             );
     }
@@ -526,7 +517,7 @@ async fn readiness(State(state): State<Arc<GatewayState>>) -> StatusCode {
     }
 }
 
-/// Public webhook ingress for bot triggers. No RPC auth: the URL token is
+/// Public webhook ingress for bot triggers. No application token authentication: the URL token is
 /// the baseline credential (checked in constant time), an HMAC scheme adds
 /// a signature over the raw body. Unknown and mismatched endpoints are all
 /// 404 so the path cannot be probed.
@@ -664,11 +655,13 @@ async fn environment_route_upgrade(
         .max_frame_size(MAX_MESSAGE_BYTES as usize);
     match &environment.source {
         environments::EnvironmentSource::External { endpoint } => {
-            let upstream =
-                match dial_upstream(endpoint.as_str(), external_target(endpoint), None).await {
-                    Ok(upstream) => upstream,
-                    Err(failure) => return failure.respond(endpoint.as_str()),
-                };
+            let Ok(target) = external_target(endpoint, &api.environment_gateway) else {
+                return StatusCode::FORBIDDEN.into_response();
+            };
+            let upstream = match dial_upstream(endpoint.as_str(), target, None).await {
+                Ok(upstream) => upstream,
+                Err(failure) => return failure.respond(endpoint.as_str()),
+            };
             let guard = state.registrations().track_proxy();
             upgrade
                 .on_upgrade(move |socket| async move {
@@ -811,15 +804,15 @@ const _: () = assert!(
 );
 
 /// The provider data route of a provisioned environment and the credential
-/// it is dialed with (none when the provider has none). The universe's
-/// binding of the provider must exist and be enabled; a target the
-/// provider has not named yet is still provisioning.
+/// it is dialed with (none when the provider has none). The provider must
+/// still be available to the universe; a target the provider has not named
+/// yet is still provisioning.
 async fn provider_route(
     state: &GatewayState,
     api: &GatewayAgentApi,
     key: &RouteKey,
     source: &environments::ProvisionedSource,
-) -> Result<(String, Option<auth::SecretValue>), Box<Response>> {
+) -> Result<(String, Option<credentials::SecretValue>), Box<Response>> {
     let provider_id = &source.provider_id;
     let unavailable = |error: environments::EnvironmentRegistryError| match error {
         environments::EnvironmentRegistryError::Store { .. } => {
@@ -831,29 +824,24 @@ async fn provider_route(
             Box::new(StatusCode::BAD_GATEWAY.into_response())
         }
     };
-    match environments::EnvironmentProviderBindingStore::read_provider_binding(
+    let forbidden = || Box::new(StatusCode::FORBIDDEN.into_response());
+    let provider = match crate::environments::providers::read_available_provider(
         api.store().as_ref(),
         key.universe_id,
         provider_id,
     )
     .await
     {
-        Ok(binding) if binding.enabled => {}
-        Ok(_) | Err(environments::EnvironmentRegistryError::NotFound { .. }) => {
-            return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
-        }
+        Ok(provider) => provider,
+        Err(environments::EnvironmentRegistryError::NotFound { .. }) => return Err(forbidden()),
         Err(error) => return Err(unavailable(error)),
-    }
+    };
     let Some(target_id) = source.provider_target_id.as_ref() else {
         return Err(Box::new(refusal_response(
             &DataRouteRefusal::Provisioning {},
             None,
         )));
     };
-    let provider = state
-        .environment_provider(provider_id)
-        .await
-        .map_err(unavailable)?;
     let base = provider.effective_data_route_base().map_err(unavailable)?;
     let credential = state
         .environment_provider_credential(provider_id)
@@ -937,11 +925,15 @@ enum UpstreamTarget<'a> {
     Unix(&'a str),
 }
 
-fn external_target(endpoint: &EnvironmentEndpoint) -> UpstreamTarget<'_> {
-    match (endpoint.scheme(), endpoint.unix_socket_path()) {
+fn external_target<'a>(
+    endpoint: &'a EnvironmentEndpoint,
+    config: &crate::environments::gateway::EnvironmentGatewayClientConfig,
+) -> Result<UpstreamTarget<'a>, AgentApiError> {
+    config.require_external_environments()?;
+    Ok(match (endpoint.scheme(), endpoint.unix_socket_path()) {
         (EndpointScheme::Unix, Some(path)) => UpstreamTarget::Unix(path),
         _ => UpstreamTarget::Url,
-    }
+    })
 }
 
 enum Upstream {
@@ -1163,11 +1155,11 @@ async fn cimd_document(State(state): State<Arc<GatewayState>>) -> Json<serde_jso
     }
 }
 
-/// Whom a gateway takes `/rpc` requests from.
-enum RpcAdmission<'a> {
-    /// Callers present an API key, resolved before a request body is read.
-    Keyed(&'a PgApiKeyStore),
-    /// Development mode: no key and no actor, never a header claim. Every
+/// Who may call the runtime API.
+enum ApiAdmission<'a> {
+    /// Configured tokens are checked before a request body is read.
+    Token { tokens: &'a RuntimeTokens },
+    /// Development mode: no token and no actor, never a header claim. Every
     /// request is served as the one universe, or as the deployment.
     Local { universe_id: Uuid },
 }
@@ -1178,178 +1170,17 @@ enum Admitted {
     Local { universe_id: Uuid },
 }
 
-impl RpcAdmission<'_> {
+impl ApiAdmission<'_> {
     /// Decide from the headers alone whether the request may send its body.
     async fn admit(&self, headers: &HeaderMap) -> Result<Admitted, AgentApiError> {
         match self {
-            Self::Keyed(api_keys) => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| AgentApiError::internal(e.to_string()))?
-                    .as_millis() as u64;
-                authentication::resolve_caller(api_keys, headers, now)
-                    .await
-                    .map(|caller| Admitted::Caller(Box::new(caller)))
-            }
+            Self::Token { tokens } => authentication::resolve_caller(tokens, headers)
+                .map(|caller| Admitted::Caller(Box::new(caller))),
             Self::Local { universe_id } => Ok(Admitted::Local {
                 universe_id: *universe_id,
             }),
         }
     }
-}
-
-impl Admitted {
-    /// Resolve the request once its body has named a method: what it
-    /// addresses, its key and its actor.
-    fn request_context(
-        self,
-        headers: &HeaderMap,
-        method: &str,
-    ) -> Result<RequestContext, AgentApiError> {
-        match self {
-            Self::Caller(caller) => authentication::authorize(*caller, method),
-            Self::Local { universe_id } => {
-                api::method_access(method).ok_or_else(authentication::unknown_method)?;
-                authentication::reject_identity_headers(headers)?;
-                Ok(RequestContext::local(if is_deployment_method(method) {
-                    AccessScope::Deployment
-                } else {
-                    AccessScope::Universe { universe_id }
-                }))
-            }
-        }
-    }
-}
-
-/// What came of receiving a `/rpc` request.
-enum ReceivedRpc {
-    /// Resolved and read: ready to dispatch.
-    Request {
-        context: RequestContext,
-        request: JsonRpcRequest,
-    },
-    /// Answered at the transport boundary.
-    Refused(Response),
-}
-
-/// Receive one `/rpc` request: resolve who sent it, read its body, then
-/// resolve what it addresses.
-///
-/// The caller is resolved from the headers before the body is touched. The
-/// body limit is sized for what an authenticated caller may legitimately
-/// send, so a request without a valid key is answered while its body is
-/// still unread: nobody can make the gateway buffer and parse that much just
-/// by reaching the port. Everything decided after that point depends on the
-/// method, and is reported as a JSON-RPC error against the request's id.
-async fn receive_rpc(admission: RpcAdmission<'_>, request: Request) -> ReceivedRpc {
-    let (parts, body) = request.into_parts();
-    let admitted = match admission.admit(&parts.headers).await {
-        Ok(admitted) => admitted,
-        Err(error) => return ReceivedRpc::Refused(refused_before_body(error)),
-    };
-    let headers = parts.headers.clone();
-    let request =
-        match Json::<JsonRpcRequest>::from_request(Request::from_parts(parts, body), &()).await {
-            Ok(Json(request)) => request,
-            Err(rejection) => return ReceivedRpc::Refused(rejection.into_response()),
-        };
-    match admitted.request_context(&headers, &request.method) {
-        Ok(context) => ReceivedRpc::Request { context, request },
-        Err(error) => {
-            // A forbidden refusal is logged where it is decided, with the
-            // caller's key.
-            if error.kind != api::AgentApiErrorKind::Forbidden {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    method = authentication::logged_method(&request.method),
-                    kind = ?error.kind,
-                    "request refused"
-                );
-            }
-            ReceivedRpc::Refused(no_store_json_rpc(JsonRpcResponse::failure(
-                request.id,
-                error.into(),
-            )))
-        }
-    }
-}
-
-/// Answer a request whose caller could not be resolved. Its body was not
-/// read, so there is no request id to answer: the JSON-RPC error travels
-/// with a null id, under the HTTP status that says what happened. A missing
-/// or invalid key is 401; anything else means the key could not be checked.
-fn refused_before_body(error: AgentApiError) -> Response {
-    tracing::warn!(
-        target: "temporal_runtime",
-        kind = ?error.kind,
-        "request refused before authentication"
-    );
-    let unauthenticated = error.kind == api::AgentApiErrorKind::Unauthenticated;
-    let status = if unauthenticated {
-        StatusCode::UNAUTHORIZED
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    };
-    let body = serde_json::json!({ "id": null, "error": api::JsonRpcError::from(error) });
-    let mut response = (status, Json(body)).into_response();
-    let headers = response.headers_mut();
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    if unauthenticated {
-        headers.insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-    }
-    response
-}
-
-async fn rpc(State(state): State<Arc<GatewayState>>, request: Request) -> Response {
-    let accepts_stream = request
-        .headers()
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(',')
-                .any(|part| part.trim().split(';').next() == Some("text/event-stream"))
-        });
-    let (context, request) = match receive_rpc(state.rpc_admission(), request).await {
-        ReceivedRpc::Request { context, request } => (context, request),
-        ReceivedRpc::Refused(response) => return response,
-    };
-    if request.method == api::METHOD_UNIVERSE_WATCH {
-        let result = request_context::with_request_context(context.clone(), async {
-            if !accepts_stream {
-                return Err(AgentApiError::invalid_request(
-                    "universe/watch requires Accept: text/event-stream",
-                ));
-            }
-            let params = serde_json::from_value::<api::UniverseWatchParams>(
-                request
-                    .params
-                    .clone()
-                    .unwrap_or_else(|| serde_json::json!({})),
-            )
-            .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
-            let api = state.api_for_request(&context).await?;
-            api.authorize_method(api::METHOD_UNIVERSE_WATCH, None)
-                .await?;
-            state
-                .watches
-                .subscribe(api.store().clone(), &context, params)
-        })
-        .await;
-        return match result {
-            Ok(subscription) => subscription.response(request.id),
-            Err(error) => no_store_json_rpc(JsonRpcResponse::failure(request.id, error.into())),
-        };
-    }
-    let method = request.method.clone();
-    let response =
-        request_context::with_request_context(context.clone(), state.dispatch(&context, request))
-            .await;
-    no_store_json_rpc(if response_budget_exempt(&method) {
-        response
-    } else {
-        enforce_response_budget(response)
-    })
 }
 
 /// Full message projections and blob reads cannot be shortened with a smaller
@@ -1368,32 +1199,6 @@ fn response_budget_exempt(method: &str) -> bool {
             | api::METHOD_SESSION_ENVIRONMENTS_DEACTIVATE
             | api::METHOD_SESSION_PROFILES_APPLY
     )
-}
-
-fn enforce_response_budget(response: JsonRpcResponse) -> JsonRpcResponse {
-    const MAX_JSON_RPC_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-    if response.result.is_some()
-        && serde_json::to_vec(&response)
-            .is_ok_and(|bytes| bytes.len() > MAX_JSON_RPC_RESPONSE_BYTES)
-    {
-        JsonRpcResponse::failure(
-            response.id,
-            AgentApiError::response_too_large(format!(
-                "serialized response exceeds {MAX_JSON_RPC_RESPONSE_BYTES} bytes; retry with a smaller page limit"
-            ))
-            .into(),
-        )
-    } else {
-        response
-    }
-}
-
-fn no_store_json_rpc(response: JsonRpcResponse) -> Response {
-    let mut response = Json(response).into_response();
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
 }
 
 /// Query parameters of the OAuth authorization callback (RFC 6749 §4.1.2).
@@ -1416,9 +1221,9 @@ async fn oauth_callback(
     State(state): State<Arc<GatewayState>>,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> (StatusCode, Html<String>) {
-    let callback = auth::AuthCallback {
+    let callback = credentials::CredentialCallback {
         state: query.state.unwrap_or_default(),
-        code: query.code.map(auth::SecretValue::new),
+        code: query.code.map(credentials::SecretValue::new),
         issuer: query.iss,
         error: query.error,
         error_description: query.error_description,
@@ -1429,9 +1234,11 @@ async fn oauth_callback(
     let api = match &state.resolution {
         UniverseResolution::FixedApi { api } => api.clone(),
         UniverseResolution::Multi { runtime, .. } => {
-            let state_hash = auth::state_hash(&callback.state);
-            match store_pg::find_auth_flow_universe(runtime.stores().pool(), &state_hash).await {
-                Ok(Some(universe_id)) => match runtime.state_for(universe_id, false).await {
+            let state_hash = credentials::state_hash(&callback.state);
+            match store_pg::find_credential_flow_universe(runtime.stores().pool(), &state_hash)
+                .await
+            {
+                Ok(Some(universe_id)) => match runtime.state_for(universe_id).await {
                     Ok(universe) => universe.api.clone(),
                     Err(error) => {
                         tracing::error!(target: "temporal_runtime", %error, "oauth callback universe resolution failed");
@@ -1521,18 +1328,6 @@ mod tests {
     use environment_protocol::ids::ProviderTargetId;
 
     #[test]
-    fn json_rpc_responses_disable_caching() {
-        let response = no_store_json_rpc(JsonRpcResponse::success(
-            api::RequestId::Number(1),
-            serde_json::json!({ "secret": "sensitive" }),
-        ));
-        assert_eq!(
-            response.headers().get(header::CACHE_CONTROL),
-            Some(&HeaderValue::from_static("no-store"))
-        );
-    }
-
-    #[test]
     fn full_message_views_and_bulk_reads_are_response_budget_exempt() {
         assert!(response_budget_exempt(api::METHOD_BLOBS_READ));
         assert!(response_budget_exempt(
@@ -1546,22 +1341,28 @@ mod tests {
     }
 
     #[test]
-    fn non_exempt_oversized_json_rpc_response_is_rejected() {
-        let response = JsonRpcResponse::success(
-            api::RequestId::Number(7),
-            serde_json::json!({"text": "x".repeat(2 * 1024 * 1024)}),
+    fn stored_external_endpoints_require_deployment_opt_in_before_dialing() {
+        let mut config = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
+            "http://gateway",
+            "test",
         );
-        let bounded = enforce_response_budget(response);
-        assert!(bounded.result.is_none());
-        assert_eq!(
-            bounded
-                .error
-                .expect("response-too-large error")
-                .data
-                .expect("typed error data")
-                .kind,
-            AgentApiErrorKind::ResponseTooLarge
-        );
+        let ws = EnvironmentEndpoint::parse("ws://127.0.0.1:19091/").unwrap();
+        let unix = EnvironmentEndpoint::parse("unix:///tmp/lightspeed-envd.sock").unwrap();
+        for endpoint in [&ws, &unix] {
+            assert!(matches!(
+                external_target(endpoint, &config),
+                Err(error) if error.kind == AgentApiErrorKind::Forbidden
+            ));
+        }
+        config.allow_external_environments = true;
+        assert!(matches!(
+            external_target(&ws, &config),
+            Ok(UpstreamTarget::Url)
+        ));
+        assert!(matches!(
+            external_target(&unix, &config),
+            Ok(UpstreamTarget::Unix(_))
+        ));
     }
 
     #[test]
@@ -1803,7 +1604,7 @@ mod tests {
             origins(
                 Some("https://lightspeed.example"),
                 &[
-                    " ws://lightspeed-gateway.lightspeed.svc:18080/environment-gateway/connect ",
+                    " ws://lightspeed-gateway.lightspeed.svc:18080/environments/connect ",
                     "",
                     "https://lightspeed.example/other",
                 ],
@@ -1845,257 +1646,5 @@ mod tests {
             universe_id: Uuid::nil(),
         });
         assert_eq!(error.kind, AgentApiErrorKind::NotFound);
-    }
-
-    const LOCAL_UNIVERSE: Uuid = Uuid::from_u128(7);
-    const WELL_FORMED_KEY: &str = "Bearer lsk_0123456789abcdef0123456789abcdef";
-    const SESSION_READ: &str = r#"{"id":7,"method":"session/read","params":{}}"#;
-
-    /// A key store whose database is never reachable. Requests that present
-    /// no well-formed key are refused without it; any other request fails
-    /// there, which tells the two apart.
-    fn unreachable_keys() -> PgApiKeyStore {
-        PgApiKeyStore::new(
-            sqlx::postgres::PgPoolOptions::new()
-                .acquire_timeout(Duration::from_millis(200))
-                .connect_lazy("postgres://127.0.0.1:1/unreachable")
-                .unwrap(),
-        )
-    }
-
-    /// A `/rpc` request, and whether anything has read its body.
-    fn rpc_request(
-        headers: &[(&str, &str)],
-        body: &str,
-    ) -> (Request, Arc<std::sync::atomic::AtomicBool>) {
-        let read = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let observed = read.clone();
-        let bytes = axum::body::Bytes::from(body.to_owned());
-        let body = axum::body::Body::from_stream(futures_util::stream::once(async move {
-            observed.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok::<_, std::convert::Infallible>(bytes)
-        }));
-        let mut request = axum::http::Request::builder().method("POST").uri("/rpc");
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-        (request.body(body).unwrap(), read)
-    }
-
-    const JSON: (&str, &str) = ("content-type", "application/json");
-
-    async fn refused(admission: RpcAdmission<'_>, request: Request) -> Response {
-        match receive_rpc(admission, request).await {
-            ReceivedRpc::Refused(response) => response,
-            ReceivedRpc::Request { request, .. } => {
-                panic!("{} was admitted", request.method)
-            }
-        }
-    }
-
-    async fn json_body(response: Response) -> serde_json::Value {
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
-    /// The error of a refusal that carries no request id.
-    async fn error_without_id(response: Response) -> AgentApiError {
-        let mut body = json_body(response).await;
-        assert!(body["id"].is_null(), "no request was read: {body}");
-        serde_json::from_value::<api::JsonRpcError>(body["error"].take())
-            .unwrap()
-            .data
-            .expect("typed error data")
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_request_without_a_valid_key_is_answered_401_with_its_body_unread() {
-        let keys = unreachable_keys();
-        for headers in [
-            vec![JSON],
-            vec![JSON, ("authorization", "Bearer not-a-lightspeed-key")],
-            vec![
-                JSON,
-                ("authorization", WELL_FORMED_KEY),
-                ("authorization", WELL_FORMED_KEY),
-            ],
-            // Not even a body that is no JSON-RPC request is looked at.
-            vec![("content-type", "text/plain")],
-        ] {
-            let (request, read) = rpc_request(&headers, SESSION_READ);
-            let response = refused(RpcAdmission::Keyed(&keys), request).await;
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{headers:?}");
-            assert_eq!(
-                response.headers().get(header::WWW_AUTHENTICATE),
-                Some(&HeaderValue::from_static("Bearer"))
-            );
-            assert_eq!(
-                response.headers().get(header::CACHE_CONTROL),
-                Some(&HeaderValue::from_static("no-store"))
-            );
-            assert_eq!(
-                error_without_id(response).await.kind,
-                AgentApiErrorKind::Unauthenticated
-            );
-            assert!(
-                !read.load(std::sync::atomic::Ordering::SeqCst),
-                "the body of an unauthenticated request was read: {headers:?}"
-            );
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_key_that_cannot_be_checked_is_a_server_error_with_the_body_unread() {
-        let keys = unreachable_keys();
-        let (request, read) =
-            rpc_request(&[JSON, ("authorization", WELL_FORMED_KEY)], SESSION_READ);
-        let response = refused(RpcAdmission::Keyed(&keys), request).await;
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
-        assert_eq!(
-            error_without_id(response).await.kind,
-            AgentApiErrorKind::Internal
-        );
-        assert!(!read.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_local_request_is_read_and_addresses_the_universe_or_the_deployment() {
-        let local = || RpcAdmission::Local {
-            universe_id: LOCAL_UNIVERSE,
-        };
-        for (body, scope) in [
-            (
-                SESSION_READ,
-                AccessScope::Universe {
-                    universe_id: LOCAL_UNIVERSE,
-                },
-            ),
-            (
-                r#"{"id":7,"method":"deployment/universes/list"}"#,
-                AccessScope::Deployment,
-            ),
-        ] {
-            let (request, read) = rpc_request(&[JSON], body);
-            let ReceivedRpc::Request { context, request } = receive_rpc(local(), request).await
-            else {
-                panic!("a local request is admitted: {body}");
-            };
-            assert!(read.load(std::sync::atomic::Ordering::SeqCst));
-            assert_eq!(request.id, api::RequestId::Number(7));
-            assert_eq!(context, RequestContext::local(scope));
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_refusal_after_the_body_is_a_json_rpc_error_for_that_request() {
-        let local = || RpcAdmission::Local {
-            universe_id: LOCAL_UNIVERSE,
-        };
-        let long_method = "m".repeat(4096);
-        let unknown = format!(r#"{{"id":7,"method":"{long_method}"}}"#);
-        for (headers, body) in [
-            (vec![JSON], unknown.as_str()),
-            // Development mode takes no identity claim from a header.
-            (vec![JSON, (UNIVERSE_HEADER, "elsewhere")], SESSION_READ),
-            (vec![JSON, ("authorization", WELL_FORMED_KEY)], SESSION_READ),
-        ] {
-            let (request, _) = rpc_request(&headers, body);
-            let response = refused(local(), request).await;
-            assert_eq!(response.status(), StatusCode::OK, "{headers:?}");
-            assert_eq!(
-                response.headers().get(header::CACHE_CONTROL),
-                Some(&HeaderValue::from_static("no-store"))
-            );
-            let response: JsonRpcResponse =
-                serde_json::from_value(json_body(response).await).unwrap();
-            assert_eq!(response.id, api::RequestId::Number(7));
-            assert_eq!(
-                response.error.unwrap().data.expect("typed error data").kind,
-                AgentApiErrorKind::InvalidRequest
-            );
-        }
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_body_that_is_no_json_rpc_request_is_refused_by_its_http_status() {
-        let local = || RpcAdmission::Local {
-            universe_id: LOCAL_UNIVERSE,
-        };
-        for (headers, body, status) in [
-            (vec![JSON], "not json", StatusCode::BAD_REQUEST),
-            (vec![JSON], r#"{"id":7}"#, StatusCode::UNPROCESSABLE_ENTITY),
-            (vec![], SESSION_READ, StatusCode::UNSUPPORTED_MEDIA_TYPE),
-        ] {
-            let (request, _) = rpc_request(&headers, body);
-            assert_eq!(refused(local(), request).await.status(), status, "{body}");
-        }
-    }
-
-    /// The `/rpc` route as `gateway_router` mounts it, with a body limit of
-    /// 64 bytes, served on a loopback port.
-    async fn serve_rpc_with_a_small_body_limit(keys: Option<Arc<PgApiKeyStore>>) -> String {
-        let router = Router::new()
-            .route(
-                "/rpc",
-                post(move |request: Request| {
-                    let keys = keys.clone();
-                    async move {
-                        let admission = match &keys {
-                            Some(keys) => RpcAdmission::Keyed(keys.as_ref()),
-                            None => RpcAdmission::Local {
-                                universe_id: LOCAL_UNIVERSE,
-                            },
-                        };
-                        match receive_rpc(admission, request).await {
-                            ReceivedRpc::Refused(response) => response,
-                            ReceivedRpc::Request { .. } => StatusCode::NO_CONTENT.into_response(),
-                        }
-                    }
-                }),
-            )
-            .layer(DefaultBodyLimit::max(64));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}/rpc", listener.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        endpoint
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn the_body_limit_applies_to_admitted_callers_only() {
-        let oversized = format!(
-            r#"{{"id":7,"method":"session/read","params":{{"pad":"{}"}}}}"#,
-            "x".repeat(1024)
-        );
-        let status_of = |endpoint: String, body: String| async move {
-            reqwest::Client::new()
-                .post(endpoint)
-                .header("content-type", "application/json")
-                .body(body)
-                .send()
-                .await
-                .unwrap()
-                .status()
-        };
-
-        // Without a key the request is refused for that, whatever it carries.
-        let keyed = serve_rpc_with_a_small_body_limit(Some(Arc::new(unreachable_keys()))).await;
-        assert_eq!(
-            status_of(keyed, oversized.clone()).await,
-            reqwest::StatusCode::UNAUTHORIZED
-        );
-
-        // An admitted request is still held to the configured limit.
-        let local = serve_rpc_with_a_small_body_limit(None).await;
-        assert_eq!(
-            status_of(local.clone(), oversized).await,
-            reqwest::StatusCode::PAYLOAD_TOO_LARGE
-        );
-        assert_eq!(
-            status_of(local, SESSION_READ.to_owned()).await,
-            reqwest::StatusCode::NO_CONTENT
-        );
     }
 }

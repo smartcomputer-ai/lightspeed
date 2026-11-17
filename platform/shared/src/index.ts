@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { universeIconSchema, universeIconColorSchema } from "./universe-appearance.js";
+import { universeRoleSchema } from "./access.js";
+export * from "./access.js";
 export * from "./universe-appearance.js";
 export * from "./workspace-transfers.js";
 
@@ -15,46 +17,15 @@ export const universeHandleSchema = z
   .regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
   .refine((handle) => !UUID_SHAPED.test(handle));
 
-export const universeCreateSchema = z.object({
-  name: z.string().min(1).max(100),
-  /// Requested handle; derived from the name when omitted.
-  handle: universeHandleSchema.optional(),
-});
-export type UniverseCreateInput = z.infer<typeof universeCreateSchema>;
-
 export const universeUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   icon: universeIconSchema.optional(),
   iconColor: universeIconColorSchema.optional(),
-  gatewayUrl: z.union([z.url(), z.null()]).optional(),
   status: z.enum(["active", "archived"]).optional(),
   /// Switches to change; others keep what they were.
   features: z.lazy(() => featureOverridesSchema).optional(),
 });
 export type UniverseUpdateInput = z.infer<typeof universeUpdateSchema>;
-
-/// Member roles, least to most. A universe is an organization; its members
-/// hold exactly one of these.
-export const UNIVERSE_ROLES = ["viewer", "contributor", "operator", "admin"] as const;
-export const universeRoleSchema = z.enum(UNIVERSE_ROLES);
-export type UniverseRole = z.infer<typeof universeRoleSchema>;
-
-/// Whether `role` meets `required`.
-export function roleAtLeast(role: UniverseRole, required: UniverseRole): boolean {
-  return UNIVERSE_ROLES.indexOf(role) >= UNIVERSE_ROLES.indexOf(required);
-}
-
-export const memberAddSchema = z
-  .object({
-    userId: z.string().min(1).optional(),
-    email: z.email().optional(),
-    role: universeRoleSchema.default("contributor"),
-  })
-  .refine((value) => !!value.userId || !!value.email, {
-    message: "userId or email is required",
-  });
-
-export type MemberAddInput = z.infer<typeof memberAddSchema>;
 
 export const memberUpdateSchema = z.object({
   role: universeRoleSchema,
@@ -99,7 +70,7 @@ export function universeHandleFromName(name: string): string {
   return UUID_SHAPED.test(handle) ? `u-${handle}`.slice(0, UNIVERSE_HANDLE_MAX_LENGTH) : handle;
 }
 
-/// The id of an API key or registration key when its creator chooses it
+/// The id of a registration key when its creator chooses it
 /// instead of having one allocated. The runtime owns which characters it may
 /// hold and refuses the rest as an invalid request.
 export const KEY_ID_MAX_LENGTH = 128;
@@ -131,22 +102,14 @@ function defineFeatures<const Features extends Record<string, FeatureDefinition<
 /// Parts of the product a universe admin can switch on or off. A feature that
 /// is off is hidden in the web app and its runtime methods are refused for
 /// every member (`FEATURE_METHOD_PREFIXES`). The switch governs what members
-/// do through the Platform: what already runs in the runtime (a bot answering
-/// on its channels) keeps running, and callers holding a runtime key are not
-/// affected. Features that let agents act on their own start switched off.
+/// do through the Platform: bots already running in the runtime keep running. Features that let agents act on their own start switched off.
 /// Add a feature here and every surface can ask for it by key.
 export const FEATURES = defineFeatures({
   bots: {
     label: "Bots",
-    description: "Agents that run on their own: they react to events, schedules and chats.",
+    description: "Agents that run on their own: they react to events and schedules.",
     default: false,
     requires: [],
-  },
-  channels: {
-    label: "Channels",
-    description: "Chat accounts, such as Telegram, that bots talk through.",
-    default: false,
-    requires: ["bots"],
   },
 });
 export type FeatureKey = keyof typeof FEATURES;
@@ -197,7 +160,6 @@ export function mergeFeatureOverrides(stored: unknown, changes: FeatureOverrides
 /// name. A member's call to one is refused while the feature is off.
 export const FEATURE_METHOD_PREFIXES: Record<FeatureKey, readonly string[]> = {
   bots: ["bots/"],
-  channels: ["channels/"],
 };
 
 /// The feature a runtime method belongs to, if any.
@@ -229,13 +191,7 @@ export {
   type MessageRunOptions,
 } from "./messages.js";
 
-/** Closing shared work is an operator responsibility, even for its creator. */
-export function canCloseSession(role: UniverseRole | null | undefined, creator: boolean, shared: boolean): boolean {
-  return role === "admin" || (role === "operator" && (creator || shared)) ||
-    (role === "contributor" && creator && !shared);
-}
-
-/** Operators may remove shared sessions; private sessions require an admin. */
-export function canDeleteSession(role: UniverseRole | null | undefined, shared: boolean): boolean {
-  return role === "admin" || (role === "operator" && shared);
-}
+export * from "./platform-api.js";
+export * from "./credential-api.js";
+export * from "./session-api.js";
+export * from "./audit-log.js";

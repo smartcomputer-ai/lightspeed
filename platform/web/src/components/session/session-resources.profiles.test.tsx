@@ -44,7 +44,7 @@ it("names and describes the sub-agent profiles, reading them only once their pop
 
   await act(async () => container.querySelector<HTMLButtonElement>('[data-meta-item="resource:agents"]')!.click());
   await act(async () => { await Promise.resolve(); });
-  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/v1/universes/universe/profiles");
+  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/ui/universes/universe/profiles");
   const rows = [...document.body.querySelectorAll<HTMLAnchorElement>('ul[aria-label="Sub-agent profiles"] a')];
   expect(rows.map((row) => row.getAttribute("href"))).toEqual(["/demo/profiles/repo-explorer", "/demo/profiles/test-writer"].map((path) => `/u${path}`));
   // A profile with a name shows it and its description; one without, its id.

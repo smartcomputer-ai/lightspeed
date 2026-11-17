@@ -1,14 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
-    "AccessScopeKind": {
-      "description": "The kind of an [`AccessScope`]: the deployment, or a universe. Where a\nrecord already belongs to one universe this is enough to tell a universe\nkey of that universe from a deployment key.",
-      "enum": [
-        "deployment",
-        "universe"
-      ],
-      "type": "string"
-    },
     "Attachment": {
       "oneOf": [
         {
@@ -66,10 +58,10 @@
       "type": "object"
     },
     "Attribution": {
-      "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+      "description": "Who created a resource or authored bytes. Actors are opaque caller claims;\nthe runtime records them without resolving caller permissions.",
       "oneOf": [
         {
-          "description": "The actor a key asserted for its request.",
+          "description": "The actor the caller named for its request.",
           "properties": {
             "id": {
               "type": "string"
@@ -86,23 +78,19 @@
           "type": "object"
         },
         {
-          "description": "A key acting for itself, named by its key id. A key id is unique\namong the keys of one scope, so `scopeKind` says whether it names a\ndeployment key or a key of the universe the record belongs to. The\nid survives a change of secret; the secret's display prefix does not\nand is deliberately not recorded.",
+          "description": "The configured runtime token's name, never its secret.",
           "properties": {
-            "keyId": {
-              "type": "string"
-            },
             "kind": {
-              "const": "key",
+              "const": "token",
               "type": "string"
             },
-            "scopeKind": {
-              "$ref": "#/definitions/AccessScopeKind"
+            "name": {
+              "type": "string"
             }
           },
           "required": [
             "kind",
-            "keyId",
-            "scopeKind"
+            "name"
           ],
           "type": "object"
         },
@@ -139,315 +127,6 @@
             "cause"
           ],
           "type": "object"
-        }
-      ]
-    },
-    "BotId": {
-      "type": "string"
-    },
-    "BotTriggerId": {
-      "type": "string"
-    },
-    "ChannelAccountId": {
-      "type": "string"
-    },
-    "ChannelDeliveryCommand": {
-      "description": "One connector activity call. `idempotency_key` is the invocation id, or\n`{invocation}:chunk:{i}/{n}` for a chunk of a split send.",
-      "properties": {
-        "idempotencyKey": {
-          "type": "string"
-        },
-        "invocationId": {
-          "type": "string"
-        },
-        "operation": {
-          "$ref": "#/definitions/ChannelDeliveryOperation"
-        },
-        "route": {
-          "$ref": "#/definitions/ChannelRoute"
-        },
-        "version": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "version",
-        "invocationId",
-        "idempotencyKey",
-        "route",
-        "operation"
-      ],
-      "type": "object"
-    },
-    "ChannelDeliveryOperation": {
-      "description": "What a connector executes: provider message ids and their direction.",
-      "oneOf": [
-        {
-          "properties": {
-            "replyContext": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ReplyContext"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "replyTo": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "const": "send",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "text"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "messageId": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            },
-            "type": {
-              "const": "edit",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "messageId",
-            "text"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "emoji": {
-              "type": "string"
-            },
-            "fromMe": {
-              "description": "Whether the reacted-to message is the bot's own.",
-              "type": "boolean"
-            },
-            "messageId": {
-              "type": "string"
-            },
-            "type": {
-              "const": "react",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "messageId",
-            "emoji",
-            "fromMe"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "ChannelDeliveryResult": {
-      "properties": {
-        "messageIds": {
-          "description": "Every provider id the delivery produced (a chunked send has several;\nthe first is the anchor).",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "provider": {
-          "$ref": "#/definitions/ChannelProvider"
-        },
-        "version": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "version",
-        "provider",
-        "messageIds"
-      ],
-      "type": "object"
-    },
-    "ChannelInboundMedia": {
-      "description": "A provider-owned attachment reference; never bytes. The connector\ndownloads it when the conversation workflow asks (`prepare_channel_media`).",
-      "properties": {
-        "byteSize": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "fileId": {
-          "description": "Provider file handle (a Telegram file id, a sealed WhatsApp locator).",
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/definitions/ChannelMediaKind"
-        },
-        "mime": {
-          "type": "string"
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "fileId",
-        "kind",
-        "mime"
-      ],
-      "type": "object"
-    },
-    "ChannelMediaKind": {
-      "enum": [
-        "image",
-        "audio",
-        "document"
-      ],
-      "type": "string"
-    },
-    "ChannelProvider": {
-      "type": "string"
-    },
-    "ChannelRoute": {
-      "description": "Where a delivery goes: one account's chat, optionally a thread.",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "chatId": {
-          "type": "string"
-        },
-        "provider": {
-          "$ref": "#/definitions/ChannelProvider"
-        },
-        "threadId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "provider",
-        "accountId",
-        "chatId"
-      ],
-      "type": "object"
-    },
-    "ChatAccess": {
-      "description": "Who may take a turn and who may issue control commands, by provider\nhandle (Telegram user id, WhatsApp JID). Handle allowlists on the\ntrigger replace any platform membership lookup.",
-      "properties": {
-        "allowed": {
-          "description": "Handles allowed to take a turn when `turn` is `listed`.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "controllers": {
-          "description": "Handles allowed to issue `/activation` and `/status`; empty denies\ncontrol commands to everyone.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "turn": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ChatTurnAccess"
-            }
-          ],
-          "default": "anyone"
-        }
-      },
-      "type": "object"
-    },
-    "ChatActivation": {
-      "description": "When the bot acts in a conversation.",
-      "properties": {
-        "group": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ChatGroupActivation"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "mentionNames": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "triggerPrefixes": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "ChatGroupActivation": {
-      "oneOf": [
-        {
-          "const": "mention",
-          "description": "Act on mentions, replies to the bot, and trigger prefixes only.",
-          "type": "string"
-        },
-        {
-          "const": "always",
-          "description": "Act on every message.",
-          "type": "string"
-        }
-      ]
-    },
-    "ChatScope": {
-      "enum": [
-        "direct",
-        "group"
-      ],
-      "type": "string"
-    },
-    "ChatTurnAccess": {
-      "oneOf": [
-        {
-          "const": "anyone",
-          "description": "Anyone in the conversation may take a turn.",
-          "type": "string"
-        },
-        {
-          "const": "listed",
-          "description": "Only the listed provider handles may take a turn.",
-          "type": "string"
         }
       ]
     },
@@ -861,82 +540,6 @@
       ],
       "type": "object"
     },
-    "ConversationRef": {
-      "description": "The conversation a message belongs to: one account's chat, optionally\na thread inside it.",
-      "properties": {
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "chatId": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "accountId",
-        "chatId"
-      ],
-      "type": "object"
-    },
-    "ConversationStart": {
-      "description": "Secret-free durable input of one conversation workflow: the chat trigger\nit serves and the conversation it fronts. The workflow owns nothing on\nthe core side: the bot controller creates and controls the session; the\nworkflow is the source of the conversation's events and the receiver of\nits `message_*` tools.",
-      "properties": {
-        "access": {
-          "$ref": "#/definitions/ChatAccess"
-        },
-        "accountId": {
-          "$ref": "#/definitions/ChannelAccountId"
-        },
-        "activation": {
-          "$ref": "#/definitions/ChatActivation"
-        },
-        "botId": {
-          "$ref": "#/definitions/BotId"
-        },
-        "connectorTaskQueue": {
-          "description": "Task queue of the connector host serving the account.",
-          "type": "string"
-        },
-        "conversation": {
-          "$ref": "#/definitions/ConversationRef"
-        },
-        "label": {
-          "description": "Human label of the conversation (routed session label, display name).",
-          "type": "string"
-        },
-        "provider": {
-          "$ref": "#/definitions/ChannelProvider"
-        },
-        "scope": {
-          "$ref": "#/definitions/ChatScope"
-        },
-        "triggerId": {
-          "$ref": "#/definitions/BotTriggerId"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "botId",
-        "triggerId",
-        "accountId",
-        "provider",
-        "conversation",
-        "scope",
-        "activation",
-        "access",
-        "label",
-        "connectorTaskQueue"
-      ],
-      "type": "object"
-    },
     "EmissionBody": {
       "description": "Closed internal vocabulary carried by the shared delivery signal.",
       "oneOf": [
@@ -1189,18 +792,6 @@
       ],
       "type": "object"
     },
-    "MaintainChannelTypingInput": {
-      "description": "`maintain_channel_typing`: keep the provider's typing indicator up for\nthe conversation until the activity is cancelled.",
-      "properties": {
-        "route": {
-          "$ref": "#/definitions/ChannelRoute"
-        }
-      },
-      "required": [
-        "route"
-      ],
-      "type": "object"
-    },
     "MediaDescriptor": {
       "description": "A media asset named for a consumer that did not see it enter context: the\nparent of a sub-agent, an awaited promise's holder. Carries everything\nneeded to append a media entry without reading the bytes.",
       "properties": {
@@ -1300,63 +891,6 @@
       ],
       "type": "object"
     },
-    "PrepareChannelMediaInput": {
-      "description": "`prepare_channel_media`: the connector downloads the provider file and\nstores it in the universe's CAS.",
-      "properties": {
-        "media": {
-          "$ref": "#/definitions/ChannelInboundMedia"
-        },
-        "route": {
-          "$ref": "#/definitions/ChannelRoute"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "route",
-        "media"
-      ],
-      "type": "object"
-    },
-    "PrepareChannelMediaResult": {
-      "properties": {
-        "item": {
-          "$ref": "#/definitions/PreparedMediaItem"
-        }
-      },
-      "required": [
-        "item"
-      ],
-      "type": "object"
-    },
-    "PreparedMediaItem": {
-      "description": "A prepared attachment: a CAS reference, never bytes.",
-      "properties": {
-        "blobRef": {
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "#/definitions/ChannelMediaKind"
-        },
-        "mime": {
-          "type": "string"
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "blobRef",
-        "kind",
-        "mime"
-      ],
-      "type": "object"
-    },
     "PromiseId": {
       "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The harness hands every dispatch of a\ntool batch a base above the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from that\nbase. Proposal building accepts a creation only at or above the batch's\nbase, and neither it nor the reducer accepts one twice. Producer correlation\nlives on `PromiseSource`, not in the id.",
       "type": "string"
@@ -1413,22 +947,6 @@
           "type": "object"
         }
       ]
-    },
-    "ReplyContext": {
-      "description": "The message a send replies to, for providers that quote it themselves.",
-      "properties": {
-        "senderId": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "senderId",
-        "text"
-      ],
-      "type": "object"
     },
     "RunStatus": {
       "enum": [
@@ -1810,6 +1328,7 @@
       "description": "Start arguments every start-on-call plugin workflow receives. The plugin\nresolves each keyed completion promise by emitting `SourceResolution`\nbodies to the holder workflow through the fixed `deliver_emission`\nsignal, using its own execution id as the producer workflow id.",
       "properties": {
         "execution_id": {
+          "description": "Logical execution id used as the emission producer. The Temporal workflow id\nis `{universe_id}/{execution_id}`.",
           "type": "string"
         },
         "holder_workflow_id": {

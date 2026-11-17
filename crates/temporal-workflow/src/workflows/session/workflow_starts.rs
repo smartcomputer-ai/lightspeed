@@ -269,6 +269,9 @@ pub(super) async fn process_execution_cancels(ctx: &mut WorkflowContext<AgentSes
             .execute_activity(
                 WorkflowActivities::cancel_workflow_tool_execution,
                 crate::WorkflowToolExecutionCancelRequest {
+                    universe_id: split_workflow_id(ctx.workflow_id())
+                        .expect("validated session identity")
+                        .0,
                     execution_id: execution_id.clone(),
                 },
                 preparation::activity_options(),

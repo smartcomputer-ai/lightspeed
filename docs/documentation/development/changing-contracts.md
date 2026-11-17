@@ -14,8 +14,9 @@ before choosing an exporter or changing a version.
 
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
-| Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
-| Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
+| Public application API | DTOs, typed operation catalogs, HTTP bindings and service interfaces in `crates/api/src/` | JSON Schema, HTTP routing catalog, OpenAPI, API reference, TypeScript and Python clients, Configurator tools, Platform method-action map, and profile-editor reference. |
+| Native Platform API | Zod route descriptors in `platform/shared/src/platform-api.ts` and `credential-api.ts` | Native JSON Schema/HTTP catalog and TypeScript/Python clients. |
+| Workflow integration | Harness emission types, workflow recipes and recovery types, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
 | Platform database | Schema modules and Drizzle configuration in `platform/db` | SQL migrations, snapshots, journal, and the separate Platform release revision and upgrade baseline. |
@@ -35,22 +36,22 @@ both repository readers and the documentation site see.
 
 For a new operation, follow the neighboring DTO, method constant, service
 interface, and manifest/dispatcher entries in `crates/api`. The
-[RPC manifest](../../../crates/api/src/rpc.rs) ties ordinary dispatch and
+[operation catalog](../../../crates/api/src/operations.rs) ties ordinary dispatch and
 method metadata together; deployment methods have their corresponding
 [deployment manifest](../../../crates/api/src/deployment.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
 
-Every method declaration requires an `access:` classification. From it, the
-exporter derives scope and the recommended member role. The method's name
-determines its API-key group, and session-target metadata identifies calls that
-need a session visibility check. These appear in the generated contract and
-TypeScript `METHOD_INFO`.
+Every operation declares its access scope. A universe operation also names
+the action required to call it. The operation's name identifies its API family,
+and session-target metadata marks operations that need a session visibility
+check. The exporter includes these facts in the contract and TypeScript
+`OPERATION_INFO`.
 
-Core enforces the key's scope and method group. Platform uses the generated
-role and target metadata to enforce people's access, while the runtime applies
-separate rules to its own controllers. Review all three when adding a method;
-the classification alone does not implement a resource-specific policy. See
-[Access and security](../access-and-security/overview.md).
+Platform uses that metadata alongside the caller's actions and resource
+policies. The runtime applies its own controller rules and accepts direct API
+calls from trusted runtime clients. When adding an operation, review the
+Platform policy, runtime behavior, and Configurator exposure. See
+[How access works](../access-and-security/overview.md).
 
 Choose whether the operation serves universe members, internal services, or
 deployment administration. The Configurator generator
@@ -112,17 +113,20 @@ consumers:
 cargo run -p api --bin export-schema
 cargo run -q -p cli -- config schema > crates/cli/contract/configuration-document.schema.json
 npm install
+npm run generate:platform-contract
 npm run generate --workspace @lightspeed-ai/sdk
 npm run generate --workspace @lightspeed-ai/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
-node platform/scripts/generate-method-roles.mjs
+node platform/scripts/generate-method-actions.mjs
 (cd clients/python && uv sync --locked && uv run python scripts/generate.py)
 ```
 
-The API exporter writes four files under `crates/api/contract/`:
-`api.schema.json`, `methods.json`, `openrpc.json`, and `api-reference.md`.
-Downstream code generation reads the JSON Schema bundle and method manifest;
-OpenRPC is an additional documentation format.
+The API exporter writes `api.schema.json`, `http.json`, `openapi.json` and `api-reference.md` under `crates/api/contract/`.
+The HTTP catalog and OpenAPI are generated from the same typed declarations
+that expand into runtime handlers. Declare input locations and response
+semantics there; never copy route definitions into a consumer. SDK transports use this same HTTP catalog. The SDK schema
+bundle remains draft-07; OpenAPI has its own 2020-12 export from the same DTOs.
+Run `npm run check:openapi` after export to validate structure and references.
 
 The second command writes the JSON Schema of a
 [configuration document](../deployment/configuration-as-code.md). A document
@@ -130,7 +134,9 @@ entry is the input of the API method that writes the resource, so a change to
 one of those inputs changes this schema too. A CLI test fails while the
 committed copy is stale.
 
-The TypeScript generator reads both the API and workflow exports. It writes
+The native Platform exporter reads the same Zod descriptors used by its routes. It writes `platform/shared/contract`; clients consume that export rather than authoring their own native routes or DTOs.
+
+The TypeScript generator reads runtime, native Platform, and workflow exports. It writes
 the generated types and method metadata under `clients/typescript/src/generated/`
 and schema copies under `clients/typescript/schema/`. Configurator generates
 `platform/configurator-mcp/src/generated/tools.ts`. The config-reference command updates
@@ -150,9 +156,11 @@ API and workflow exports and the same helper table, and writes `types.py`,
 `clients/python/src/lightspeed_ai/`. A new helper belongs in the Python client's
 README too, which its tests check.
 
-The method-role generator updates `platform/backend/src/routes/method-roles.ts`:
-minimum member roles, session-target checks, and methods unavailable to member
-calls. Keep this generated policy map with the API change.
+The method-action generator updates `platform/backend/src/routes/method-actions.ts`:
+the universe action each method requires, session-target checks, and methods
+unavailable to member calls. A new core action fails the Platform build until
+`platform/shared/src/access.ts` places it in a role. Keep this generated policy
+map with the API change.
 
 Keep the generated diff with the authored change. Then check the exported
 contract and consumers:
@@ -244,15 +252,6 @@ explains the two histories involved, and
 [Workflow tools](../integrating-and-extending/workflow-tools.md) explains the
 external receiver and controller contract.
 
-Channel delivery and prepared-media DTOs are included in the workflow export
-and reach connectors through `@lightspeed-ai/sdk/workflow`. Some
-checks remain authored on both sides: `CHANNEL_DELIVERY_VERSION` exists in
-[`crates/channels/src/delivery.rs`](../../../crates/channels/src/delivery.rs)
-and the connector's
-[`delivery.ts`](../../../platform/connectors/src/providers/delivery.ts).
-When changing delivery compatibility, check both validators and their tests;
-regenerating TypeScript shapes does not prove they accept the same versions.
-
 ## Change stored session events and state
 
 The runtime database crosses every release, whichever namespace the release runs on,
@@ -339,9 +338,9 @@ covers the controller, daemon, and gateway responsibilities in more detail.
 ## Database migrations
 
 Runtime and Platform data have separate owners and migration histories.
-Runtime PostgreSQL holds universes, API keys, sessions, creator attribution,
-visibility, and domain records such as bots and channel accounts. Platform owns
-login credentials, accounts, organization memberships and roles, universe
+Runtime PostgreSQL holds universes, sessions, creator attribution,
+visibility, and domain records such as bots. Platform owns
+login credentials, organizations, memberships and roles, universe
 mapping, and setup provenance. Add a table to the database that owns its
 behavior. [Access and security](../access-and-security/overview.md) explains the
 boundary that these records support.
@@ -363,11 +362,12 @@ and retain post-create foreign keys needed by dependency order. Transitional
 tables, backfills, and copy steps are unnecessary when no existing data must
 survive.
 
-A changed baseline requires recreation of both the runtime schema and its
-migration ledger; deleting rows or changing stored checksums is insufficient.
-For disposable local state, `./dev.sh reset` also recreates the Platform database
-and clears the Lightspeed MinIO prefix. Stop the supervisor first. Checksum
-validation and startup verification remain enabled; resets are never automatic.
+A new baseline requires fresh schemas and ledgers. The consolidated runtime
+baseline ends at revision 7, and the Platform journal starts at
+`0000_initial_platform`. For disposable local state, stop the supervisor
+before `./dev.sh reset`. That command recreates both databases and clears the
+Lightspeed MinIO prefix. For retained data, see
+[Upgrades and recovery](../deployment/upgrades-and-recovery.md).
 
 Normal Rust startup verifies the ledger. Apply migrations explicitly before
 starting the upgraded runtime:

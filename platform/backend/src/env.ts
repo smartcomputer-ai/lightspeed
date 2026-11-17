@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { databaseWorkloadIdentityFromEnv, type DatabaseWorkloadIdentity } from "@lightspeed-ai/platform-db";
 import {
   DEFAULT_WORKSPACE_UPLOAD_LIMITS,
@@ -36,23 +37,21 @@ export interface ServerEnv {
   adminPassword: string | null;
   /// Explicit local launcher fixtures; disabled in ordinary server startup.
   devSeed?: boolean;
+  browserSessionIdleDays?: number;
+  browserSessionMaxDays?: number;
+  personalOrganizations?: boolean;
+  personalOrganizationUniverseQuota?: number;
+  sharedOrganizationUniverseQuota?: number;
+  apiKeyDefaultExpiryDays?: number;
+  /** Unset: no maximum, and keys may be created without expiry. */
+  apiKeyMaxExpiryDays?: number;
   github: { clientId: string; clientSecret: string } | null;
   oidc?: OidcConfig | null;
   passwordSignIn?: "local" | "break-glass" | "off";
-  /// Authenticated Lightspeed gateway RPC endpoint.
+  /// Authenticated Lightspeed runtime HTTP API endpoint.
   lightspeedApiUrl: string | null;
-  /// The Platform's deployment key: every group, and allowed to assert the
-  /// signed-in user as the actor (`server api-key bootstrap`).
-  lightspeedApiKey?: string | null;
-  /// Public Streamable HTTP endpoint installed by the Configurator setup.
-  configuratorMcpUrl: string | null;
-  /// Permit the installed Configurator MCP record to reach a private network.
-  /// This is intended for explicit local/internal deployments only.
-  configuratorMcpAllowPrivateNetwork: boolean;
-  /// Retired configuration field, always false; true is rejected at startup.
-  configuratorMcpInternalTrustedHeader: boolean;
-  /// Internal connector health endpoints aggregated for platform admins.
-  channelsHealthUrls: string[];
+  /// Full-authority runtime credential, held only by the Platform backend.
+  lightspeedApiToken?: string | null;
   /// Development convenience: a directly attached `lightspeed-envd` endpoint
   /// (started by ./dev.sh) offered as the default when registering an
   /// external environment. Never set in deployed configuration.
@@ -70,12 +69,18 @@ function required(name: string): string {
 }
 
 export function loadEnv(): ServerEnv {
-  if (booleanEnv("LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER", false)) {
-    throw new Error("Configurator trusted-header authentication is retired; use a scoped service key");
+  const token = process.env.LIGHTSPEED_PLATFORM_API_TOKEN;
+  const tokenFile = process.env.LIGHTSPEED_PLATFORM_API_TOKEN_FILE;
+  if (token !== undefined && tokenFile !== undefined) {
+    throw new Error("Set only one of LIGHTSPEED_PLATFORM_API_TOKEN and LIGHTSPEED_PLATFORM_API_TOKEN_FILE");
   }
-  const lightspeedApiKey = process.env.LIGHTSPEED_PLATFORM_API_KEY ?? null;
-  if (lightspeedApiKey !== null && !/^lsk_[A-Za-z0-9_-]+$/.test(lightspeedApiKey)) {
-    throw new Error("LIGHTSPEED_PLATFORM_API_KEY must be a Lightspeed bearer key");
+  let lightspeedApiToken: string | null = token ?? null;
+  if (tokenFile !== undefined) {
+    try { lightspeedApiToken = readFileSync(tokenFile, "utf8").replace(/\r?\n$/, ""); }
+    catch { throw new Error("Cannot read LIGHTSPEED_PLATFORM_API_TOKEN_FILE"); }
+  }
+  if (lightspeedApiToken !== null && (lightspeedApiToken.length < 32 || /[^\x21-\x7e]/u.test(lightspeedApiToken))) {
+    throw new Error("LIGHTSPEED_PLATFORM_API_TOKEN must contain at least 32 printable ASCII characters without whitespace");
   }
   const github =
     process.env.LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID &&
@@ -100,21 +105,19 @@ export function loadEnv(): ServerEnv {
     adminEmail: process.env.LIGHTSPEED_PLATFORM_ADMIN_EMAIL ?? null,
     adminPassword: process.env.LIGHTSPEED_PLATFORM_ADMIN_PASSWORD ?? null,
     devSeed: booleanEnv("LIGHTSPEED_PLATFORM_DEV_SEED", false),
+    browserSessionIdleDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS", 30, 1, 365),
+    browserSessionMaxDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS", 90, 1, 3650),
+    // Platform settings: set here, they win over a Platform Admin's value.
+    personalOrganizations: optionalBooleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS"),
+    personalOrganizationUniverseQuota: optionalIntegerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 0, 100000),
+    sharedOrganizationUniverseQuota: optionalIntegerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 0, 100000),
+    apiKeyDefaultExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS", 365, 1, 3650),
+    apiKeyMaxExpiryDays: optionalIntegerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 1, 3650),
     github,
     oidc,
     passwordSignIn: passwordSignIn as ServerEnv["passwordSignIn"],
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,
-    lightspeedApiKey,
-    configuratorMcpUrl: process.env.LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL ?? null,
-    configuratorMcpAllowPrivateNetwork: booleanEnv(
-      "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK",
-      false,
-    ),
-    configuratorMcpInternalTrustedHeader: booleanEnv(
-      "LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER",
-      false,
-    ),
-    channelsHealthUrls: csv(process.env.LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS),
+    lightspeedApiToken,
     devEnvdEndpoint: process.env.LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT ?? null,
     workspaceUploadLimits: {
       maxBytes: integerEnv(
@@ -131,6 +134,10 @@ export function loadEnv(): ServerEnv {
       ),
     },
   };
+}
+
+function optionalIntegerEnv(name: string, min: number, max: number): number | undefined {
+  return process.env[name]?.trim() ? integerEnv(name, min, min, max) : undefined;
 }
 
 function integerEnv(name: string, fallback: number, min: number, max: number): number {
@@ -179,6 +186,10 @@ function loadOidc(): OidcConfig | null {
     resource: process.env[`${prefix}RESOURCE`] || undefined,
     audience: claimsToken === "access" ? required(`${prefix}AUDIENCE`) : undefined,
   };
+}
+
+function optionalBooleanEnv(name: string): boolean | undefined {
+  return process.env[name]?.trim() ? booleanEnv(name, false) : undefined;
 }
 
 function booleanEnv(name: string, fallback: boolean): boolean {

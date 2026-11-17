@@ -34,14 +34,14 @@ const icons: IconSet = tagAll(library.icons, "data-icon-role");
 // Every role in IconSet, in the order roles.ts declares them.
 export const {
   SessionIcon, WorkspaceIcon, EnvironmentIcon, EnvironmentProviderIcon, ModelIcon, McpServerIcon, ProfileIcon,
-  TemplateIcon, ChannelIcon, CredentialIcon, ApiKeyIcon, MemberIcon, UserAdminIcon, AuditLogIcon, UniversesIcon,
+  CredentialIcon, ApiKeyIcon, MemberIcon, UserAdminIcon, AuditLogIcon, UniversesIcon,
   SettingsIcon, FeatureOffIcon, BotIcon, BotAvatarIcon, UserIcon, SecurityIcon, SecretIcon, AppearanceIcon,
   AdminIcon, ManagedIcon, PrivateIcon, SharedIcon, SignInIcon, SignOutIcon, RevokeIcon, DisconnectIcon,
   LightThemeIcon, DarkThemeIcon, SystemThemeIcon, ReducedMotionOnIcon, ReducedMotionOffIcon, ReducedMotionSystemIcon, GitHubLogo, OpenAiLogo, AnthropicLogo, CompatibleProviderLogo,
   ToolsIcon, SubAgentIcon, ParentAgentIcon, SessionMainThreadIcon, SessionSubThreadIcon, CodeModeIcon, WebIcon, TimerIcon, MetadataIcon, RetentionIcon, ThinkingIcon,
   ExploreToolIcon, EditToolIcon, ExecuteToolIcon, CodeToolIcon, McpToolIcon, DelegateToolIcon, AwaitToolIcon,
-  EmitToSelfIcon, MessageToolIcon, OtherToolIcon, ToolGroupIcon, BotEventIcon, ScheduleIcon, WebhookIcon,
-  ChatTriggerIcon, InboxIcon, PollIcon, CommandIcon, ActivityIcon, AddIcon, AttachIcon, EditIcon, EditFilesIcon, SaveIcon,
+  EmitToSelfIcon, OtherToolIcon, ToolGroupIcon, BotEventIcon, ScheduleIcon, WebhookIcon,
+  InboxIcon, PollIcon, CommandIcon, ActivityIcon, AddIcon, AttachIcon, EditIcon, EditFilesIcon, SaveIcon,
   DeleteIcon, ArchiveIcon, SessionCloseIcon, CopyIcon, CopyLinkIcon, DownloadIcon, UploadIcon, UploadFolderIcon, NewFileIcon,
   NewFolderIcon, ShareIcon, CompactIcon, ConfigureIcon, FilterIcon, SelectModeIcon, SourceViewIcon, PreviewIcon, FormViewIcon, JsonViewIcon, SendIcon, SubmitIcon, QueueIcon,
   SteerIcon, StopIcon, PauseIcon, ResumeIcon, RetryIcon, RotateSecretIcon, ResetIcon, ReplayIcon, RefreshIcon,

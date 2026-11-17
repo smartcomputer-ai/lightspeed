@@ -40,7 +40,7 @@ describe("transcriptAuthor", () => {
   });
 
   it.each<Attribution>([
-    { kind: "key", keyId: "service", scopeKind: "universe" },
+    { kind: "token", name: "service" },
     { kind: "internal", component: "bot", cause: "delivery" },
     { kind: "local" },
   ])("does not turn $kind attribution into a person", requestedBy => {

@@ -380,7 +380,6 @@ fn put_result_secrets(
             .webhook_token
             .and(ingest_path)
             .map(|path| ingest_url(public_base_url, &path)),
-        pairing_code: minted.pairing_code,
     }
 }
 
@@ -412,7 +411,6 @@ async fn put_trigger(
             BotTriggerInput {
                 trigger_id: put.trigger_id.clone(),
                 document,
-                pairing_code: None,
             },
             None,
         )
@@ -1015,12 +1013,12 @@ mod tests {
     #[test]
     fn ingest_urls_join_the_origin_and_the_route_once() {
         assert_eq!(
-            ingest_url("https://ls.example", "/hooks/bots/u/b/t/tok"),
-            "https://ls.example/hooks/bots/u/b/t/tok"
+            ingest_url("https://ls.example", "/ingress/webhooks/bots/u/b/t/tok"),
+            "https://ls.example/ingress/webhooks/bots/u/b/t/tok"
         );
         assert_eq!(
-            ingest_url("https://ls.example/", "/hooks/bots/u/b/t/tok"),
-            "https://ls.example/hooks/bots/u/b/t/tok"
+            ingest_url("https://ls.example/", "/ingress/webhooks/bots/u/b/t/tok"),
+            "https://ls.example/ingress/webhooks/bots/u/b/t/tok"
         );
     }
 
@@ -1062,29 +1060,6 @@ mod tests {
             },
             bots::BotTriggerSecrets {
                 webhook_token: Some(token.to_owned()),
-                pairing_code: None,
-            },
-        )
-    }
-
-    fn chat_record(code: Option<&str>) -> BotTriggerRecord {
-        trigger_record(
-            "tg",
-            api::BotTriggerSpec::Chat {
-                account_id: "tg-main".to_owned(),
-                match_scope: None,
-                activation: Default::default(),
-                access: Default::default(),
-                pairing: if code.is_some() {
-                    api::ChatPairing::Code
-                } else {
-                    api::ChatPairing::Open
-                },
-                priority: 100,
-            },
-            bots::BotTriggerSecrets {
-                webhook_token: None,
-                pairing_code: code.map(str::to_owned),
             },
         )
     }
@@ -1093,11 +1068,12 @@ mod tests {
     const ORIGIN: &str = "https://ls.example/";
 
     fn ingest_path_of(record: &BotTriggerRecord) -> Option<String> {
-        record
-            .secrets
-            .webhook_token
-            .as_ref()
-            .map(|token| format!("/hooks/bots/u/triage/{}/{token}", record.trigger_id))
+        record.secrets.webhook_token.as_ref().map(|token| {
+            format!(
+                "/ingress/webhooks/bots/u/triage/{}/{token}",
+                record.trigger_id
+            )
+        })
     }
 
     fn put_secrets(
@@ -1114,9 +1090,8 @@ mod tests {
         let created = put_secrets(MAIN, None, &webhook);
         assert_eq!(
             created.ingest_url.as_deref(),
-            Some("https://ls.example/hooks/bots/u/triage/github/tok-1")
+            Some("https://ls.example/ingress/webhooks/bots/u/triage/github/tok-1")
         );
-        assert_eq!(created.pairing_code, None);
         // The same holds in a rotated generation of the main session.
         assert_eq!(put_secrets("bot:v1:triage-g2", None, &webhook), created);
         // An edit keeps the URL token, so the URL is not shown again.
@@ -1124,37 +1099,13 @@ mod tests {
             put_secrets(MAIN, Some(&webhook), &webhook),
             MintedTriggerSecretsView::default()
         );
-
-        let chat = chat_record(Some("ABCDEFGH2345"));
-        let paired = put_secrets(MAIN, None, &chat);
-        assert_eq!(paired.pairing_code.as_deref(), Some("ABCDEFGH2345"));
-        assert_eq!(paired.ingest_url, None);
-        assert_eq!(
-            put_secrets(MAIN, Some(&chat), &chat),
-            MintedTriggerSecretsView::default()
-        );
-        // Requiring pairing again on an open connection mints a new code.
-        let open = chat_record(None);
-        assert_eq!(
-            put_secrets(MAIN, Some(&open), &chat)
-                .pairing_code
-                .as_deref(),
-            Some("ABCDEFGH2345")
-        );
-        assert_eq!(
-            put_secrets(MAIN, Some(&chat), &open),
-            MintedTriggerSecretsView::default()
-        );
     }
 
     #[test]
     fn a_put_outside_the_main_session_shows_no_secret() {
         let webhook = webhook_record("tok-1");
-        let chat = chat_record(Some("ABCDEFGH2345"));
         for session_id in [
-            // A conversation's session, a keyed session and its rotated
-            // generation, a per-event session.
-            "bot:v1:triage:k-tg-main-42-0123abcd",
+            // A rotated keyed session and a per-event session.
             "bot:v1:triage:k-pr-42-0123abcd-g2",
             "bot:v1:triage:e-0123456789ab",
             // Not this bot's main session at all.
@@ -1162,13 +1113,11 @@ mod tests {
             "ses_0123",
             "",
         ] {
-            for record in [&webhook, &chat] {
-                assert_eq!(
-                    put_secrets(session_id, None, record),
-                    MintedTriggerSecretsView::default(),
-                    "{session_id}"
-                );
-            }
+            assert_eq!(
+                put_secrets(session_id, None, &webhook),
+                MintedTriggerSecretsView::default(),
+                "{session_id}"
+            );
         }
     }
 
@@ -1190,12 +1139,8 @@ mod tests {
             assert!(!hidden.to_string().contains("tok-1"), "{hidden}");
             assert!(hidden.get("ingestUrl").is_none());
         }
-        // The list never shows either secret, whatever the session.
-        for record in [&webhook, &chat_record(Some("ABCDEFGH2345"))] {
-            let listed = trigger_tool_view(record).to_string();
-            assert!(!listed.contains("tok-1"), "{listed}");
-            assert!(!listed.contains("ABCDEFGH2345"), "{listed}");
-        }
+        let listed = trigger_tool_view(&webhook).to_string();
+        assert!(!listed.contains("tok-1"), "{listed}");
     }
 
     #[test]

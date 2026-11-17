@@ -8,7 +8,7 @@
   "response": {},
   "error": {
     "code": -32019,
-    "message": "dialing wss://gw.example.com/environment-gateway/data failed: connection refused",
+    "message": "dialing wss://gw.example.com/environments/data failed: connection refused",
     "data": {
       "kind": "unavailable"
     }

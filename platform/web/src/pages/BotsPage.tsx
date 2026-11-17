@@ -42,7 +42,7 @@ import { botMetaItems } from "@/components/bot/bot-meta";
 const ROSTER_REFRESH_MS = 5_000;
 
 /// Bots: a roster on the left and one bot's conversations or activity on the right.
-export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
+export function BotsPage({ view = "chat" }: { view?: BotTab }) {
   const { universe, handle, isLoading } = useActiveUniverse();
   const { botId, sessionId } = useParams<{ botId?: string; sessionId?: string }>();
   const permissions = useActionPermissions(universe?.id);
@@ -172,7 +172,7 @@ function BotsPane({
   const watchConnected = useWatchConnected(universeId);
   const bots = useQuery({
     queryKey: ["bots", universeId],
-    queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
+    queryFn: () => api<BotListResponse>("GET", `/api/ui/universes/${universeId}/bots`),
     refetchInterval: watchConnected ? 60_000 : ROSTER_REFRESH_MS,
     refetchIntervalInBackground: false,
   });
@@ -187,7 +187,7 @@ function BotsPane({
   const states = useQueries({
     queries: openBots.map((botId) => ({
       queryKey: ["bot-state", universeId, botId],
-      queryFn: () => api<BotStateReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}/state`),
+      queryFn: () => api<BotStateReadResponse>("GET", `/api/ui/universes/${universeId}/bots/${botId}/state`),
       refetchInterval: botId === activeId ? (false as const) : OPEN_BOT_REFRESH_MS,
       refetchIntervalInBackground: false,
     })),
@@ -455,11 +455,11 @@ function BotWorkspace({
 }) {
   const bot = useQuery({
     queryKey: ["bot", universeId, botId],
-    queryFn: () => api<BotReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}`),
+    queryFn: () => api<BotReadResponse>("GET", `/api/ui/universes/${universeId}/bots/${botId}`),
   });
   const state = useQuery({
     queryKey: ["bot-state", universeId, botId],
-    queryFn: () => api<BotStateReadResponse>("GET", `/api/v1/universes/${universeId}/bots/${botId}/state`),
+    queryFn: () => api<BotStateReadResponse>("GET", `/api/ui/universes/${universeId}/bots/${botId}/state`),
     refetchInterval: 3_000,
     retry: true,
   });

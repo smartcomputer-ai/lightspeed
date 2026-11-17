@@ -19,8 +19,8 @@ describe("lifecycle controller ownership", () => {
     const integration = {
       version: 1,
       lifecycleController: {
-        workflowKind: "ChannelConversationWorkflow",
-        workflowId: "universe/chat-telegram-example",
+        workflowKind: "CustomControllerWorkflow",
+        workflowId: "universe/custom-controller",
       },
     };
     expect(controlledSessionBotId(integration, { bot: "spoofed" })).toBeNull();

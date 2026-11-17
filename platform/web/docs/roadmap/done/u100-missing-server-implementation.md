@@ -20,7 +20,7 @@ show the title alone, so the list keeps working while the server does not
 send it.
 
 The web reads an optional field on each session summary of
-`GET /api/v1/universes/{id}/sessions` (`session/list`):
+`GET /api/ui/universes/{id}/sessions` (`session/list`):
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -121,7 +121,7 @@ the list keeps working while the server does not send it. The session
 page already shows the active environment, from the single-session read.
 
 The web reads an optional field on each session summary of
-`GET /api/v1/universes/{id}/sessions` (`session/list`):
+`GET /api/ui/universes/{id}/sessions` (`session/list`):
 
 | Field | Type | Meaning |
 | --- | --- | --- |

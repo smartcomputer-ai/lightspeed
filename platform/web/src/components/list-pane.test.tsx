@@ -37,32 +37,6 @@ async function render() {
 const row = (id: string) => container.querySelector<HTMLElement>(`a[href="/${id}"]`)!;
 const lines = (id: string) => row(id).querySelectorAll("[aria-hidden] > span").length;
 
-it("draws no separator inside a tree, only after its last row", async () => {
-  await render();
-  expect(["root", "first", "grandchild"].map((id) => row(id).className.includes("border-b-0"))).toEqual([true, true, true]);
-  expect(row("second").className).not.toContain("border-b-0");
-  expect(row("other").className).not.toContain("border-b-0");
-});
-
-it("indents each level and hangs each child off its parent's line", async () => {
-  await render();
-  expect(row("root").style.paddingLeft).toBe("");
-  expect(row("first").style.paddingLeft).toBe("2.375rem");
-  expect(row("grandchild").style.paddingLeft).toBe("3.25rem");
-  // Every parent drops its line from its dot at its centre (a plain dot here,
-  // with no status dot): the root has the drop, its dot and the dotted
-  // separator on its bottom edge; a middle child a running line, a branch,
-  // the drop, the dot and the separator; the last grandchild an ancestor
-  // line, a curve, a dot and a separator (its grandparent's line runs on);
-  // the last child a curve and a dot, ending the tree on a solid separator;
-  // a lone root nothing.
-  expect(lines("root")).toBe(3);
-  expect(lines("first")).toBe(5);
-  expect(lines("grandchild")).toBe(4);
-  expect(lines("second")).toBe(2);
-  expect(row("other").querySelector("[aria-hidden]")).toBeNull();
-});
-
 it("opens and closes a toggle row's children instead of linking", async () => {
   const onToggle = vi.fn();
   await act(async () => root.render(
@@ -87,23 +61,6 @@ it("puts a row's actions beside its link, not inside it", async () => {
   const button = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent === "More")!;
   expect(link.contains(button)).toBe(false);
   expect(button.closest("li")).toBe(link.closest("li"));
-});
-
-it("draws a muted row's title in its second line's colours", async () => {
-  await act(async () => root.render(
-    <MemoryRouter>
-      <ul>
-        <ListRow to="/open" title="Open session" />
-        <ListRow to="/closed" title="Closed session" muted />
-      </ul>
-    </MemoryRouter>,
-  ));
-  const title = (id: string) => [...row(id).querySelectorAll("span")].reverse().find((span) => span.textContent === `${id[0]!.toUpperCase()}${id.slice(1)} session`)!;
-  expect(title("open").className).toContain("text-(--item-foreground-rest)");
-  expect(title("open").dataset.muted).toBeUndefined();
-  expect(title("closed").className).toContain("text-(--list-second-line-rest)");
-  expect(title("closed").className).toContain("group-hover/row:text-muted-foreground");
-  expect(title("closed").dataset.muted).toBe("true");
 });
 
 describe("dedicated expansion", () => {

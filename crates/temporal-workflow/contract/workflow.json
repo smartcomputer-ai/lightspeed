@@ -1,22 +1,4 @@
 {
-  "channels": {
-    "connectorActivities": {
-      "deliverChannelMessage": "deliverChannelMessage",
-      "maintainChannelTyping": "maintainChannelTyping",
-      "prepareChannelMedia": "prepareChannelMedia"
-    },
-    "connectorTaskQueue": "lightspeed-connector-{provider}-{24 hex of sha256(domain, universeId, provider, accountId)}",
-    "deliveryReceiptSignal": "bot_delivery",
-    "domains": {
-      "connectorTaskQueue": "lightspeed.channels.delivery-queue.v1",
-      "conversation": "lightspeed.channels.conversation.v1",
-      "pairing": "lightspeed.channels.pairing.v1"
-    },
-    "hashFraming": "sha256 over the domain string, then each part in order; every piece is prefixed by its byte length as an unsigned 64-bit big-endian integer.",
-    "inboundSignal": "chat_inbound",
-    "stateQuery": "chat_state",
-    "workflowKind": "ChannelConversationWorkflow"
-  },
   "codeExecution": {
     "activities": {
       "finalize": "WorkflowActivities::code_finalize",
@@ -78,11 +60,6 @@
     "WorkflowToolStartArgs",
     "WorkflowToolRecoveryResult",
     "WorkflowToolRecipeV1",
-    "ConversationStart",
-    "ChannelDeliveryCommand",
-    "ChannelDeliveryResult",
-    "PrepareChannelMediaInput",
-    "PrepareChannelMediaResult",
     "TranscriptionWorkflowArgs",
     "TranscriptionSnapshot",
     "TranscriptionActivityResult",
@@ -106,18 +83,6 @@
     "openCodeToolScope": "open_code_tool_scope"
   },
   "vectors": {
-    "channels": {
-      "connectorTaskQueue": "lightspeed-connector-telegram-9b32a282ab8d90f892b5916c",
-      "conversationKey": "tg-main/12345/7",
-      "conversationWorkflowId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/chat-telegram-4f32eceadb5d05f640c88ff4517eccbd4ab9c99c72c84db5",
-      "inputs": {
-        "accountId": "tg-main",
-        "chatId": "12345",
-        "provider": "telegram",
-        "threadId": "7",
-        "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f"
-      }
-    },
     "codeExecution": {
       "descriptor": {
         "catalog_ref": "sha256:37205a7f23ed067993395414b26457d7eb603bf78e181254ac6d2a74ea2918d9",
@@ -369,16 +334,17 @@
       "split": {
         "sessionId": "bot:v1:triage",
         "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f"
-      }
+      },
+      "workflowToolExecution": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/wte:vector"
     }
   },
   "workflowIds": {
     "botController": "{universeId}/bot-{botId}",
     "botTriggerFire": "{universeId}/botfire-{botId}-{triggerId}",
-    "chatConversation": "{universeId}/chat-{provider}-{sha256 of the conversation, 48 hex}",
     "environmentJob": "{universeId}/envjob-{environmentId}-{jobGroupId}",
     "separator": "/",
-    "session": "{universeId}/{sessionId}"
+    "session": "{universeId}/{sessionId}",
+    "workflowToolExecution": "{universeId}/{executionId}"
   },
   "workflowTools": {
     "executionKind": "workflow_tool.execution",

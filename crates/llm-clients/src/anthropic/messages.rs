@@ -100,6 +100,7 @@ impl Config {
 #[derive(Clone, Debug)]
 pub struct Client {
     http: HttpClient,
+    base_url: Url,
     messages_url: Url,
     count_tokens_url: Url,
     models_url: Url,
@@ -140,6 +141,7 @@ impl Client {
         }
 
         Ok(Self {
+            base_url,
             http: HttpClient::with_headers(config.http, headers)?,
             messages_url,
             count_tokens_url,
@@ -205,32 +207,31 @@ impl Client {
                 None => builder,
             })
         };
-        match auth {
-            Some(crate::RequestAuth::None) => Err(ConfigurationError::new(
-                "anonymous Anthropic requests are not supported",
-            )
-            .into()),
+        let token = match auth {
+            Some(crate::RequestAuth::None) => {
+                return Err(ConfigurationError::new(
+                    "anonymous Anthropic requests are not supported",
+                )
+                .into());
+            }
             None | Some(crate::RequestAuth::ApiKey(_)) => {
                 let api_key = match auth {
                     Some(crate::RequestAuth::ApiKey(api_key)) => Some(api_key),
                     _ => None,
                 };
-                with_betas(
+                return with_betas(
                     builder.header("x-api-key", self.auth_header(api_key)?),
                     false,
-                )
+                );
             }
-            Some(crate::RequestAuth::Bearer(token)) => {
-                let mut bearer =
-                    HeaderValue::from_str(&format!("Bearer {token}")).map_err(|err| {
-                        ConfigurationError::new(format!(
-                            "invalid Anthropic bearer token header: {err}"
-                        ))
-                    })?;
-                bearer.set_sensitive(true);
-                with_betas(builder.header(AUTHORIZATION, bearer), true)
-            }
-        }
+            Some(crate::RequestAuth::Bearer(token)) => token,
+            Some(crate::RequestAuth::ScopedBearer(bearer)) => bearer.token_for(&self.base_url)?,
+        };
+        let mut bearer = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|err| {
+            ConfigurationError::new(format!("invalid Anthropic bearer token header: {err}"))
+        })?;
+        bearer.set_sensitive(true);
+        with_betas(builder.header(AUTHORIZATION, bearer), true)
     }
 
     pub async fn create(

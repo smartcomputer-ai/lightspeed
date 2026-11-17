@@ -11,7 +11,8 @@ pub(crate) struct EnvArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum EnvCommand {
-    /// Administer deployment-wide environment provider controllers (deployment key).
+    /// See the providers this universe may use, or administer the
+    /// deployment's provider controllers (deployment key).
     #[command(visible_alias = "providers")]
     Provider(ProviderArgs),
     /// Provision an environment from a provider template.
@@ -27,10 +28,11 @@ enum EnvCommand {
     /// connection, so that a machine with a new identity can bind. The
     /// environment keeps its id and everything that references it.
     Release(EnvironmentResourceArgs),
-    /// Inspect or set the current universe's bindings to environment providers.
+    /// Bind the current universe to a provider that is not available to
+    /// every universe, or unbind it (deployment key).
     #[command(visible_alias = "bindings")]
     Binding(BindingArgs),
-    /// Browse templates offered by the universe's enabled providers.
+    /// Browse templates offered by the providers available to the universe.
     #[command(visible_alias = "templates")]
     Template(TemplateArgs),
     /// Enable or disable provider-authorized public HTTPS ingress.
@@ -92,8 +94,6 @@ enum RegistrationKeyCommand {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyCreateArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     /// persistent: environments wait for their daemon to reconnect;
@@ -110,8 +110,6 @@ struct RegistrationKeyCreateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyPutArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     registration_key_id: String,
@@ -177,8 +175,6 @@ impl RegistrationKeyPolicyArgs {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyUpdateArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     registration_key_id: String,
@@ -194,8 +190,6 @@ enum IdentityModeArg {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyResourceArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     registration_key_id: String,
@@ -240,8 +234,6 @@ impl From<PowerArg> for api::EnvironmentPowerStateView {
 
 #[derive(Args, Debug, Clone)]
 struct ResourceArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
 }
@@ -281,8 +273,6 @@ struct EnvUpdateArgs {
 
 #[derive(Args, Debug, Clone)]
 struct EnvironmentResourceArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     environment_id: String,
@@ -307,8 +297,6 @@ enum CredentialCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialListArgs {
-    #[arg(skip)]
-    api_url: String,
     #[arg(long)]
     json: bool,
     environment_id: String,
@@ -376,7 +364,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
         ),
         RegistrationKeyCommand::Create(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
                     registration_key_id: args.registration_key_id,
                     display_name: args.policy.display_name,
@@ -388,15 +376,14 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     expires_at_ms,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_secret(&response.registration_key, &response.secret.0)
             })
         }
         RegistrationKeyCommand::Put(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .put_environment_registration_key(api::EnvironmentRegistrationKeyPutParams {
                     registration_key_id: args.registration_key_id,
                     display_name: args.policy.display_name,
@@ -409,8 +396,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     secret: api::EnvironmentRegistrationSecretView(args.secret.read()?),
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_key(&response.registration_key);
                 println!();
@@ -427,7 +413,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
         }
         RegistrationKeyCommand::Update(args) => {
             let expires_at_ms = args.policy.expires_at_ms()?;
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .update_environment_registration_key(api::EnvironmentRegistrationKeyUpdateParams {
                     registration_key_id: args.registration_key_id,
                     display_name: args.policy.display_name,
@@ -438,30 +424,27 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                     expires_at_ms,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_key(&response.registration_key)
             })
         }
         RegistrationKeyCommand::Rotate(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .rotate_environment_registration_key(api::EnvironmentRegistrationKeyRotateParams {
                     registration_key_id: args.registration_key_id,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_secret(&response.registration_key, &response.secret.0)
             })
         }
         RegistrationKeyCommand::List(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .list_environment_registration_keys(api::EnvironmentRegistrationKeyListParams {})
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 if response.registration_keys.is_empty() {
                     println!("No environment registration keys found.");
@@ -472,26 +455,24 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
             })
         }
         RegistrationKeyCommand::Read(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .read_environment_registration_key(api::EnvironmentRegistrationKeyReadParams {
                     registration_key_id: args.registration_key_id,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 print_registration_key(&response.registration_key)
             })
         }
         RegistrationKeyCommand::Revoke(args) => {
-            let response = HttpAgentApi::new(args.common.api_url)
+            let response = HttpAgentApi::from_active()
                 .revoke_environment_registration_key(api::EnvironmentRegistrationKeyRevokeParams {
                     registration_key_id: args.common.registration_key_id,
                     close_environments: args.close_environments,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.common.json, &response, || {
                 print_registration_key(&response.registration_key);
                 for environment_id in &response.closed_environment_ids {
@@ -513,20 +494,19 @@ fn print_registration_secret(key: &api::EnvironmentRegistrationKeyView, secret: 
     println!("  {secret}");
     println!();
     println!("Bootstrap a daemon with:");
-    println!("  LIGHTSPEED_ENVD_GATEWAY_URL=wss://<gateway>/environment-gateway/connect");
+    println!("  LIGHTSPEED_ENVD_GATEWAY_URL=wss://<gateway>/environments/connect");
     println!("  LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE=<file holding the key>");
     println!("  lightspeed-envd");
 }
 
 async fn power(args: PowerArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .put_environment_power(api::EnvironmentPowerPutParams {
             environment_id: args.common.environment_id,
             power: args.power.into(),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.common.json {
         crate::output::show(true, &response)
     } else {
@@ -538,20 +518,19 @@ async fn power(args: PowerArgs) -> Result<()> {
 }
 
 async fn update(args: EnvUpdateArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .update_environment(api::EnvironmentUpdateParams {
             environment_id: args.common.environment_id,
             display_name: args.display_name,
             metadata: args.metadata.map(),
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     crate::output::show(args.common.json, &response.environment)
 }
 
 async fn list(args: EnvListArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.common.api_url)
+    let response = HttpAgentApi::from_active()
         .list_environments(api::EnvironmentListParams {
             metadata: args.metadata.map(),
             provider_id: args.provider,
@@ -562,8 +541,7 @@ async fn list(args: EnvListArgs) -> Result<()> {
             ..Default::default()
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     if args.common.json {
         crate::output::show(true, &response)
     } else {
@@ -585,23 +563,21 @@ async fn list(args: EnvListArgs) -> Result<()> {
 }
 
 async fn read(args: EnvironmentResourceArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.api_url)
+    let response = HttpAgentApi::from_active()
         .read_environment(api::EnvironmentReadParams {
             environment_id: args.environment_id,
         })
-        .await?
-        .result;
+        .await?;
     crate::output::show(args.json, &response.environment)
 }
 
 async fn close(args: EnvironmentResourceArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.api_url)
+    let response = HttpAgentApi::from_active()
         .close_environment(api::EnvironmentCloseParams {
             environment_id: args.environment_id,
         })
         .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .map_err(crate::api_client::api_error)?;
     print_json_or(args.json, &response, || {
         if response.environment.state == api::EnvironmentStateView::Closed {
             println!("Closed {}.", response.environment.environment_id);
@@ -619,34 +595,34 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
         CredentialCommand::Bind(args) => {
             let source = match (args.grant_id, args.provider_id) {
                 (Some(grant_id), None) => {
-                    api::EnvironmentCredentialSourceView::AuthGrant { grant_id }
+                    api::EnvironmentCredentialSourceView::CredentialGrant { grant_id }
                 }
                 (None, Some(provider_id)) => {
-                    api::EnvironmentCredentialSourceView::AuthProviderCredential { provider_id }
+                    api::EnvironmentCredentialSourceView::CredentialProviderCredential {
+                        provider_id,
+                    }
                 }
                 _ => anyhow::bail!("specify exactly one of --grant and --provider-id"),
             };
-            let response = HttpAgentApi::new(args.common.api_url)
+            let response = HttpAgentApi::from_active()
                 .bind_environment_credential(api::EnvironmentCredentialBindParams {
                     environment_id: args.common.environment_id,
                     env_name: args.env_name,
                     source,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.common.json, &response, || {
                 print_credential(&response.credential)
             })
         }
         CredentialCommand::List(args) => {
-            let response = HttpAgentApi::new(args.api_url)
+            let response = HttpAgentApi::from_active()
                 .list_environment_credentials(api::EnvironmentCredentialListParams {
                     environment_id: args.environment_id,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.json, &response, || {
                 if response.credentials.is_empty() {
                     println!("No credentials bound to this environment.");
@@ -657,14 +633,13 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
             })
         }
         CredentialCommand::Unbind(args) => {
-            let response = HttpAgentApi::new(args.common.api_url)
+            let response = HttpAgentApi::from_active()
                 .unbind_environment_credential(api::EnvironmentCredentialUnbindParams {
                     environment_id: args.common.environment_id,
                     env_name: args.env_name,
                 })
                 .await
-                .map_err(crate::api_client::api_error)?
-                .result;
+                .map_err(crate::api_client::api_error)?;
             print_json_or(args.common.json, &response, || {
                 print_credential(&response.credential)
             })
@@ -752,29 +727,16 @@ struct BindingArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum BindingCommand {
-    /// Bind the selected universe to a provider, enabled or disabled
-    /// (deployment key).
+    /// Let the selected universe use a provider that is not available to
+    /// every universe (deployment key).
     Put {
         provider_id: String,
-        /// Let the universe provision from this provider.
-        #[arg(long, conflicts_with = "disable", required_unless_present = "disable")]
-        enable: bool,
-        /// Keep the binding but stop new provisioning from it.
-        #[arg(long)]
-        disable: bool,
         #[arg(long)]
         json: bool,
     },
-    /// Delete the selected universe's binding to a provider (deployment key).
+    /// Stop the selected universe from using a provider that is not
+    /// available to every universe (deployment key).
     Delete {
-        provider_id: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// List the selected universe's provider bindings.
-    List(ResourceArgs),
-    /// Read the selected universe's binding to one provider.
-    Read {
         provider_id: String,
         #[arg(long)]
         json: bool,
@@ -787,7 +749,7 @@ struct TemplateArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum TemplateCommand {
-    /// List the templates the universe's enabled providers offer.
+    /// List the templates the providers available to the universe offer.
     List {
         /// Only this provider's templates; omit for every enabled binding.
         #[arg(long)]
@@ -814,7 +776,7 @@ struct IngressArgs {
     disable: bool,
 }
 async fn create(args: CreateArgs) -> Result<()> {
-    let response: api::EnvironmentCreateResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentCreateResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_CREATE,
             api::EnvironmentCreateParams {
@@ -827,8 +789,7 @@ async fn create(args: CreateArgs) -> Result<()> {
                 idle: None,
             },
         )
-        .await?
-        .result;
+        .await?;
     if !args.common.json {
         println!("Provisioning requested; use environment read to inspect progress.");
     }
@@ -841,7 +802,7 @@ async fn register(args: RegisterArgs) -> Result<()> {
             .any(|scheme| args.endpoint.starts_with(scheme)),
         "envd endpoint must use ws://, wss:// or unix://"
     );
-    let response: api::EnvironmentExternalCreateResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentExternalCreateResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_EXTERNAL_CREATE,
             api::EnvironmentExternalCreateParams {
@@ -852,12 +813,11 @@ async fn register(args: RegisterArgs) -> Result<()> {
                 metadata: args.metadata.map(),
             },
         )
-        .await?
-        .result;
+        .await?;
     crate::output::show(args.common.json, &response.environment)
 }
 async fn declare(args: DeclareArgs) -> Result<()> {
-    let response: api::EnvironmentRegisteredPutResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentRegisteredPutResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_REGISTERED_PUT,
             api::EnvironmentRegisteredPutParams {
@@ -868,8 +828,7 @@ async fn declare(args: DeclareArgs) -> Result<()> {
                 metadata: args.metadata.map(),
             },
         )
-        .await?
-        .result;
+        .await?;
     if args.common.json {
         return crate::output::show(true, &response);
     }
@@ -886,15 +845,14 @@ async fn declare(args: DeclareArgs) -> Result<()> {
     Ok(())
 }
 async fn release(args: EnvironmentResourceArgs) -> Result<()> {
-    let response: api::EnvironmentRegisteredReleaseResponse = HttpAgentApi::new(args.api_url)
+    let response: api::EnvironmentRegisteredReleaseResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_REGISTERED_RELEASE,
             api::EnvironmentRegisteredReleaseParams {
                 environment_id: args.environment_id,
             },
         )
-        .await?
-        .result;
+        .await?;
     if args.json {
         return crate::output::show(true, &response);
     }
@@ -911,25 +869,18 @@ async fn release(args: EnvironmentResourceArgs) -> Result<()> {
     Ok(())
 }
 async fn binding(args: BindingArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
-        BindingCommand::Put {
-            provider_id,
-            enable: enabled,
-            disable: _,
-            json,
-        } => {
+        BindingCommand::Put { provider_id, json } => {
             let response: api::DeploymentProviderBindingPutResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
                     api::DeploymentProviderBindingPutParams {
                         universe: selected_universe("binding a provider")?,
                         provider_id,
-                        enabled,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.binding)
         }
         BindingCommand::Delete { provider_id, json } => {
@@ -941,45 +892,16 @@ async fn binding(args: BindingArgs) -> Result<()> {
                         provider_id,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if !json {
                 println!("Deleted environment provider binding.");
             }
             crate::output::show(json, &response.binding)
         }
-        BindingCommand::List(args) => {
-            let response: api::EnvironmentProviderBindingListResponse = client
-                .request(
-                    api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST,
-                    api::EnvironmentProviderBindingListParams {},
-                )
-                .await?
-                .result;
-            if args.json {
-                crate::output::show(true, &response)
-            } else {
-                crate::output::table(
-                    &response.bindings,
-                    &[("providerId", "PROVIDER"), ("enabled", "ENABLED")],
-                    "No environment provider bindings available.",
-                )
-            }
-        }
-        BindingCommand::Read { provider_id, json } => {
-            let response: api::EnvironmentProviderBindingReadResponse = client
-                .request(
-                    api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ,
-                    api::EnvironmentProviderBindingReadParams { provider_id },
-                )
-                .await?
-                .result;
-            crate::output::show(json, &response.binding)
-        }
     }
 }
 async fn template(args: TemplateArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
         TemplateCommand::List { provider, json } => {
             let response: api::EnvironmentTemplateListResponse = client
@@ -989,8 +911,7 @@ async fn template(args: TemplateArgs) -> Result<()> {
                         provider_id: provider,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             if json {
                 crate::output::show(true, &response)
             } else {
@@ -1020,14 +941,13 @@ async fn template(args: TemplateArgs) -> Result<()> {
                         template_id,
                     },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.template)
         }
     }
 }
 async fn ingress(args: IngressArgs) -> Result<()> {
-    let response: api::EnvironmentIngressPutResponse = HttpAgentApi::new(args.common.api_url)
+    let response: api::EnvironmentIngressPutResponse = HttpAgentApi::from_active()
         .request(
             api::METHOD_ENVIRONMENTS_INGRESS_PUT,
             api::EnvironmentIngressPutParams {
@@ -1035,8 +955,7 @@ async fn ingress(args: IngressArgs) -> Result<()> {
                 enabled: args.enable,
             },
         )
-        .await?
-        .result;
+        .await?;
     crate::output::show(args.common.json, &response.environment)
 }
 
@@ -1065,6 +984,13 @@ struct ProviderPutArgs {
     /// Remove the stored credential.
     #[arg(long)]
     clear_credential: bool,
+    /// Limit use to universes bound to the provider (`environment binding put`).
+    #[arg(long, group = "availability")]
+    selected_universes: bool,
+    /// Allow every universe. Omitting both availability flags keeps the current
+    /// setting and defaults new providers to every universe.
+    #[arg(long, group = "availability")]
+    all_universes: bool,
     #[arg(long)]
     json: bool,
 }
@@ -1090,7 +1016,15 @@ struct ProviderArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum ProviderCommand {
-    /// List the deployment's environment provider controllers.
+    /// The providers the selected universe may use: those available to
+    /// every universe, and those it is bound to. With a provider ID, only
+    /// that one.
+    Available {
+        provider_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the deployment's environment provider controllers (deployment key).
     List {
         #[arg(long)]
         json: bool,
@@ -1103,7 +1037,8 @@ enum ProviderCommand {
     },
     /// Register or replace a provider controller.
     Put(ProviderPutArgs),
-    /// Delete a provider controller that no universe is bound to.
+    /// Delete a provider controller that no universe is bound to and no open
+    /// environment uses.
     Delete {
         provider_id: String,
         #[arg(long)]
@@ -1111,16 +1046,46 @@ enum ProviderCommand {
     },
 }
 async fn provider(args: ProviderArgs) -> Result<()> {
-    let client = HttpAgentApi::new("");
+    let client = HttpAgentApi::from_active();
     match args.command {
+        ProviderCommand::Available { provider_id, json } => match provider_id {
+            None => {
+                let response: api::AvailableEnvironmentProviderListResponse = client
+                    .request(
+                        api::METHOD_ENVIRONMENTS_PROVIDERS_LIST,
+                        api::AvailableEnvironmentProviderListParams {},
+                    )
+                    .await?;
+                if json {
+                    crate::output::show(true, &response)
+                } else {
+                    crate::output::table(
+                        &response.providers,
+                        &[
+                            ("providerId", "PROVIDER"),
+                            ("availableToAllUniverses", "ALL UNIVERSES"),
+                        ],
+                        "No environment providers are available to this universe.",
+                    )
+                }
+            }
+            Some(provider_id) => {
+                let response: api::AvailableEnvironmentProviderReadResponse = client
+                    .request(
+                        api::METHOD_ENVIRONMENTS_PROVIDERS_READ,
+                        api::AvailableEnvironmentProviderReadParams { provider_id },
+                    )
+                    .await?;
+                crate::output::show(json, &response.provider)
+            }
+        },
         ProviderCommand::List { json } => {
             let response: api::DeploymentEnvironmentProviderListResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST,
                     api::DeploymentEnvironmentProviderListParams {},
                 )
-                .await?
-                .result;
+                .await?;
             if json {
                 crate::output::show(true, &response)
             } else {
@@ -1142,8 +1107,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ,
                     api::DeploymentEnvironmentProviderReadParams { provider_id },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(json, &response.provider)
         }
         ProviderCommand::Put(args) => {
@@ -1172,10 +1136,11 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                         data_route_base: args.data_route_base,
                         credential,
                         clear_credential: args.clear_credential,
+                        available_to_all_universes: (args.all_universes || args.selected_universes)
+                            .then_some(args.all_universes),
                     },
                 )
-                .await?
-                .result;
+                .await?;
             crate::output::show(args.json, &response.provider)
         }
         ProviderCommand::Delete { provider_id, json } => {
@@ -1184,8 +1149,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                     api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE,
                     api::DeploymentEnvironmentProviderDeleteParams { provider_id },
                 )
-                .await?
-                .result;
+                .await?;
             if !json {
                 println!("Deleted environment provider controller.");
             }

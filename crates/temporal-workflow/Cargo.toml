@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 api = { path = "../api" }
 bots = { path = "../bots" }
-channels = { path = "../channels" }
 harness = { path = "../harness", features = ["contract"] }
 schemars = { version = "1", features = ["uuid1"] }
 sha2 = "0.11"

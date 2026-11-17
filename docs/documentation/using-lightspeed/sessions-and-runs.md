@@ -9,11 +9,11 @@ This distinction gives you two kinds of control. You can ask for more work
 after the current task, or change what the agent is doing now. The session
 retains both the work and its history when you leave the page.
 
-Use a Contributor, Operator or Admin account in the universe for the web
+Use Contributor, Operator or Owner access in the universe for the web
 procedures below. To control an existing private session, you must be its
-creator or an Admin; shared sessions can be controlled by Contributors and
+creator or an Owner; shared sessions can be controlled by Contributors and
 above. Changing session setup or per-message model and reasoning options
-requires an Operator or Admin. If you haven't completed a task yet, start with
+requires an Operator or Owner. If you haven't completed a task yet, start with
 [Build your first agent](../getting-started/first-agent.md).
 
 ## Start and continue a session
@@ -23,7 +23,7 @@ Open **Sessions → New session**, enter a **Name**, and select an existing
 is resolved at creation; later profile edits do not change this session.
 Contributors use these prepared choices without configuration overrides.
 
-Operators and Admins can choose **Customize setup…** to change the setup for
+Operators and Owners can choose **Customize setup…** to change the setup for
 this session without saving those changes back to the profile. After
 customizing, choose **Create session**. They can also customize a session
 that starts without a profile.
@@ -46,18 +46,20 @@ still point to the same shared files.
 ## Share a session with the universe
 
 New standalone sessions are private: through the Platform, only their creator
-and Admins can read them. To share a review with the team, open the session
-title menu, choose **Share with universe…**, and confirm with **Share**. This
+and Owners can read them. To share a review with the team, open
+**Session actions**, choose **Share with universe…**, and confirm with **Share**. This
 also shares its sub-agents. Sharing cannot be undone.
 
-Every member can then read the conversation, and Contributors and above can
+Everyone with universe access can then read the conversation, and Contributors and above can
 continue runs, steer, cancel work, or decide tool approvals. Sharing requires
-the creator with at least the Contributor role, or an Admin. Bot conversations
+the creator with at least the Contributor role, or an Owner. Bot conversations
 are always shared; delegated sessions follow their root's visibility.
 
 Files written into an attached shared workspace remain visible through that
-workspace even while the conversation is private. Direct core keys with the
-`session` method group also have access to private sessions in their universe.
+workspace even while the conversation is private. Platform API keys inherit
+their principal's session visibility and may narrow it further through their
+restrictions. Direct runtime infrastructure tokens have full deployment
+authority and belong only to trusted components.
 See [Private and shared work](../access-and-security/private-and-shared-work.md)
 for the access model.
 
@@ -124,7 +126,7 @@ turn, including recovery turns and turns delivering steering.
 ## If a session's workflow stops
 
 A banner saying the session's workflow has stopped means its history is intact but
-nothing is running it, so new messages fail. An Operator or Admin can choose
+nothing is running it, so new messages fail. An Operator or Owner can choose
 **Restart**. A run that was in progress fails, with a message saying so, rather than
 repeat work it may already have done. A run waiting on an approval or a result keeps
 waiting, and queued runs start afterwards. See
@@ -188,7 +190,7 @@ to continue.
 A message that could never fit is refused when you send it, if the limit is known,
 rather than failing every run after it.
 
-As an Operator or Admin, open **Customize run controls → Context compaction**
+As an Operator or Owner, open **Customize run controls → Context compaction**
 in the profile or idle session's model setup. **Engine default** and **Engine managed standalone**
 enable standalone compaction; **Provider triggered** uses supported OpenAI
 Responses or Anthropic Messages generation compaction. **Disabled** turns off
@@ -240,10 +242,10 @@ configuration, and attached resources. Viewers and Contributors see a read-only
 form: sections still expand, but values cannot be changed and **Apply setup**
 is hidden.
 
-Operators and Admins can edit the setup and choose **Apply setup**. Changes to
+Operators and Owners can edit the setup and choose **Apply setup**. Changes to
 the agent's working setup require an open session with no active or queued
 runs. The composer's per-message model and reasoning choices, including saving
-a model choice as the session default, also require an Operator or Admin.
+a model choice as the session default, also require an Operator or Owner.
 
 A session keeps its configured provider identity and API kind for its entire
 lifetime, including before its first run. You can switch to any model within
@@ -279,26 +281,28 @@ The examples use `lightspeed` on your executable path. Use `./lightspeed`
 for a release binary in the current directory, or `target/debug/lightspeed`
 for the source build above.
 
-For the authenticated development launcher stack from the quickstart, use its
-runtime gateway and a universe API key created by an Admin. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
-for creating and revoking keys. A universe key already selects its universe:
+For a Platform installation, sign in with the CLI and select the universe
+that contains the session. The chat client sends its own run settings, so
+use Operator or Owner access to a session you can control.
 
 ```bash
-export LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc
-export LIGHTSPEED_API_KEY="<universe API key>"
-unset LIGHTSPEED_UNIVERSE
+lightspeed connect login --url https://lightspeed.example --name work
+lightspeed universe use my-universe
 lightspeed chat --session "<session-id>"
 ```
 
-Copy **Session ID** from the web app's session title menu.
-For a remote installation, use the gateway address and authentication supplied
-by the operator. A deployment key needs `LIGHTSPEED_UNIVERSE` set to the
-universe's UUID, or to its handle, which is the readable name in the browser
-URL. Local
-single mode accepts neither API keys nor universe headers.
+Copy **Session ID** from **Session actions** in the web app. For a local
+checkout, you can also import the development launcher's direct connection.
 
-Without model flags, `lightspeed chat` uses the deployment default for a new
+```bash
+lightspeed connect dev
+lightspeed chat --session "<session-id>"
+```
+
+For other CLI connections and credential options, see
+[Use Lightspeed from the terminal](cli.md).
+
+Without model flags, `lightspeed chat` uses the profile model or universe default for a new
 session and the stored model when opening an existing session. To choose a
 route for a new session, supply `--provider`, `--api-kind`, and `--model`
 together. When reopening a session, these flags may select another model
@@ -317,7 +321,7 @@ approval by ID. `/interrupt` cancels the newest queued run first, or the active
 run when no queued run exists. `/quit` exits the interface and leaves the
 session available to reopen.
 
-At startup, the TUI header shows the full session ID, universe and key scope,
+At startup, the TUI header shows the full session ID, universe and connection mode,
 then the runtime endpoint and useful slash commands. Model and effort remain
 in the footer; `lightspeed --version` shows the build version.
 The TUI shows live tool activity as calls run and finish, including individual
@@ -354,12 +358,12 @@ A session whose setup fails when you create it leaves nothing live: an ID the se
 chose is closed, and retrying an ID you chose reports the error again.
 
 Deleting a closed session in Platform **soft-deletes** it: it disappears from
-ordinary session views for everyone, including Admins, while its history remains stored.
+ordinary session views for everyone, including Owners, while its history remains stored.
 **Also delete delegated children** includes its retention descendants, which must
 also be closed. Without that option, the session must have no retention descendants.
 Closing and deletion have different [role requirements](../access-and-security/private-and-shared-work.md#what-each-person-may-do).
 
-Admins can set **Delete after close (days)** to automatically soft-delete a
+Owners can set **Delete after close (days)** to automatically soft-delete a
 closed session tree; a blank value keeps it until manual deletion. The root
 owns this policy for its retention tree, and deletion waits until all descendants
 are closed. This policy never permanently removes stored history. Bot conversations
@@ -367,21 +371,22 @@ are kept until deleted, whatever their profile sets.
 
 Within Platform, only Platform admins can permanently delete retained session
 history. In the delete dialog, select **Also permanently delete retained history** to soft-delete
-and then purge. For already deleted sessions, open **Platform admin → Universes →
-Deleted sessions**, select sessions and choose **Purge selected…**, or use
+and then purge. For already deleted sessions, open the universe's **Settings →
+General → Deleted sessions**, select sessions and choose **Purge selected…**, or use
 **Purge all…**, then confirm removal of their deleted history trees. There is
 no automatic purge or restore action.
 Permanent deletion through Platform is recorded in the
 [audit log](../access-and-security/overview.md#what-is-recorded-today).
 
-Direct runtime clients use `session/delete`, which permanently deletes by
-default; pass `softDelete: true` to retain hidden history. Similarly,
-`lightspeed session delete` deletes permanently unless `--soft-delete` is set.
-Both modes require closed sessions and use `cascade` for retention descendants.
-Platform always requests soft deletion before its separate admin purge step;
-automatic retention also continues to soft-delete only.
+On a direct runtime connection, `session/delete` and
+`lightspeed session delete` permanently delete by default. To retain hidden
+history, use `softDelete: true` in the API or `--soft-delete` in the CLI.
+Platform requests soft deletion for both API and CLI calls and uses its
+separate purge action for permanent deletion. Both modes require closed sessions
+and use `cascade` for retention descendants. Automatic retention soft-deletes
+closed sessions.
 
-Bot and channel conversations have a lifecycle controller. Their session
+Bot conversations have a lifecycle controller. Their session
 inspector identifies what manages them; use that controller's reset or close
 actions. If you enable direct input in a managed-session inspector, you bypass
 the controller's normal event admission, routing, and delivery policies. Use
@@ -394,7 +399,7 @@ the [bot conversation](bots-and-triggers.md) or connected chat for normal work.
 | A message is waiting while the agent works | It may be a queued run. Use steering for an instruction intended for the current task. |
 | Steering has no immediate visible effect | The current model call or tool batch must finish before the next model turn can consume it. |
 | Work starts again after stopping | Check for other queued runs. Stopping one run leaves those tasks in place. |
-| Setup changes are refused | Confirm you have an Operator or Admin role. Wait for active work to finish and drain or cancel queued runs. Reload settings if another editor changed them. |
+| Setup changes are refused | Confirm you have an Operator or Owner role. Wait for active work to finish and drain or cancel queued runs. Reload settings if another editor changed them. |
 | A finished child or closed conversation is missing | Under **Filter sessions → Include**, select **Closed sessions** and **Sub-agent sessions**, or follow the child link from the parent transcript. |
 | The agent lost a detail from much earlier | Inspect the retained history and restate the needed fact or point it to the source file. The current model context can be smaller than the transcript. |
 | A banner says the workflow has stopped | [Restart the session](#if-a-sessions-workflow-stops) if you want to continue it. |

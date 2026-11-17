@@ -113,7 +113,7 @@ export function useComposerAttachments(universeId: string | undefined, apiKind: 
     update(id, { status: "uploading", error: undefined });
     try {
       const bytesBase64 = await blobBase64(file, controller.signal);
-      const result = await api<BlobPutResponse>("POST", `/api/v1/universes/${universeId}/attachments`, { bytesBase64 }, controller.signal);
+      const result = await api<BlobPutResponse>("POST", `/api/ui/universes/${universeId}/attachments`, { bytesBase64 }, controller.signal);
       const blobRef = result.blobs?.[0]?.blobRef;
       if (!blobRef) throw new Error("The upload did not return a reference.");
       if (controller.signal.aborted) return;

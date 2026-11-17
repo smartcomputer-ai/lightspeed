@@ -4345,10 +4345,11 @@ mod tests {
                 controller_endpoint: EnvironmentEndpoint::parse("ws://controller.test/control")
                     .unwrap(),
                 data_route_base: None,
-                credential: ProviderCredentialChange::Set(auth::SecretValue::new(
+                credential: ProviderCredentialChange::Set(credentials::SecretValue::new(
                     "provider-credential",
                 )),
                 updated_at_ms: 10,
+                available_to_all_universes: Some(false),
             })
             .await
             .expect("register provider");
@@ -4356,7 +4357,6 @@ mod tests {
             .put_provider_binding(PutEnvironmentProviderBinding {
                 universe_id: store.universe_id(),
                 provider_id: EnvironmentProviderId::new(provider_id),
-                enabled: true,
                 updated_at_ms: 10,
             })
             .await

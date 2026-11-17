@@ -1,4 +1,3 @@
-import { mcpDiscoveryFailureAction } from "@/lib/mcp/tool-discovery";
 import { describe, expect, it } from "vitest";
 import {
   isValidMcpUrl,
@@ -6,7 +5,6 @@ import {
   mcpAuthKind,
   mcpAuthenticationSummary,
   mcpGrantCompatible,
-  mcpHeadersExecutionError,
   mcpServerCredentialError,
   mcpServerStatusForCredential,
 } from "./McpServersPage";
@@ -68,20 +66,5 @@ describe("MCP server credential ownership", () => {
     expect(isValidMcpUrl("https://user:secret@mcp.example.com/mcp")).toBe(false);
     expect(isValidMcpUrl("https://mcp.example.com/mcp#tools")).toBe(false);
   });
-
-  it("turns stable discovery failures into actionable guidance", () => {
-    expect(mcpDiscoveryFailureAction("forbidden")).toContain("scopes");
-    expect(mcpDiscoveryFailureAction("grantAudienceMismatch")).toContain("exact server");
-    expect(mcpDiscoveryFailureAction("responseTooLarge")).toContain("safe discovery limits");
-  });
 });
 
-describe("MCP request headers", () => {
-  // The header rows themselves are covered with the shared editor's rules.
-  it("needs Lightspeed to connect", () => {
-    const headers = { "x-tenant": { type: "literal" as const, value: "acme" } };
-    expect(mcpHeadersExecutionError("provider", headers)).toContain("Lightspeed");
-    expect(mcpHeadersExecutionError("runtime", headers)).toBeNull();
-    expect(mcpHeadersExecutionError("provider", {})).toBeNull();
-  });
-});

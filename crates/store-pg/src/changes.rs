@@ -20,6 +20,7 @@ const MAX_PAYLOAD: usize = 7_500;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeKind {
+    Universe,
     Session,
     Bot,
     Environment,

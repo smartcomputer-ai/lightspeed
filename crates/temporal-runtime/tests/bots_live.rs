@@ -73,8 +73,7 @@ where
 
     let builder = GatewayAgentApi::builder(client.clone(), store.clone())
         .with_task_queue(queues.sessions.clone())
-        .with_bot_task_queue(queues.bots.clone())
-        .with_channel_task_queue(queues.channels.clone());
+        .with_bot_task_queue(queues.bots.clone());
     let activity_state = match llm {
         Llm::Fake => {
             let blobs: Arc<dyn BlobStore> = store.clone();
@@ -207,7 +206,6 @@ async fn list_events(api: &GatewayAgentApi, bot_id: &BotId) -> anyhow::Result<Ve
             cursor: None,
         })
         .await?
-        .result
         .events)
 }
 
@@ -233,7 +231,6 @@ async fn wait_for_outcomes(
                     bot_id: bot_id.clone(),
                 })
                 .await?
-                .result
                 .state;
             anyhow::bail!(
                 "timed out waiting for {expected} outcomes on bot {bot_id}; state: {state:#?}; events: {events:#?}"
@@ -258,7 +255,6 @@ where
                 bot_id: bot_id.clone(),
             })
             .await?
-            .result
             .state;
         if predicate(state.controller.as_ref()) {
             return Ok(state.controller);
@@ -320,8 +316,7 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
                 bot_id: bot_id.clone(),
                 event: manual_event("first ping"),
             })
-            .await?
-            .result;
+            .await?;
         assert_eq!(admitted.event.seq, 1);
         assert!(!admitted.duplicate);
 
@@ -348,7 +343,6 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_eq!(session.lifecycle_status, SessionLifecycleStatus::Open);
         assert_eq!(session.activity, api::SessionActivity::Idle);
@@ -375,8 +369,7 @@ async fn bots_live_manual_event_runs_and_records_outcome() -> anyhow::Result<()>
                     ..manual_event("first ping again")
                 },
             })
-            .await?
-            .result;
+            .await?;
         assert!(duplicate.duplicate);
         assert_eq!(duplicate.event.seq, 1);
         Ok(())
@@ -413,7 +406,6 @@ async fn bots_live_reset_main_recovers_a_missing_session_row() -> anyhow::Result
                 session_id: first.clone(),
             })
             .await?
-            .result
             .accepted
         );
         let second = bot_main_session_id(&bot_id, 2);
@@ -427,7 +419,6 @@ async fn bots_live_reset_main_recovers_a_missing_session_row() -> anyhow::Result
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_eq!(session.lifecycle_status, SessionLifecycleStatus::Open);
         assert_eq!(session.activity, api::SessionActivity::Idle);
@@ -456,10 +447,10 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
         let profile_id = create_profile(&api, "You are a live-test bot.").await?;
         let secret = format!("signing-{}", uuid::Uuid::new_v4().simple());
         let grant_id = api
-            .import_auth_grant(api::AuthGrantImportParams {
+            .import_credential_grant(api::CredentialGrantImportParams {
                 grant_id: None,
                 provider_id: None,
-                exposure: api::AuthGrantExposure::Retrievable,
+                exposure: api::CredentialGrantExposure::Retrievable,
                 token: secret.clone(),
                 display_name: Some("Webhook signing secret".to_owned()),
                 subject_hint: None,
@@ -469,7 +460,6 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
                 metadata: None,
             })
             .await?
-            .result
             .grant
             .grant_id;
         let trigger_id = BotTriggerId::new("signed");
@@ -496,7 +486,6 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
                     session_close_after_ms: None,
                     enabled: true,
                 },
-                pairing_code: None,
             }],
         )
         .await?;
@@ -506,7 +495,6 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
                 trigger_id: trigger_id.clone(),
             })
             .await?
-            .result
             .secrets
             .ingest_path
             .expect("webhook ingest path");
@@ -517,21 +505,19 @@ async fn bots_live_hmac_webhook_verifies_without_a_caller() -> anyhow::Result<()
                 bot_id: bot_id.clone(),
                 trigger_id: trigger_id.clone(),
             })
-            .await?
-            .result;
+            .await?;
         let listed = api
             .list_bot_triggers(api::BotTriggerListParams {
                 bot_id: bot_id.clone(),
             })
-            .await?
-            .result;
+            .await?;
         for view in [
             serde_json::to_string(&read)?,
             serde_json::to_string(&listed)?,
         ] {
             assert!(!view.contains(&token), "trigger view holds the URL token");
             assert!(
-                !view.contains("/hooks/"),
+                !view.contains("/ingress/webhooks/"),
                 "trigger view holds the ingest path"
             );
         }
@@ -619,7 +605,6 @@ async fn bots_live_webhook_trigger_coalesces_events() -> anyhow::Result<()> {
                     session_close_after_ms: None,
                     enabled: true,
                 },
-                pairing_code: None,
             }],
         )
         .await?;
@@ -629,7 +614,6 @@ async fn bots_live_webhook_trigger_coalesces_events() -> anyhow::Result<()> {
                 trigger_id: trigger_id.clone(),
             })
             .await?
-            .result
             .secrets
             .ingest_path
             .expect("webhook ingest path");
@@ -777,12 +761,10 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
                         session_close_after_ms: None,
                         enabled: true,
                     },
-                    pairing_code: None,
                 },
                 expected_revision: None,
             })
             .await?
-            .result
             .trigger;
         assert_eq!(trigger.revision, 1);
 
@@ -812,7 +794,6 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
                 bot_id: bot_id.clone(),
             })
             .await?
-            .result
             .bot;
         let mut document = bot.document.clone();
         document.enabled = false;
@@ -863,7 +844,6 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
                 bot_id: bot_id.clone(),
             })
             .await?
-            .result
             .bot;
         assert!(closed.closed_at_ms.is_some());
         assert!(!closed.document.enabled);
@@ -883,7 +863,6 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
                     bot_id: bot_id.clone(),
                 })
                 .await?
-                .result
                 .bot;
             if bot.closed_sessions.contains(&main_session) {
                 break;
@@ -899,7 +878,6 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_eq!(session.lifecycle_status, SessionLifecycleStatus::Closed);
 
@@ -918,8 +896,7 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
             .delete_bot(BotDeleteParams {
                 bot_id: bot_id.clone(),
             })
-            .await?
-            .result;
+            .await?;
         assert!(deleted.deleted_sessions.is_empty());
         assert!(
             api.read_bot(BotReadParams {
@@ -934,7 +911,6 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_eq!(retained.lifecycle_status, SessionLifecycleStatus::Closed);
         assert_eq!(retained.access.visibility, api::Visibility::Universe);
@@ -958,7 +934,6 @@ async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::R
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_ne!(successor.id, retained.id);
         api.delete_bot(BotDeleteParams { bot_id }).await?;
@@ -1020,7 +995,6 @@ async fn bots_live_controller_without_state_rolls_past_an_open_main_session() ->
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_eq!(successor.lifecycle_status, SessionLifecycleStatus::Open);
         assert_eq!(successor.activity, api::SessionActivity::Idle);
@@ -1032,7 +1006,6 @@ async fn bots_live_controller_without_state_rolls_past_an_open_main_session() ->
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         assert_eq!(retained.lifecycle_status, SessionLifecycleStatus::Closed);
         Ok(())
@@ -1094,7 +1067,6 @@ async fn bots_live_dead_main_session_rolls_forward_with_no_lane_waiting() -> any
                         run_limit: None,
                     })
                     .await?
-                    .result
                     .session,
                 )
             }

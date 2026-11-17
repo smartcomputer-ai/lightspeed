@@ -137,7 +137,7 @@ export function modelProviderName(provider: SecretProvider): string {
 export function useSecretsInventory(universeId: string, enabled = true) {
   return useQuery({
     queryKey: ["secrets", universeId],
-    queryFn: () => api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
+    queryFn: () => api<SecretsInventory>("GET", `/api/ui/universes/${universeId}/secrets`),
     enabled,
   });
 }

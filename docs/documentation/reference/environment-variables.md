@@ -24,7 +24,6 @@ environment and then applies the defaults from `scripts/dev/env.sh`.
 | --- | --- |
 | `LIGHTSPEED_*` | Core runtime and shared client/deployment settings. Check the owning section because a few, such as `LIGHTSPEED_API_URL`, are client-side rather than server-side. |
 | `LIGHTSPEED_PLATFORM_*` | TypeScript Platform management plane and its database. |
-| `LIGHTSPEED_CONNECTOR_*` | The connector host (Telegram and WhatsApp bridges over the core API). |
 | `LIGHTSPEED_CONFIGURATOR_MCP_*` | Configurator MCP service. |
 | `LIGHTSPEED_ENVD_*` | Environment daemon. |
 | `OPENAI_*` / `ANTHROPIC_*` | Provider transport and live-test overrides. |
@@ -33,7 +32,7 @@ environment and then applies the defaults from `scripts/dev/env.sh`.
 
 ## Core runtime
 
-These variables configure `lightspeed-runtime`, including its JSON-RPC gateway,
+These variables configure `lightspeed-runtime`, including its HTTP API gateway,
 Temporal worker, PostgreSQL stores, CAS, provider clients, and preprocessing.
 They do not configure the TypeScript Platform backend.
 
@@ -44,20 +43,21 @@ They do not configure the TypeScript Platform backend.
 | `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. TLS is supported; use `sslmode=verify-full` for remote databases to verify the certificate and hostname. |
 | `LIGHTSPEED_POSTGRES_AUTH_MODE` | `password` | `password` or `workload_identity`. With `workload_identity`, the Runtime logs in with a Microsoft Entra token using the [`AZURE_*` settings](#object-storage). The URL must name the identity as its user, hold no password, and set `sslmode=verify-full`. |
 | `LIGHTSPEED_PG_UNIVERSE_ID` | **Required in `single` auth mode** | UUID of the sole universe in a single-tenant deployment. Not used to auto-create universes in multi-tenant modes. |
-| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Environment gateway replicas require individual peer URLs and a shared gateway token. |
+| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,code` | Roles this process runs, a comma-separated subset of `gateway` (private HTTP API plus a separate public OAuth callback/webhook listener), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `code` (isolated JavaScript execution; also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Environment gateway replicas require individual peer URLs and a shared gateway token. |
 | `LIGHTSPEED_TASK_QUEUE` | `lightspeed-sessions` | Sessions task queue shared by the gateway and the `sessions` role. Deployments sharing a Temporal namespace must use distinct queues. |
 | `LIGHTSPEED_TASK_QUEUE_BOTS` | `lightspeed-bots` | Task queue of the `bots` role (bot controllers, trigger fires, bot activities). |
-| `LIGHTSPEED_TASK_QUEUE_CHANNELS` | `lightspeed-channels` | Task queue of the `channels` role (conversation workflows and core channel activities). Connector activities run on the per-account `lightspeed-connector-*` queues served by the connector host. |
-| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend address as `host:port` (also `--temporal-target`). An `http://` or `https://` URL is accepted too, and `https://` turns TLS on. The address names a host and port only: user information, a path, or a query is a startup error. Written without a port, a bare host uses `7233` and a URL the default port of its scheme (`80` or `443`). Shared with the connector host. |
-| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace (also `--namespace`). Shared with the connector host. |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend address as `host:port` (also `--temporal-target`). An `http://` or `https://` URL is accepted too, and `https://` turns TLS on. The address names a host and port only: user information, a path, or a query is a startup error. Written without a port, a bare host uses `7233` and a URL the default port of its scheme (`80` or `443`). |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace (also `--namespace`). |
 | `TEMPORAL_TLS`, `TEMPORAL_TLS_*`, `TEMPORAL_API_KEY`, `TEMPORAL_API_KEY_FILE` | Unset: unencrypted, unauthenticated | TLS, client certificate, and API key for the Temporal connection. See [Temporal connection security](#temporal-connection-security). |
-| `LIGHTSPEED_GATEWAY_BIND` | `127.0.0.1:18080` | JSON-RPC and environment-gateway listener address. |
-| `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` | `67108864` | Maximum gateway request body size in bytes. In `authenticated` mode the gateway reads a `/rpc` body only after the request presented a valid API key; a request without one is answered HTTP 401 with its body unread. |
-| `LIGHTSPEED_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_GATEWAY_BIND}`; an `environment-gateway` process on a non-loopback bind needs it or `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Externally reachable gateway base URL used for OAuth callbacks, bot webhook ingest URLs (`/hooks/bots/…`), and as the environment route base when the process runs the `gateway` role. Its origin is also one registered daemons may sign: daemons dial the registration routes on this host or on a host named in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, and a daemon that dials another hostname is refused. A process running `environment-gateway` on a non-loopback bind refuses to start with neither. Hosted deployments should set it explicitly. |
-| `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Unset | Comma-separated further gateway URLs registered daemons may dial and sign (also `--environment-registration-urls`), for example a cluster-internal Service address such as `ws://lightspeed-environment-gateway.lightspeed.svc:18080/environment-gateway/connect`. Only each URL's origin counts; an entry without a WebSocket origin is a startup error. Read only by a process running `environment-gateway`. |
+| `LIGHTSPEED_GATEWAY_BIND` | `127.0.0.1:18080` | Private HTTP API listener (`--bind`), started by the `gateway` role. Admit only trusted components and operators. |
+| `LIGHTSPEED_PUBLIC_BIND` | `127.0.0.1:18082` | OAuth callback, client metadata and bot webhook listener (`--public-bind`), started by the `gateway` role. Never serves `/api/v1`. |
+| `LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND` | `127.0.0.1:18083` | Environment daemon, worker and replica-peer listener (`--environment-bind`), started by `environment-gateway`. Never serves application API or public callback routes. |
+| `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` | `67108864` | Maximum gateway request body size in bytes. In `authenticated` mode the gateway reads an API body only after the request presented a valid configured API token; a request without one is answered HTTP 401 with its body unread. |
+| `LIGHTSPEED_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_PUBLIC_BIND}` | Externally reachable URL for `/ingress/credentials/callback`, `/ingress/credentials/client-metadata.json`, and `/ingress/webhooks/bots/…` (`--public-base-url`). Hosted deployments should set it explicitly. This URL does not configure the environment gateway. |
+| `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND}` for loopback; otherwise it or registration URLs are required | Origin registered daemons dial and sign (`--environment-public-base-url`). Also supplies the local environment route default when this process runs `environment-gateway`; workers may override it with `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`. A non-loopback environment listener requires this or `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. |
+| `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Unset | Comma-separated further gateway URLs registered daemons may dial and sign (also `--environment-registration-urls`), for example a cluster-internal Service address such as `ws://lightspeed-environment-gateway.lightspeed.svc:18083/environments/connect`. Only each URL's origin counts; an entry without a WebSocket origin is a startup error. Read only by a process running `environment-gateway`. |
 | `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles and `scripts/dev/env.sh`) | Comma-separated exact hostnames and CIDR ranges that outbound requests may reach on private networks: runtime MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`), MCP OAuth (metadata, client registration, token exchange, and refresh), and bot URL polls. A listed hostname is allowed wherever it resolves. A range admits any server, named by hostname or by IP, whose resolved address falls inside it; for example `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` covers the usual internal networks while leaving loopback and link-local addresses blocked. Plain HTTP is accepted only for a listed hostname or an address inside a listed range. OAuth requests are decided for each URL separately, redirects included, and do not consult the record's opt-in: an authorization server is a different host from the MCP server it protects, so an internal one must be covered by the list in its own right. All other targets retain public-only HTTPS/SSRF policy. |
-| `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped API key. |
-| `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (no credential check, ordinary methods use one configured universe; local development only) or `authenticated` (bearer keys with a scope and allowed method groups). There is no default: the process refuses to start without it. Configurator uses the same mode. |
+| `LIGHTSPEED_AUTH_MODE` | **Required** | `single` for private local development (no credential check, one configured universe for ordinary operations) or `authenticated` (configured API tokens with full deployment authority). |
 | `LIGHTSPEED_SECRETS_MASTER_KEY` | Unset | Base64-encoded 32-byte AES key for encrypted secret values and grant tokens. Required before encrypted secret material can be persisted or resolved. Keep stable across restarts. |
 | `LIGHTSPEED_BLOB_CACHE_BYTES` | `268435456` | Per-process CAS blob-cache budget. `0` disables the cache. |
 | `LIGHTSPEED_CAS_SWEEP_GRACE_MS` | `604800000` (seven days) | Minimum time since a blob's last put or API admission before an unheld blob is eligible for collection; reads do not refresh it. `0` disables background collection. One elected `sessions` process examines up to 100,000 old catalog rows per universe per hourly pass in pages of at most 1,024 rows, resuming its cursor next time. Passes have a soft 10-minute budget between pages; database statements have a five-second timeout and a one-second lock timeout. `lightspeed-runtime cas-sweep [--dry-run]` runs one bounded pass; deletion yields to an active background leader. Profiles and uncommitted workflow handoffs do not retain blobs; a handoff stalled beyond grace may require resubmission. |
@@ -70,20 +70,20 @@ They do not configure the TypeScript Platform backend.
 universes explicitly through the deployment API or `lightspeed-runtime universe
 create`.
 
-In authenticated mode, the gateway checks the key's status, scope, and allowed
-method groups on each request. A universe key selects its own universe and
-must omit `x-lightspeed-universe`. A deployment key sends that header, with
-the universe's UUID or handle, for universe/service methods and omits it for
-deployment methods and `initialize`.
-`x-lightspeed-actor` requires the key's `assertActor` flag and supplies attribution,
-not a person's permissions. The removed `x-lightspeed-principal` header is
-rejected. Single mode rejects all credential, universe, and actor headers.
-See [API keys and service access](../access-and-security/api-keys-and-service-access.md).
+Remove the retired `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL`
+from runtime configuration. A nonempty value prevents startup.
+
+In authenticated mode, a token authenticates a trusted component with full
+deployment authority. Universe resources select their UUID or handle in
+`/api/v1/universes/{universe}/…`; connection discovery and deployment resources
+use their own paths. The HTTP API rejects `x-lightspeed-universe`. Any token
+may supply `x-lightspeed-actor` for attribution. Single mode rejects credential
+and actor headers and only serves its configured universe. See
+[API keys and runtime tokens](../access-and-security/api-keys-and-service-access.md).
 
 ### Temporal connection security
 
-The runtime and the connector host read these variables with the same rules, so
-one set of values secures both. With none of them set the connection is
+With none of these variables set, the connection is
 unencrypted and carries no credential, which suits only a Temporal frontend on
 a private network that accepts such connections.
 
@@ -113,15 +113,18 @@ The runtime also accepts each file and TLS setting as a flag
 logs the key or the file contents; the runtime's startup line states only
 whether TLS, a client certificate, and an API key are in use.
 
-### Explicit API-key provisioning
+### Runtime API tokens
 
-| Variable | Default | Purpose |
+| Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-runtime api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url, as `lightspeed api-key generate-secret` prints. The command declares the key of its `--key-id` with the groups it is given (`--group` or `--all-groups`): the hash is stored in the normal key store, a changed secret replaces the previous one at once, and changed groups are applied. Its output never repeats a supplied secret. It does not bypass revocation or enable provisioning on ordinary production startup. |
+| `LIGHTSPEED_API_TOKEN` | At least one token required in authenticated mode | Full-authority runtime credential, named `default`. At least 32 non-whitespace printable ASCII characters. |
+| `LIGHTSPEED_API_TOKEN_FILE` | Alternative to inline value | Mounted secret file; strips one terminal LF or CRLF. |
+| `LIGHTSPEED_API_TOKEN_<NAME>` | Optional additional named token | Lower-case suffix is the attribution name. Every token has the same authority. |
+| `LIGHTSPEED_API_TOKEN_<NAME>_FILE` | Alternative to a named inline value | Mounted secret for that name. Duplicate names, duplicate secrets and conflicting sources fail startup. |
 
-The development opt-out is the launcher option `--no-api-key-bootstrap`, not
-an environment variable. It skips API-key provisioning without disabling
-migrations or universe setup.
+Tokens are loaded at startup. Rotation uses overlapping named tokens and a
+restart after each configuration change. There is no database key provisioning.
+
 
 ### Default model and provider transport
 
@@ -214,8 +217,8 @@ route automatically. Every other process, including one that runs only the
 `gateway` role, must provide both values.
 
 The `environment-gateway` role serves worker routes, private peer endpoints,
-and the public registration routes `/environment-gateway/connect` and
-`/environment-gateway/data`. Replicas register their own direct peer URL in
+and the public registration routes `/environments/connect` and
+`/environments/data`. Replicas register their own direct peer URL in
 `runtime_instances`, renew a 20-second lease every five seconds, and record
 the owner and control connection ID on each registered environment. Workers
 may reach any replica through the shared URL. A dial-back landing on another
@@ -235,8 +238,8 @@ backoff. Streams may be interrupted; gateway failover does not automatically
 repeat tool operations.
 
 Expose only the two public daemon routes through TLS on the host named by
-`LIGHTSPEED_PUBLIC_BASE_URL`; keep `/environment-gateway/routes/` and
-`/environment-gateway/peer/` private. The daemon refuses plain `ws://` toward
+`LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL`; keep `/environments/routes/` and
+`/environments/peer/` private. The daemon refuses plain `ws://` toward
 anything but loopback unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set,
 and derives the data route from its connect URL.
 
@@ -256,9 +259,9 @@ are given together.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform backend's fallback gateway URL. |
-| `LIGHTSPEED_API_KEY` | Unset | Bearer key sent to an authenticated gateway. |
-| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or handle overriding saved selection, sent to the runtime as given. Only deployment keys may switch universes. |
+| `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed HTTP API base URL ending in `/api/v1`. Also used as the Platform backend's fallback gateway URL. |
+| `LIGHTSPEED_API_TOKEN` | Unset | Token sent by the CLI to an authenticated runtime. |
+| `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or handle overriding saved selection, sent to the runtime as given. Runtime tokens may select any universe. |
 | `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |
 | `LIGHTSPEED_CHAT_MAX_TOKENS` | Unset | Optional positive integer maximum output-token setting for new sessions. |
@@ -285,7 +288,7 @@ from the environment of each process and job the daemon starts.
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_ENVD_LISTEN` | `127.0.0.1:19091` unless a gateway URL is set | WebSocket listener for the passive transport: `host:port` (or `tcp://host:port`) for TCP, or `unix:///absolute/path` for a Unix socket only the daemon's user can connect to. Set it explicitly to listen while also registering outbound. |
-| `LIGHTSPEED_ENVD_GATEWAY_URL` | Unset | Public connect route to dial, `wss://<host>/environment-gateway/connect`, or another URL in the gateway's `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. Plain `ws://` is accepted only toward loopback unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set. |
+| `LIGHTSPEED_ENVD_GATEWAY_URL` | Unset | Public connect route to dial, `wss://<host>/environments/connect`, or another URL in the gateway's `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. Plain `ws://` is accepted only toward loopback unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set. |
 | `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` | `false` | Accept a plain `ws://` gateway URL toward a non-loopback host, such as a cluster-internal service inside one trusted network (also `--allow-insecure-gateway`). The registration key and every data stream then cross that network in the clear. Refused without a gateway URL. The discovery URL derived from such a gateway is plain `http://` and only named in mismatch reports, so `LIGHTSPEED_ENVD_AUTO_UPGRADE` with an insecure gateway needs an explicit HTTPS `LIGHTSPEED_ENVD_DISCOVERY_URL`. |
 | `LIGHTSPEED_ENVD_ON_CLOSED` | `exit` | What a registered daemon does once its environment is closed (also `--on-closed`): `exit` ends the process with status 4; `park` stops registering and listening, logs once, keeps open data connections until it is stopped, and exits with status 0 on `SIGTERM` or `SIGINT`. Use `park` under a supervisor that restarts on every exit, such as a Kubernetes pod, so a spent identity is not restarted forever. Applies both to a close while connected and to a closed identity's refused registration; a superseded daemon always exits with status 5. Refused without a gateway URL. |
 | `LIGHTSPEED_ENVD_DISCOVERY_URL` | `https://<gateway-host>/.well-known/lightspeed-envd` | Override the deployment discovery document used by `lightspeed-envd upgrade` and automatic protocol-mismatch upgrades. Must use HTTPS, except that HTTP is accepted toward loopback for development. |
@@ -365,16 +368,20 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | The Platform's deployment key: every method group and allowed to assert actors. Create with `lightspeed-runtime api-key create --deployment --assert-actor --all-groups`. Interactive calls name the universe and assert the signed-in user as the actor after Platform permission checks. Full development provisions a key when omitted. |
+| `LIGHTSPEED_PLATFORM_API_TOKEN`, `LIGHTSPEED_PLATFORM_API_TOKEN_FILE` | Unset | Backend runtime token, inline or mounted file. Configure the same secret on the runtime. Interactive calls name the universe and actor after Platform checks. Supply only one form. |
 | `LIGHTSPEED_PLATFORM_DATABASE_URL` | **Required** | Platform PostgreSQL connection URL. |
 | `LIGHTSPEED_PLATFORM_DATABASE_AUTH_MODE` | `password` | `password` or `workload_identity`. With `workload_identity`, the Platform logs in with a Microsoft Entra token using the [`AZURE_*` settings](#object-storage). The URL must name the identity as its user, hold no password, and set `sslmode=verify-full`. |
 | `LIGHTSPEED_PLATFORM_AUTH_SECRET` | **Required** | Better Auth signing/encryption secret. Use a strong, stable deployment secret. |
-| `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
+| `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` (`http://localhost:5173` under `dev.sh`) | Public Platform origin used by authentication, CLI device approval, and trusted-origin checks. |
 | `LIGHTSPEED_PLATFORM_TRUSTED_ORIGINS` | Empty list | Comma-separated additional browser origins accepted by Better Auth. The development supervisor supplies both `http://127.0.0.1:5173` and `http://localhost:5173`. |
 | `PORT` | `3000` | Platform HTTP listen port. |
 | `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Seeds an emergency local admin with the password when the users table is empty. Also designates an existing local password admin as emergency access, without elevating roles or resetting its password. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN` | `break-glass` with OIDC; `local` without | `break-glass` permits only designated local emergency admins; `off` disables password sign-in and changes. `local` is rejected with OIDC. |
+| `LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS` | `365` | Default user/service-user key lifetime, capped by the maximum. |
+| `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | Unset | Maximum key lifetime. Unset means no maximum, and keys may be created without expiry when chosen explicitly; set, it also refuses keys without expiry. Both expiry settings accept 1–3650 days. |
+| `LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS` | `30` | Local browser and CLI session inactivity lifetime, from 1 to 365 days. |
+| `LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS` | `90` | Absolute local browser and CLI session lifetime, from 1 to 3,650 days. Company sign-in uses its own admission window. |
 | `LIGHTSPEED_PLATFORM_OIDC_ISSUER` | Unset | Exact OIDC issuer. Setting any OIDC variable enables configuration validation; incomplete configuration fails startup. HTTPS is required except loopback HTTP for development. |
 | `LIGHTSPEED_PLATFORM_OIDC_DISCOVERY_URL` | `<issuer>/.well-known/openid-configuration` | Metadata URL override, including providers with a separate discovery path. Must describe the exact issuer. HTTPS except loopback HTTP. |
 | `LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID` | Required with OIDC | Confidential application client ID. |
@@ -390,68 +397,50 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS` | `28800` | Absolute session lifetime with OIDC, including emergency sessions. Integer from 60 to 86400; requests cannot extend it. |
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_ID` | Unset | GitHub login client ID. GitHub login is enabled only when both GitHub variables are present and OIDC is absent. |
 | `LIGHTSPEED_PLATFORM_GITHUB_CLIENT_SECRET` | Unset | GitHub login client secret. |
-| `LIGHTSPEED_API_URL` | Unset | Runtime endpoint bound to the Platform service key. Per-universe overrides must match it exactly. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` | Unset | Public Configurator MCP endpoint installed by the Configurator setup. The setup is unavailable when omitted. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK` | `false` | Whether the setup-created Configurator MCP record may reach a private network. Enable only for an intentional local/internal endpoint and configure `LIGHTSPEED_MCP_PRIVATE_NETWORKS` on the Runtime accordingly. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER` | `false` | Retired; `true` fails startup. |
+| `LIGHTSPEED_API_URL` | Unset | Runtime endpoint used with the Platform API token. Per-universe overrides must match it exactly. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` | `33554432` (32 MiB) | Total file content one workspace upload may carry, from 1 byte to 256 MiB. The request body limit follows at 1.5 times this value (at least 1 MiB) for base64 and paths. The web UI reads the effective value, so browser and server agree. An upload is held in memory while it is stored, so raising this raises the Platform's peak memory per upload. Each file reaches the runtime in its own request: a single file above about 47 MiB also needs a larger `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` on the runtime. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES` | `10000` | Files and folders one workspace upload may contain, from 1 to 1,000,000. |
-| `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` | Empty list | Comma-separated internal connector-host health base URLs (`/healthz` reports every served account) aggregated for Platform administrators. |
 | `LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT` | unset | Development only: `lightspeed-envd` endpoint offered as the default when registering an external environment. Set by `./dev.sh`; never in deployed configuration. |
 | `LIGHTSPEED_PLATFORM_DEV_SEED` | `false` (`true` in the authenticated full dev profile) | Development only: ensure the Test universe and Admin, Operator, Contributor, Viewer logins at startup. New logins share the bootstrap Admin password; existing passwords are preserved. |
 
-The Platform administration CLI additionally accepts
-`LIGHTSPEED_PLATFORM_CONFIG_DIR`; it defaults to
-`~/.config/lightspeed-platform` and stores its URL and bearer token in
-`config.json`.
+### Platform settings
 
-## Connector host
+A Platform Admin can set these under **Admin → Platform → Settings**. An
+environment variable locks its setting to the supplied value. With the variable
+unset, Platform uses the saved value or the built-in default shown below.
+An organization-specific universe limit takes precedence over the deployment's
+default limit.
 
-`platform/connectors` is the one Node worker left after Bots and Channels
-core moved into the Rust runtime: a single process that serves many channel
-accounts across many universes. It reads no database; its only dependencies
-are the core JSON-RPC endpoint and Temporal. Accounts are discovered through
-`deployment/channels/accounts/list`, provider tokens are leased through
-`auth/grants/lease` (never configured in the environment), and every
-universe-scoped call carries `x-lightspeed-universe` and its bearer key.
-Core must use authenticated mode. The host needs a deployment-scoped key with
-the `deployment/channels`, `auth/lease`, `channels/inbound`, and `blobs/put`
-method groups. These allow discovery, credential leasing, inbound admission,
-and attachment uploads without session reads.
-
-| Variable | Requirement/default | Purpose |
+| Variable | Built-in default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_API_URL` | **Required** | Core JSON-RPC endpoint. |
-| `LIGHTSPEED_CONNECTOR_API_KEY` | **Required** | Deployment-scoped bearer key with the connector method groups listed above. |
-| `LIGHTSPEED_CONNECTOR_PROVIDERS` | `telegram,whatsapp` | Comma-separated providers this host serves. |
-| `LIGHTSPEED_CONNECTOR_ACCOUNTS` | All discovered accounts | Comma-separated `<universeId>/<accountId>` entries narrowing the served accounts. |
-| `LIGHTSPEED_CONNECTOR_DISCOVERY_INTERVAL_MS` | `30000` | Positive interval between discovery passes; new accounts start, disabled or removed ones stop, and a changed revision or a failed runner restarts without a process restart. |
-| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend address as `host:port`, or an `http://` or `https://` URL, read as the runtime reads it. |
-| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. Each account gets one activity worker on its derived `lightspeed-connector-<provider>-<hash>` task queue. |
-| `TEMPORAL_TLS`, `TEMPORAL_TLS_*`, `TEMPORAL_API_KEY`, `TEMPORAL_API_KEY_FILE` | Unset: unencrypted, unauthenticated | The same variables and rules as the runtime; see [Temporal connection security](#temporal-connection-security). One connection, shared by every account worker, is made with them. |
-| `LIGHTSPEED_CONNECTOR_INGRESS_MAX_PER_MINUTE` | `120` | Positive per-chat, per-sender ingress rate limit applied before `channels/inbound/admit`. |
-| `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` | **Required when WhatsApp is served** | Root directory of the Baileys session state; each account uses `<dir>/<universeId>/<accountId>`. |
-| `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY` | **Required when WhatsApp is served** | Base64-encoded 32-byte key sealing WhatsApp media locators in inbound envelopes. Keep stable across restarts. |
-| `LIGHTSPEED_CONNECTOR_HEALTH_HOST` | `0.0.0.0` | Bind host of the host's `/healthz`, `/readyz`, and `/metrics` listener. |
-| `LIGHTSPEED_CONNECTOR_HEALTH_PORT` | `8090` | Port of that listener; `/readyz` is 200 after at least one successful discovery and while every currently served account is ready. Zero accounts qualifies; there is no discovery-freshness deadline. |
-| `LIGHTSPEED_CONNECTOR_METRICS_HOST` | `0.0.0.0` | Temporal Prometheus exporter host. |
-| `LIGHTSPEED_CONNECTOR_METRICS_PORT` | `9090` | Temporal Prometheus exporter port, shared by every per-account worker in the process. |
+| `LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS` | `true` | Provision a personal organization for each admitted user. |
+| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | `25` | Default universe limit for personal organizations. Accepts 0 to 100,000. |
+| `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | `100` | Default universe limit for shared organizations. Accepts 0 to 100,000. |
 
-Telegram accounts need a retrievable auth grant (`credentialGrantId`) holding
-the bot token; WhatsApp accounts pair through the QR code printed on the host's
-terminal unless the account's `settings.printQr` is false.
+### Saved CLI connections
+
+The unified `lightspeed` CLI stores runtime and Platform connections under
+`LIGHTSPEED_CONFIG_DIR`, or `$XDG_CONFIG_HOME/lightspeed` /
+`$HOME/.config/lightspeed`. `connect login --url` and `connect add --url` select the
+deployment; `--connection` chooses a saved connection. The Node SDK
+`createClientFromConnection` and Python `AsyncLightspeedClient.from_connection`
+use the same configuration directory unless one is supplied explicitly.
+See [CLI connections](../using-lightspeed/cli.md) and
+[SDK connection reuse](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
 
 ## Configurator MCP
 
-Configurator is a separate deployable service. Its auth mode must match the
-upstream Lightspeed gateway.
+Clients connect to Configurator with a restricted Platform API key. The full
+and platform development profiles start Configurator in authenticated mode against
+Platform at port 3000. Do not give an agent a runtime infrastructure token.
+The defaults below describe standalone service startup.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `single` | `single` (private development, no identity headers) or `authenticated` (scoped bearer keys). Must match the upstream gateway. |
+| `LIGHTSPEED_AUTH_MODE` | `single` | `single` (private development, no identity headers) or `authenticated` (bearer credential forwarded upstream). Must match the upstream gateway. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST` | `127.0.0.1` | HTTP bind host. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | HTTP bind port. |
-| `LIGHTSPEED_CONFIGURATOR_MCP_RPC_URL` | `http://127.0.0.1:18080/rpc` | Upstream Lightspeed JSON-RPC endpoint. |
+| `LIGHTSPEED_CONFIGURATOR_MCP_API_URL` | `http://127.0.0.1:18080/api/v1` | Upstream HTTP API base URL. Managed agent use targets Platform; the development launcher supplies its `/api/v1` endpoint at port 3000 by default. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_HOSTS` | Loopback hosts | Comma-separated HTTP `Host` allow-list; **required** when binding beyond loopback. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_ALLOWED_ORIGINS` | Empty list | Comma-separated browser `Origin` allow-list. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_MAX_BODY_BYTES` | `67108864` | Maximum MCP JSON request size. |
@@ -467,21 +456,18 @@ Never reuse their credentials in a deployed environment.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `authenticated` | Both `full` and `runtime` provision a CLI key and connection handoff by default; full also provisions a separate Platform key when needed. Explicit `single` remains supported for runtime-only local use. |
-| `LIGHTSPEED_CHANNELS_CONNECTORS` | Empty | Providers the `full` development profile hands to one connector host process (`LIGHTSPEED_CONNECTOR_PROVIDERS`). Values: `telegram`, `whatsapp`, or both. WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`; the session directory defaults to `.lightspeed-dev/whatsapp-auth`. |
+| `LIGHTSPEED_AUTH_MODE` | `authenticated` | Both `full` and `runtime` configure a CLI token and connection handoff; full also configures a Platform token when needed. Explicit `single` remains supported for runtime-only local use. |
 | `PORT` | `3000` | Platform backend port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |
-| `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped service key. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER` | `false` | Retired; `true` fails startup. |
 
-The supervisor also honors all runtime, Platform, connector host, and
-Configurator variables documented above.
+The supervisor also honors runtime, Platform, and Configurator variables
+documented above.
 
 The `full` and `runtime` development profiles warn when neither
 `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set: they still start, and provider
 API keys can be added per universe from the Platform UI (**Models → Add provider**); the Sessions view shows a banner until a usable key exists.
-Pass `./dev.sh --require-api-keys` to make a missing deployment key fatal
-(useful in CI). `--allow-missing-api-keys` is still accepted and is a no-op.
+Provider credentials are configured per universe; they are separate from runtime
+API tokens.
 
 ### Web UI debug mode
 
@@ -591,7 +577,6 @@ them on services.
 | `LIGHTSPEED_ENVD_TARGETS` | Complete comma-separated daemon target set from release metadata, baked into release servers so `initialize` reports Linux musl and Windows MSVC. A direct local Cargo build reports its own target unless overridden. |
 | `LIGHTSPEED_RUNTIME_IMAGE` | Digest-pinned runtime image recorded in the manifest. |
 | `LIGHTSPEED_PLATFORM_IMAGE` | Digest-pinned Platform image recorded in the manifest. |
-| `LIGHTSPEED_PLATFORM_WORKERS_IMAGE` | Digest-pinned connector-host image (still published as `platform-workers`) recorded in the manifest. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_IMAGE` | Digest-pinned Configurator image recorded in the manifest. |
 
 `release/metadata.env` additionally owns these release-source values. They are
@@ -604,7 +589,7 @@ consumed by build scripts and should not be used as deployment overrides.
 | `LIGHTSPEED_PRODUCT_VERSION` | Product version used when no explicit release version is supplied. |
 | `LIGHTSPEED_RELEASE_RUST_VERSION` | Pinned release Rust toolchain. |
 | `LIGHTSPEED_RELEASE_BUILD_BASE_IMAGE` | Digest-pinned base used to construct the build environment. |
-| `LIGHTSPEED_API_PROTOCOL_VERSION` | API protocol identifier recorded in release metadata. |
+| `LIGHTSPEED_HTTP_CONTRACT_REVISION` | Resource HTTP contract revision recorded in release metadata and matched against runtime discovery. |
 | `LIGHTSPEED_ENVD_PROTOCOL_VERSION` | Environment protocol number of the data plane and the registration channel: the gateway, the runtime, and envd must match it exactly. Checked against the protocol crate and published in `envd.json`. Changing it is the release event that stops older daemons from registering. |
 | `LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION` | Environment protocol number of the provider controller plane: the runtime and every provider controller must match it exactly. Checked against the protocol crate and recorded in the release manifest. |
 | `LIGHTSPEED_SCHEMA_REVISION` | Required Rust runtime database revision. |

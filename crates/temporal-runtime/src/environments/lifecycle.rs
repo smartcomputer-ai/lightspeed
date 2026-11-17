@@ -1091,7 +1091,13 @@ impl Reconciler<'_> {
                     self.schedule(
                         row,
                         now_ms + POLL_MS,
-                        0,
+                        if row.close_reason == Some(EnvironmentCloseReason::UniverseDeleted) {
+                            row.provisioned()
+                                .map_or(0, |source| source.attempts)
+                                .saturating_add(1)
+                        } else {
+                            0
+                        },
                         Some("waiting for the provider to close the target".to_owned()),
                         now_ms,
                     )
@@ -1587,11 +1593,11 @@ mod tests {
         fake_controller::{FAKE_TEMPLATE_ID, FakeController, FakeControllerOptions},
         provider_controllers::WebSocketProviderControllerConnector,
     };
+    use ::credentials::SecretValue;
     use ::environments::{
         EnvironmentProviderBindingStore, InMemoryEnvironmentRegistryStore, PowerState,
         ProviderCredentialChange, PutEnvironmentProvider, PutEnvironmentProviderBinding,
     };
-    use auth::SecretValue;
     use environment_protocol::ENVD_PROTOCOL_VERSION;
 
     #[test]
@@ -1673,6 +1679,7 @@ mod tests {
                         None => ProviderCredentialChange::Keep,
                     },
                     updated_at_ms: 1,
+                    available_to_all_universes: Some(false),
                 })
                 .await
                 .unwrap();
@@ -1680,7 +1687,6 @@ mod tests {
                 .put_provider_binding(PutEnvironmentProviderBinding {
                     universe_id: store.universe_id(),
                     provider_id: provider_id.clone(),
-                    enabled: true,
                     updated_at_ms: 1,
                 })
                 .await

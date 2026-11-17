@@ -1,6 +1,6 @@
 import type { Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { LightspeedRpcError, LightspeedTransportError } from "@lightspeed-ai/sdk";
+import { LightspeedApiError, LightspeedTransportError } from "@lightspeed-ai/sdk";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import express, {
@@ -36,7 +36,7 @@ export function createConfiguratorApp(options: ConfiguratorAppOptions): Express 
   const upstreamFactory =
     options.upstreamFactory ??
     createUpstreamClientFactory({
-      endpoint: config.rpcEndpoint,
+      endpoint: config.apiEndpoint,
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       maxResponseBytes: config.maxBodyBytes,
     });
@@ -196,7 +196,7 @@ function httpStatus(error: unknown): number {
   if (error instanceof LightspeedTransportError) {
     return error.status === 401 || error.status === 403 ? error.status : 502;
   }
-  if (error instanceof LightspeedRpcError) {
+  if (error instanceof LightspeedApiError) {
     switch (error.data?.kind) {
       case "unauthenticated":
         return 401;
@@ -218,7 +218,7 @@ function httpStatus(error: unknown): number {
 function methodNotAllowed(_req: Request, res: Response): void {
   res.status(405).json({
     jsonrpc: "2.0",
-    error: { code: -32000, message: "Method not allowed" },
+    error: { code: -32000, message: "OperationId not allowed" },
     id: null,
   });
 }

@@ -1507,7 +1507,7 @@ mod tests {
     #[test]
     fn an_upgrade_runs_once_per_target_version() {
         let mut registration = RegistrationConfig::new(
-            "wss://gateway.example/environment-gateway/connect".to_owned(),
+            "wss://gateway.example/environments/connect".to_owned(),
             "https://gateway.example/.well-known/lightspeed-envd".to_owned(),
         );
         assert!(
@@ -1548,7 +1548,7 @@ mod tests {
             "--registration-key",
             "lsrk_secret",
             "--gateway-url",
-            "wss://g/environment-gateway/connect",
+            "wss://g/environments/connect",
             "--registration-key-file=/run/key",
             "--registration-name",
             "n",
@@ -1564,7 +1564,7 @@ mod tests {
             kept,
             [
                 "--gateway-url",
-                "wss://g/environment-gateway/connect",
+                "wss://g/environments/connect",
                 "--registration-name",
                 "n"
             ]

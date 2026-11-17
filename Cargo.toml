@@ -7,9 +7,8 @@ members = [
     "crates/environment-protocol",
     "crates/llm-clients",
     "crates/api",
-    "crates/auth",
+    "crates/credentials",
     "crates/bots",
-    "crates/channels",
     "crates/codemode",
     "crates/environments",
     "crates/harness",
@@ -30,4 +29,4 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.10.0"
+version = "0.11.0"

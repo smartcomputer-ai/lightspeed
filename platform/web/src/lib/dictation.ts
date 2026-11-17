@@ -21,13 +21,13 @@ function pause(signal: AbortSignal) {
 }
 
 export function cancelRecording(universeId: string, recording: DictationRecording) {
-  if (recording.transcriptionId) void api("POST", `/api/v1/universes/${universeId}/transcriptions/${recording.transcriptionId}/cancel`).catch(() => {});
+  if (recording.transcriptionId) void api("POST", `/api/ui/universes/${universeId}/transcriptions/${recording.transcriptionId}/cancel`).catch(() => {});
 }
 
 export async function transcribeRecording(universeId: string, recording: DictationRecording, signal: AbortSignal): Promise<string> {
   if (!recording.blob.size) throw new Error("No audio was recorded. Try again.");
   if (recording.blob.size > MAX_DICTATION_AUDIO_BYTES) throw new Error("Recording exceeds 25 MiB. Try a shorter recording.");
-  const path = `/api/v1/universes/${universeId}/transcriptions`;
+  const path = `/api/ui/universes/${universeId}/transcriptions`;
   if (!recording.blobRef) {
     const bytesBase64 = await blobBase64(recording.blob, signal);
     const result = await api<BlobPutResponse>("POST", `${path}/audio`, { bytesBase64 }, signal);

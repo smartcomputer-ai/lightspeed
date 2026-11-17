@@ -6,7 +6,7 @@ but does not progress, inspect its state and workers. This narrows the problem
 without repeatedly restarting services that are already doing their job.
 
 Record the deployed release, time, exact error, universe UUID, and the affected
-session/run, bot, environment, or channel account IDs. Capture the relevant
+session/run, bot, or environment IDs. Capture the relevant
 logs before changing state. Keep credential values and private conversation
 content out of reports unless they are necessary and the report's recipients
 are authorized to see them.
@@ -23,7 +23,6 @@ are authorized to see them.
 | The model rejects a call or tools are absent | [Models and MCP](#models-and-mcp) |
 | A machine is disconnected or a command cannot see a file | [Execution environments](#execution-environments) |
 | A larger upload or stored payload fails | [Blob writes](#blob-writes) |
-| Chat messages do not reach the agent or return | [Chat delivery](#chat-delivery) |
 | Closing work does not reclaim storage or compute | [Retention and cleanup](#retention-and-cleanup) |
 
 The [operations guide](operations.md) lists health endpoints and their limits.
@@ -43,10 +42,10 @@ If the runtime exits before serving, check the error against these dependencies:
 
 | Error area | What to inspect |
 | --- | --- |
-| PostgreSQL connection | The runtime database URL, credentials, network path, and required connection options. Container-local `localhost` is not the database host. With workload identity, the error names the stage: the token file, the Entra exchange with its `AADSTS` code, or the login, where the URL user must be the identity's name and that role must exist. |
-| Schema verification | Use the deployed release's `schema-version` diagnostic. The runtime never migrates implicitly; follow the explicit migration procedure. |
-| Temporal connection | The frontend address and an existing namespace, reachable from the process. A `TEMPORAL_…` variable named in the error is a setting that contradicts another or a certificate, key, or API key file that cannot be used. A handshake or certificate error means the server certificate does not chain to `TEMPORAL_TLS_SERVER_CA_FILE` (or the system roots) or does not name the host dialed; a frontend that expects TLS or a credential and gets neither usually closes the connection or answers that the caller is unauthenticated. See [Secure the Temporal connection](configuration.md#secure-the-temporal-connection). |
-| Object-store configuration | S3 requires a bucket; `LIGHTSPEED_OBJECT_STORE_BACKEND=azure` requires account, container, and exactly one access key or SAS token, or `LIGHTSPEED_OBJECT_STORE_AZURE_AUTH_MODE=workload_identity` with `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and an absolute `AZURE_FEDERATED_TOKEN_FILE`. Check for settings mixed between backends and use the intended endpoint. |
+| PostgreSQL connection | Check the database URL, credentials, and network path from the process. For Entra authentication, check its [workload identity configuration](configuration.md#postgresql-workload-identity). |
+| Schema verification | Run the deployed release's `schema-version` diagnostic. Check the [migration baseline](upgrades-and-recovery.md#check-compatibility-before-reusing-state) before running the migrator. |
+| Temporal connection | Check the frontend address, namespace, certificate trust, and credentials. See [Secure the Temporal connection](configuration.md#secure-the-temporal-connection). |
+| Object-store configuration | Check that the selected backend has its complete set of settings, including credentials and the required bucket or container. See [Choose the blob backend](configuration.md#choose-the-blob-backend). |
 | Role or environment routing | Valid roles and the internal environment gateway URL/token on every process without that role. |
 | Secret configuration | A base64 master key decoding to 32 bytes, matching the stored encrypted state. |
 | Retired model variables | Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL`; configure each universe's model defaults through Models or `lightspeed model defaults`. |
@@ -62,34 +61,18 @@ the relevant service's logs and prerequisites before restarting it.
 
 ## Authentication and universe access
 
-If sign-in fails, compare the browser's actual origin with
-`LIGHTSPEED_PLATFORM_BASE_URL` and any configured trusted origins. Check HTTPS
-termination and forwarded host/scheme handling. Retain the Platform's
-authentication secret across restarts.
+| Where it fails | What to check |
+| --- | --- |
+| Browser sign-in | Match `LIGHTSPEED_PLATFORM_BASE_URL` to the browser origin and verify HTTPS and forwarded host/scheme. For a company account, check provider admission and the configured groups. |
+| Administrator bootstrap | Set the email and password before the first startup with an empty users table. To manage an existing user, use **Admin → Platform → Users**. |
+| Platform API returns 401 | Check that the client is using the Platform URL and a valid session or Platform API key. Check key expiry, revocation, and whether the person or service user is still admitted. |
+| Platform denies an operation | Check the caller's organization membership, universe grants, and any restrictions on the key. For a session, check its sharing and creator. A private session can appear missing to other members. |
+| Runtime API returns 401 | Check the configured runtime token and the endpoint. For calls forwarded by Platform, compare `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE` value to the runtime configuration. |
 
-The administrator bootstrap variables apply only while the users table is
-empty. They cannot reset an existing password. Use **Platform admin → Users**
-from an authorized administrator account for account management.
-
-When sign-in works but a page fails, distinguish a Platform permission denial
-from an upstream runtime error. Viewers can read visible work, Contributors can
-run work, Operators can configure shared resources, and Admins manage membership
-and keys. Admins can access every session; other members see their own private
-sessions and sessions shared with the universe. A private session outside that
-audience appears absent. See [People and roles](../access-and-security/people-and-roles.md)
-for the permission matrix.
-
-For runtime errors, verify the endpoint, key status, key scope, and allowed
-method groups. An HTTP 401 from `/rpc` means the request presented no valid key:
-the key is missing, malformed, unknown, or revoked. A key that is valid but not
-allowed to make the call is refused with a `forbidden` JSON-RPC error instead.
-The Platform needs a deployment key allowed to assert actors.
-It sends the runtime universe UUID, not the handle shown in the browser URL.
-A direct universe key must omit `x-lightspeed-universe`; a deployment key must
-send it for universe methods and omit it for deployment methods. See
-[API keys and service access](../access-and-security/api-keys-and-service-access.md)
-for request authentication, and [People and roles](../access-and-security/people-and-roles.md)
-for membership changes and offboarding.
+For sign-in and offboarding, see [Company sign-in (SSO)](../access-and-security/single-sign-on.md)
+and [People and roles](../access-and-security/people-and-roles.md). For token
+installation and rotation, see
+[API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
 ## Session progress
 
@@ -197,14 +180,14 @@ template that created it.
 
 For a registered daemon, inspect its own output and both public WebSocket
 paths. The control connection can be established while data routing is still
-broken. Verify the deployment has one environment gateway, that the proxy
-preserves upgrades, and that runtime processes use the correct internal URL
-and token. Retain the daemon state directory so a restart proves the same
-identity. A closed identity cannot reconnect as a new environment merely by
-reusing its key.
+broken. Verify WebSocket upgrades at the proxy and check the workers'
+private gateway URL and token. If you run replicated gateways, also check
+that peers can reach each other. Keep the daemon state directory so a
+restart can prove the same identity.
 
-For Incus, inspect provider `/health`, the universe provider binding, which
-must be enabled for its environments to be reachable, the selected template,
+For Incus, inspect provider `/health`, whether the provider is available to
+the universe (to every universe, or to this one through a binding), which its
+environments need to be reachable, the selected template,
 instance boot, and guest daemon. Follow the specific procedures in
 [Bring your own compute](../environments/bring-your-own-compute.md),
 [Incus VMs](../environments/incus-vms.md), and
@@ -217,41 +200,13 @@ directory. [Processes and jobs](../environments/processes-and-jobs.md) also
 explains why a daemon restart interrupts persisted active jobs and loses
 interactive process handles.
 
-## Chat delivery
-
-Follow delivery in three stages: connector account, runtime routing, and
-outbound response.
-
-1. Inspect the connector host's `/healthz` and expected account inventory.
-   Verify its provider/account selection, runtime API access, Temporal
-   namespace, and current provider login. Platform's **Waiting for connector** display can
-   mean health aggregation is missing; check
-   `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` before concluding the host is down.
-2. If the account is ready but no agent runs, inspect the chat trigger,
-   pairing, sender allowlist, group activation policy, and paused bot/trigger
-   state. Connector readiness does not establish that a message has a route
-   to a bot.
-3. If the agent produced a response but chat did not receive it, inspect the
-   delivery activity and the connector's per-account activity worker. Check
-   provider authentication and WhatsApp linked-device state where applicable.
-
-Also check discovery freshness: `/readyz` can remain successful after a later
-discovery failure, and a host with no selected accounts can be ready. Duplicate
-hosts serving the same account can conflict, particularly when polling one
-Telegram token. Use nonoverlapping account ownership as described in
-[operations](operations.md#partition-connector-accounts).
-
-[Chat channels](../using-lightspeed/chat-channels.md) provides the complete
-account, pairing, and routing setup.
-
 ## Blob writes
 
 If the runtime starts successfully but a larger file, attachment, model
 payload, or diagnostic dump fails with
 `blob exceeds inline threshold (65536 bytes) but no object store is configured`,
-configure S3-compatible storage on the runtime processes using CAS. The current
-PostgreSQL-only setup accepts blobs up to 64 KiB; larger blobs require that
-backend. Follow [Choose the blob backend](configuration.md#choose-the-blob-backend)
+configure S3-compatible or Azure Blob storage. PostgreSQL-only
+deployments accept blobs up to 64 KiB. Follow [Choose the blob backend](configuration.md#choose-the-blob-backend)
 and retry a controlled write after restarting the affected processes.
 
 When object storage is already configured, distinguish a failed write from
@@ -274,7 +229,6 @@ bring-your-own machine remains under its operator's control. The
 [environment cleanup guide](../environments/power-and-cleanup.md) explain the
 individual decisions.
 
-Universe archive is also separate from shutdown. It does not stop automation
-or revoke access, and permanent purge is not a complete infrastructure cleanup
-operation. Follow [Managing universes](multi-tenancy.md#archive-and-delete-a-universe)
-when retiring an entire tenant.
+If an archived universe still runs work, that is expected. Follow
+[Managing universes](multi-tenancy.md#archive-and-delete-a-universe) to retire
+it and check provider cleanup.

@@ -13,7 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { usePermissionIdentity, useUniverseRole } from "@/lib/permissions";
+import { useActionPermissions, usePermissionIdentity } from "@/lib/permissions";
 
 /**
  * Who sees a session. Work is private until shared: the header marks both
@@ -53,13 +53,13 @@ export function SharingMark({
 }
 
 /**
- * Whether the signed-in user created this work or administers the universe:
- * who may share or delete a session. The server decides again.
+ * Whether the signed-in user created this work or may act on others'
+ * private work: who may share or delete a session. The server decides again.
  */
 export function useSessionOwner(universeId: string, access: ResourceAccessSummary | undefined): boolean {
   const userId = usePermissionIdentity();
-  const role = useUniverseRole(universeId);
-  if (role === "admin") return true;
+  const permissions = useActionPermissions(universeId);
+  if (permissions.can("accessPrivateSessions")) return true;
   return access?.createdBy?.kind === "actor" && access.createdBy.id === userId;
 }
 
@@ -90,7 +90,7 @@ export function ShareSessionDialog({
 }) {
   const queryClient = useQueryClient();
   const share = useMutation({
-    mutationFn: () => api<{ access: ResourceAccessSummary }>("POST", `/api/v1/universes/${universeId}/sessions/${sessionId}/share`),
+    mutationFn: () => api<{ access: ResourceAccessSummary }>("POST", `/api/ui/universes/${universeId}/sessions/${sessionId}/share`),
     onSuccess: async () => {
       onOpenChange(false);
       await Promise.all([

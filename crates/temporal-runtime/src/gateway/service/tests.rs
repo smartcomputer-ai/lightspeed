@@ -219,7 +219,7 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
             definition: WorkflowToolDefinitionInput {
                 workflow_tool_id: "channel-noop".to_owned(),
                 schema_revision: 1,
-                semantic_type: "channels.noop.v1".to_owned(),
+                semantic_type: "plugin.noop.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "channel_noop".to_owned(),
                     kind: WorkflowToolKindInput::Function {
@@ -234,8 +234,8 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
             },
             target: WorkflowToolTargetInput::Bound {
                 receiver: WorkflowEndpointInput {
-                    workflow_id: "channels/session-1".to_owned(),
-                    workflow_kind: "channels.session".to_owned(),
+                    workflow_id: "plugins/session-1".to_owned(),
+                    workflow_kind: "plugin.session".to_owned(),
                 },
                 dispatch: BoundWorkflowToolDispatchInput::Push,
             },
@@ -252,8 +252,8 @@ fn declared_workflow_tools_api_maps_bound_accepted_function_tools() {
         declaration.tools[0].target,
         WorkflowToolTarget::Bound {
             receiver: WorkflowEndpointRef {
-                workflow_id: "channels/session-1".to_owned(),
-                workflow_kind: "channels.session".to_owned(),
+                workflow_id: "plugins/session-1".to_owned(),
+                workflow_kind: "plugin.session".to_owned(),
             },
             dispatch: BoundWorkflowToolDispatch::Push,
         }
@@ -271,7 +271,7 @@ fn declared_workflow_tools_api_maps_joined_completion() {
             definition: WorkflowToolDefinitionInput {
                 workflow_tool_id: "message-send".to_owned(),
                 schema_revision: 1,
-                semantic_type: "channels.receipt.v1".to_owned(),
+                semantic_type: "plugin.receipt.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "message_send".to_owned(),
                     kind: WorkflowToolKindInput::Function {
@@ -286,8 +286,8 @@ fn declared_workflow_tools_api_maps_joined_completion() {
             },
             target: WorkflowToolTargetInput::Bound {
                 receiver: WorkflowEndpointInput {
-                    workflow_id: "channels/session-1".to_owned(),
-                    workflow_kind: "channels.session".to_owned(),
+                    workflow_id: "plugins/session-1".to_owned(),
+                    workflow_kind: "plugin.session".to_owned(),
                 },
                 dispatch: BoundWorkflowToolDispatchInput::Push,
             },
@@ -311,7 +311,7 @@ fn declared_workflow_tools_api_maps_joined_completion() {
 #[test]
 fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
     let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-    let recipe_bytes = br#"{"workflowType":"ChannelsSendWorkflow","taskQueue":"channels"}"#;
+    let recipe_bytes = br#"{"workflowType":"PluginSendWorkflow","taskQueue":"plugin"}"#;
     let recipe_ref = BlobRef::from_bytes(recipe_bytes);
     let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(recipe_bytes);
     let declaration = declared_workflow_tools_from_api(SessionIntegrationInput {
@@ -321,7 +321,7 @@ fn declared_workflow_tools_api_maps_start_targets_and_reply_completion() {
             definition: WorkflowToolDefinitionInput {
                 workflow_tool_id: "channel-send".to_owned(),
                 schema_revision: 1,
-                semantic_type: "channels.send.v1".to_owned(),
+                semantic_type: "plugin.send.v1".to_owned(),
                 tool: WorkflowToolSpecInput {
                     name: "channel_send".to_owned(),
                     kind: WorkflowToolKindInput::Function {
@@ -567,23 +567,23 @@ fn mcp_attachment_subsets_constrain_every_execution_and_exposure_mode() {
     }
 }
 
-fn test_auth_grant_record(
+fn test_credential_grant_record(
     grant_id: &str,
-    provider_kind: auth::AuthProviderKind,
-    status: auth::AuthGrantStatus,
+    provider_kind: credentials::CredentialProviderKind,
+    status: credentials::CredentialGrantStatus,
     audience: Option<&str>,
-) -> auth::AuthGrantRecord {
-    auth::CreateAuthGrantRecord {
-        grant_id: auth::AuthGrantId::new(grant_id),
+) -> credentials::CredentialGrantRecord {
+    credentials::CreateCredentialGrantRecord {
+        grant_id: credentials::CredentialGrantId::new(grant_id),
         provider_id: "static".to_owned(),
         provider_kind,
-        exposure: auth::AuthGrantExposure::Brokered,
+        exposure: credentials::CredentialGrantExposure::Brokered,
         created_by: Attribution::Local,
         display_name: None,
         subject_hint: None,
         scopes: Vec::new(),
         audience: audience.map(str::to_owned),
-        access_token_secret: Some(auth::SecretId::new("authsec_1")),
+        access_token_secret: Some(credentials::SecretId::new("authsec_1")),
         refresh_token_secret: None,
         oauth_client: None,
         expires_at_ms: None,
@@ -596,14 +596,14 @@ fn test_auth_grant_record(
 
 #[test]
 fn grant_leases_require_creation_time_retrievable_exposure() {
-    let brokered = test_auth_grant_record(
+    let brokered = test_credential_grant_record(
         "authgrant_brokered",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         None,
     );
     let mut retrievable = brokered.clone();
-    retrievable.exposure = auth::AuthGrantExposure::Retrievable;
+    retrievable.exposure = credentials::CredentialGrantExposure::Retrievable;
 
     let error = require_retrievable_grant(&brokered).expect_err("brokered grant must reject");
     assert_eq!(error.kind, AgentApiErrorKind::Rejected);
@@ -638,10 +638,10 @@ fn mcp_server_put_enforces_required_and_optional_binding_states() {
 /// The draft of a declaration of `grant_id`, as an import would validate it.
 async fn token_declaration(
     grant_id: &str,
-    exposure: api::AuthGrantExposure,
+    exposure: api::CredentialGrantExposure,
     provider_id: Option<&str>,
-) -> auth_api::AuthGrantImportDraft {
-    let params = api::AuthGrantImportParams {
+) -> credentials_api::CredentialGrantImportDraft {
+    let params = api::CredentialGrantImportParams {
         grant_id: Some(grant_id.to_owned()),
         provider_id: provider_id.map(str::to_owned),
         exposure,
@@ -656,7 +656,7 @@ async fn token_declaration(
     // The draft records who is declaring, so it needs a caller.
     crate::gateway::request_context::with_request_context(
         crate::gateway::request_context::RequestContext::local(api::AccessScope::Deployment),
-        async move { auth_api::auth_grant_import_draft(params, 4_000) },
+        async move { credentials_api::credential_grant_import_draft(params, 4_000) },
     )
     .await
     .expect("valid declaration")
@@ -664,10 +664,10 @@ async fn token_declaration(
 
 #[tokio::test(flavor = "current_thread")]
 async fn a_token_declaration_writes_settings_over_active_token_credentials_only() {
-    let token = test_auth_grant_record(
+    let token = test_credential_grant_record(
         "authgrant_upstream",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         Some("https://tracker.example.com"),
     );
     let expected = token
@@ -676,18 +676,21 @@ async fn a_token_declaration_writes_settings_over_active_token_credentials_only(
         .expect("token has a value");
     let draft = token_declaration(
         "authgrant_upstream",
-        api::AuthGrantExposure::Brokered,
+        api::CredentialGrantExposure::Brokered,
         Some(&token.provider_id),
     )
     .await;
-    let (held, update) = auth_api::token_credential_update(&token, &draft, 4_000)
+    let (held, update) = credentials_api::token_credential_update(&token, &draft, 4_000)
         .expect("an active token credential can be declared");
     assert_eq!(held, expected);
     // The update keeps pointing at the held value; the caller swaps in the
     // new sealed secret only when the token differs.
     assert_eq!(update.access_token_secret, expected);
     assert_ne!(draft.secret.secret_id, expected);
-    assert_eq!(draft.secret.secret_kind, auth::SECRET_KIND_STATIC_TOKEN);
+    assert_eq!(
+        draft.secret.secret_kind,
+        credentials::SECRET_KIND_STATIC_TOKEN
+    );
     assert_eq!(update.display_name.as_deref(), Some("Tracker"));
     assert_eq!(update.scopes, ["read"]);
     assert_eq!(update.metadata, serde_json::json!({"owner": "ops"}));
@@ -699,10 +702,10 @@ async fn a_token_declaration_writes_settings_over_active_token_credentials_only(
     assert!(
         format!(
             "{:?}",
-            api::AuthGrantPutParams {
+            api::CredentialGrantPutParams {
                 grant_id: "authgrant_upstream".to_owned(),
                 provider_id: None,
-                exposure: api::AuthGrantExposure::Brokered,
+                exposure: api::CredentialGrantExposure::Brokered,
                 token: "never-logged".to_owned(),
                 display_name: None,
                 subject_hint: None,
@@ -719,26 +722,26 @@ async fn a_token_declaration_writes_settings_over_active_token_credentials_only(
     // What a declaration never changes is a conflict.
     for (kind, status) in [
         (
-            auth::AuthProviderKind::McpOAuth,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::McpOAuth,
+            credentials::CredentialGrantStatus::Active,
         ),
         (
-            auth::AuthProviderKind::GitHubApp,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::GitHubApp,
+            credentials::CredentialGrantStatus::Active,
         ),
         (
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Revoked,
+            credentials::CredentialProviderKind::StaticToken,
+            credentials::CredentialGrantStatus::Revoked,
         ),
     ] {
-        let grant = test_auth_grant_record("authgrant_other", kind, status, None);
+        let grant = test_credential_grant_record("authgrant_other", kind, status, None);
         let draft = token_declaration(
             "authgrant_other",
-            api::AuthGrantExposure::Brokered,
+            api::CredentialGrantExposure::Brokered,
             Some(&grant.provider_id),
         )
         .await;
-        let error = auth_api::token_credential_update(&grant, &draft, 4_000)
+        let error = credentials_api::token_credential_update(&grant, &draft, 4_000)
             .expect_err("refused declaration");
         assert_eq!(
             error.kind,
@@ -749,18 +752,18 @@ async fn a_token_declaration_writes_settings_over_active_token_credentials_only(
     for draft in [
         token_declaration(
             "authgrant_upstream",
-            api::AuthGrantExposure::Retrievable,
+            api::CredentialGrantExposure::Retrievable,
             Some(&token.provider_id),
         )
         .await,
         token_declaration(
             "authgrant_upstream",
-            api::AuthGrantExposure::Brokered,
+            api::CredentialGrantExposure::Brokered,
             Some("another-provider"),
         )
         .await,
     ] {
-        let error = auth_api::token_credential_update(&token, &draft, 4_000)
+        let error = credentials_api::token_credential_update(&token, &draft, 4_000)
             .expect_err("exposure and provider never change");
         assert_eq!(error.kind, AgentApiErrorKind::Conflict);
     }
@@ -793,7 +796,7 @@ fn mcp_server_put_lowercases_header_names_and_refuses_case_duplicates() {
     );
     assert_eq!(
         record.headers["x-upstream-token"].grant_id(),
-        Some(&auth::AuthGrantId::new("authgrant_upstream"))
+        Some(&credentials::CredentialGrantId::new("authgrant_upstream"))
     );
 
     let error = mcp_api::put_mcp_server_record(
@@ -840,7 +843,7 @@ fn mcp_server_headers_that_carry_a_secret_take_only_a_credential() {
     .expect("a credential under a name that carries a secret");
     assert_eq!(
         record.headers["x-api-key"].grant_id(),
-        Some(&auth::AuthGrantId::new("authgrant_upstream"))
+        Some(&credentials::CredentialGrantId::new("authgrant_upstream"))
     );
 }
 
@@ -850,10 +853,10 @@ fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
         .expect("server converts");
     let header = "x-upstream-token";
     let grant = |kind, status, audience| {
-        test_auth_grant_record("authgrant_upstream", kind, status, audience)
+        test_credential_grant_record("authgrant_upstream", kind, status, audience)
     };
 
-    let check = |grant: &auth::AuthGrantRecord| {
+    let check = |grant: &credentials::CredentialGrantRecord| {
         validate_header_credential(
             &mcp::MCP_SERVER_HEADER_POLICY,
             header,
@@ -863,26 +866,26 @@ fn mcp_header_credentials_must_be_active_static_tokens_covering_the_server() {
     };
 
     check(&grant(
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         Some("https://gateway.example.com"),
     ))
     .expect("an active static token covering the URL is accepted");
 
     for (kind, status, audience) in [
         (
-            auth::AuthProviderKind::McpOAuth,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::McpOAuth,
+            credentials::CredentialGrantStatus::Active,
             None,
         ),
         (
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Revoked,
+            credentials::CredentialProviderKind::StaticToken,
+            credentials::CredentialGrantStatus::Revoked,
             None,
         ),
         (
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::StaticToken,
+            credentials::CredentialGrantStatus::Active,
             Some("https://elsewhere.example.com"),
         ),
     ] {
@@ -900,8 +903,8 @@ fn mcp_server_view_returns_header_names_and_grant_ids_only() {
     let mut record = test_mcp_server_record("gateway", mcp::McpServerStatus::Active);
     record.headers.insert(
         "x-upstream-token".to_owned(),
-        auth::RequestHeaderValue::Credential {
-            grant_id: auth::AuthGrantId::new("authgrant_upstream"),
+        credentials::RequestHeaderValue::Credential {
+            grant_id: credentials::CredentialGrantId::new("authgrant_upstream"),
         },
     );
     let view = serde_json::to_value(mcp_server_view(record)).expect("serialize view");
@@ -915,7 +918,7 @@ fn mcp_server_view_returns_header_names_and_grant_ids_only() {
 
 fn model_endpoint_draft(
     headers: serde_json::Value,
-) -> Result<github_api::AuthProviderCreateDraft, AgentApiError> {
+) -> Result<github_api::CredentialProviderCreateDraft, AgentApiError> {
     let config = serde_json::from_value(serde_json::json!({
         "type": "modelEndpoint",
         "endpoint": {
@@ -925,8 +928,8 @@ fn model_endpoint_draft(
         },
     }))
     .expect("provider config input");
-    auth_provider_create_draft(
-        AuthProviderCreateParams {
+    credential_provider_create_draft(
+        CredentialProviderCreateParams {
             provider_id: Some("model:router".to_owned()),
             display_name: None,
             config,
@@ -950,19 +953,19 @@ fn model_endpoint_headers_normalize_names_and_keep_their_value_source() {
         .expect("model endpoint");
     assert_eq!(
         endpoint.headers.get("x-title"),
-        Some(&auth::RequestHeaderValue::Literal {
+        Some(&credentials::RequestHeaderValue::Literal {
             value: "Lightspeed".to_owned(),
         })
     );
     assert_eq!(
         endpoint.headers.get("x-api-key"),
-        Some(&auth::RequestHeaderValue::Credential {
-            grant_id: auth::AuthGrantId::new("authgrant_router"),
+        Some(&credentials::RequestHeaderValue::Credential {
+            grant_id: credentials::CredentialGrantId::new("authgrant_router"),
         })
     );
 
     // Reads return header names, literal values and grant ids, never a token.
-    let view = serde_json::to_value(auth_provider_view(draft.provider.into_record()))
+    let view = serde_json::to_value(credential_provider_view(draft.provider.into_record()))
         .expect("serialize view");
     assert_eq!(
         view["config"]["endpoint"]["headers"],
@@ -1003,12 +1006,13 @@ fn model_endpoint_header_credentials_must_be_active_static_tokens_covering_the_e
         .model_endpoint()
         .expect("model endpoint");
     let header = "x-api-key";
-    let grant =
-        |kind, status, audience| test_auth_grant_record("authgrant_router", kind, status, audience);
+    let grant = |kind, status, audience| {
+        test_credential_grant_record("authgrant_router", kind, status, audience)
+    };
 
-    let check = |grant: &auth::AuthGrantRecord| {
+    let check = |grant: &credentials::CredentialGrantRecord| {
         validate_header_credential(
-            &auth::MODEL_ENDPOINT_HEADER_POLICY,
+            &credentials::MODEL_ENDPOINT_HEADER_POLICY,
             header,
             &endpoint.base_url,
             grant,
@@ -1017,8 +1021,8 @@ fn model_endpoint_header_credentials_must_be_active_static_tokens_covering_the_e
 
     for audience in [None, Some("https://router.example")] {
         check(&grant(
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::StaticToken,
+            credentials::CredentialGrantStatus::Active,
             audience,
         ))
         .expect("an active static token covering the endpoint is accepted");
@@ -1026,18 +1030,18 @@ fn model_endpoint_header_credentials_must_be_active_static_tokens_covering_the_e
 
     for (kind, status, audience) in [
         (
-            auth::AuthProviderKind::CustomOAuth,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::CustomOAuth,
+            credentials::CredentialGrantStatus::Active,
             None,
         ),
         (
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Revoked,
+            credentials::CredentialProviderKind::StaticToken,
+            credentials::CredentialGrantStatus::Revoked,
             None,
         ),
         (
-            auth::AuthProviderKind::StaticToken,
-            auth::AuthGrantStatus::Active,
+            credentials::CredentialProviderKind::StaticToken,
+            credentials::CredentialGrantStatus::Active,
             Some("https://elsewhere.example.com"),
         ),
     ] {
@@ -1055,12 +1059,12 @@ fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     record.server_url = "https://crm.example.com/s/PATH_SECRET/mcp?api_key=QUERY_SECRET".to_owned();
     record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
-    record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
+    record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
     record.allow_private_network = true;
-    let grant = test_auth_grant_record(
+    let grant = test_credential_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         Some("https://crm.example.com"),
     );
 
@@ -1086,11 +1090,11 @@ fn mcp_attachment_leaves_url_and_credential_out_of_durable_state() {
 fn mcp_attachment_rejects_revoked_grant() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     record.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
-    record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
-    let grant = test_auth_grant_record(
+    record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
+    let grant = test_credential_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Revoked,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Revoked,
         None,
     );
 
@@ -1110,11 +1114,11 @@ fn mcp_attachment_rejects_grant_kind_incompatible_with_auth_policy() {
         protected_resource_metadata_url: None,
         authorization_server: None,
     };
-    record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
-    let grant = test_auth_grant_record(
+    record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
+    let grant = test_credential_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         None,
     );
 
@@ -1129,11 +1133,11 @@ fn mcp_attachment_rejects_grant_kind_incompatible_with_auth_policy() {
 fn mcp_attachment_rejects_grant_audience_that_does_not_cover_server() {
     let mut record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
     record.auth_policy = mcp::McpServerAuthPolicy::OptionalBearer;
-    record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
-    let grant = test_auth_grant_record(
+    record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
+    let grant = test_credential_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         Some("https://other.example.com"),
     );
 
@@ -1153,11 +1157,11 @@ fn mcp_server_rejects_grant_audience_that_does_not_cover_oauth_resource() {
         protected_resource_metadata_url: None,
         authorization_server: None,
     };
-    record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
-    let grant = test_auth_grant_record(
+    record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
+    let grant = test_credential_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::McpOAuth,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::McpOAuth,
+        credentials::CredentialGrantStatus::Active,
         Some("https://crm.example.com"),
     );
 
@@ -1173,22 +1177,22 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
     let mut work = test_mcp_server_record("crm_work", mcp::McpServerStatus::Active);
     work.server_url = "https://crm.example.com/mcp".to_owned();
     work.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
-    work.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_work"));
-    let work_grant = test_auth_grant_record(
+    work.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_work"));
+    let work_grant = test_credential_grant_record(
         "authgrant_work",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         Some("https://crm.example.com"),
     );
 
     let mut personal = test_mcp_server_record("crm_personal", mcp::McpServerStatus::Active);
     personal.server_url = work.server_url.clone();
     personal.auth_policy = mcp::McpServerAuthPolicy::RequiredBearer;
-    personal.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_personal"));
-    let personal_grant = test_auth_grant_record(
+    personal.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_personal"));
+    let personal_grant = test_credential_grant_record(
         "authgrant_personal",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         Some("https://crm.example.com"),
     );
 
@@ -1219,10 +1223,10 @@ fn two_server_ids_can_share_an_endpoint_with_distinct_credentials() {
 #[test]
 fn mcp_attachment_rejects_grant_for_no_auth_server() {
     let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
-    let grant = test_auth_grant_record(
+    let grant = test_credential_grant_record(
         "authgrant_1",
-        auth::AuthProviderKind::StaticToken,
-        auth::AuthGrantStatus::Active,
+        credentials::CredentialProviderKind::StaticToken,
+        credentials::CredentialGrantStatus::Active,
         None,
     );
 
@@ -1971,7 +1975,7 @@ async fn context_entry_input_from_api_stores_text_as_user_message() {
         &InputItem::Text {
             provenance_ref: None,
             origin: None,
-            text: " [telegram] Alice (12:01): hi ".to_owned(),
+            text: " [support] Alice (12:01): hi ".to_owned(),
         },
     )
     .await
@@ -1989,7 +1993,7 @@ async fn context_entry_input_from_api_stores_text_as_user_message() {
             .read_text(&entry.content.content_ref)
             .await
             .expect("stored text"),
-        "[telegram] Alice (12:01): hi"
+        "[support] Alice (12:01): hi"
     );
 }
 
@@ -2551,15 +2555,9 @@ async fn blob_api_helpers_put_get_and_check_many() {
         vec![true, false]
     );
 
-    let read = read_blob(
-        &store,
-        BlobReadParams {
-            blob_ref: put.blobs[1].blob_ref.clone(),
-        },
-    )
-    .await
-    .expect("read blob");
-    assert_eq!(read.bytes_base64, BASE64.encode(b"world"));
+    let reference = BlobRef::parse(&put.blobs[1].blob_ref).unwrap();
+    let read = store.read_bytes(&reference).await.expect("read blob");
+    assert_eq!(read, b"world");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2728,7 +2726,7 @@ fn test_mcp_server_put(server_id: &str, status: mcp::McpServerStatus) -> mcp::Pu
     }
 }
 
-fn client_create_params() -> AuthClientCreateParams {
+fn client_create_params() -> CredentialClientCreateParams {
     serde_json::from_value(serde_json::json!({
         "clientId": "crm",
         "providerKind": "mcpOAuth",
@@ -2742,42 +2740,45 @@ fn client_create_params() -> AuthClientCreateParams {
 }
 
 #[test]
-fn auth_client_drafts_encrypt_secret_and_default_to_basic_auth() {
-    let draft = oauth_api::auth_client_create_draft(client_create_params(), 10)
+fn credential_client_drafts_encrypt_secret_and_default_to_basic_auth() {
+    let draft = oauth_api::credential_client_create_draft(client_create_params(), 10)
         .expect("draft oauth client");
 
     let secret = draft.secret.expect("client secret drafted");
-    assert_eq!(secret.secret_kind, auth::SECRET_KIND_OAUTH_CLIENT_SECRET);
+    assert_eq!(
+        secret.secret_kind,
+        credentials::SECRET_KIND_OAUTH_CLIENT_SECRET
+    );
     assert_eq!(secret.value.expose(), "shh-secret");
     assert_eq!(draft.client.client_secret, Some(secret.secret_id.clone()));
     assert_eq!(
         draft.client.token_endpoint_auth_method,
-        auth::TokenEndpointAuthMethod::ClientSecretBasic
+        credentials::TokenEndpointAuthMethod::ClientSecretBasic
     );
     // Provider id defaults to the client id.
     assert_eq!(draft.client.provider_id, "crm");
 }
 
 #[test]
-fn auth_client_drafts_without_secret_default_to_public_client() {
+fn credential_client_drafts_without_secret_default_to_public_client() {
     let mut params = client_create_params();
     params.client_secret = None;
 
-    let draft = oauth_api::auth_client_create_draft(params, 10).expect("draft oauth client");
+    let draft = oauth_api::credential_client_create_draft(params, 10).expect("draft oauth client");
 
     assert!(draft.secret.is_none());
     assert_eq!(
         draft.client.token_endpoint_auth_method,
-        auth::TokenEndpointAuthMethod::None
+        credentials::TokenEndpointAuthMethod::None
     );
 }
 
 #[test]
-fn auth_client_drafts_reject_non_oauth_kinds() {
+fn credential_client_drafts_reject_non_oauth_kinds() {
     let mut params = client_create_params();
-    params.provider_kind = api::AuthProviderKind::StaticToken;
+    params.provider_kind = api::CredentialProviderKind::StaticToken;
 
-    let error = oauth_api::auth_client_create_draft(params, 10)
+    let error = oauth_api::credential_client_create_draft(params, 10)
         .expect_err("static bearer kind must be rejected");
 
     assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
@@ -2788,7 +2789,7 @@ fn mcp_oauth_client_drafts_require_an_audience() {
     let mut params = client_create_params();
     params.audience = None;
 
-    let error = oauth_api::auth_client_create_draft(params, 10)
+    let error = oauth_api::credential_client_create_draft(params, 10)
         .expect_err("mcp oauth without audience must be rejected");
 
     assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
@@ -2798,11 +2799,11 @@ fn mcp_oauth_client_drafts_require_an_audience() {
 fn oauth_redirect_uris_normalize_trailing_slashes() {
     assert_eq!(
         oauth_api::oauth_redirect_uri("http://127.0.0.1:18080"),
-        "http://127.0.0.1:18080/auth/callback"
+        "http://127.0.0.1:18080/ingress/credentials/callback"
     );
     assert_eq!(
         oauth_api::oauth_redirect_uri("https://lightspeed.example.com/"),
-        "https://lightspeed.example.com/auth/callback"
+        "https://lightspeed.example.com/ingress/credentials/callback"
     );
 }
 
@@ -2842,7 +2843,7 @@ fn cimd_config_requires_a_public_https_base_url() {
     let cimd = oauth_api::cimd_config("https://lightspeed.example.com/").expect("cimd config");
     assert_eq!(
         cimd.client_id_url,
-        "https://lightspeed.example.com/auth/client-metadata.json"
+        "https://lightspeed.example.com/ingress/credentials/client-metadata.json"
     );
 }
 
@@ -2852,28 +2853,28 @@ fn cimd_documents_declare_a_public_pkce_client() {
 
     assert_eq!(
         document["client_id"],
-        "https://lightspeed.example.com/auth/client-metadata.json"
+        "https://lightspeed.example.com/ingress/credentials/client-metadata.json"
     );
     assert_eq!(
         document["redirect_uris"][0],
-        "https://lightspeed.example.com/auth/callback"
+        "https://lightspeed.example.com/ingress/credentials/callback"
     );
     assert_eq!(document["token_endpoint_auth_method"], "none");
     assert_eq!(document["grant_types"][0], "authorization_code");
 }
 
 #[test]
-fn auth_flow_views_carry_derived_status() {
-    let record = auth::CreateAuthFlowRecord {
-        flow_id: auth::AuthFlowId::new("authflow_1"),
-        client_id: auth::OAuthClientId::new("crm"),
+fn credential_flow_views_carry_derived_status() {
+    let record = credentials::CreateCredentialFlowRecord {
+        flow_id: credentials::CredentialFlowId::new("authflow_1"),
+        client_id: credentials::OAuthClientId::new("crm"),
         provider_id: "crm".to_owned(),
-        provider_kind: auth::AuthProviderKind::McpOAuth,
-        grant_exposure: auth::AuthGrantExposure::Brokered,
+        provider_kind: credentials::CredentialProviderKind::McpOAuth,
+        grant_exposure: credentials::CredentialGrantExposure::Brokered,
         created_by: Attribution::Local,
-        state_hash: auth::state_hash("state-1"),
-        pkce_verifier_secret: auth::SecretId::new("authsec_pkce"),
-        redirect_uri: "http://127.0.0.1:18080/auth/callback".to_owned(),
+        state_hash: credentials::state_hash("state-1"),
+        pkce_verifier_secret: credentials::SecretId::new("authsec_pkce"),
+        redirect_uri: "http://127.0.0.1:18080/ingress/credentials/callback".to_owned(),
         scopes: Vec::new(),
         audience: Some("https://crm.example.com/mcp".to_owned()),
         expected_issuer: None,
@@ -2883,12 +2884,12 @@ fn auth_flow_views_carry_derived_status() {
     }
     .into_record();
 
-    let pending = oauth_api::auth_flow_view(record.clone(), 50);
-    assert_eq!(pending.status, api::AuthFlowStatus::Pending);
+    let pending = oauth_api::credential_flow_view(record.clone(), 50);
+    assert_eq!(pending.status, api::CredentialFlowStatus::Pending);
     assert!(pending.grant_id.is_none());
 
-    let expired = oauth_api::auth_flow_view(record, 200);
-    assert_eq!(expired.status, api::AuthFlowStatus::Expired);
+    let expired = oauth_api::credential_flow_view(record, 200);
+    assert_eq!(expired.status, api::CredentialFlowStatus::Expired);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3634,8 +3635,8 @@ fn a_catalog_action_makes_an_attachment_unavailable_and_an_outage_does_not() {
         mcp_api::map_mcp_error(mcp::McpRegistryError::NotFound {
             server_id: mcp::McpServerId::new("crm"),
         }),
-        map_auth_error(auth::AuthRegistryError::GrantNotFound {
-            grant_id: auth::AuthGrantId::new("grant"),
+        map_credential_error(credentials::CredentialRegistryError::GrantNotFound {
+            grant_id: credentials::CredentialGrantId::new("grant"),
         }),
     ] {
         assert!(mcp_api::mcp_attachment_is_unavailable(&error), "{error:?}");

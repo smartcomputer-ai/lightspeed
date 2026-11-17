@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use auth::{AuthGrantId, RequestHeaderError, RequestHeaderPolicy, RequestHeaders};
+use credentials::{CredentialGrantId, RequestHeaderError, RequestHeaderPolicy, RequestHeaders};
 use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
@@ -260,7 +260,7 @@ pub struct McpServerRecord {
     pub auth_policy: McpServerAuthPolicy,
     /// Universe-owned grant used to authenticate this configured server.
     /// Sessions select only `server_id` and never override this binding.
-    pub auth_grant_id: Option<AuthGrantId>,
+    pub auth_grant_id: Option<CredentialGrantId>,
     /// Extra request headers sent on every request to the server, keyed by
     /// lowercased name. Independent of `auth_policy`, which governs only
     /// `Authorization`.
@@ -292,7 +292,8 @@ impl McpServerRecord {
         self.auth_policy.validate()?;
         if matches!(self.auth_policy, McpServerAuthPolicy::None) && self.auth_grant_id.is_some() {
             return Err(McpRegistryError::InvalidInput {
-                message: "MCP servers with auth policy none cannot bind an auth grant".to_owned(),
+                message: "MCP servers with auth policy none cannot bind a credential grant"
+                    .to_owned(),
             });
         }
         MCP_SERVER_HEADER_POLICY.validate(&self.headers)?;
@@ -335,7 +336,7 @@ pub struct PutMcpServerRecord {
     pub defer_loading: Option<bool>,
     pub allow_private_network: bool,
     pub auth_policy: McpServerAuthPolicy,
-    pub auth_grant_id: Option<AuthGrantId>,
+    pub auth_grant_id: Option<CredentialGrantId>,
     pub headers: RequestHeaders,
     pub status: McpServerStatus,
     pub now_ms: i64,
@@ -906,7 +907,7 @@ fn validate_mcp_component(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auth::RequestHeaderValue;
+    use credentials::RequestHeaderValue;
 
     fn put_request(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
         PutMcpServerRecord {
@@ -993,7 +994,7 @@ mod tests {
     #[test]
     fn no_auth_servers_reject_grant_bindings() {
         let mut record = put_request("echo", McpServerStatus::Active).into_record();
-        record.auth_grant_id = Some(auth::AuthGrantId::new("authgrant_1"));
+        record.auth_grant_id = Some(credentials::CredentialGrantId::new("authgrant_1"));
 
         let error = record
             .validate()
@@ -1016,7 +1017,7 @@ mod tests {
 
     fn credential(grant_id: &str) -> RequestHeaderValue {
         RequestHeaderValue::Credential {
-            grant_id: auth::AuthGrantId::new(grant_id),
+            grant_id: credentials::CredentialGrantId::new(grant_id),
         }
     }
 
@@ -1149,7 +1150,7 @@ mod tests {
         }
 
         let mut record = runtime_record();
-        for index in 0..=auth::REQUEST_HEADERS_MAX {
+        for index in 0..=credentials::REQUEST_HEADERS_MAX {
             record
                 .headers
                 .insert(format!("x-header-{index}"), literal("v"));

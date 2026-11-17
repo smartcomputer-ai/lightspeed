@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { DeleteSessionDialog } from "./delete-session-dialog";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), deleted: vi.fn(), cancel: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -25,7 +26,7 @@ afterEach(async () => {
   client.clear(); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals();
 });
 async function settle() {
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
 }
 async function show(platformAdmin: boolean) {
   await act(async () => root.render(<QueryClientProvider client={client}>
@@ -48,14 +49,14 @@ it("keeps permanent deletion unavailable without platform-admin identity", async
   await show(false);
   expect(document.body.textContent).not.toContain("Also permanently delete retained history");
   await submit("Delete session");
-  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/v1/universes/u/sessions/s"]]);
+  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/ui/universes/u/sessions/s"]]);
   expect(mocks.deleted).toHaveBeenCalledOnce();
 });
 it("defaults to soft deletion even for platform admins", async () => {
   await show(true);
   expect(document.body.textContent).toContain("Also permanently delete retained history");
   await submit("Delete session");
-  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/v1/universes/u/sessions/s"]]);
+  expect(mocks.api.mock.calls).toEqual([["DELETE", "/api/ui/universes/u/sessions/s"]]);
 });
 it("soft-deletes first and permanently deletes through the audited admin endpoint", async () => {
   await show(true);
@@ -65,8 +66,8 @@ it("soft-deletes first and permanently deletes through the audited admin endpoin
   expect(mocks.api).not.toHaveBeenCalled();
   await submit("Permanently delete");
   expect(mocks.api.mock.calls).toEqual([
-    ["DELETE", "/api/v1/universes/u/sessions/s?cascade=true"],
-    ["POST", "/api/v1/admin/universes/u/sessions/s/purge", {}],
+    ["DELETE", "/api/ui/universes/u/sessions/s?cascade=true"],
+    ["POST", "/api/ui/admin/universes/u/sessions/s/purge", {}],
   ]);
   expect(mocks.deleted).toHaveBeenCalledOnce();
 });

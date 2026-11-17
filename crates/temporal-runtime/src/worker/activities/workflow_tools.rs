@@ -96,7 +96,11 @@ pub(super) async fn start_execution(
         .start_workflow(
             UntypedWorkflow::new(recipe.workflow_type.clone()),
             input,
-            execution_start_options(recipe.task_queue.clone(), request.execution_id.clone()),
+            execution_start_options(
+                recipe.task_queue.clone(),
+                universe_id,
+                request.execution_id.clone(),
+            ),
         )
         .await
     {
@@ -109,13 +113,20 @@ pub(super) async fn start_execution(
     }
 }
 
-fn execution_start_options(task_queue: String, execution_id: String) -> WorkflowStartOptions {
+fn execution_start_options(
+    task_queue: String,
+    universe_id: uuid::Uuid,
+    execution_id: String,
+) -> WorkflowStartOptions {
     // A lost start acknowledgement may be retried after the execution has
     // already closed. Reusing that id would replay domain work and replace the
     // recovery view, so the same invocation must always name its original run.
-    WorkflowStartOptions::new(task_queue, execution_id)
-        .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
-        .build()
+    WorkflowStartOptions::new(
+        task_queue,
+        temporal_workflow::compose_workflow_tool_execution_id(universe_id, &execution_id),
+    )
+    .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
+    .build()
 }
 
 /// A query waits for a poller on the execution's queue, and the poll blocks the
@@ -150,9 +161,12 @@ pub(super) async fn check_execution(
             "workflow-tool execution activities are not configured"
         )));
     };
-    let handle = deps
-        .client
-        .get_workflow_handle::<UntypedWorkflow>(request.execution_id.clone());
+    let handle = deps.client.get_workflow_handle::<UntypedWorkflow>(
+        temporal_workflow::compose_workflow_tool_execution_id(
+            request.universe_id,
+            &request.execution_id,
+        ),
+    );
     let description = match handle.describe(WorkflowDescribeOptions::default()).await {
         Ok(description) => description,
         // Not visible yet: the deterministic start may not have been issued
@@ -303,9 +317,12 @@ pub(super) async fn cancel_execution(
             "workflow-tool execution activities are not configured"
         )));
     };
-    let handle = deps
-        .client
-        .get_workflow_handle::<UntypedWorkflow>(request.execution_id);
+    let handle = deps.client.get_workflow_handle::<UntypedWorkflow>(
+        temporal_workflow::compose_workflow_tool_execution_id(
+            request.universe_id,
+            &request.execution_id,
+        ),
+    );
     // A normally completed or already-cancelled execution makes this a
     // no-op; other failures surface so the workflow can record them.
     match handle.cancel(WorkflowCancelOptions::default()).await {
@@ -323,18 +340,21 @@ mod tests {
 
     #[test]
     fn retrying_a_start_cannot_reexecute_a_closed_invocation() {
-        let options = execution_start_options("workflow-tools".into(), "wte:execution".into());
+        let universe = uuid::Uuid::from_u128(42);
+        let options =
+            execution_start_options("workflow-tools".into(), universe, "wte:execution".into());
         assert_eq!(
             options.id_reuse_policy,
             WorkflowIdReusePolicy::RejectDuplicate
         );
-        assert_eq!(options.workflow_id, "wte:execution");
+        assert_eq!(options.workflow_id, format!("{universe}/wte:execution"));
         assert_eq!(options.task_queue, "workflow-tools");
     }
 
     #[test]
     fn an_unresolved_terminal_reports_why_the_execution_failed() {
         let request = WorkflowToolExecutionCheckRequest {
+            universe_id: uuid::Uuid::nil(),
             execution_id: "wte:execution".into(),
             completion_key: "reply".into(),
         };

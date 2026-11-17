@@ -52,7 +52,7 @@ async fn queued_followups_allow_code_tool_timers_and_awaits_to_complete() -> any
                 run_id: queued.id,
             })
             .await?;
-        assert_eq!(cancelled.result.run.status, api::RunStatus::Cancelled);
+        assert_eq!(cancelled.run.status, api::RunStatus::Cancelled);
         fixture.finish().await
     })
     .await

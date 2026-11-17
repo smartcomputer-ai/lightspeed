@@ -1,6 +1,8 @@
 {
   "excludeParams": {
-    "session/start": ["integration"]
+    "session/start": [
+      "integration"
+    ]
   },
   "excludeMethods": [
     "universe/watch",
@@ -15,6 +17,7 @@
     "environments/registration-keys/rotate",
     "environments/registration-keys/put",
     "environments/registered/put",
-    "environments/registered/release"
+    "environments/registered/release",
+    "blobs/upload"
   ]
 }

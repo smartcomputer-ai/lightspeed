@@ -1,0 +1,8 @@
+rules:
+  struct: error
+  no-unresolved-refs: error
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-parameters-unique: error
+  path-parameters-defined: error
+  operation-2xx-response: error

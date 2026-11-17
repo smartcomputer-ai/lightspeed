@@ -16,7 +16,6 @@ pytestmark = pytest.mark.skipif(
 
 
 async def test_typescript_submission_can_resume_in_python():
-    endpoint = os.environ["LIGHTSPEED_API_URL"]
     suffix = uuid4().hex
     session_id, submission_id = f"sdk-parity-{suffix}", f"submission-{suffix}"
     prompt = "Reply with the word ready."
@@ -27,9 +26,15 @@ async def test_typescript_submission_can_resume_in_python():
     stdout, _ = await process.communicate()
     assert process.returncode == 0, "Build the TypeScript SDK and check gateway credentials"
     started = json.loads(stdout)
-    async with AsyncLightspeedClient(
-        endpoint, api_key=os.environ.get("LIGHTSPEED_API_KEY"), universe=os.environ.get("LIGHTSPEED_UNIVERSE"),
-    ) as client:
+    connection = os.environ.get("LIGHTSPEED_TEST_MODEL_CONNECTION")
+    client = (
+        await AsyncLightspeedClient.from_connection(connection, config_dir=os.environ["LIGHTSPEED_TEST_CONNECTION_CONFIG"])
+        if connection else AsyncLightspeedClient(
+            os.environ["LIGHTSPEED_API_URL"], token=os.environ.get("LIGHTSPEED_RUNTIME_TOKEN"),
+            universe=os.environ.get("LIGHTSPEED_UNIVERSE"),
+        )
+    )
+    async with client:
         repeated = await client.start_run(session_id, prompt, submission_id=submission_id)
         assert repeated["run"]["id"] == started["runId"]
         async with asyncio.timeout(120):

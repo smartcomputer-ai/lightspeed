@@ -26,6 +26,17 @@ pub(crate) struct Target {
 }
 
 impl Target {
+    /// Pin all subsequent requests to the resolved resource, even if its handle
+    /// is renamed or reused while reconciliation is in progress.
+    pub(crate) fn select_universe(&mut self, universe_id: String) {
+        let connection = crate::connection::ResolvedConnection {
+            universe: Some(universe_id.clone()),
+            ..self.api.connection().clone()
+        };
+        self.api = HttpAgentApi::with_connection(connection);
+        self.universe_id = Some(universe_id);
+    }
+
     /// Whether there is anything to read: a universe that does not exist yet
     /// has no state.
     pub(crate) fn exists(&self) -> bool {
@@ -36,7 +47,6 @@ impl Target {
         self.api
             .request::<Value, Value>(method, params)
             .await
-            .map(|outcome| outcome.result)
             .map_err(|error| anyhow!("{method}: {error}"))
     }
 
@@ -243,7 +253,7 @@ fn list(value: &Value, field: &str) -> Vec<Value> {
 
 // --- credentials -------------------------------------------------------------
 
-/// Token credentials (`auth/grants/put`). The runtime compares the supplied
+/// Token credentials (`credentials/grants/put`). The runtime compares the supplied
 /// token itself, so a dry run says whether it would be replaced.
 pub(crate) struct Credentials;
 
@@ -284,11 +294,11 @@ impl Resource for Credentials {
         (field == "providerId").then(|| json!("static"))
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
-        let typed = strict::<api::AuthGrantPutParams>(with(entry, "token", json!("")))?;
+        let typed = strict::<api::CredentialGrantPutParams>(with(entry, "token", json!("")))?;
         Ok(without(typed, &["token", "dryRun"]))
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
-        schema_of::<api::AuthGrantPutParams>(generator)
+        schema_of::<api::CredentialGrantPutParams>(generator)
     }
     fn undeclared_fields(&self) -> &'static [&'static str] {
         &["dryRun"]
@@ -298,7 +308,7 @@ impl Resource for Credentials {
         if !target.exists() {
             return Ok(live);
         }
-        let response = target.call("auth/grants/list", json!({})).await?;
+        let response = target.call("credentials/grants/list", json!({})).await?;
         for view in list(&response, "grants") {
             let Some(id) = text(&view, "grantId").map(str::to_owned) else {
                 continue;
@@ -306,7 +316,7 @@ impl Resource for Credentials {
             let token_credential = text(&view, "providerKind") == Some("staticToken");
             let active = text(&view, "status") == Some("active");
             let entry =
-                from_view::<api::AuthGrantPutParams>(with(view.clone(), "token", json!("")))
+                from_view::<api::CredentialGrantPutParams>(with(view.clone(), "token", json!("")))
                     .map(|entry| without(entry, &["token", "dryRun"]))
                     .unwrap_or(Value::Null);
             live.insert(
@@ -333,7 +343,7 @@ impl Resource for Credentials {
         _live: &Live,
     ) -> Result<bool> {
         let response = target
-            .call("auth/grants/put", Self::params(entry, secret, true)?)
+            .call("credentials/grants/put", Self::params(entry, secret, true)?)
             .await?;
         Ok(response["tokenReplaced"] == json!(true))
     }
@@ -345,7 +355,10 @@ impl Resource for Credentials {
         _live: Option<&Live>,
     ) -> Result<()> {
         target
-            .call("auth/grants/put", Self::params(entry, secret, false)?)
+            .call(
+                "credentials/grants/put",
+                Self::params(entry, secret, false)?,
+            )
             .await
             .map(drop)
     }
@@ -381,7 +394,7 @@ fn normalize_request_headers(headers: Option<&mut Value>, what: &str) -> Result<
 
 // --- providers ---------------------------------------------------------------
 
-/// Model providers and GitHub Apps (`auth/providers/put`). A provider's
+/// Model providers and GitHub Apps (`credentials/providers/put`). A provider's
 /// credential is optional; a dry run says whether it would change.
 pub(crate) struct Providers;
 
@@ -432,7 +445,7 @@ impl Resource for Providers {
         false
     }
     fn normalize(&self, entry: Value) -> Result<Value> {
-        let typed = strict::<api::AuthProviderPutParams>(entry)?;
+        let typed = strict::<api::CredentialProviderPutParams>(entry)?;
         let mut entry = without(typed, &["credential", "dryRun"]);
         normalize_request_headers(
             entry.pointer_mut("/config/endpoint/headers"),
@@ -441,7 +454,7 @@ impl Resource for Providers {
         Ok(entry)
     }
     fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
-        schema_of::<api::AuthProviderPutParams>(generator)
+        schema_of::<api::CredentialProviderPutParams>(generator)
     }
     fn undeclared_fields(&self) -> &'static [&'static str] {
         &["dryRun"]
@@ -462,14 +475,14 @@ impl Resource for Providers {
         if !target.exists() {
             return Ok(live);
         }
-        let response = target.call("auth/providers/list", json!({})).await?;
+        let response = target.call("credentials/providers/list", json!({})).await?;
         for view in list(&response, "providers") {
             let Some(id) = text(&view, "providerId").map(str::to_owned) else {
                 continue;
             };
             // Kinds the put method cannot express are not configuration a
             // document can hold.
-            let entry = from_view::<api::AuthProviderPutParams>(view.clone())
+            let entry = from_view::<api::CredentialProviderPutParams>(view.clone())
                 .map(|entry| without(entry, &["credential", "dryRun"]));
             let live_entry = match entry {
                 Ok(entry) => Live {
@@ -495,7 +508,10 @@ impl Resource for Providers {
         _live: &Live,
     ) -> Result<bool> {
         let response = target
-            .call("auth/providers/put", Self::credential_probe(entry, secret))
+            .call(
+                "credentials/providers/put",
+                Self::credential_probe(entry, secret),
+            )
             .await?;
         Ok(response["credentialReplaced"] == json!(true))
     }
@@ -507,7 +523,10 @@ impl Resource for Providers {
         _live: Option<&Live>,
     ) -> Result<()> {
         target
-            .call("auth/providers/put", Self::params(entry, secret, false))
+            .call(
+                "credentials/providers/put",
+                Self::params(entry, secret, false),
+            )
             .await
             .map(drop)
     }
@@ -642,7 +661,8 @@ impl Resource for McpServers {
 
 // --- environment providers ---------------------------------------------------
 
-/// Which deployment providers this universe may provision from
+/// Deployment providers this universe is bound to, for providers that are
+/// not available to every universe
 /// (`deployment/environment-providers/bindings/put`).
 pub(crate) struct EnvironmentProviders;
 
@@ -650,7 +670,6 @@ pub(crate) struct EnvironmentProviders;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProviderBindingEntry {
     provider_id: String,
-    enabled: bool,
 }
 
 #[async_trait]
@@ -672,18 +691,21 @@ impl Resource for EnvironmentProviders {
         if !target.exists() {
             return Ok(live);
         }
+        // A provider available to every universe needs no binding, so a
+        // document that names one finds it in place; only real bindings are
+        // exported.
         let response = target
-            .call("environments/provider-bindings/list", json!({}))
+            .call("environments/providers/list", json!({}))
             .await?;
-        for view in list(&response, "bindings") {
+        for view in list(&response, "providers") {
             let Some(id) = text(&view, "providerId").map(str::to_owned) else {
                 continue;
             };
             live.insert(
                 id.clone(),
                 Live {
-                    entry: json!({ "providerId": id, "enabled": view["enabled"] }),
-                    exportable: true,
+                    entry: json!({ "providerId": id }),
+                    exportable: view["availableToAllUniverses"] != true,
                     ..Live::default()
                 },
             );
@@ -700,7 +722,6 @@ impl Resource for EnvironmentProviders {
         let params = json!({
             "universe": target.universe_id()?,
             "providerId": entry["providerId"],
-            "enabled": entry["enabled"],
         });
         target
             .call("deployment/environment-providers/bindings/put", params)
@@ -1230,155 +1251,6 @@ impl Resource for Profiles {
     }
 }
 
-// --- API keys ----------------------------------------------------------------
-
-/// API keys (`deployment/api-keys/put`), scoped to the document's universe
-/// or to the deployment. The scope is implied by the document.
-pub(crate) struct ApiKeys;
-
-impl ApiKeys {
-    fn scope(target: &Target) -> Result<Value> {
-        Ok(if target.deployment {
-            json!({ "kind": "deployment" })
-        } else {
-            json!({ "kind": "universe", "universeId": target.universe_id()? })
-        })
-    }
-
-    /// An entry with `groups: all` written out as the groups a key of the
-    /// document's scope may hold. A stored key holds a concrete set, so this
-    /// is the form the two are compared in: when a release adds a group, a
-    /// key declared with `all` shows `groups` as a pending change until
-    /// `apply` declares it again.
-    fn with_concrete_groups(entry: &Value, deployment: bool) -> Value {
-        if entry.get("groups") != Some(&json!(api::API_KEY_GROUPS_ALL)) {
-            return entry.clone();
-        }
-        // Which groups a universe key may hold does not depend on the
-        // universe.
-        let scope = if deployment {
-            api::AccessScope::Deployment
-        } else {
-            api::AccessScope::Universe {
-                universe_id: uuid::Uuid::nil(),
-            }
-        };
-        with(
-            entry.clone(),
-            "groups",
-            json!(api::ApiKeyGroups::All.resolve(scope)),
-        )
-    }
-}
-
-#[async_trait]
-impl Resource for ApiKeys {
-    fn section(&self) -> &'static str {
-        "apiKeys"
-    }
-    fn id_field(&self) -> &'static str {
-        "keyId"
-    }
-    fn secret_field(&self) -> Option<&'static str> {
-        Some("secret")
-    }
-    fn fixed_fields(&self) -> &'static [&'static str] {
-        &["assertActor"]
-    }
-    fn normalize(&self, entry: Value) -> Result<Value> {
-        if entry.get("scope").is_some() {
-            bail!("unknown field `scope`: a key's scope is the document it is declared in");
-        }
-        // A key's authority is always written down: nothing fills it in.
-        if entry.get("groups").is_none_or(Value::is_null) {
-            bail!(
-                "`groups` is missing: list the method groups the key may call, or write `groups: all` for every group its scope allows"
-            );
-        }
-        let placed = with(
-            with(entry, "secret", json!("")),
-            "scope",
-            json!({ "kind": "deployment" }),
-        );
-        let typed = strict::<api::DeploymentApiKeyPutParams>(placed)?;
-        Ok(without(typed, &["secret", "scope"]))
-    }
-    fn input_schema(&self, generator: &mut schemars::SchemaGenerator) -> Value {
-        schema_of::<api::DeploymentApiKeyPutParams>(generator)
-    }
-    fn undeclared_fields(&self) -> &'static [&'static str] {
-        &["scope"]
-    }
-    fn in_target(&self, target: &Target, entry: &Value) -> Value {
-        Self::with_concrete_groups(entry, target.deployment)
-    }
-    async fn read(&self, target: &Target, _wanted: &Wanted) -> Result<BTreeMap<String, Live>> {
-        let mut live = BTreeMap::new();
-        if !target.exists() {
-            return Ok(live);
-        }
-        let response = target
-            .call(
-                "deployment/api-keys/list",
-                json!({ "scope": Self::scope(target)? }),
-            )
-            .await?;
-        for view in list(&response, "apiKeys") {
-            let Some(id) = text(&view, "keyId").map(str::to_owned) else {
-                continue;
-            };
-            let revoked = view.get("revokedAtMs").is_some_and(|at| !at.is_null());
-            live.insert(
-                id.clone(),
-                Live {
-                    entry: json!({
-                        "keyId": id,
-                        "displayName": text(&view, "displayName").unwrap_or(&id),
-                        "groups": view["groups"],
-                        "assertActor": view["assertActor"],
-                    }),
-                    key_prefix: text(&view, "keyPrefix").map(str::to_owned),
-                    blocked: revoked.then(|| {
-                        "is revoked; a revoked key is never restored, so declare it under a new id"
-                            .to_owned()
-                    }),
-                    exportable: !revoked,
-                    has_secret: true,
-                    ..Live::default()
-                },
-            );
-        }
-        Ok(live)
-    }
-    async fn secret_differs(
-        &self,
-        _target: &Target,
-        _entry: &Value,
-        secret: Option<&str>,
-        live: &Live,
-    ) -> Result<bool> {
-        Ok(prefix_differs(secret, live))
-    }
-    async fn write(
-        &self,
-        target: &Target,
-        entry: &Value,
-        secret: Option<&str>,
-        _live: Option<&Live>,
-    ) -> Result<()> {
-        let secret = secret.context("an API key needs its secret")?;
-        let params = with(
-            with(entry.clone(), "secret", json!(secret)),
-            "scope",
-            Self::scope(target)?,
-        );
-        target
-            .call("deployment/api-keys/put", params)
-            .await
-            .map(drop)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1542,7 +1414,7 @@ mod tests {
             json!({ "x-title": { "type": "literal", "value": "Lightspeed" } })
         );
         // What is left is still a declaration the runtime accepts.
-        strict::<api::AuthProviderPutParams>(probe).unwrap();
+        strict::<api::CredentialProviderPutParams>(probe).unwrap();
 
         // The write names every header.
         let write = Providers::params(&entry, Some("model-key"), false);
@@ -1586,113 +1458,6 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(source.contains("daemonId"), "{source}");
-    }
-
-    #[test]
-    fn a_document_never_names_a_scope_or_a_stored_secret() {
-        assert!(
-            ApiKeys
-                .normalize(
-                    json!({ "keyId": "k", "displayName": "K", "scope": { "kind": "deployment" } })
-                )
-                .is_err()
-        );
-        let key = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": ["session"] }))
-            .unwrap();
-        assert!(key.get("secret").is_none() && key.get("scope").is_none());
-        assert_eq!(key["assertActor"], false);
-
-        // A binding names a credential or a model provider; a stored secret
-        // is not a source.
-        assert!(
-            EnvironmentCredentials
-                .normalize(json!({
-                    "environmentId": "build-box",
-                    "envName": "TOKEN",
-                    "source": { "type": "directSecret", "secretId": "s" },
-                }))
-                .is_err()
-        );
-        for source in [
-            json!({ "type": "authGrant", "grantId": "repo-token" }),
-            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
-        ] {
-            let binding = EnvironmentCredentials
-                .normalize(json!({
-                    "environmentId": "build-box",
-                    "envName": "TOKEN",
-                    "source": source.clone(),
-                }))
-                .unwrap();
-            assert_eq!(binding["source"], source);
-        }
-        assert!(
-            Profiles
-                .normalize(json!({
-                    "profileId": "p",
-                    "instructions": { "type": "textRef", "blobRef": "sha256:00" },
-                }))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn a_key_always_states_its_groups() {
-        for unstated in [
-            json!({ "keyId": "k", "displayName": "K" }),
-            json!({ "keyId": "k", "displayName": "K", "groups": null }),
-        ] {
-            let error = ApiKeys.normalize(unstated).unwrap_err().to_string();
-            assert!(error.contains("`groups` is missing"), "{error}");
-        }
-        for refused in [json!([]), json!("everything"), json!(["session", "nope"])] {
-            assert!(
-                ApiKeys
-                    .normalize(json!({ "keyId": "k", "displayName": "K", "groups": refused }))
-                    .is_err(),
-                "{refused}"
-            );
-        }
-        // Nothing fills the groups in, so nothing is accepted in their place.
-        assert!(ApiKeys.server_filled().is_empty());
-
-        let all = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": "all" }))
-            .unwrap();
-        assert_eq!(all["groups"], "all");
-        // A list is a set, held in the order a key view reports it.
-        let listed = ApiKeys
-            .normalize(
-                json!({ "keyId": "k", "displayName": "K", "groups": ["profiles", "session", "profiles"] }),
-            )
-            .unwrap();
-        assert_eq!(listed["groups"], json!(["session", "profiles"]));
-    }
-
-    #[test]
-    fn all_is_compared_as_the_groups_the_documents_scope_allows() {
-        let all = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": "all" }))
-            .unwrap();
-        let universe = ApiKeys::with_concrete_groups(&all, false);
-        let deployment = ApiKeys::with_concrete_groups(&all, true);
-        let names = |entry: &Value| -> Vec<String> {
-            serde_json::from_value(entry["groups"].clone()).unwrap()
-        };
-        assert!(names(&universe).contains(&"session".to_owned()));
-        assert!(
-            names(&universe)
-                .iter()
-                .all(|group| !group.starts_with("deployment/"))
-        );
-        assert_eq!(names(&deployment).len(), api::MethodGroup::ALL.len());
-        // Only the groups change, and only when they are `all`.
-        assert_eq!(universe["displayName"], "K");
-        let listed = ApiKeys
-            .normalize(json!({ "keyId": "k", "displayName": "K", "groups": ["session"] }))
-            .unwrap();
-        assert_eq!(ApiKeys::with_concrete_groups(&listed, true), listed);
     }
 
     #[test]
@@ -1759,6 +1524,41 @@ mod tests {
                 "targetId": "t-1", "observed": { "phase": "running" },
             })),
             Some(json!({ "type": "provisioned", "providerId": "pods", "templateId": "default" }))
+        );
+    }
+    #[test]
+    fn a_document_never_names_a_stored_secret() {
+        // A binding names a credential or a model provider; a stored secret
+        // is not a source.
+        assert!(
+            EnvironmentCredentials
+                .normalize(json!({
+                    "environmentId": "build-box",
+                    "envName": "TOKEN",
+                    "source": { "type": "directSecret", "secretId": "s" },
+                }))
+                .is_err()
+        );
+        for source in [
+            json!({ "type": "authGrant", "grantId": "repo-token" }),
+            json!({ "type": "authProviderCredential", "providerId": "model:openai" }),
+        ] {
+            let binding = EnvironmentCredentials
+                .normalize(json!({
+                    "environmentId": "build-box",
+                    "envName": "TOKEN",
+                    "source": source.clone(),
+                }))
+                .unwrap();
+            assert_eq!(binding["source"], source);
+        }
+        assert!(
+            Profiles
+                .normalize(json!({
+                    "profileId": "p",
+                    "instructions": { "type": "textRef", "blobRef": "sha256:00" },
+                }))
+                .is_err()
         );
     }
 }

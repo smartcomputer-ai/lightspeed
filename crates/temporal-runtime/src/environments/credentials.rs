@@ -1,12 +1,14 @@
 use super::*;
-use crate::gateway::service::auth_api::map_auth_error;
+use crate::gateway::service::credentials_api::map_credential_error;
 
+use ::credentials::{
+    CredentialGrantId, CredentialGrantStatus, CredentialProviderId, CredentialProviderStatus,
+};
 use ::environments::{
     EnvironmentCredentialRecord, EnvironmentCredentialSource, EnvironmentCredentialSourceRefusal,
     EnvironmentCredentialStore, ListEnvironmentCredentials, PutEnvironmentCredential,
     require_bindable_grant, require_bindable_provider,
 };
-use auth::{AuthGrantId, AuthGrantStatus, AuthProviderId, AuthProviderStatus};
 
 impl EnvironmentService {
     pub(crate) async fn bind_environment_credential_record(
@@ -78,23 +80,26 @@ impl EnvironmentService {
         source: EnvironmentCredentialSourceView,
     ) -> Result<EnvironmentCredentialSource, AgentApiError> {
         match source {
-            EnvironmentCredentialSourceView::AuthGrant { grant_id } => {
-                let grant_id = AuthGrantId::try_new(grant_id).map_err(|error| {
+            EnvironmentCredentialSourceView::CredentialGrant { grant_id } => {
+                let grant_id = CredentialGrantId::try_new(grant_id).map_err(|error| {
                     AgentApiError::invalid_request(format!("invalid grant_id: {error}"))
                 })?;
-                let grant = auth::AuthGrantStore::read_grant(self.store.as_ref(), &grant_id)
-                    .await
-                    .map_err(map_auth_error)?;
+                let grant =
+                    ::credentials::CredentialGrantStore::read_grant(self.store.as_ref(), &grant_id)
+                        .await
+                        .map_err(map_credential_error)?;
                 grant_credential_source(&grant)
             }
-            EnvironmentCredentialSourceView::AuthProviderCredential { provider_id } => {
-                let provider_id = AuthProviderId::try_new(provider_id).map_err(|error| {
+            EnvironmentCredentialSourceView::CredentialProviderCredential { provider_id } => {
+                let provider_id = CredentialProviderId::try_new(provider_id).map_err(|error| {
                     AgentApiError::invalid_request(format!("invalid provider_id: {error}"))
                 })?;
-                let provider =
-                    auth::AuthProviderStore::read_auth_provider(self.store.as_ref(), &provider_id)
-                        .await
-                        .map_err(map_auth_error)?;
+                let provider = ::credentials::CredentialProviderStore::read_credential_provider(
+                    self.store.as_ref(),
+                    &provider_id,
+                )
+                .await
+                .map_err(map_credential_error)?;
                 provider_credential_source(&provider)
             }
         }
@@ -103,17 +108,17 @@ impl EnvironmentService {
 
 /// The binding source for a stored grant: it must be active and retrievable.
 fn grant_credential_source(
-    grant: &auth::AuthGrantRecord,
+    grant: &::credentials::CredentialGrantRecord,
 ) -> Result<EnvironmentCredentialSource, AgentApiError> {
-    if grant.status != AuthGrantStatus::Active {
+    if grant.status != CredentialGrantStatus::Active {
         return Err(AgentApiError::rejected(format!(
-            "auth grant is not active: {}",
+            "credential grant is not active: {}",
             grant.grant_id
         )));
     }
     require_bindable_grant(&grant.grant_id, grant.exposure)
         .map_err(map_credential_source_refusal)?;
-    Ok(EnvironmentCredentialSource::AuthGrant {
+    Ok(EnvironmentCredentialSource::CredentialGrant {
         grant_id: grant.grant_id.clone(),
     })
 }
@@ -121,11 +126,11 @@ fn grant_credential_source(
 /// The binding source for a stored provider: it must be an active model API
 /// key provider that holds a key.
 fn provider_credential_source(
-    provider: &auth::AuthProviderRecord,
+    provider: &::credentials::CredentialProviderRecord,
 ) -> Result<EnvironmentCredentialSource, AgentApiError> {
-    if provider.status != AuthProviderStatus::Active {
+    if provider.status != CredentialProviderStatus::Active {
         return Err(AgentApiError::rejected(format!(
-            "auth provider is not active: {}",
+            "credential provider is not active: {}",
             provider.provider_id
         )));
     }
@@ -133,11 +138,11 @@ fn provider_credential_source(
         .map_err(map_credential_source_refusal)?;
     if provider.credential_secret.is_none() {
         return Err(AgentApiError::rejected(format!(
-            "auth provider has no stored API key: {}",
+            "credential provider has no stored API key: {}",
             provider.provider_id
         )));
     }
-    Ok(EnvironmentCredentialSource::AuthProviderCredential {
+    Ok(EnvironmentCredentialSource::CredentialProviderCredential {
         provider_id: provider.provider_id.clone(),
     })
 }
@@ -156,13 +161,13 @@ pub(crate) fn environment_credential_view(
 
 fn credential_source_view(source: EnvironmentCredentialSource) -> EnvironmentCredentialSourceView {
     match source {
-        EnvironmentCredentialSource::AuthGrant { grant_id } => {
-            EnvironmentCredentialSourceView::AuthGrant {
+        EnvironmentCredentialSource::CredentialGrant { grant_id } => {
+            EnvironmentCredentialSourceView::CredentialGrant {
                 grant_id: grant_id.as_str().to_owned(),
             }
         }
-        EnvironmentCredentialSource::AuthProviderCredential { provider_id } => {
-            EnvironmentCredentialSourceView::AuthProviderCredential {
+        EnvironmentCredentialSource::CredentialProviderCredential { provider_id } => {
+            EnvironmentCredentialSourceView::CredentialProviderCredential {
                 provider_id: provider_id.as_str().to_owned(),
             }
         }
@@ -209,19 +214,23 @@ pub(crate) fn validate_credential_env_name(value: &str) -> Result<(), AgentApiEr
 
 #[cfg(test)]
 mod tests {
-    use api::AgentApiErrorKind;
-    use auth::{
-        AuthGrantExposure, AuthGrantRecord, AuthProviderConfig, AuthProviderKind,
-        CreateAuthProviderRecord, GitHubAppConfig, ModelApiKeyConfig, SecretId,
+    use ::credentials::{
+        CreateCredentialProviderRecord, CredentialGrantExposure, CredentialGrantRecord,
+        CredentialProviderConfig, CredentialProviderKind, GitHubAppConfig, ModelApiKeyConfig,
+        SecretId,
     };
+    use api::AgentApiErrorKind;
 
     use super::*;
 
-    fn grant(exposure: AuthGrantExposure, status: AuthGrantStatus) -> AuthGrantRecord {
-        AuthGrantRecord {
-            grant_id: AuthGrantId::new("authgrant_repo"),
+    fn grant(
+        exposure: CredentialGrantExposure,
+        status: CredentialGrantStatus,
+    ) -> CredentialGrantRecord {
+        CredentialGrantRecord {
+            grant_id: CredentialGrantId::new("authgrant_repo"),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
+            provider_kind: CredentialProviderKind::StaticToken,
             exposure,
             created_by: api::Attribution::Local,
             display_name: None,
@@ -243,15 +252,15 @@ mod tests {
 
     fn provider(
         provider_id: &str,
-        config: AuthProviderConfig,
+        config: CredentialProviderConfig,
         credential_secret: Option<&str>,
-    ) -> auth::AuthProviderRecord {
-        CreateAuthProviderRecord {
-            provider_id: AuthProviderId::new(provider_id),
+    ) -> ::credentials::CredentialProviderRecord {
+        CreateCredentialProviderRecord {
+            provider_id: CredentialProviderId::new(provider_id),
             display_name: None,
             config,
             credential_secret: credential_secret.map(SecretId::new),
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 1,
         }
         .into_record()
@@ -261,26 +270,28 @@ mod tests {
     fn a_retrievable_grant_can_be_bound() {
         assert_eq!(
             grant_credential_source(&grant(
-                AuthGrantExposure::Retrievable,
-                AuthGrantStatus::Active
+                CredentialGrantExposure::Retrievable,
+                CredentialGrantStatus::Active
             ))
             .expect("retrievable grant binds"),
-            EnvironmentCredentialSource::AuthGrant {
-                grant_id: AuthGrantId::new("authgrant_repo"),
+            EnvironmentCredentialSource::CredentialGrant {
+                grant_id: CredentialGrantId::new("authgrant_repo"),
             }
         );
     }
 
     #[test]
     fn a_brokered_grant_is_refused_at_bind_time() {
-        let error =
-            grant_credential_source(&grant(AuthGrantExposure::Brokered, AuthGrantStatus::Active))
-                .expect_err("brokered grant must not bind");
+        let error = grant_credential_source(&grant(
+            CredentialGrantExposure::Brokered,
+            CredentialGrantStatus::Active,
+        ))
+        .expect_err("brokered grant must not bind");
         assert_eq!(error.kind, AgentApiErrorKind::Rejected);
         assert_eq!(
             error.message,
             EnvironmentCredentialSourceRefusal::BrokeredGrant {
-                grant_id: AuthGrantId::new("authgrant_repo"),
+                grant_id: CredentialGrantId::new("authgrant_repo"),
             }
             .to_string()
         );
@@ -289,8 +300,8 @@ mod tests {
     #[test]
     fn an_inactive_grant_is_refused_at_bind_time() {
         let error = grant_credential_source(&grant(
-            AuthGrantExposure::Retrievable,
-            AuthGrantStatus::Revoked,
+            CredentialGrantExposure::Retrievable,
+            CredentialGrantStatus::Revoked,
         ))
         .expect_err("revoked grant must not bind");
         assert_eq!(error.kind, AgentApiErrorKind::Rejected);
@@ -300,13 +311,13 @@ mod tests {
     fn a_model_api_key_provider_can_be_bound() {
         let record = provider(
             "model:openai",
-            AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
             Some("authsec_openai"),
         );
         assert_eq!(
             provider_credential_source(&record).expect("model API key binds"),
-            EnvironmentCredentialSource::AuthProviderCredential {
-                provider_id: AuthProviderId::new("model:openai"),
+            EnvironmentCredentialSource::CredentialProviderCredential {
+                provider_id: CredentialProviderId::new("model:openai"),
             }
         );
     }
@@ -315,9 +326,9 @@ mod tests {
     fn a_github_app_provider_is_refused_at_bind_time() {
         let record = provider(
             "github",
-            AuthProviderConfig::GitHubApp(GitHubAppConfig {
+            CredentialProviderConfig::GitHubApp(GitHubAppConfig {
                 app_id: "12345".to_owned(),
-                api_base_url: auth::DEFAULT_GITHUB_API_BASE_URL.to_owned(),
+                api_base_url: ::credentials::DEFAULT_GITHUB_API_BASE_URL.to_owned(),
             }),
             Some("authsec_github_key"),
         );
@@ -327,7 +338,7 @@ mod tests {
         assert_eq!(
             error.message,
             EnvironmentCredentialSourceRefusal::GitHubAppProvider {
-                provider_id: AuthProviderId::new("github"),
+                provider_id: CredentialProviderId::new("github"),
             }
             .to_string()
         );
@@ -337,7 +348,7 @@ mod tests {
     fn a_model_provider_without_a_stored_key_is_refused_at_bind_time() {
         let record = provider(
             "model:openai",
-            AuthProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
+            CredentialProviderConfig::ModelApiKey(ModelApiKeyConfig::default()),
             None,
         );
         let error = provider_credential_source(&record).expect_err("no key to bind");

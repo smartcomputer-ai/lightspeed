@@ -116,7 +116,7 @@ function LiveSessionSetup({
     queryKey: ["session-instructions", universeId, sessionId],
     queryFn: () => api<SessionInstructionState>(
       "GET",
-      `/api/v1/universes/${universeId}/sessions/${sessionId}/instructions`,
+      `/api/ui/universes/${universeId}/sessions/${sessionId}/instructions`,
     ),
     enabled,
   });
@@ -221,7 +221,7 @@ function LiveSessionSetup({
         if (sameConfig(config, configBase.current.config)) return;
         const updated = await api<SessionView>(
           "PUT",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/config`,
+          `/api/ui/universes/${universeId}/sessions/${sessionId}/config`,
           {
             config,
             expectedConfigRevision: configBase.current.revision,
@@ -241,8 +241,8 @@ function LiveSessionSetup({
         await api<SessionView>(
           "POST",
           activeEnvironmentDraft
-            ? `/api/v1/universes/${universeId}/sessions/${sessionId}/environments/${encodeURIComponent(activeEnvironmentDraft)}/activate`
-            : `/api/v1/universes/${universeId}/sessions/${sessionId}/environments/deactivate`,
+            ? `/api/ui/universes/${universeId}/sessions/${sessionId}/environments/${encodeURIComponent(activeEnvironmentDraft)}/activate`
+            : `/api/ui/universes/${universeId}/sessions/${sessionId}/environments/deactivate`,
           {},
         );
       }
@@ -250,7 +250,7 @@ function LiveSessionSetup({
       if (instructionsDirty) {
         await api<SessionView>(
           "PUT",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/instructions`,
+          `/api/ui/universes/${universeId}/sessions/${sessionId}/instructions`,
           { text: instructionsDraft?.trim() ? instructionsDraft : null },
         );
       }
@@ -259,7 +259,7 @@ function LiveSessionSetup({
         // A complete map: the put replaces, an empty map clears.
         await api<SessionView>(
           "PUT",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/metadata`,
+          `/api/ui/universes/${universeId}/sessions/${sessionId}/metadata`,
           { metadata: metadataDraft },
         );
       }
@@ -267,7 +267,7 @@ function LiveSessionSetup({
       if (retentionDirty && canSetRetention) {
         await api<SessionView>(
           "PUT",
-          `/api/v1/universes/${universeId}/sessions/${sessionId}/retention`,
+          `/api/ui/universes/${universeId}/sessions/${sessionId}/retention`,
           {
             deleteAfterCloseMs: retentionDays === null
               ? null

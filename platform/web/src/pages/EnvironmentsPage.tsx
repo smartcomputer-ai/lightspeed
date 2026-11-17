@@ -12,7 +12,7 @@ import {
   api,
   type Environment,
   type EnvironmentCredential,
-  type EnvironmentProviderBinding,
+  type AvailableEnvironmentProvider,
   type EnvironmentRegistrationKey,
   type EnvironmentRegistrationKeyCreated,
   type EnvironmentTemplate,
@@ -58,7 +58,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { EmptyState, LoadingNote, PageHeader, SectionHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
-import { isKeyIdConflict, KeyIdField } from "@/components/api-keys/key-id-field";
+import { isKeyIdConflict, KeyIdField } from "@/components/key-id-field";
 import { EnvironmentPowerControls } from "@/components/environment/power-controls";
 import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
@@ -84,7 +84,7 @@ import { useActiveUniverse } from "@/lib/universes";
 
 /// Universe environments are provisioned from the templates offered by the
 /// universe's enabled providers. Physical provider registration stays admin-only.
-export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
+export function EnvironmentsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
@@ -106,12 +106,12 @@ function EnvironmentList({ universeId }: { universeId: string }) {
   const [showClosed, setShowClosed] = useState(false);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null);
   const detailsTriggerRef = useRef<HTMLElement | null>(null);
-  const bindings = useQuery({
-    queryKey: ["environment-provider-bindings", universeId],
+  const providers = useQuery({
+    queryKey: ["environment-providers", universeId],
     queryFn: () =>
-      api<EnvironmentProviderBinding[]>(
+      api<AvailableEnvironmentProvider[]>(
         "GET",
-        `/api/v1/universes/${universeId}/environment-provider-bindings`,
+        `/api/ui/universes/${universeId}/environment-providers`,
       ),
   });
   const templates = useQuery(environmentTemplatesQuery(universeId));
@@ -133,14 +133,14 @@ function EnvironmentList({ universeId }: { universeId: string }) {
   const secrets = useQuery({
     queryKey: ["secrets", universeId],
     queryFn: () =>
-      api<SecretsInventory>("GET", `/api/v1/universes/${universeId}/secrets`),
+      api<SecretsInventory>("GET", `/api/ui/universes/${universeId}/secrets`),
   });
   const hints = useQuery({
     queryKey: ["environment-hints", universeId],
     queryFn: () =>
       api<{ devEnvdEndpoint: string | null }>(
         "GET",
-        `/api/v1/universes/${universeId}/environments/hints`,
+        `/api/ui/universes/${universeId}/environments/hints`,
       ),
     staleTime: 300_000,
   });
@@ -150,11 +150,11 @@ function EnvironmentList({ universeId }: { universeId: string }) {
     queryFn: () =>
       api<EnvironmentRegistrationKey[]>(
         "GET",
-        `/api/v1/universes/${universeId}/environment-registration-keys`,
+        `/api/ui/universes/${universeId}/environment-registration-keys`,
       ),
   });
 
-  const bindingRows = (bindings.data ?? [])
+  const providerRows = (providers.data ?? [])
     .slice()
     .sort((a, b) => a.providerId.localeCompare(b.providerId));
   const templateRows = (templates.data ?? [])
@@ -166,11 +166,9 @@ function EnvironmentList({ universeId }: { universeId: string }) {
     .sort((a, b) => environmentName(a).localeCompare(environmentName(b))
       || a.environmentId.localeCompare(b.environmentId));
   const selectedEnvironment = environmentRows.find((environment) => environment.environmentId === selectedEnvironmentId);
-  const enabledProviders = new Set(
-    bindingRows.filter((binding) => binding.enabled).map((binding) => binding.providerId),
-  );
+  const availableProviders = new Set(providerRows.map((provider) => provider.providerId));
   const creatableTemplates = templateRows.filter(
-    (template) => enabledProviders.has(template.providerId) && !template.deprecated,
+    (template) => availableProviders.has(template.providerId) && !template.deprecated,
   );
   const keyRows = (registrationKeys.data ?? [])
     .slice()
@@ -203,9 +201,9 @@ function EnvironmentList({ universeId }: { universeId: string }) {
           </div>
         )}
       />
-      {(bindings.isLoading || templates.isLoading || environments.isLoading || secrets.isLoading) && <LoadingNote />}
-      {bindings.error && (
-        <ReadError error={bindings.error} loading={!bindings.data} prefix="Provider bindings unavailable" />
+      {(providers.isLoading || templates.isLoading || environments.isLoading || secrets.isLoading) && <LoadingNote />}
+      {providers.error && (
+        <ReadError error={providers.error} loading={!providers.data} prefix="Environment providers unavailable" />
       )}
       {templates.error && (
         <ReadError error={templates.error} loading={!templates.data} prefix="Environment templates unavailable" />
@@ -287,7 +285,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
           {keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
         </section>
       )}
-      {bindingRows.length > 0 && <ProviderBindings bindings={bindingRows} />}
+      {providerRows.length > 0 && <AvailableProviders providers={providerRows} />}
     </>
   );
 }
@@ -479,14 +477,14 @@ function EnvironmentCredentials({
     queryFn: () =>
       api<EnvironmentCredential[]>(
         "GET",
-        `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials`,
+        `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials`,
       ),
   });
   const unbind = useMutation({
     mutationFn: (envName: string) =>
       api<EnvironmentCredential>(
         "DELETE",
-        `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials/${encodeURIComponent(envName)}`,
+        `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials/${encodeURIComponent(envName)}`,
       ),
     onSuccess: () =>
       queryClient.invalidateQueries({
@@ -619,7 +617,7 @@ function AssignCredentialDialog({
       const source = environmentCredentialSourceFromValue(selectedSource);
       return api<EnvironmentCredential>(
         "POST",
-        `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environmentId)}/credentials`,
+        `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environmentId)}/credentials`,
         { envName: envName.trim(), source },
       );
     },
@@ -868,7 +866,7 @@ function DeclareEnvironmentDialog({
   const [displayName, setDisplayName] = useState("");
   const declare = useMutation({
     mutationFn: (key: EnvironmentRegistrationKey) =>
-      api<Environment>("POST", `/api/v1/universes/${universeId}/environments/registered`, {
+      api<Environment>("POST", `/api/ui/universes/${universeId}/environments/registered`, {
         environmentId: environmentId.trim(),
         registrationKeyId: key.registrationKeyId,
         name: name.trim(),
@@ -967,7 +965,7 @@ function RevokeRegistrationKeyButton({
     mutationFn: () =>
       api<{ registrationKey: EnvironmentRegistrationKey; closedEnvironmentIds?: string[] }>(
         "POST",
-        `/api/v1/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/revoke`,
+        `/api/ui/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/revoke`,
         { closeEnvironments },
       ),
     onSuccess: async () => {
@@ -1026,7 +1024,7 @@ function RotateRegistrationKeyButton({
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
-        `/api/v1/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/rotate`,
+        `/api/ui/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/rotate`,
       ),
     onSuccess: async () => {
       setConfirming(false);
@@ -1218,7 +1216,7 @@ function RegistrationSecret({
 }) {
   const [copied, setCopied] = useState(false);
   const bootstrap = [
-    "LIGHTSPEED_ENVD_GATEWAY_URL=wss://<lightspeed host>/environment-gateway/connect",
+    "LIGHTSPEED_ENVD_GATEWAY_URL=wss://<lightspeed host>/environments/connect",
     `LIGHTSPEED_ENVD_REGISTRATION_KEY=${created.secret}`,
     "lightspeed-envd",
   ].join("\n");
@@ -1281,7 +1279,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
-        `/api/v1/universes/${universeId}/environment-registration-keys`,
+        `/api/ui/universes/${universeId}/environment-registration-keys`,
         {
           identityMode,
           ...registrationKeySettings(form, identityMode, null),
@@ -1387,7 +1385,7 @@ function EditRegistrationKeyDialog({
     mutationFn: (key: EnvironmentRegistrationKey) =>
       api<EnvironmentRegistrationKey>(
         "PUT",
-        `/api/v1/universes/${universeId}/environment-registration-keys/${key.registrationKeyId}`,
+        `/api/ui/universes/${universeId}/environment-registration-keys/${key.registrationKeyId}`,
         registrationKeySettings(form, key.identityMode, key.expiresAtMs),
       ),
     onSuccess: async () => {
@@ -1428,42 +1426,34 @@ function EditRegistrationKeyDialog({
   );
 }
 
-function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[] }) {
+/// The providers this universe may create environments from: those
+/// available to every universe, and those it is bound to.
+function AvailableProviders({ providers }: { providers: AvailableEnvironmentProvider[] }) {
   const [open, setOpen] = useState(false);
-  const enabled = bindings.filter((binding) => binding.enabled).length;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <TableCard className="mt-6">
         <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left outline-none hover:bg-muted/30 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 md:px-5">
-          <span className="text-sm font-medium">Provider configuration</span>
-          <span className="text-xs text-muted-foreground">
-            {enabled} enabled · {bindings.length} total
-          </span>
+          <span className="text-sm font-medium">Providers</span>
+          <span className="text-xs text-muted-foreground">{providers.length} available</span>
           <DropdownCaretIcon className={`ml-auto size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          {/* A table without a header: the provider's name, its state and id, and
-              when it changed. */}
-          <Table aria-label="Provider configuration" className="border-t [&_td]:px-4 [&_td]:py-3 md:[&_td]:px-5">
+          {/* A table without a header: the provider's name and id, and whether
+              every universe may use it or this one through its binding. */}
+          <Table aria-label="Providers" className="border-t [&_td]:px-4 [&_td]:py-3 md:[&_td]:px-5">
             <TableBody>
-              {bindings.map((binding) => (
-                <TableRow key={binding.providerId} className="hover:bg-transparent">
+              {providers.map((provider) => (
+                <TableRow key={provider.providerId} className="hover:bg-transparent">
                   <TableCell className="w-full max-w-0">
                     <div className="grid min-w-0 gap-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{humanizeIdentifier(binding.providerId)}</span>
-                        {binding.enabled ? (
-                          <Badge variant="secondary">enabled</Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
-                        )}
-                      </div>
-                      <IdText className="text-muted-foreground">{binding.providerId}</IdText>
+                      <span className="font-medium">{provider.displayName ?? humanizeIdentifier(provider.providerId)}</span>
+                      <IdText className="text-muted-foreground">{provider.providerId}</IdText>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">
-                    Updated {relativeTime(binding.updatedAtMs)}
+                  <TableCell className="text-right">
+                    <Badge variant="secondary">{provider.availableToAllUniverses ? "All universes" : "This universe"}</Badge>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1489,7 +1479,7 @@ function EnvironmentIngressButton({
   const ingress = useMutation({
     mutationFn: (enabled: boolean) => api<Environment>(
       "PUT",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/ingress`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/ingress`,
       { enabled },
     ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),
@@ -1525,7 +1515,7 @@ function ReleaseDaemonButton({
   const release = useMutation({
     mutationFn: () => api<Environment>(
       "POST",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/release`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/release`,
     ),
     onSuccess: async () => {
       setConfirming(false);
@@ -1573,7 +1563,7 @@ function CloseEnvironmentButton({
   const close = useMutation({
     mutationFn: () => api<Environment>(
       "DELETE",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
     ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),
   });
@@ -1644,7 +1634,7 @@ function EditEnvironmentDialog({
   const save = useMutation({
     mutationFn: () => api<Environment>(
       "PATCH",
-      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
+      `/api/ui/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
       {
         displayName: displayName.trim() || null,
         metadata: metadata ?? {},
@@ -1725,7 +1715,7 @@ function CreateEnvironmentDialog({
   const create = useMutation({
     mutationFn: () => {
       if (!selectedTemplate) throw new Error("Choose an environment template.");
-      return api<Environment>("POST", `/api/v1/universes/${universeId}/environments`, {
+      return api<Environment>("POST", `/api/ui/universes/${universeId}/environments`, {
         requestId,
         providerId: selectedTemplate.providerId,
         templateId: selectedTemplate.templateId,
@@ -1893,7 +1883,7 @@ function RegisterExternalEnvironmentDialog({
   const [error, setError] = useState<string | null>(null);
   const register = useMutation({
     mutationFn: () =>
-      api<Environment>("POST", `/api/v1/universes/${universeId}/environments/external`, {
+      api<Environment>("POST", `/api/ui/universes/${universeId}/environments/external`, {
         endpoint: endpoint.trim(),
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
       }),

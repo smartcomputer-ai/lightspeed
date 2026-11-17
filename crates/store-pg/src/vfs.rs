@@ -26,7 +26,7 @@ const WORKSPACE_COLUMNS: &str = r#"
 #[async_trait]
 impl VfsSnapshotStore for PgStore {
     async fn record_snapshot(&self, record: VfsSnapshotRecord) -> Result<(), VfsCatalogError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| catalog_store_error("ensure universe", error))?;
         let source_json =
@@ -94,7 +94,7 @@ impl VfsWorkspaceStore for PgStore {
         &self,
         record: CreateVfsWorkspaceRecord,
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| catalog_store_error("ensure universe", error))?;
         let base_digest = record
@@ -273,7 +273,7 @@ impl VfsWorkspaceStore for PgStore {
         &self,
         workspace_id: &VfsWorkspaceId,
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| catalog_store_error("ensure universe", error))?;
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(

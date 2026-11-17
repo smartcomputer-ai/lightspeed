@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { demoUniverseActions } from "../access";
 import type { TranscriptionView } from "@lightspeed-ai/sdk";
-import { MAX_DICTATION_AUDIO_BYTES, roleAtLeast, transcriptionStartSchema, transcriptionUploadSchema } from "@lightspeed-ai/platform-shared";
+import { MAX_DICTATION_AUDIO_BYTES, transcriptionStartSchema, transcriptionUploadSchema } from "@lightspeed-ai/platform-shared";
 import type { DemoStore } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 
@@ -10,7 +11,7 @@ export function transcriptionRoutes(store: DemoStore) {
   app.post("/:id/transcriptions/audio", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (store.currentUser.role !== "admin" && !roleAtLeast(universe.universe.role ?? "viewer", "contributor")) return c.json({ error: "contributor role required" }, 403);
+    if (!demoUniverseActions(store, universe).has("useResource")) return c.json({ error: "universe permission required: useResource" }, 403);
     const body = transcriptionUploadSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, "Invalid audio upload");
     const bytes = Uint8Array.from(atob(body.data.bytesBase64), (char) => char.charCodeAt(0));
@@ -23,7 +24,7 @@ export function transcriptionRoutes(store: DemoStore) {
   app.post("/:id/transcriptions", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (store.currentUser.role !== "admin" && !roleAtLeast(universe.universe.role ?? "viewer", "contributor")) return c.json({ error: "contributor role required" }, 403);
+    if (!demoUniverseActions(store, universe).has("useResource")) return c.json({ error: "universe permission required: useResource" }, 403);
     const body = transcriptionStartSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, "Invalid transcription request");
     const request = JSON.stringify(body.data);
@@ -52,7 +53,7 @@ export function transcriptionRoutes(store: DemoStore) {
     const universe = universeFor(store, c);
     const job = jobs.get(c.req.param("transcriptionId"));
     if (!universe || !job || job.universeId !== universe.universe.id || job.view.createdBy.kind !== "actor" || job.view.createdBy.id !== store.currentUser.id) return notFound(c);
-    if (store.currentUser.role !== "admin" && !roleAtLeast(universe.universe.role ?? "viewer", "contributor")) return c.json({ error: "contributor role required" }, 403);
+    if (!demoUniverseActions(store, universe).has("useResource")) return c.json({ error: "universe permission required: useResource" }, 403);
     if (job.view.status === "running") job.view.status = "cancelled";
     return c.json(job.view);
   });

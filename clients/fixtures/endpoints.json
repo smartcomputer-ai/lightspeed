@@ -1,0 +1,28 @@
+{
+  "accepted": [
+    { "input": "http://localhost:18080", "normalized": "http://localhost:18080/api/v1" },
+    { "input": "http://127.0.0.1:18080/", "normalized": "http://127.0.0.1:18080/api/v1" },
+    { "input": "https://example.test/api/v1", "normalized": "https://example.test/api/v1" },
+    { "input": "https://example.test/api/v1///", "normalized": "https://example.test/api/v1" },
+    { "input": "https://example.test/team", "normalized": "https://example.test/team/api/v1" },
+    { "input": "https://example.test/team/api/v1/", "normalized": "https://example.test/team/api/v1" },
+    { "input": "https://example.test/a%20b/", "normalized": "https://example.test/a%20b/api/v1" },
+    { "input": "http://[::1]:18080/", "normalized": "http://[::1]:18080/api/v1" }
+  ],
+  "rejected": [
+    "/api/v1",
+    "file:///api/v1",
+    "ftp://example.test",
+    "https://user@example.test",
+    "https://user:placeholder@example.test",
+    "https://example.test?token=placeholder",
+    "https://example.test?",
+    "https://example.test#fragment",
+    "https://example.test#",
+    " https://example.test",
+    "https://example.test ",
+    "https://exam\tple.test",
+    "https://example.test\\other",
+    "http://[::1"
+  ]
+}

@@ -1,3 +1,5 @@
+import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { Hono } from "hono";
 import { unzipSync } from "fflate";
 import {
@@ -12,14 +14,14 @@ import { gatewayRoutes } from "./gateway.js";
 
 const identity = vi.hoisted(() => ({ role: "contributor" }));
 vi.mock("./universes.js", () => ({
-  universeForSession: vi.fn(async () => ({
+  universeForRequest: vi.fn(async () => ({
     universe: {
       lightspeedUniverseId: "universe",
-      gatewayUrl: "https://engine.example/rpc",
+
     },
     handle: "test",
     role: identity.role,
-    member: { userId: "member", role: identity.role },
+    actions: universeActions([identity.role as UniverseRole]), caller: { actorId: "member", actions: universeActions([identity.role as UniverseRole]) },
   })),
 }));
 
@@ -161,24 +163,14 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: unknown, init: RequestInit) => {
-      const rpc = JSON.parse(String(init.body));
-      calls.push(rpc.method);
-      expect(new Headers(init.headers).get("x-lightspeed-universe")).toBe(
-        "universe",
-      );
+      const request = decodeHttpRequest(_url as string | Request | URL, init);
+      calls.push(request.method);
       let result: unknown;
-      switch (rpc.method) {
+      switch (request.method) {
         case "vfs/workspaces/delete":
-          expect(rpc.params).toEqual({ workspaceId: "docs" });
+          expect(request.params).toEqual({ workspaceId: "docs" });
           if (workspaceDeleted)
-            return Response.json({
-              id: rpc.id,
-              error: {
-                code: -32004,
-                message: "workspace not found",
-                data: { kind: "notFound" },
-              },
-            });
+            return problemResponse({ type: "about:blank", title: "workspace not found", detail: "workspace not found", status: 404, kind: "notFound" });
           workspaceDeleted = true;
           result = {
             workspace: {
@@ -199,17 +191,14 @@ beforeEach(() => {
           };
           break;
         case "vfs/snapshots/read":
-          expect(rpc.params.snapshotRef).toBe("snapshot");
+          expect(request.params.snapshotRef).toBe("snapshot");
           result = { manifest: structuredClone(manifest) };
           break;
         case "blobs/put": {
           if (failBlob)
-            return Response.json({
-              id: rpc.id,
-              error: { code: -32603, message: "storage failed" },
-            });
+            return problemResponse({ type: "about:blank", title: "storage failed", detail: "storage failed", status: 500, kind: "internal" });
           const ref = `blob${blobs.size}`;
-          const bytesBase64 = rpc.params.blobs[0].bytesBase64;
+          const bytesBase64 = request.params.blobs[0].bytesBase64;
           blobs.set(ref, bytesBase64);
           result = {
             blobs: [
@@ -222,23 +211,16 @@ beforeEach(() => {
           break;
         }
         case "vfs/snapshots/commit":
-          committedManifest = rpc.params.manifest;
+          committedManifest = request.params.manifest;
           result = { snapshotRef: "next" };
           break;
         case "vfs/workspaces/update":
-          expect(rpc.params.expectedRevision).toBe(revision);
+          expect(request.params.expectedRevision).toBe(revision);
           if (race)
-            return Response.json({
-              id: rpc.id,
-              error: {
-                code: -32009,
-                message: "conflict",
-                data: { kind: "conflict" },
-              },
-            });
-          if (rpc.params.displayName !== undefined) {
-            expect(rpc.params.snapshotRef).toBe("snapshot");
-            displayName = rpc.params.displayName;
+            return problemResponse({ type: "about:blank", title: "conflict", detail: "conflict", status: 409, kind: "conflict" });
+          if (request.params.displayName !== undefined) {
+            expect(request.params.snapshotRef).toBe("snapshot");
+            displayName = request.params.displayName;
           } else {
             if (!committedManifest)
               throw new Error("Expected a committed snapshot");
@@ -255,15 +237,11 @@ beforeEach(() => {
           };
           break;
         case "blobs/read":
-          result = { bytesBase64: blobs.get(rpc.params.blobRef) };
-          break;
+          return new Response(Buffer.from(blobs.get(request.params.blobRef)!, "base64"), { headers: { "content-type": "application/octet-stream" } });
         default:
-          throw new Error(`Unexpected RPC ${rpc.method}`);
+          throw new Error(`Unexpected operation ${request.method}`);
       }
-      return Response.json({
-        id: rpc.id,
-        result: { result, notifications: [] },
-      });
+      return Response.json(result);
     }),
   );
 });
@@ -275,8 +253,8 @@ function app(workspaceUploadLimits?: WorkspaceUploadLimits) {
     "/",
     gatewayRoutes({
       env: {
-        lightspeedApiUrl: "https://engine.example/rpc",
-        lightspeedApiKey: "lsk_fixture",
+        lightspeedApiUrl: "https://engine.example/api/v1",
+        lightspeedApiToken: "lsr_fixture",
         workspaceUploadLimits,
       },
     } as AppContext),
@@ -322,7 +300,7 @@ it.each(["viewer", "contributor"])(
   },
 );
 
-it.each(["operator", "admin"])(
+it.each(["operator", "owner"])(
   "deletes a workspace as %s without deleting its snapshots or blobs",
   async (role) => {
     await upload();
@@ -362,7 +340,7 @@ async function renameWorkspace(name: string, expectedRevision = revision) {
     body: JSON.stringify({ displayName: name, expectedRevision }),
   });
 }
-it.each(["operator", "admin"])(
+it.each(["operator", "owner"])(
   "renames a workspace as %s without changing its ID or snapshot",
   async (role) => {
     await upload();

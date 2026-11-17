@@ -88,7 +88,6 @@ async fn started_session_with_a_tool(
     let workspace = api
         .create_vfs_workspace(api::VfsWorkspaceCreateParams::default())
         .await?
-        .result
         .workspace;
     let config = SessionConfig {
         model: Some(model_to_api(&model)),
@@ -142,7 +141,6 @@ async fn restart(api: &GatewayAgentApi, session_id: &SessionId) -> Result<bool, 
             session_id: session_id.as_str().to_owned(),
         })
         .await?
-        .result
         .restarted)
 }
 
@@ -164,7 +162,6 @@ async fn assert_failed_by_restart(
             wait_ms: None,
         })
         .await?
-        .result
         .events;
     let failure = events.iter().find_map(|event| match &event.kind {
         api::SessionEventKindView::RunFailed { kind, message, .. } => Some((kind, message)),
@@ -207,7 +204,6 @@ async fn temporal_live_restart_fails_a_run_cut_off_mid_generation() -> anyhow::R
                     run_limit: None,
                 })
                 .await?
-                .result
                 .session;
             assert_eq!(dead.lifecycle_status, SessionLifecycleStatus::Open);
             assert_eq!(
@@ -464,7 +460,6 @@ async fn wait_for_parked_approval(
                 run_limit: None,
             })
             .await?
-            .result
             .session;
         approval_id = session
             .runs

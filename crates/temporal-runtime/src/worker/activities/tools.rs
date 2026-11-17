@@ -554,9 +554,8 @@ mod tests {
     use llm_runtime::secrets::{AbsentSecretResolver, SecretResolver};
 
     use super::*;
-    use crate::{
-        gateway::service::mcp_discovery::ConfiguratorTrustedHeaderPolicy,
-        worker::mcp::{McpPrivateNetworkPolicy, RuntimeMcpExecutor, RuntimeMcpInventoryResolver},
+    use crate::worker::mcp::{
+        McpPrivateNetworkPolicy, RuntimeMcpExecutor, RuntimeMcpInventoryResolver,
     };
 
     #[tokio::test(flavor = "current_thread")]
@@ -746,24 +745,18 @@ mod tests {
         let secrets: Arc<dyn SecretResolver> = Arc::new(AbsentSecretResolver);
         let private_networks =
             McpPrivateNetworkPolicy::parse(None).expect("private network policy");
-        let trusted_header = ConfiguratorTrustedHeaderPolicy;
-        let universe_id = uuid::Uuid::from_u128(7);
         let servers: Arc<dyn mcp::McpRegistryStore> =
             Arc::new(mcp::InMemoryMcpRegistryStore::new());
         let inventory = Arc::new(RuntimeMcpInventoryResolver::new(
             servers.clone(),
             secrets.clone(),
             private_networks.clone(),
-            trusted_header.clone(),
-            universe_id,
         ));
         Arc::new(RuntimeMcpExecutor::new(
             servers,
             secrets,
             inventory,
             private_networks,
-            trusted_header,
-            universe_id,
         ))
     }
 

@@ -1,4 +1,4 @@
-import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
+import type { FeatureStates, OrganizationAction, UniverseAction, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
 export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/sdk";
 import type {
   SessionSummaryView as WireSessionSummary,
@@ -12,12 +12,12 @@ import type {
   RunStatus,
   EnvironmentCredentialSourceView,
   EnvironmentCredentialView,
+  AvailableEnvironmentProviderView,
   EnvironmentProviderBindingView,
   EnvironmentRegistrationKeyCreateResponse,
   EnvironmentRegistrationKeyView,
   EnvironmentTemplateView,
   EnvironmentView,
-  MethodGroup,
   ProfileSessionRetention as ProfileSessionRetentionView,
   SessionEventView,
   SessionEventsReadResponse,
@@ -26,7 +26,7 @@ import type {
 import type { RequestHeader } from "@/lib/request-headers";
 import { failureText, notJsonText, readResponseBody } from "@/lib/response-body";
 
-/// Thin fetch wrapper for /api/v1 (cookie-authenticated, same origin).
+/// Thin fetch wrapper for /api/ui (cookie-authenticated, same origin).
 
 /// `body` is the parsed JSON answer, `null` when there was none, or the
 /// shortened text of an answer that was not JSON. `message` replaces the text
@@ -42,7 +42,9 @@ export class ApiError extends Error {
 }
 
 function extractMessage(body: unknown): string | null {
-  if (!body || typeof body !== "object" || !("error" in body)) return null;
+  if (!body || typeof body !== "object") return null;
+  if ("detail" in body && typeof body.detail === "string") return body.detail;
+  if (!("error" in body)) return null;
   const { error, issues, failure } = body as {
     error: unknown;
     issues?: unknown;
@@ -93,6 +95,10 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
 }
 
 export interface Universe {
+  organizationId?: string;
+  organizationRole?: "admin" | "creator" | "member" | null;
+  protected?: boolean;
+  expiresAtMs?: number | null;
   runtimeConfiguration?: Omit<import("@lightspeed-ai/sdk").DeploymentUniverseConfigurationPutParams, "universe">;
   icon?: UniverseIconName;
   iconColor?: UniverseIconColor;
@@ -101,18 +107,23 @@ export interface Universe {
   name: string;
   /// Cached runtime handle used as the Platform URL segment.
   handle: string;
-  gatewayUrl: string | null;
-  status: "active" | "archived";
+  status: "active" | "archived" | "deleting";
+  deletion?: import("@lightspeed-ai/sdk").DeploymentUniverseView["deletion"];
   createdAt: string;
-  /// Own membership role; null for platform admins browsing a universe
-  /// they are not a member of.
+  /// The highest universe role the caller holds, for display.
   role?: UniverseRole | null;
+  /// What the caller may do here: the union of every role it holds,
+  /// computed by the server. Screens decide on these, never on `role`.
+  actions?: UniverseAction[];
+  organizationActions?: OrganizationAction[];
   /// What is switched on in this universe, requirements applied.
   features: FeatureStates;
 }
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
+  displayName?: string | null;
+  protected?: boolean;
   handle: string;
   universeId: string;
   sessions: number;
@@ -123,18 +134,14 @@ export interface EngineUniverse {
   lastActivityAtMs?: number | null;
 }
 
-export interface UniverseHandleSyncResult {
-  updated: number;
-  skipped: number;
-}
-
 /// Admin reconciliation: each platform row's engine status, plus engine
 /// universes no platform row links to (orphans).
 export interface UniverseReconcile {
   platform: {
     id: string;
     lightspeedUniverseId: string;
-    engine: "ok" | "missing" | "unchecked";
+    engine: "ok" | "missing" | "deleting";
+    deletion?: import("@lightspeed-ai/sdk").DeploymentUniverseView["deletion"];
   }[];
   orphans: EngineUniverse[];
 }
@@ -148,27 +155,6 @@ export interface Member {
   email?: string;
   name: string;
   createdAt: string;
-}
-
-export interface UniverseSetup {
-  id: string;
-  name: string;
-  description: string;
-  version: number;
-  available: boolean;
-  status: "available" | "installing" | "ready" | "failed" | "unavailable";
-  installedVersion?: number;
-  error?: string;
-  resources?: {
-    keyPrefix?: string;
-    /// The groups the admin chose for the Configurator's key.
-    keyGroups?: MethodGroup[];
-    /// `existing` when an admin brought the key; the setup never revokes it.
-    keySource?: "minted" | "existing";
-    grantId?: string;
-    serverId?: string;
-    profileId?: string;
-  };
 }
 
 /// Gateway passthrough shapes (the engine owns the full documents).
@@ -236,7 +222,7 @@ export interface ModelListResponse {
   providers?: ModelProviderDiscovery[];
 }
 
-export interface AuthGrantOption {
+export interface CredentialGrantOption {
   grantId: string;
   providerId: string;
   providerKind: string;
@@ -246,7 +232,7 @@ export interface AuthGrantOption {
   exposure: "brokered" | "retrievable";
 }
 
-export interface SecretGrant extends AuthGrantOption {
+export interface SecretGrant extends CredentialGrantOption {
   /// Who created the grant; attribution only.
   createdBy: Attribution;
   scopes?: string[];
@@ -266,7 +252,7 @@ export interface SecretGrant extends AuthGrantOption {
 export interface SecretProvider {
   /// Friendly ModelSelection.providerId, such as `openai`.
   providerId: string;
-  /// Namespaced auth-provider row id, such as `model:openai`.
+  /// Namespaced credential-provider row id, such as `model:openai`.
   credentialId: string;
   /// False only for legacy/malformed rows that the model runtime will ignore.
   usableForModels: boolean;
@@ -431,6 +417,8 @@ export interface McpServerAuthDiscovery {
 /// Exact projections of the generated Lightspeed environment contract.
 export type Environment = EnvironmentView;
 export type EnvironmentProviderBinding = EnvironmentProviderBindingView;
+/// A provider this universe may create environments from.
+export type AvailableEnvironmentProvider = AvailableEnvironmentProviderView;
 export type EnvironmentTemplate = EnvironmentTemplateView;
 export type EnvironmentCredentialSource = EnvironmentCredentialSourceView;
 export type EnvironmentCredential = EnvironmentCredentialView;
@@ -608,9 +596,9 @@ export interface BlobContent {
   bytesBase64: string;
 }
 
-/// Bot and channel wire types come from the generated core API client: the
+/// Bot wire types come from the generated core API client: the
 /// platform routes are passthroughs, so the browser reads the
-/// core response shapes verbatim. Only the connector health report — a
+/// core response shapes verbatim.
 /// platform-owned surface — keeps a local shape.
 export type {
   BotActiveDeliverySnapshot,
@@ -626,7 +614,6 @@ export type {
   BotEventDocument,
   BotEventInput,
   BotEventListResponse,
-  BotEventMedia,
   BotEventOutcome,
   BotEventReadResponse,
   BotEventReplyRef,
@@ -654,24 +641,7 @@ export type {
   BotTriggerView,
   BotView,
   BotWhenBusy,
-  ChannelAccountInput,
-  ChannelAccountListResponse,
-  ChannelAccountReadResponse,
-  ChannelAccountSettings,
-  ChannelAccountView,
-  ChannelPairedVia,
-  ChannelPairingListResponse,
-  ChannelPairingView,
-  ChannelProvider,
-  ChatAccess,
-  ChatActivation,
-  ChatGroupActivation,
-  ChatPairing,
-  ChatScope,
-  ChatTurnAccess,
   LlmUsageView,
-  DeploymentChannelAccountListResponse,
-  DeploymentChannelAccountView,
   PollCursorSpec,
   PollCursorState,
   PollHttpAuth,
@@ -690,65 +660,8 @@ import type { BotView } from "@lightspeed-ai/sdk";
 export interface BotTriggerSecrets {
   /// Webhook triggers: the ingest path including its URL token.
   ingestPath?: string | null;
-  /// Chat triggers with `pairing: code`: the code a conversation sends once.
-  pairingCode?: string | null;
 }
 
 export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
   return bot.displayName ?? bot.botId;
-}
-
-/// Connector host health, aggregated by the platform backend from each
-/// connector's /healthz (`GET /api/v1/status/channels`). Platform-owned;
-/// unrelated to the core channel account records.
-export interface ChannelConnectorHealth {
-  version: 1;
-  universeId?: string;
-  provider: string;
-  accountId: string;
-  state: "starting" | "ready" | "disconnected" | "failed" | "stopping" | "stopped";
-  ingressConnected: boolean;
-  activityWorkerReady: boolean;
-  reconnectAttempts: number;
-  detail?: string;
-  lastError?: string;
-  lastErrorAtMs?: number;
-  changedAtMs: number;
-}
-
-export interface ChannelConnectorHostHealth {
-  version: 1;
-  state: "starting" | "ready" | "degraded" | "stopping" | "stopped";
-  startedAtMs: number;
-  discovery: {
-    passes: number;
-    lastSuccessAtMs?: number;
-    lastError?: string;
-    lastErrorAtMs?: number;
-  };
-  accounts: ChannelConnectorHealth[];
-}
-
-export interface ChannelConnectorStatus {
-  url: string;
-  reachable: boolean;
-  httpStatus: number | null;
-  health?: ChannelConnectorHostHealth | ChannelConnectorHealth;
-  error?: string;
-}
-
-export interface ChannelsStatus {
-  connectors: ChannelConnectorStatus[];
-}
-
-export interface UniverseChannelStatus {
-  accounts: ChannelConnectorHealth[];
-}
-
-export function connectorAccountHealth(
-  status: ChannelConnectorStatus,
-): ChannelConnectorHealth[] {
-  const health = status.health;
-  if (!health) return [];
-  return "accounts" in health ? health.accounts : [health];
 }

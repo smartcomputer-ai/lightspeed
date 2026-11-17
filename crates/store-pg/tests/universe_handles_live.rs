@@ -52,7 +52,6 @@ async fn universes_are_named_at_creation_and_renamed_only_explicitly() {
 
 async fn exercise(pool: &sqlx::PgPool) {
     PgStore::migrate(pool).await.expect("apply migrations");
-    upgrade_keeps_fitting_names_and_derives_the_rest(pool).await;
 
     // A universe created without a handle takes the one derived from its id.
     let id = Uuid::new_v4();
@@ -96,13 +95,11 @@ async fn exercise(pool: &sqlx::PgPool) {
     // Declaration updates are partial and preserve unrelated sections and tenants.
     let configuration = api::UniverseConfiguration {
         display_name: Some("Fresh universe".into()),
-        members: Some(vec![api::DeclaredUniverseMember {
-            email: None,
-            issuer: Some("https://id.example".into()),
-            subject: Some("owner".into()),
-            role: api::UniverseMemberRole::Admin,
-        }]),
-        directory_group_mappings: None,
+        metadata: Some(std::collections::BTreeMap::from([(
+            "purpose".into(),
+            "research".into(),
+        )])),
+        protected: Some(false),
     };
     assert!(
         store_pg::put_universe_configuration(pool, fresh_id, &configuration)
@@ -118,7 +115,7 @@ async fn exercise(pool: &sqlx::PgPool) {
         configuration
     );
     let clear = api::UniverseConfiguration {
-        members: Some(vec![]),
+        metadata: Some(Default::default()),
         ..Default::default()
     };
     for _ in 0..2 {
@@ -134,15 +131,19 @@ async fn exercise(pool: &sqlx::PgPool) {
         .unwrap()
         .configuration;
     assert_eq!(actual.display_name, configuration.display_name);
-    assert_eq!(actual.members, Some(vec![]));
-    assert_eq!(actual.directory_group_mappings, None);
+    assert_eq!(actual.metadata, Some(Default::default()));
+    assert_eq!(actual.protected, Some(false));
     assert_eq!(
         store_pg::read_universe_stats(pool, id)
             .await
             .unwrap()
             .unwrap()
             .configuration,
-        api::UniverseConfiguration::default()
+        api::UniverseConfiguration {
+            metadata: Some(Default::default()),
+            protected: Some(false),
+            ..Default::default()
+        }
     );
 
     // Handles are unique across universes, at creation and on rename.
@@ -207,50 +208,6 @@ async fn exercise(pool: &sqlx::PgPool) {
     }
 }
 
-/// Rebuild the universe table as the previous revision left it, then apply
-/// the handle migration over rows of every kind it has to carry.
-async fn upgrade_keeps_fitting_names_and_derives_the_rest(pool: &sqlx::PgPool) {
-    pool.execute(sqlx::raw_sql(
-        r#"
-        ALTER TABLE universes DROP CONSTRAINT universes_handle_format;
-        ALTER TABLE universes ALTER COLUMN handle DROP NOT NULL;
-        ALTER TABLE universes RENAME CONSTRAINT universes_handle_key TO universes_slug_key;
-        ALTER TABLE universes RENAME COLUMN handle TO slug;
-        ALTER TABLE universes ADD CONSTRAINT universes_slug_format
-            CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$');
-        "#,
-    ))
-    .await
-    .expect("restore the previous universe table");
-    let kept = Uuid::new_v4();
-    let unnamed = Uuid::new_v4();
-    let mixed_case = Uuid::new_v4();
-    let uuid_shaped = Uuid::new_v4();
-    for (id, slug) in [
-        (kept, Some("kept-name".to_owned())),
-        (unnamed, None),
-        (mixed_case, Some("My.Universe:one".to_owned())),
-        (uuid_shaped, Some(Uuid::new_v4().simple().to_string())),
-    ] {
-        sqlx::query("INSERT INTO universes (universe_id, slug) VALUES ($1, $2)")
-            .bind(id)
-            .bind(slug)
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-
-    apply_migration(pool, 16).await;
-
-    assert_eq!(handle(pool, kept).await, "kept-name");
-    for id in [unnamed, mixed_case, uuid_shaped] {
-        assert_eq!(
-            handle(pool, id).await,
-            store_pg::default_universe_handle(id)
-        );
-    }
-}
-
 fn is_unique_violation(error: &store_pg::PgStoreError) -> bool {
     matches!(error, store_pg::PgStoreError::Postgres(sqlx::Error::Database(error)) if error.is_unique_violation())
 }
@@ -267,16 +224,4 @@ async fn handle(pool: &sqlx::PgPool, id: Uuid) -> String {
         .unwrap()
         .unwrap()
         .handle
-}
-
-/// Run one embedded migration's statements over the schema as it stands. The
-/// ledger is left alone, so migrations added later do not affect this.
-async fn apply_migration(pool: &sqlx::PgPool, version: i64) {
-    let migration = store_pg::MIGRATIONS
-        .iter()
-        .find(|migration| migration.version == version)
-        .expect("embedded migration");
-    pool.execute(sqlx::raw_sql(migration.sql))
-        .await
-        .expect("apply migration");
 }

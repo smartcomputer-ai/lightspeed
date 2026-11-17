@@ -11,7 +11,7 @@ pub(crate) struct ReadArgs {
 }
 
 pub(crate) async fn read(args: ReadArgs) -> Result<()> {
-    let session = load(&HttpAgentApi::new(""), &args.session_id).await?;
+    let session = load(&HttpAgentApi::from_active(), &args.session_id).await?;
     if args.json {
         return output::show(true, &session);
     }
@@ -49,7 +49,7 @@ enum ConfigCommand {
     },
 }
 pub(crate) async fn config(args: ConfigArgs) -> Result<()> {
-    let api = HttpAgentApi::new("");
+    let api = HttpAgentApi::from_active();
     match args.command {
         ConfigCommand::Read(args) => {
             output::show(args.json, &load(&api, &args.session_id).await?.config)
@@ -73,8 +73,7 @@ pub(crate) async fn config(args: ConfigArgs) -> Result<()> {
                         expected_revision.unwrap_or(session.config_revision),
                     ),
                 })
-                .await?
-                .result;
+                .await?;
             output::show(json, &response)
         }
     }
@@ -94,6 +93,5 @@ async fn load(api: &HttpAgentApi, id: &str) -> Result<api::SessionView> {
             run_limit: Some(1),
         })
         .await?
-        .result
         .session)
 }

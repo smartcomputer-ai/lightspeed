@@ -46,17 +46,28 @@ impl SecretSourceArgs {
 /// The kinds of key whose secret can be supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretKind {
-    /// For `api-key put`.
-    ApiKey,
+    /// For configuring runtime HTTP authentication.
+    RuntimeToken,
     /// For `environment registration-key put`.
     RegistrationKey,
+    /// For a service user key declared in an organization document.
+    ServiceUserKey,
 }
 
 impl SecretKind {
     fn prefix(self) -> &'static str {
         match self {
-            Self::ApiKey => api::API_KEY_SECRET_PREFIX,
+            Self::RuntimeToken => "lsr_",
             Self::RegistrationKey => api::REGISTRATION_KEY_SECRET_PREFIX,
+            Self::ServiceUserKey => "lsa_",
+        }
+    }
+
+    /// Platform keys need at least 64 characters after their prefix.
+    fn random_bytes(self) -> usize {
+        match self {
+            Self::ServiceUserKey => 48,
+            _ => api::KEY_SECRET_RANDOM_BYTES,
         }
     }
 }
@@ -75,7 +86,7 @@ pub fn generate_secret(kind: SecretKind) -> Result<String> {
     use base64::Engine as _;
     use rand::TryRng as _;
 
-    let mut bytes = [0u8; api::KEY_SECRET_RANDOM_BYTES];
+    let mut bytes = vec![0u8; kind.random_bytes()];
     rand::rngs::SysRng
         .try_fill_bytes(&mut bytes)
         .context("read the operating system's random source")?;
@@ -94,16 +105,29 @@ mod tests {
     fn generated_secrets_have_the_accepted_form_and_differ() {
         use base64::Engine as _;
         for (kind, prefix) in [
-            (SecretKind::ApiKey, "lsk_"),
+            (SecretKind::RuntimeToken, "lsr_"),
             (SecretKind::RegistrationKey, "lsrk_"),
+            (SecretKind::ServiceUserKey, "lsa_"),
         ] {
             let secret = generate_secret(kind).unwrap();
             let random = secret.strip_prefix(prefix).expect("prefix");
             let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(random)
                 .expect("base64url without padding");
-            assert_eq!(bytes.len(), 32);
+            assert_eq!(bytes.len(), kind.random_bytes());
             assert_ne!(secret, generate_secret(kind).unwrap());
         }
+    }
+
+    #[test]
+    fn a_service_user_secret_has_the_form_platform_accepts() {
+        let secret = generate_secret(SecretKind::ServiceUserKey).unwrap();
+        let random = secret.strip_prefix("lsa_").unwrap();
+        assert!(random.len() >= 64);
+        assert!(
+            random
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
     }
 }

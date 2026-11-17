@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { demoUniverseActions } from "../access";
 import type { AgentNotification } from "@lightspeed-ai/sdk";
 import { sessionSummary, type DemoStore, type UniverseState } from "../store";
 import { listItemOf } from "./bots";
@@ -8,8 +9,8 @@ import { listItemOf } from "./bots";
  */
 export function watchRoutes(store: DemoStore): Hono {
   const app = new Hono();
-  app.get("/:id/watch", c => {
-    const universe = store.universe(c.req.param("id"));
+  app.get("/:universe/events", c => {
+    const universe = [...store.universes.values()].find(value => value.universe.lightspeedUniverseId === c.req.param("universe") || value.universe.handle === c.req.param("universe"));
     if (!universe) return c.json({ error: "not found" }, 404);
     const encoder = new TextEncoder();
     let previous = snapshot(store, universe);
@@ -25,7 +26,7 @@ export function watchRoutes(store: DemoStore): Hono {
           c.req.raw.signal.removeEventListener("abort", close);
         };
         close = () => { if (!closed) { cancel(); output.close(); } };
-        const send = (event: AgentNotification) => output.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        const send = (event: AgentNotification) => output.enqueue(encoder.encode(`event: ${event.method}\ndata: ${JSON.stringify(event.params)}\n\n`));
         send({ method: "watch/reset", params: {} });
         let ticks = 0;
         let missed = false;
@@ -65,7 +66,7 @@ export function watchRoutes(store: DemoStore): Hono {
 function snapshot(store: DemoStore, universe: UniverseState) {
   const rows = new Map<string, { event: AgentNotification; serialized: string }>();
   const add = (key: string, event: AgentNotification) => rows.set(key, { event, serialized: JSON.stringify(event) });
-  const admin = store.currentUser.role === "admin" || universe.universe.role === "admin";
+  const admin = demoUniverseActions(store, universe).has("accessPrivateSessions");
   for (const record of universe.sessions.values()) {
     const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
     const access = root.view.access;

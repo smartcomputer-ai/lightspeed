@@ -1,10 +1,9 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
 import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
-import { effectiveFeatures, mergeFeatureOverrides, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
+import { effectiveFeatures, mergeFeatureOverrides, type AuditEvent, type PlatformSettingKey, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor, type OrganizationRole, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
-  ChannelsStatus,
   EngineUniverse,
   Environment,
   EnvironmentCredential,
@@ -22,7 +21,6 @@ import type {
   SessionSummary,
   SessionView,
   Universe,
-  UniverseSetup,
   WorkspaceRow,
   WorkspaceTree,
 } from "@/api";
@@ -31,12 +29,8 @@ import type {
   BotEventView,
   BotTriggerView,
   BotView,
-  ChannelAccountView,
-  ChannelPairingView,
   ContextEntryView,
-  DeploymentApiKeyView,
   DeploymentEnvironmentProviderView,
-  MethodGroup,
   RunFailureKindView,
   RunView,
   SessionEventView,
@@ -154,8 +148,6 @@ export interface WorkspaceRecord {
 export type StoredBotTrigger = BotTriggerView & {
   /// Webhook triggers: the ingest path including its URL token.
   ingestPath?: string | null;
-  /// Chat triggers with `pairing: code`.
-  pairingCode?: string | null;
 };
 
 export interface BotRecord {
@@ -178,7 +170,6 @@ export interface UniverseState {
   featureOverrides: FeatureOverrides;
   members: Member[];
   /// Universe keys as core lists them.
-  apiKeys: DeploymentApiKeyView[];
   profiles: Map<string, ProfileDocument>;
   sessions: Map<string, SessionRecord>;
   /// Called once, the first time someone lists the universe's sessions.
@@ -197,12 +188,7 @@ export interface UniverseState {
   githubApps: GitHubApp[];
   models: ModelListResponse;
   modelDefaults: ModelDefaults;
-  setups: UniverseSetup[];
   bots: Map<string, BotRecord>;
-  /// Universe channel accounts (core wire shape), keyed by `accountId`.
-  channelAccounts: Map<string, ChannelAccountView>;
-  /// Conversation → bot pairing rows (core wire shape).
-  channelPairings: ChannelPairingView[];
   /// Fallback responder for sessions without their own script.
   responder: DemoResponder;
 }
@@ -231,17 +217,21 @@ const fallbackResponder: DemoResponder = (input) => ({
 });
 
 export class DemoStore {
-  readonly auditEvents: Array<{ id: string; createdAt: string; actorId: string; targetId: string; universeId: string; action: string; outcome: string; details: Record<string, unknown> }> = [];
+  readonly auditEvents: AuditEvent[] = [];
   readonly deletedSessions = new Map<string, { record: SessionRecord; deletedAtMs: number }>();
   readonly users = new Map<string, DemoUser>();
+  readonly organizations = new Map<string, PlatformOperationResult<"platform/organizations/read">["organization"]>();
+  readonly organizationMemberships = new Map<string, Map<string, OrganizationRole>>();
+  readonly serviceUsers = new Map<string, PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number]>();
+  readonly serviceUserGrants = new Map<string, PlatformOperationResult<"platform/universes/grants/list">["grants"]>();
+  /// Platform settings changed in the demo; the rest use their defaults.
+  readonly platformSettings = new Map<PlatformSettingKey, boolean | number>();
   currentUser: DemoUser;
   readonly universes = new Map<string, UniverseState>();
   /// Engine universes no platform row links to (admin reconcile view).
   readonly orphanEngineUniverses: EngineUniverse[] = [];
   readonly environmentProviders = new Map<string, DeploymentEnvironmentProviderView>();
   /// Deployment keys; universe keys live on their universe.
-  readonly deploymentKeys: DeploymentApiKeyView[] = [];
-  channelsStatus: ChannelsStatus = { connectors: [] };
   readonly blobs = new Map<string, BlobContent>();
   readonly defaultInstructionsRef: string;
   /// Debug commands (`debug: …` messages); see debug-commands.ts.
@@ -293,7 +283,7 @@ export class DemoStore {
   addUniverse(init: UniverseInit): UniverseState {
     const id = init.id ?? crypto.randomUUID();
     const createdAt = init.createdAt ?? new Date().toISOString();
-    const role = init.role === undefined ? "admin" : init.role;
+    const role = init.role === undefined ? "owner" : init.role;
     const state: UniverseState = {
       universe: {
         id,
@@ -301,8 +291,12 @@ export class DemoStore {
         name: init.name,
         icon: init.icon ?? "orbit",
         iconColor: init.iconColor ?? "default",
+        organizationId: "demo-organization",
+        organizationRole: "admin",
+        protected: false,
+        expiresAtMs: null,
         handle: init.handle,
-        gatewayUrl: null,
+
         status: "active",
         createdAt,
         role,
@@ -310,7 +304,6 @@ export class DemoStore {
       },
       featureOverrides: mergeFeatureOverrides({}, init.features ?? {}),
       members: [],
-      apiKeys: [],
       profiles: new Map(),
       sessions: new Map(),
       workspaces: new Map(),
@@ -325,10 +318,7 @@ export class DemoStore {
       githubApps: [],
       models: { models: [], providers: [] },
       modelDefaults: { revision: 0, agentRun: null, speechToText: null },
-      setups: [],
       bots: new Map(),
-      channelAccounts: new Map(),
-      channelPairings: [],
       responder: init.responder ?? fallbackResponder,
     };
     if (role) {
@@ -365,30 +355,6 @@ export class DemoStore {
       lastActivityAtMs,
     };
   }
-}
-
-/// The id core allocates for a key whose creator chose none.
-export function allocatedKeyId(): string {
-  return `api_key_${crypto.randomUUID().replaceAll("-", "")}`;
-}
-
-/// A key scoped to `state`'s universe, as core lists it.
-export function universeApiKey(
-  state: UniverseState,
-  key: { keyId?: string; keyPrefix: string; displayName: string; groups: MethodGroup[]; createdAtMs: number; createdBy: string; lastUsedAtMs?: number | null; revokedAtMs?: number | null },
-): DeploymentApiKeyView {
-  return {
-    keyId: key.keyId ?? allocatedKeyId(),
-    keyPrefix: key.keyPrefix,
-    displayName: key.displayName,
-    scope: { kind: "universe", universeId: state.universe.lightspeedUniverseId },
-    groups: key.groups,
-    assertActor: false,
-    createdBy: { kind: "actor", id: key.createdBy },
-    createdAtMs: key.createdAtMs,
-    lastUsedAtMs: key.lastUsedAtMs ?? null,
-    revokedAtMs: key.revokedAtMs ?? null,
-  };
 }
 
 export function sessionSummary(record: SessionRecord): SessionSummary {

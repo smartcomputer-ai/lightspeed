@@ -3,7 +3,7 @@
 //! query names. The event row in Postgres is authoritative; the signal is
 //! a notification carrying only what routing and delivery need.
 
-use api::{BotCoalescePolicy, BotEventMedia, BotEventOutcome, BotId, ProfileId};
+use api::{BotCoalescePolicy, BotId, ProfileId};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -13,9 +13,6 @@ pub const BOT_EVENT_SIGNAL: &str = "bot_event";
 pub const BOT_CONFIG_SIGNAL: &str = "bot_config";
 pub const BOT_SESSION_ROTATE_SIGNAL: &str = "bot_session_rotate";
 pub const BOT_STATE_QUERY: &str = "bot_state";
-/// Delivery receipts to an admitting source's workflow (`BotEvent::notify`):
-/// `started` when the run begins, `finished` when the delivery ends.
-pub const BOT_DELIVERY_SIGNAL: &str = "bot_delivery";
 
 /// Durable controller configuration; one per bot record revision. Sent as
 /// the workflow's start argument and again with every `bot_config` signal.
@@ -105,15 +102,6 @@ pub struct BotEvent {
     /// The sender asked for a receipt when this delivery finishes.
     #[serde(default)]
     pub reply: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub media: Vec<BotEventMedia>,
-    /// CAS ref of receiver-bound tool declarations a routed session is
-    /// created with.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools_ref: Option<String>,
-    /// The admitting source asked for `started` / `finished` receipts.
-    #[serde(default)]
-    pub notify: bool,
 }
 
 /// Operator request to close one controlled session and advance its
@@ -121,30 +109,4 @@ pub struct BotEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotSessionRotate {
     pub session_id: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BotDeliveryPhase {
-    Started,
-    Finished,
-}
-
-/// The `bot_delivery` signal body a notified workflow receives.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BotDeliveryReceipt {
-    /// The admitting source's opaque token, echoed verbatim.
-    pub token: String,
-    pub phase: BotDeliveryPhase,
-    pub delivery_id: String,
-    /// `#N`s of the delivery's events.
-    pub seqs: Vec<u64>,
-    pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    /// `finished` only: the lane's outcome.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<BotEventOutcome>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
 }

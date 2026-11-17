@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     document::{SCHEMA_VERSION, SecretSource, source_field},
-    plan::{deployment_resources, universe_resources},
+    plan::universe_resources,
     resources::{MODEL_DEFAULT_SLOTS, Resource, schema_of},
 };
 
@@ -164,11 +164,6 @@ pub(crate) fn document_schema() -> Value {
             }),
         );
     }
-    let deployment_sections: Map<String, Value> = deployment_resources()
-        .iter()
-        .map(|resource| (resource.section().to_owned(), list_of(resource.section())))
-        .collect();
-
     let configuration = schema_of::<api::UniverseConfiguration>(&mut generator);
     if let Some(properties) = configuration.get("properties").and_then(Value::as_object) {
         universe_sections.extend(properties.clone());
@@ -191,6 +186,25 @@ pub(crate) fn document_schema() -> Value {
                 "handle".to_owned(),
                 json!({
                     "description": "The universe's deployment-unique name. apply finds the universe by it and creates the universe when no universe has it.",
+                    "type": "string",
+                    "minLength": 1,
+                }),
+            );
+            properties.insert(
+                "organization".to_owned(),
+                json!({
+                    "description": "Platform only. The handle of the organization holding the universe: apply creates a missing universe there, and an existing universe must already be there. Left out, creation uses the selected organization.",
+                    "type": "string",
+                    "minLength": 1,
+                }),
+            );
+            properties.insert("access".to_owned(), reference("UniverseAccess"));
+        }
+        if kind == "organization" {
+            properties.insert(
+                "handle".to_owned(),
+                json!({
+                    "description": "The organization's deployment-unique handle. apply finds the organization by it and creates it when none has it.",
                     "type": "string",
                     "minLength": 1,
                 }),
@@ -220,6 +234,116 @@ pub(crate) fn document_schema() -> Value {
         }),
     );
     definitions.extend(entries);
+    let role = |roles: &[&str]| json!({ "type": "string", "enum": roles });
+    let organization_role = role(&["member", "creator", "admin"]);
+    let universe_role = role(&["viewer", "contributor", "operator", "owner"]);
+    let declared_member = |role: &Value| {
+        json!({
+            "description": "A person declared by verified email, or by their company sign-in issuer and subject.",
+            "anyOf": [
+                { "type": "object", "properties": { "email": { "type": "string", "format": "email" }, "role": role }, "required": ["email", "role"], "additionalProperties": false },
+                { "type": "object", "properties": { "issuer": { "type": "string", "format": "uri" }, "subject": { "type": "string", "minLength": 1 }, "role": role }, "required": ["issuer", "subject", "role"], "additionalProperties": false },
+            ],
+        })
+    };
+    let group_mapping = |role: &Value| {
+        json!({
+            "description": "Everyone in a company directory group holds the role.",
+            "type": "object",
+            "properties": { "issuer": { "type": "string", "format": "uri" }, "group": { "type": "string", "minLength": 1 }, "role": role },
+            "required": ["issuer", "group", "role"],
+            "additionalProperties": false,
+        })
+    };
+    definitions.insert(
+        "UniverseAccess".to_owned(),
+        json!({
+            "description": "Platform only. Who may use the universe beyond the organization's default access. `members` and `directoryGroupMappings` are its declared access policy; each one present replaces its part. Service users are granted their role by name; one left out keeps its grant.",
+            "type": "object",
+            "properties": {
+                "members": { "type": "array", "items": declared_member(&universe_role) },
+                "directoryGroupMappings": { "type": "array", "items": group_mapping(&universe_role) },
+                "serviceUsers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": { "name": { "type": "string", "minLength": 1 }, "role": universe_role },
+                        "required": ["name", "role"],
+                        "additionalProperties": false,
+                    },
+                },
+            },
+            "additionalProperties": false,
+        }),
+    );
+    let mut organization_sections = Map::new();
+    organization_sections.insert("name".to_owned(), json!({ "description": "Required to create the organization.", "type": "string", "minLength": 1, "maxLength": 120 }));
+    organization_sections.insert("baseUniverseRole".to_owned(), json!({
+        "description": "The default universe access: the role every member person holds in every universe of the organization. `null` gives members only what they are granted.",
+        "anyOf": [universe_role.clone(), { "type": "null" }],
+    }));
+    organization_sections.insert("defaultProtected".to_owned(), json!({ "description": "New universes start with deletion protection.", "type": "boolean" }));
+    organization_sections.insert("requireProtected".to_owned(), json!({ "description": "Every universe must stay protected and cannot expire.", "type": "boolean" }));
+    organization_sections.insert("universeQuota".to_owned(), json!({
+        "description": "The organization's own universe limit; `null` follows the deployment default. Only a Platform Admin changes it.",
+        "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 100000 }, { "type": "null" }],
+    }));
+    organization_sections.insert("membershipPolicy".to_owned(), json!({
+        "description": "People and company directory groups declared to hold organization roles. When present, it replaces the organization's policy.",
+        "type": "object",
+        "properties": {
+            "members": { "type": "array", "items": declared_member(&organization_role) },
+            "directoryGroupMappings": { "type": "array", "items": group_mapping(&organization_role) },
+        },
+        "additionalProperties": false,
+    }));
+    organization_sections.insert("serviceUsers".to_owned(), json!({
+        "description": "Service users, by their name in the organization. Their API keys are issued with `lightspeed platform service-user`, never declared. One left out is kept.",
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "role": organization_role,
+                "enabled": { "type": "boolean" },
+                "keys": {
+                    "description": "Keys whose secret comes from outside, by name. The document is each key's desired state: restrictions left out mean none, an expiry left out means never. A changed secret replaces the old one at once. A key left out is kept.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+                            "secretFrom": reference("SecretSource"),
+                            "expiresAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+                            "restrictions": {
+                                "type": "object",
+                                "properties": {
+                                    "organizationIds": { "type": "array", "items": { "type": "string" } },
+                                    "universeIds": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+                                    "operations": { "type": "array", "items": { "type": "string" } },
+                                    "readOnly": { "type": "boolean" },
+                                    "allowUniverseCreation": { "type": "boolean" },
+                                    "allowServiceUserKeys": { "type": "boolean" },
+                                },
+                            },
+                        },
+                        "required": ["name", "secretFrom"],
+                    },
+                },
+            },
+            "required": ["name", "role"],
+            "additionalProperties": false,
+        },
+    }));
+    definitions.insert(
+        "OrganizationDocument".to_owned(),
+        envelope(
+            "organization",
+            "Platform only. The configuration of one organization. A field left out is not managed by the document.",
+            &["schemaVersion", "kind", "handle"],
+            organization_sections,
+        ),
+    );
     definitions.insert(
         "UniverseDocument".to_owned(),
         envelope(
@@ -229,22 +353,13 @@ pub(crate) fn document_schema() -> Value {
             universe_sections,
         ),
     );
-    definitions.insert(
-        "DeploymentDocument".to_owned(),
-        envelope(
-            "deployment",
-            "Resources that belong to the deployment and not to one universe.",
-            &["schemaVersion", "kind"],
-            deployment_sections,
-        ),
-    );
     let mut definitions = Value::Object(definitions);
     close(&mut definitions);
     json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "Lightspeed configuration document",
-        "description": "A document that `lightspeed config apply` makes a universe, or the deployment, match. Generated from the API's input types; do not edit.",
-        "oneOf": [reference("UniverseDocument"), reference("DeploymentDocument")],
+        "description": "A document that `lightspeed config apply` makes a universe or a Platform organization match. Generated from the API's input types; do not edit.",
+        "oneOf": [reference("UniverseDocument"), reference("OrganizationDocument")],
         "definitions": definitions,
     })
 }
@@ -269,10 +384,8 @@ schemaVersion: 1
 kind: universe
 handle: research
 displayName: Research
-members:
-  - { issuer: https://identity.example.com, subject: owner, role: admin }
-directoryGroupMappings:
-  - { issuer: https://identity.example.com, group: readers, role: viewer }
+metadata: { purpose: research }
+protected: true
 credentials:
   - grantId: tracker-token
     displayName: Issue tracker
@@ -304,7 +417,6 @@ mcpServers:
       x-upstream-token: { type: credential, grantId: tracker-token }
 environmentProviders:
   - providerId: pods
-    enabled: true
 registrationKeys:
   - registrationKeyId: runners
     displayName: Runners
@@ -338,11 +450,6 @@ profiles:
           environments:
             - { environmentId: build-box, default: true, access: read }
   - file: ../profiles/triage.json
-apiKeys:
-  - keyId: release-bot
-    displayName: Release bot
-    groups: [session, profiles]
-    secretFrom: { env: RELEASE_BOT_KEY }
 "#,
         )
         .unwrap()
@@ -373,56 +480,54 @@ apiKeys:
         );
     }
 
-    #[test]
-    fn a_document_that_uses_every_section_is_valid() {
-        assert_eq!(errors(&full_document()), Vec::<String>::new());
-        let deployment = json!({
-            "schemaVersion": 1,
-            "kind": "deployment",
-            "apiKeys": [{
-                "keyId": "platform", "displayName": "Platform", "assertActor": true,
-                "groups": "all",
-                "secretFrom": { "env": "PLATFORM_API_KEY" },
-            }],
-        });
-        assert_eq!(errors(&deployment), Vec::<String>::new());
+    /// The schema and the commands must agree, or an editor would accept
+    /// what `apply` refuses. Includes are resolved when a file is loaded,
+    /// before entries are checked, so the included profile is left out here.
+    fn accepted_by_the_commands(mut document: Value) -> bool {
+        if let Some(profiles) = document["profiles"].as_array_mut() {
+            profiles.retain(|profile| profile.get("file").is_none());
+        }
+        serde_json::from_value::<crate::config::document::UniverseDocument>(document)
+            .map_err(anyhow::Error::from)
+            .and_then(|document| crate::config::plan::check_universe(&document))
+            .is_ok()
     }
 
     #[test]
-    fn a_key_states_its_groups_as_a_list_or_all() {
+    fn an_optional_provider_credential_stays_optional() {
+        // The second provider of the full document has no credential.
         let schema = document_schema();
-        let key = &schema["definitions"]["ApiKeysEntry"];
+        let provider = &schema["definitions"]["ProvidersEntry"];
+        assert!(provider["properties"].get("credentialFrom").is_some());
+        assert!(provider["properties"].get("credential").is_none());
         assert!(
-            key["required"]
+            !provider["required"]
                 .as_array()
                 .unwrap()
-                .contains(&json!("groups"))
+                .contains(&json!("credentialFrom"))
         );
-        let with_groups =
-            |groups: Value| edited(|document| document["apiKeys"][0]["groups"] = groups);
-        for valid in [json!("all"), json!(["session"])] {
-            let document = with_groups(valid.clone());
-            assert_eq!(errors(&document), Vec::<String>::new(), "{valid}");
-            assert!(accepted_by_the_commands(document), "{valid}");
-        }
-        let unstated = edited(|document| {
-            document["apiKeys"][0]
-                .as_object_mut()
+        let credential = &schema["definitions"]["CredentialsEntry"];
+        assert!(
+            credential["required"]
+                .as_array()
                 .unwrap()
-                .remove("groups");
-        });
-        for (what, document) in [
-            ("a key without groups", unstated),
-            ("another word than all", with_groups(json!("everything"))),
-            ("an unknown group", with_groups(json!(["session", "nope"]))),
-            ("groups that are neither", with_groups(json!(true))),
-        ] {
-            assert!(!errors(&document).is_empty(), "the schema accepts {what}");
-            assert!(
-                !accepted_by_the_commands(document),
-                "the commands accept {what}"
-            );
-        }
+                .contains(&json!("tokenFrom"))
+        );
+        assert!(credential["properties"].get("dryRun").is_none());
+    }
+    #[test]
+    fn runtime_keys_and_deployment_documents_are_rejected() {
+        assert!(!errors(&json!({ "schemaVersion": 1, "kind": "deployment" })).is_empty());
+        assert!(
+            !errors(
+                &json!({ "schemaVersion": 1, "kind": "universe", "handle": "team", "apiKeys": [] })
+            )
+            .is_empty()
+        );
+    }
+    #[test]
+    fn a_document_that_uses_every_section_is_valid() {
+        assert_eq!(errors(&full_document()), Vec::<String>::new());
     }
 
     #[test]
@@ -475,9 +580,7 @@ apiKeys:
             ),
             (
                 "a scope on a key",
-                edited(|document| {
-                    document["apiKeys"][0]["scope"] = json!({ "kind": "deployment" })
-                }),
+                edited(|document| document["apiKeys"] = json!([])),
             ),
             (
                 "the environment repeated in its credential",
@@ -506,19 +609,6 @@ apiKeys:
         for (what, document) in cases {
             assert!(!errors(&document).is_empty(), "{what} must be invalid");
         }
-    }
-
-    /// The schema and the commands must agree, or an editor would accept
-    /// what `apply` refuses. Includes are resolved when a file is loaded,
-    /// before entries are checked, so the included profile is left out here.
-    fn accepted_by_the_commands(mut document: Value) -> bool {
-        if let Some(profiles) = document["profiles"].as_array_mut() {
-            profiles.retain(|profile| profile.get("file").is_none());
-        }
-        serde_json::from_value::<crate::config::document::UniverseDocument>(document)
-            .map_err(anyhow::Error::from)
-            .and_then(|document| crate::config::plan::check_universe(&document))
-            .is_ok()
     }
 
     #[test]
@@ -552,7 +642,9 @@ apiKeys:
             ),
             (
                 "a secret written in the document",
-                edited(|document| document["apiKeys"][0]["secret"] = json!("lsk_plaintext")),
+                edited(|document| {
+                    document["registrationKeys"][0]["secret"] = json!("lsrk_plaintext")
+                }),
             ),
             (
                 "a provisioned source without a template",
@@ -575,28 +667,5 @@ apiKeys:
                 "the commands accept {what}"
             );
         }
-    }
-
-    #[test]
-    fn an_optional_provider_credential_stays_optional() {
-        // The second provider of the full document has no credential.
-        let schema = document_schema();
-        let provider = &schema["definitions"]["ProvidersEntry"];
-        assert!(provider["properties"].get("credentialFrom").is_some());
-        assert!(provider["properties"].get("credential").is_none());
-        assert!(
-            !provider["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("credentialFrom"))
-        );
-        let credential = &schema["definitions"]["CredentialsEntry"];
-        assert!(
-            credential["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("tokenFrom"))
-        );
-        assert!(credential["properties"].get("dryRun").is_none());
     }
 }

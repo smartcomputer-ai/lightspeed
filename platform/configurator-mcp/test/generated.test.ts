@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { METHOD_INFO } from "@lightspeed-ai/sdk";
+import { OPERATION_INFO } from "@lightspeed-ai/sdk";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 
 describe("generated universe tools", () => {
@@ -7,6 +7,7 @@ describe("generated universe tools", () => {
     const excluded = new Set([
       "initialize",
       "universe/watch",
+      "blobs/upload",
       "environments/jobs/create",
       "environments/jobs/read",
       "environments/jobs/cancel",
@@ -20,12 +21,15 @@ describe("generated universe tools", () => {
       "environments/registered/put",
       "environments/registered/release",
     ]);
-    const expectedMethods = Object.entries(METHOD_INFO)
+    const expectedMethods = Object.entries(OPERATION_INFO)
       .filter(([method, info]) => info.scope === "universe" && !excluded.has(method))
       .map(([method]) => method)
       .sort();
     expect(GENERATED_TOOLS.map((tool) => tool.method).sort()).toEqual(expectedMethods);
     expect(new Set(GENERATED_TOOLS.map((tool) => tool.name)).size).toBe(expectedMethods.length);
+    expect(GENERATED_TOOLS.find((tool) => tool.method === "credentials/github/installations/grant")?.name).toBe(
+      "lightspeed_credentials_github_installs_grant",
+    );
     expect(GENERATED_TOOLS.some((tool) => tool.method.startsWith("deployment/"))).toBe(false);
     expect(GENERATED_TOOLS.find((tool) => tool.method === "session/config/put")?.name).toBe(
       "lightspeed_session_config_put",
@@ -82,8 +86,8 @@ describe("generated universe tools", () => {
   });
 
   it("carries operational method documentation into MCP descriptors", () => {
-    expect(GENERATED_TOOLS.find((tool) => tool.method === "auth/grants/read")).toMatchObject({
-      summary: "Read authentication grant metadata",
+    expect(GENERATED_TOOLS.find((tool) => tool.method === "credentials/grants/read")).toMatchObject({
+      summary: "Read credential grant metadata",
       description: expect.stringContaining("token values are never returned"),
     });
   });

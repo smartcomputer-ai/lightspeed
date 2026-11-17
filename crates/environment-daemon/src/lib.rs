@@ -654,7 +654,7 @@ mod tests {
             let key = config.cwd.join("registration-key");
             std::fs::write(&key, "lsrk_secret").expect("key");
             let mut registration = config::RegistrationConfig::new(
-                "wss://gateway.example/environment-gateway/connect".to_owned(),
+                "wss://gateway.example/environments/connect".to_owned(),
                 "https://gateway.example/.well-known/lightspeed-envd".to_owned(),
             );
             registration.registration_key_file = Some(key.clone());

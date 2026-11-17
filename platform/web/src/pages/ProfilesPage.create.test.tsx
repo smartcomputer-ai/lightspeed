@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { ProfilesPage } from "./ProfilesPage";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator" }, handle: "universe", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", actions: [...universeActions(["operator"])] }, handle: "universe", isLoading: false }) }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
 vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => null }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
@@ -71,7 +73,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 async function settle() {
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 }
 const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]')!;
 const lines = () => [...dialog().querySelectorAll('[data-slot="settings-disclosure"] > p')].map((line) => line.textContent);
@@ -92,7 +94,7 @@ async function type(selector: string, value: string) {
 it("keeps the display name open and summarizes the id and starting point", async () => {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
-      <Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
+      <Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage />} /></Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();
@@ -119,7 +121,7 @@ it("keeps the display name open and summarizes the id and starting point", async
 
   await click(dialog().querySelector('button[type="submit"]'));
   const put = mocks.api.mock.calls.find(([method]) => method === "PUT");
-  expect(put?.[1]).toBe("/api/v1/universes/universe/profiles/tier-two");
+  expect(put?.[1]).toBe("/api/ui/universes/universe/profiles/tier-two");
   expect(put?.[2]).toEqual({
     profileId: "tier-two",
     displayName: "Support owner",
@@ -131,7 +133,7 @@ it("keeps the display name open and summarizes the id and starting point", async
 it("opens the id on its own when neither a name nor an id is given", async () => {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={["/u/universe/profiles/own"]}>
-      <Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage admin />} /></Routes>
+      <Routes><Route path="/u/:handle/profiles/:profileId" element={<ProfilesPage />} /></Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();

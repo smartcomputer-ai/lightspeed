@@ -630,9 +630,8 @@
           },
           "approval_3": {
             "decided_by": {
-              "keyId": "ci-bot",
-              "kind": "key",
-              "scopeKind": "universe"
+              "kind": "token",
+              "name": "ci-bot"
             },
             "note": "looks fine",
             "request": {

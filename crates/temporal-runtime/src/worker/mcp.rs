@@ -5,8 +5,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use auth::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use base64::Engine;
+use credentials::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use harness::RemoteMcpToolSpec;
 use llm_runtime::{
     McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
@@ -17,8 +17,8 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use crate::gateway::service::mcp_discovery::{
-    ConfiguratorTrustedHeaderPolicy, DiscoveredMcpInventory, HttpMcpToolDiscoverer, McpRequestAuth,
-    McpToolCallRequest, McpToolDiscoverer, resolve_mcp_request_headers,
+    DiscoveredMcpInventory, HttpMcpToolDiscoverer, McpRequestAuth, McpToolCallRequest,
+    McpToolDiscoverer, resolve_mcp_request_headers,
 };
 
 pub enum RuntimeMcpExecutionOutcome {
@@ -65,8 +65,6 @@ pub struct RuntimeMcpExecutor {
     inventory: Arc<RuntimeMcpInventoryResolver>,
     transport: HttpMcpToolDiscoverer,
     private_networks: McpPrivateNetworkPolicy,
-    trusted_header: ConfiguratorTrustedHeaderPolicy,
-    universe_id: uuid::Uuid,
 }
 
 /// Demand-driven inventory TTL for servers without a tool-list change signal.
@@ -96,6 +94,11 @@ pub struct McpPrivateNetworkPolicy {
 
 impl McpPrivateNetworkPolicy {
     pub fn from_env() -> Result<Self, String> {
+        reject_retired_trusted_header_url(
+            std::env::var("LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL")
+                .ok()
+                .as_deref(),
+        )?;
         Self::parse(
             std::env::var("LIGHTSPEED_MCP_PRIVATE_NETWORKS")
                 .ok()
@@ -134,9 +137,16 @@ impl McpPrivateNetworkPolicy {
     /// refresh. It judges each URL against the list on its own, because an
     /// authorization server is a different host from the MCP server it
     /// protects and neither is known when the client is built.
-    pub fn oauth_http_client(&self) -> auth::HttpOAuthMetadataClient {
-        auth::HttpOAuthMetadataClient::with_private_networks(self.list.clone())
+    pub fn oauth_http_client(&self) -> credentials::HttpOAuthMetadataClient {
+        credentials::HttpOAuthMetadataClient::with_private_networks(self.list.clone())
     }
+}
+
+fn reject_retired_trusted_header_url(value: Option<&str>) -> Result<(), String> {
+    if value.is_some_and(|value| !value.trim().is_empty()) {
+        return Err("LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL is retired; remove it and configure a restricted Platform service-user API key as the MCP server credential".into());
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -145,8 +155,6 @@ pub struct RuntimeMcpInventoryResolver {
     discoverer: Arc<dyn McpToolDiscoverer>,
     secrets: Arc<dyn SecretResolver>,
     private_networks: McpPrivateNetworkPolicy,
-    trusted_header: ConfiguratorTrustedHeaderPolicy,
-    universe_id: uuid::Uuid,
     cache: Arc<Mutex<HashMap<InventoryCacheKey, CachedInventory>>>,
     locks: Arc<Mutex<InventoryLocks>>,
     ttl: Duration,
@@ -166,16 +174,12 @@ impl RuntimeMcpInventoryResolver {
         servers: Arc<dyn mcp::McpRegistryStore>,
         secrets: Arc<dyn SecretResolver>,
         private_networks: McpPrivateNetworkPolicy,
-        trusted_header: ConfiguratorTrustedHeaderPolicy,
-        universe_id: uuid::Uuid,
     ) -> Self {
         Self {
             servers,
             discoverer: Arc::new(HttpMcpToolDiscoverer::new()),
             secrets,
             private_networks,
-            trusted_header,
-            universe_id,
             cache: Arc::new(Mutex::new(HashMap::new())),
             locks: Arc::new(Mutex::new(HashMap::new())),
             ttl: MCP_INVENTORY_CACHE_TTL,
@@ -196,8 +200,6 @@ impl RuntimeMcpInventoryResolver {
             secrets: Arc::new(llm_runtime::secrets::AbsentSecretResolver),
             private_networks: McpPrivateNetworkPolicy::parse(Some("127.0.0.1"))
                 .expect("test private policy"),
-            trusted_header: ConfiguratorTrustedHeaderPolicy,
-            universe_id: uuid::Uuid::nil(),
             cache: Arc::new(Mutex::new(HashMap::new())),
             locks: Arc::new(Mutex::new(HashMap::new())),
             ttl,
@@ -216,11 +218,7 @@ impl RuntimeMcpInventoryResolver {
             .ok_or_else(|| {
                 McpInventoryError::new(format!("MCP server {} is not available", spec.server_id))
             })?;
-        let trusted_universe = self
-            .trusted_header
-            .permits(&spec.server_id, &record.server_url)
-            .then_some(self.universe_id);
-        let auth = record_auth(self.secrets.as_ref(), &record, trusted_universe.is_some())
+        let auth = record_auth(self.secrets.as_ref(), &record)
             .await
             .map_err(|error| McpInventoryError::new(format!("resolve MCP credential: {error}")))?;
         let private_access = self
@@ -231,7 +229,6 @@ impl RuntimeMcpInventoryResolver {
             .discover_tools(
                 &record.server_url,
                 &auth,
-                trusted_universe,
                 private_access,
                 mcp::McpToolDiscoveryLimits::default(),
             )
@@ -285,20 +282,14 @@ async fn usable_record(
     }
 }
 
-/// The live record's bearer and extra headers. A trusted-header server takes
-/// no bearer but still receives its configured headers.
+/// Resolve the live record's bearer and extra headers for every MCP exchange.
 async fn record_auth(
     secrets: &dyn SecretResolver,
     record: &mcp::McpServerRecord,
-    trusted: bool,
 ) -> Result<McpRequestAuth, SecretResolveError> {
-    let bearer = if trusted {
-        None
-    } else {
-        resolve_mcp_bearer(secrets, record.server_id.as_str(), &record.server_url)
-            .await?
-            .map(|value| SecretValue::new(value.expose()))
-    };
+    let bearer = resolve_mcp_bearer(secrets, record.server_id.as_str(), &record.server_url)
+        .await?
+        .map(|value| SecretValue::new(value.expose()));
     let headers = resolve_mcp_request_headers(secrets, record).await?;
     Ok(McpRequestAuth { bearer, headers })
 }
@@ -326,8 +317,6 @@ impl RuntimeMcpExecutor {
         secrets: Arc<dyn SecretResolver>,
         inventory: Arc<RuntimeMcpInventoryResolver>,
         private_networks: McpPrivateNetworkPolicy,
-        trusted_header: ConfiguratorTrustedHeaderPolicy,
-        universe_id: uuid::Uuid,
     ) -> Self {
         Self {
             servers,
@@ -335,8 +324,6 @@ impl RuntimeMcpExecutor {
             inventory,
             transport: HttpMcpToolDiscoverer::new(),
             private_networks,
-            trusted_header,
-            universe_id,
         }
     }
 
@@ -620,11 +607,7 @@ impl RuntimeMcpExecutor {
             }
         }
         let record = self.runtime_record(target).await?;
-        let trusted_universe = self
-            .trusted_header
-            .permits(&target.server_id, &record.server_url)
-            .then_some(self.universe_id);
-        let auth = record_auth(self.secrets.as_ref(), &record, trusted_universe.is_some())
+        let auth = record_auth(self.secrets.as_ref(), &record)
             .await
             .map_err(|error| format!("resolve MCP credential: {error}"))?;
         let private_access = self
@@ -635,7 +618,6 @@ impl RuntimeMcpExecutor {
             .call_tool(
                 &record.server_url,
                 &auth,
-                trusted_universe,
                 private_access,
                 mcp::McpToolDiscoveryLimits::default(),
                 McpToolCallRequest {
@@ -1234,6 +1216,15 @@ impl McpInventoryResolver for RuntimeMcpInventoryResolver {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retired_trusted_header_configuration_fails_closed() {
+        assert!(super::reject_retired_trusted_header_url(None).is_ok());
+        assert!(super::reject_retired_trusted_header_url(Some(" ")).is_ok());
+        assert!(
+            super::reject_retired_trusted_header_url(Some("http://localhost:18081/mcp")).is_err()
+        );
+    }
+
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use mcp::McpRegistryStore;
@@ -1266,7 +1257,6 @@ mod tests {
             &self,
             _server_url: &str,
             _auth: &McpRequestAuth,
-            _trusted_universe: Option<uuid::Uuid>,
             _private_access: PrivateNetworkAccess,
             _limits: mcp::McpToolDiscoveryLimits,
         ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
@@ -1374,7 +1364,6 @@ mod tests {
             &self,
             server_url: &str,
             _auth: &McpRequestAuth,
-            _trusted_universe: Option<uuid::Uuid>,
             private_access: PrivateNetworkAccess,
             _limits: mcp::McpToolDiscoveryLimits,
         ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {
@@ -1485,12 +1474,8 @@ mod tests {
                 servers.clone(),
                 secrets,
                 policy.clone(),
-                ConfiguratorTrustedHeaderPolicy,
-                uuid::Uuid::nil(),
             )),
             policy,
-            ConfiguratorTrustedHeaderPolicy,
-            uuid::Uuid::nil(),
         );
         let target = harness::RemoteMcpCallTarget {
             server_id: "test".to_owned(),
@@ -1589,9 +1574,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn oauth_client_reaches_private_hosts_only_through_the_list() {
         async fn verdict(
-            client: &auth::HttpOAuthMetadataClient,
+            client: &credentials::HttpOAuthMetadataClient,
             url: &str,
-        ) -> Result<(), auth::PinnedHttpError> {
+        ) -> Result<(), credentials::PinnedHttpError> {
             client
                 .policy()
                 .client_for_url(&Url::parse(url).expect("url"))
@@ -1606,25 +1591,25 @@ mod tests {
         assert_eq!(verdict(&listed, "http://10.20.4.8/token").await, Ok(()));
         assert_eq!(
             verdict(&listed, "https://127.0.0.1:9/token").await,
-            Err(auth::PinnedHttpError::NonPublicAddress)
+            Err(credentials::PinnedHttpError::NonPublicAddress)
         );
         assert_eq!(
             verdict(&listed, "https://169.254.169.254/latest").await,
-            Err(auth::PinnedHttpError::NonPublicAddress)
+            Err(credentials::PinnedHttpError::NonPublicAddress)
         );
         assert_eq!(
             verdict(&listed, "http://8.8.8.8/token").await,
-            Err(auth::PinnedHttpError::HttpsRequired)
+            Err(credentials::PinnedHttpError::HttpsRequired)
         );
 
         let unlisted = McpPrivateNetworkPolicy::default().oauth_http_client();
         assert_eq!(
             verdict(&unlisted, "http://localhost:9/token").await,
-            Err(auth::PinnedHttpError::HttpsRequired)
+            Err(credentials::PinnedHttpError::HttpsRequired)
         );
         assert_eq!(
             verdict(&unlisted, "https://localhost:9/token").await,
-            Err(auth::PinnedHttpError::NonPublicAddress)
+            Err(credentials::PinnedHttpError::NonPublicAddress)
         );
         assert_eq!(verdict(&unlisted, "https://8.8.8.8/token").await, Ok(()));
     }
@@ -1744,7 +1729,6 @@ mod tests {
             &self,
             _server_url: &str,
             _auth: &McpRequestAuth,
-            _trusted_universe: Option<uuid::Uuid>,
             _private_access: PrivateNetworkAccess,
             _limits: mcp::McpToolDiscoveryLimits,
         ) -> Result<DiscoveredMcpInventory, mcp::McpToolDiscoveryFailure> {

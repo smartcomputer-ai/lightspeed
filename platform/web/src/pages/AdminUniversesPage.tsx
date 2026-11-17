@@ -1,462 +1,169 @@
-import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
+import { organizationAllows, useDeploymentPermissions } from "@/lib/permissions";
+import { useOrganizations } from "@/lib/platform-api";
 import { ReadError } from "@/components/read-error";
-import { useState, type FormEvent } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
-import { AddIcon } from "@/icons";
+import { Link, useParams } from "react-router-dom";
+import { AddIcon, GoToIcon, MemberIcon, RefreshIcon, SettingsIcon, UniversesIcon } from "@/icons";
 import {
   api,
-  type EngineUniverse,
   type Universe,
   type UniverseReconcile,
-  type UniverseHandleSyncResult,
 } from "@/api";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  IdText,
-  Table,
-  TableActionsCell,
-  TableBody,
-  TableCard,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  TableTitleCell,
-} from "@/components/ui/table";
-import { NewUniverseDialog } from "@/components/universe-switcher";
-import { LoadingNote, PageHeader } from "@/components/page";
+import { TableCell } from "@/components/ui/table";
+import { NewUniverseDialog } from "@/components/new-universe-dialog";
+import { UniverseIcon } from "@/components/universe-icon";
+import { EmptyState, LoadingNote, PageHeader } from "@/components/page";
+import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
+import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceStatusBadge, ResourceTable, ResourceValue } from "@/components/resource-table";
+import type { ResourceStatusInfo } from "@/lib/resource-status";
 import { universeHome, useUniverses } from "@/lib/universes";
 
-/// The full inventory (platform admins get every universe from the list
-/// endpoint, incl. archived ones) — as opposed to the memberships-only
-/// switcher. Reconciliation against the engine rides along: each row gets
-/// an engine status, and engine universes with no platform row (orphans)
-/// are listed below with adopt/delete actions. Reconciliation checks links;
-/// updating cached runtime handles requires the explicit sync action.
+type EngineState = "ok" | "missing" | "deleting" | undefined;
+
+function universeStatus(universe: Universe, engine: EngineState): ResourceStatusInfo {
+  if (universe.status === "deleting") {
+    return { label: "Deleting", tone: "pending", description: universe.deletion ? `${universe.deletion.step}${universe.deletion.detail ? `: ${universe.deletion.detail}` : ""}` : undefined };
+  }
+  if (engine === "missing") return { label: "Missing on engine", tone: "danger", description: "The runtime no longer has this universe." };
+  if (universe.status === "archived") return { label: "Archived", tone: "neutral" };
+  return { label: "Active", tone: "positive" };
+}
+
+const ROLE_LABELS: Record<string, string> = { viewer: "Viewer", contributor: "Contributor", operator: "Operator", owner: "Owner" };
+
+/// The universes of one organization that the caller administers. A row
+/// opens the universe's details; its settings, members and lifecycle live in
+/// the universe itself.
 export function AdminUniversesPage() {
   const universes = useUniverses();
+  // Runtime inventory and repair are deployment administration.
+  const runtimeRepair = useDeploymentPermissions().can("manageUnclaimedUniverses");
+  const { organizationId } = useParams();
+  const organizations = useOrganizations();
+  const organization = organizations.data?.organizations.find((candidate) => candidate.id === organizationId);
+  const creates = !!organization && organizationAllows(organization, "createUniverse");
+  const canCreate = !!organization?.canCreateUniverse;
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [deletedUniverse, setDeletedUniverse] = useState<Universe | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [adopting, setAdopting] = useState<EngineUniverse | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
 
   const reconcile = useQuery({
-    queryKey: ["universes-reconcile"],
-    queryFn: () => api<UniverseReconcile>("GET", "/api/v1/universes/reconcile"),
+    queryKey: ["universes-reconcile", organizationId],
+    enabled: runtimeRepair && !!organizationId,
+    queryFn: () => api<UniverseReconcile>("GET", `/api/ui/universes/reconcile?organizationId=${encodeURIComponent(organizationId!)}`),
+    refetchInterval: 5000,
   });
-  const engineStatus = new Map(
-    (reconcile.data?.platform ?? []).map((row) => [row.id, row.engine]),
-  );
-
+  const engineStatus = new Map((reconcile.data?.platform ?? []).map((row) => [row.id, row.engine]));
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["universes"] });
     void queryClient.invalidateQueries({ queryKey: ["universes-reconcile"] });
   };
-
-  const syncHandles = useMutation({
-    mutationFn: () => api<UniverseHandleSyncResult>("POST", "/api/v1/universes/sync-handles", {}),
-    onSuccess: refresh,
-  });
-
-  const setStatus = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: "active" | "archived" }) =>
-      api<Universe>("PATCH", `/api/v1/universes/${id}`, { status }),
-    onSuccess: refresh,
-  });
-  const purge = useMutation({
-    mutationFn: (id: string) => api("DELETE", `/api/v1/universes/${id}`),
-    onSuccess: refresh,
-  });
-  const recreate = useMutation({
-    mutationFn: (id: string) => api("POST", `/api/v1/universes/${id}/engine`, {}),
-    onSuccess: refresh,
-  });
-  const deleteOrphan = useMutation({
-    mutationFn: (lightspeedUniverseId: string) =>
-      api("DELETE", `/api/v1/universes/engine/${lightspeedUniverseId}`),
-    onSuccess: refresh,
-  });
-
   const rows = (universes.data ?? [])
-    .slice()
+    .filter((universe) => universe.organizationId === organizationId && universe.actions?.includes("administer"))
+    .map((universe) => {
+      const deletion = reconcile.data?.platform.find((row) => row.id === universe.id)?.deletion ?? universe.deletion;
+      return deletion ? { ...universe, deletion, status: "deleting" as const } : universe;
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
-  const orphans = reconcile.data?.orphans ?? [];
+  const selected = rows.find((universe) => universe.id === selectedId) ?? null;
 
   return (
     <>
       <PageHeader
         title="Universes"
-        description="Every universe on this deployment, including archived ones."
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
-              {syncHandles.isPending ? "Syncing…" : "Sync from runtime"}
-            </Button>
-            <Button onClick={() => setCreateOpen(true)}>
-              <AddIcon data-icon="inline-start" />
-              New universe
-            </Button>
-          </div>
-        }
+        description={creates && !canCreate
+          ? `Universes you administer in this organization. It has reached its limit of ${organization!.universeQuota} universes.`
+          : "Universes you administer in this organization, including archived ones and deletions in progress."}
+        actions={creates && (
+          <Button disabled={!canCreate} onClick={() => setCreateOpen(true)}>
+            <AddIcon data-icon="inline-start" />
+            New universe
+          </Button>
+        )}
       />
-      <DeletedSessionsDialog universe={deletedUniverse} onClose={() => setDeletedUniverse(null)} />
-      <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
-      {syncHandles.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncHandles.error.message}</p>}
-      {syncHandles.data && !syncHandles.isPending && !syncHandles.error && (
-        <p role="status" className="mb-4 text-sm text-muted-foreground">
-          Synced runtime handles: {syncHandles.data.updated} updated.
-          {syncHandles.data.skipped > 0 && ` ${syncHandles.data.skipped} missing from the runtime and skipped; these require review.`}
-        </p>
-      )}
+      <NewUniverseDialog organizationId={organizationId} open={createOpen} onOpenChange={setCreateOpen} />
       {universes.isLoading && <LoadingNote />}
-      {universes.error && (
-        <ReadError error={universes.error} loading={!universes.data} />
-      )}
-      {reconcile.error && (
+      {universes.error && <ReadError error={universes.error} loading={!universes.data} />}
+      {runtimeRepair && reconcile.error && (
         <ReadError error={reconcile.error} loading={!reconcile.data} prefix="Engine reconciliation unavailable" className="mb-4 text-muted-foreground" />
       )}
-      {universes.data && (
-        <TableCard>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Universe</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Engine</TableHead>
-                <TableHead>Your role</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-0" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((universe) => (
-                <TableRow key={universe.id}>
-                  <TableTitleCell title={universe.name} subtitle={universe.handle} />
-                  <TableCell>
-                    <Badge
-                      variant={universe.status === "active" ? "secondary" : "outline"}
-                    >
-                      {universe.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <EngineBadge status={engineStatus.get(universe.id)} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {universe.role ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Date(universe.createdAt).toLocaleDateString()}
-                  </TableCell>
-                  <TableActionsCell>
-                    <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>
-                    {engineStatus.get(universe.id) === "missing" && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={recreate.isPending}
-                        onClick={() => recreate.mutate(universe.id)}
-                        title="Re-create the tenant on the engine (it starts empty)"
-                      >
-                        Recreate on engine
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => navigate(universeHome(universe))}
-                    >
-                      Open
-                    </Button>
-                    {universe.status === "active" ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() =>
-                          setStatus.mutate({ id: universe.id, status: "archived" })
-                        }
-                      >
-                        Archive
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            setStatus.mutate({ id: universe.id, status: "active" })
-                          }
-                        >
-                          Restore
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive"
-                              />
-                            }
-                          >
-                            Delete
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Permanently delete {universe.name}?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Purges everything engine-side (sessions, profiles,
-                                workspaces, blobs) and removes the universe, its
-                                members, and bots from the platform. This
-                                cannot be undone.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => purge.mutate(universe.id)}
-                              >
-                                Delete permanently
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </>
-                    )}
-                  </TableActionsCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableCard>
+      {universes.data && rows.length === 0 && (
+        <EmptyState icon={UniversesIcon} title="No universes to administer">
+          Universes you own, or every universe of an organization you administer, appear here.
+        </EmptyState>
       )}
-      {orphans.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-sm font-semibold">On the engine only</h2>
-          <p className="mt-1 mb-3 text-sm text-muted-foreground">
-            Engine universes no platform universe links to — CLI/test tenants, or
-            survivors of a platform reset. Adopt to manage one here, or delete to
-            purge it engine-side.
-          </p>
-          <TableCard>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Engine universe id</TableHead>
-                  <TableHead>Sessions</TableHead>
-                  <TableHead>Workspaces</TableHead>
-                  <TableHead>Profiles</TableHead>
-                  <TableHead>Blobs</TableHead>
-                  <TableHead className="w-0" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orphans.map((orphan) => (
-                  <TableRow key={orphan.universeId}>
-                    <TableCell className="max-w-64">
-                      <IdText>{orphan.universeId}</IdText>
-                    </TableCell>
-                    <TableCell>{orphan.sessions ?? 0}</TableCell>
-                    <TableCell>{orphan.workspaces ?? 0}</TableCell>
-                    <TableCell>{orphan.profiles ?? 0}</TableCell>
-                    <TableCell>{formatBytes(orphan.blobBytes ?? 0)}</TableCell>
-                    <TableActionsCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setAdopting(orphan)}
-                      >
-                        Adopt
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive"
-                            />
-                          }
-                        >
-                          Delete
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Delete this engine universe?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Purges {orphan.sessions ?? 0} session(s) and{" "}
-                              {formatBytes(orphan.blobBytes ?? 0)} of blobs from the
-                              engine. No platform state is involved. This cannot be
-                              undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-white hover:bg-destructive/90"
-                              onClick={() => deleteOrphan.mutate(orphan.universeId)}
-                            >
-                              Delete permanently
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </TableActionsCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableCard>
-        </section>
+      {rows.length > 0 && (
+        <ResourceTable label="Universes" columns={["Universe", "Your role", "Created", "Status"]}>
+          {rows.map((universe) => (
+            <ResourceRow key={universe.id} name={universe.name} onOpen={(trigger) => { triggerRef.current = trigger; setSelectedId(universe.id); }}
+              action={universe.status !== "deleting" && (
+                <Button nativeButton={false} variant="outline" size="sm" aria-label={`Open ${universe.name}`} render={<Link to={universeHome(universe)} />}>
+                  <GoToIcon data-icon="inline-start" />
+                  Open
+                </Button>
+              )}>
+              <ResourceIdentityCell name={universe.name} subtitle={universe.handle} mono
+                icon={<UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-8 rounded-md" />} />
+              <TableCell className="hidden sm:table-cell"><ResourceValue>{universe.role ? ROLE_LABELS[universe.role] ?? universe.role : "—"}</ResourceValue></TableCell>
+              <TableCell className="hidden sm:table-cell"><ResourceValue>{new Date(universe.createdAt).toLocaleDateString()}</ResourceValue></TableCell>
+              <TableCell><ResourceStatusBadge status={universeStatus(universe, engineStatus.get(universe.id))} /></TableCell>
+            </ResourceRow>
+          ))}
+        </ResourceTable>
       )}
-      <AdoptDialog
-        key={adopting?.universeId ?? "closed"}
-        orphan={adopting}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAdopting(null);
-          }
-        }}
-        onAdopted={refresh}
-      />
+      <ResourceDetailsDialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelectedId(null); }} finalFocus={triggerRef}
+        title={selected?.name ?? "Universe"} description={selected ? `/u/${selected.handle}` : ""}
+        icon={selected && <UniverseIcon icon={selected.icon} iconColor={selected.iconColor} className="size-8 rounded-md" />}>
+        {selected && <UniverseDetails universe={selected} engine={engineStatus.get(selected.id)} runtimeRepair={runtimeRepair} onRepaired={refresh} />}
+      </ResourceDetailsDialog>
     </>
   );
 }
 
-function EngineBadge({ status }: { status: "ok" | "missing" | "unchecked" | undefined }) {
-  if (!status) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-  if (status === "ok") {
-    return <Badge variant="secondary">ok</Badge>;
-  }
-  if (status === "missing") {
-    return (
-      <Badge variant="outline" className="border-destructive/50 text-destructive">
-        missing
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="outline" title="Custom gateway URL — not checked here">
-      unchecked
-    </Badge>
-  );
-}
-
-export function AdoptDialog({
-  orphan,
-  onOpenChange,
-  onAdopted,
-}: {
-  orphan: EngineUniverse | null;
-  onOpenChange: (open: boolean) => void;
-  onAdopted: () => void;
+/// The universe at a glance, with the way into it and into its settings.
+/// Deployment administrators can also recreate a universe the runtime lost.
+function UniverseDetails({ universe, engine, runtimeRepair, onRepaired }: {
+  universe: Universe;
+  engine: EngineState;
+  runtimeRepair: boolean;
+  onRepaired: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const adopt = useMutation({
-    mutationFn: () =>
-      api<Universe>("POST", "/api/v1/universes/adopt", {
-        lightspeedUniverseId: orphan!.universeId,
-        name: name.trim(),
-      }),
-    onSuccess: () => {
-      onOpenChange(false);
-      setName("");
-      setError(null);
-      onAdopted();
-    },
-    onError: (err) => setError(err.message),
+  const recreate = useMutation({
+    mutationFn: () => api("POST", `/api/ui/universes/${universe.id}/engine`, {}),
+    onSuccess: onRepaired,
   });
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!name.trim()) {
-      setError("a name is required");
-      return;
-    }
-    adopt.mutate();
-  };
-
+  const deleting = universe.status === "deleting";
   return (
-    <Dialog open={orphan !== null} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Adopt engine universe</DialogTitle>
-          <DialogDescription>
-            Creates the Platform display entry linked to{" "}
-            <span className="font-mono text-xs">{orphan?.universeId}</span>. Engine
-            permissions are managed separately.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit} className="grid gap-4">
-          <Field>
-            <FieldLabel htmlFor="adopt-name">Name</FieldLabel>
-            <Input
-              id="adopt-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Adopted universe"
-              autoFocus
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="adopt-handle">Handle</FieldLabel>
-            <Input id="adopt-handle" value={orphan?.handle ?? ""} readOnly />
-            <p className="text-sm text-muted-foreground">
-              Adoption keeps the universe's handle, which Platform URLs use. Rename it afterwards in
-              the universe's settings if needed.
-            </p>
-          </Field>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={adopt.isPending}>
-              {adopt.isPending ? "Adopting…" : "Adopt"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <>
+      <ResourceDetailsGrid>
+        <ResourceDetail label="Handle" mono>{universe.handle}</ResourceDetail>
+        <ResourceDetail label="Universe ID" mono>{universe.lightspeedUniverseId}</ResourceDetail>
+        <ResourceDetail label="Status"><ResourceStatus status={universeStatus(universe, engine)} /></ResourceDetail>
+        <ResourceDetail label="Your role">{universe.role ? ROLE_LABELS[universe.role] ?? universe.role : "—"}</ResourceDetail>
+        <ResourceDetail label="Created">{new Date(universe.createdAt).toLocaleDateString()}</ResourceDetail>
+        <ResourceDetail label="Deletion protection">{universe.protected ? "Protected" : "Not protected"}</ResourceDetail>
+        {runtimeRepair && <ResourceDetail label="Runtime">{engine === "missing" ? "Missing" : engine === "ok" ? "Present" : engine === "deleting" ? "Deleting" : "—"}</ResourceDetail>}
+      </ResourceDetailsGrid>
+      {!deleting && (
+        <div className="flex flex-wrap gap-2">
+          <Button nativeButton={false} render={<Link to={universeHome(universe)} />}><GoToIcon data-icon="inline-start" />Open universe</Button>
+          <Button nativeButton={false} variant="outline" render={<Link to={`/u/${encodeURIComponent(universe.handle)}/settings/general`} />}><SettingsIcon data-icon="inline-start" />Settings</Button>
+          <Button nativeButton={false} variant="outline" render={<Link to={`/u/${encodeURIComponent(universe.handle)}/settings/members`} />}><MemberIcon data-icon="inline-start" />Members</Button>
+        </div>
+      )}
+      {runtimeRepair && engine === "missing" && !deleting && (
+        <ResourceActions>
+          <Button variant="outline" size="sm" disabled={recreate.isPending} onClick={() => recreate.mutate()}>
+            <RefreshIcon data-icon="inline-start" />
+            {recreate.isPending ? "Recreating…" : "Recreate on engine"}
+          </Button>
+          <p className="text-sm text-muted-foreground">The runtime lost this universe. Recreating it starts empty.</p>
+          {recreate.error && <p role="alert" className="text-sm text-destructive">{recreate.error.message}</p>}
+        </ResourceActions>
+      )}
+    </>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

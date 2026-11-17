@@ -6,7 +6,7 @@ export const modelDefaultsKey = (universeId: string) => ["model-defaults", unive
 export function useModelDefaults(universeId: string, enabled = true) {
   return useQuery({
     queryKey: modelDefaultsKey(universeId),
-    queryFn: () => api<ModelDefaults>("GET", `/api/v1/universes/${universeId}/models/defaults`),
+    queryFn: () => api<ModelDefaults>("GET", `/api/ui/universes/${universeId}/models/defaults`),
     enabled,
   });
 }
@@ -14,7 +14,7 @@ export function useModelDefaults(universeId: string, enabled = true) {
 export function useModelDiscovery(universeId: string, enabled = true) {
   return useQuery({
     queryKey: ["models", universeId],
-    queryFn: () => api<ModelListResponse>("GET", `/api/v1/universes/${universeId}/models`),
+    queryFn: () => api<ModelListResponse>("GET", `/api/ui/universes/${universeId}/models`),
     staleTime: 60_000,
     enabled,
   });

@@ -29,6 +29,22 @@ fn application_failure(error: &ActivityExecutionError) -> Option<&ApplicationFai
     None
 }
 
+/// Match a typed failure through Temporal's activity wrapper.
+pub(crate) fn activity_failure_has_type(error: &ActivityExecutionError, type_name: &str) -> bool {
+    use temporalio_common::protos::temporal::api::failure::v1::failure::FailureInfo;
+    // Remote activities wrap the application failure in an activity cause; local
+    // activities retain it at the root. Inspect both shapes, including on replay.
+    let mut current = error.failure();
+    while let Some(failure) = current {
+        if matches!(&failure.failure_info, Some(FailureInfo::ApplicationFailureInfo(info)) if info.r#type == type_name)
+        {
+            return true;
+        }
+        current = failure.cause.as_deref();
+    }
+    false
+}
+
 /// The worker's own words for an activity failure. An activity failure's top message
 /// only says that the task failed; what went wrong is in its cause chain.
 pub(crate) fn activity_failure_message(error: &ActivityExecutionError) -> String {

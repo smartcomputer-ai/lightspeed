@@ -28,24 +28,6 @@ pub(super) async fn put_blobs(
     })
 }
 
-pub(super) async fn read_blob(
-    store: &dyn BlobStore,
-    params: BlobReadParams,
-) -> Result<BlobReadResponse, AgentApiError> {
-    let blob_ref = parse_blob_ref(&params.blob_ref)?;
-    let bytes = store
-        .read_bytes(&blob_ref)
-        .await
-        .map_err(map_blob_read_error)?;
-    let byte_len = u64::try_from(bytes.len())
-        .map_err(|_| AgentApiError::internal("blob byte length does not fit in u64"))?;
-    Ok(BlobReadResponse {
-        blob_ref: blob_ref.as_str().to_owned(),
-        bytes_base64: BASE64.encode(bytes),
-        bytes: byte_len,
-    })
-}
-
 pub(super) async fn has_blobs(
     store: &dyn BlobStore,
     params: BlobHasParams,

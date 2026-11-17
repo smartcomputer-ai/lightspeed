@@ -4,13 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { ModelsPage } from "./ModelsPage";
 import { ApiError, type ModelDefaults } from "@/api";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])], handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 
 const legacy = {
   providerId: "anthropic", credentialId: "anthropic", usableForModels: false, providerKind: "modelApiKey",
@@ -47,7 +49,7 @@ beforeEach(() => {
     if (path.endsWith("/secrets")) return { providers: [legacy], grants: [subscription] };
     if (path.endsWith("/integrations/subscriptions")) return [subscription];
     // The endpoint header editor offers the universe's token credentials.
-    if (path.endsWith("/auth-grants")) return [];
+    if (path.endsWith("/credential-grants")) return [];
     if (path.endsWith("/integrations/model-keys")) return { ...legacy, providerId: "openai", credentialId: "model:openai", usableForModels: true };
     if (path.endsWith("/models")) {
       if (discoveryFails) throw new Error("discovery unavailable");
@@ -70,10 +72,10 @@ afterEach(async () => {
 async function show(path = "/") {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
-      <ModelsPage admin={false} />
+      <ModelsPage />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 }
 function button(label: string) {
   return [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label);
@@ -123,7 +125,7 @@ it("lets readers inspect model connection details and restores focus on dismissa
   const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Details for Anthropic"]')!;
   expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
   await act(async () => trigger.click());
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   const dialog = document.body.querySelector('[role="dialog"]')!;
   expect(dialog.textContent).toContain("Credential ID");
   expect(dialog.textContent).toContain("Updated");
@@ -131,13 +133,13 @@ it("lets readers inspect model connection details and restores focus on dismissa
   expect(button("Replace key")).toBeUndefined();
   expect(button("Remove key")).toBeUndefined();
   await act(async () => dialog.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
   expect(document.activeElement).toBe(trigger);
 });
 
 async function click(label: string) {
   await act(async () => button(label)!.click());
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
 }
 async function enterModel(value: string) {
   const input = document.body.querySelector<HTMLInputElement>('input[placeholder="Model name"]')!;
@@ -219,7 +221,7 @@ it("offers default selection after adding a provider without changing it automat
   });
   const form = input.closest("form")!;
   await act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-  for (let step = 0; step < 4; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client, { minSteps: 4 });
   expect(button("Choose default model")).toBeDefined();
   expect(mocks.api.mock.calls.filter(([method]) => method === "PUT")).toHaveLength(0);
   await click("Choose default model");

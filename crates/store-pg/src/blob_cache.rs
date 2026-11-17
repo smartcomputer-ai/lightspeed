@@ -48,6 +48,14 @@ impl BlobCache {
         }
     }
 
+    pub fn evict_universe(&self, universe_id: Uuid) {
+        for (key, _) in self.cache.iter() {
+            if key.universe_id == universe_id {
+                self.cache.invalidate(key.as_ref());
+            }
+        }
+    }
+
     pub fn get(&self, universe_id: Uuid, blob_ref: &BlobRef) -> Option<Arc<[u8]>> {
         self.cache.get(&BlobCacheKey {
             universe_id,
@@ -55,8 +63,12 @@ impl BlobCache {
         })
     }
 
+    pub(crate) fn accepts_entry(&self, byte_len: usize) -> bool {
+        byte_len <= self.max_entry_bytes
+    }
+
     pub fn insert(&self, universe_id: Uuid, blob_ref: &BlobRef, bytes: &[u8]) {
-        if bytes.len() > self.max_entry_bytes {
+        if !self.accepts_entry(bytes.len()) {
             return;
         }
         self.cache.insert(
@@ -72,6 +84,23 @@ impl BlobCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_one_universe_evicts_only_its_blobs() {
+        let cache = BlobCache::new(1024 * 1024, 1024);
+        let bytes = b"cached content";
+        let reference = BlobRef::from_bytes(bytes);
+        let removed = Uuid::from_u128(1);
+        let retained = Uuid::from_u128(2);
+        cache.insert(removed, &reference, bytes);
+        cache.insert(retained, &reference, bytes);
+        cache.evict_universe(removed);
+        assert!(cache.get(removed, &reference).is_none());
+        assert_eq!(
+            cache.get(retained, &reference).as_deref(),
+            Some(bytes.as_slice())
+        );
+    }
 
     #[test]
     fn cache_hits_return_the_stored_bytes() {

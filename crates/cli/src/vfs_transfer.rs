@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use api::{
     AgentApiError, BlobHasItem, BlobHasParams, BlobPutItem, BlobPutParams, BlobPutResult,
-    BlobReadParams, BlobReadResponse, VfsSnapshotCommitParams, VfsSnapshotCommitResponse,
-    VfsSnapshotReadParams, VfsSnapshotReadResponse,
+    BlobReadParams, VfsSnapshotCommitParams, VfsSnapshotCommitResponse, VfsSnapshotReadParams,
+    VfsSnapshotReadResponse,
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -122,7 +122,7 @@ pub(crate) trait CasVfsApi {
 
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobPutResult>, AgentApiError>;
 
-    async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError>;
+    async fn get_blob(&self, blob_ref: String) -> Result<Vec<u8>, AgentApiError>;
 
     async fn commit_vfs_snapshot(
         &self,
@@ -140,7 +140,6 @@ impl CasVfsApi for HttpAgentApi {
     async fn has_blobs(&self, blob_refs: Vec<String>) -> Result<Vec<BlobHasItem>, AgentApiError> {
         Ok(HttpAgentApi::has_blobs(self, BlobHasParams { blob_refs })
             .await?
-            .result
             .blobs)
     }
 
@@ -153,14 +152,11 @@ impl CasVfsApi for HttpAgentApi {
             .collect();
         Ok(HttpAgentApi::put_blobs(self, BlobPutParams { blobs })
             .await?
-            .result
             .blobs)
     }
 
-    async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError> {
-        Ok(HttpAgentApi::read_blob(self, BlobReadParams { blob_ref })
-            .await?
-            .result)
+    async fn get_blob(&self, blob_ref: String) -> Result<Vec<u8>, AgentApiError> {
+        Ok(HttpAgentApi::read_blob(self, BlobReadParams { blob_ref }).await?)
     }
 
     async fn commit_vfs_snapshot(
@@ -170,22 +166,14 @@ impl CasVfsApi for HttpAgentApi {
         let manifest = serde_json::to_value(manifest).map_err(|error| {
             AgentApiError::invalid_request(format!("failed to encode manifest: {error}"))
         })?;
-        Ok(
-            HttpAgentApi::commit_vfs_snapshot(self, VfsSnapshotCommitParams { manifest })
-                .await?
-                .result,
-        )
+        Ok(HttpAgentApi::commit_vfs_snapshot(self, VfsSnapshotCommitParams { manifest }).await?)
     }
 
     async fn read_vfs_snapshot(
         &self,
         snapshot_ref: String,
     ) -> Result<VfsSnapshotReadResponse, AgentApiError> {
-        Ok(
-            HttpAgentApi::read_vfs_snapshot(self, VfsSnapshotReadParams { snapshot_ref })
-                .await?
-                .result,
-        )
+        Ok(HttpAgentApi::read_vfs_snapshot(self, VfsSnapshotReadParams { snapshot_ref }).await?)
     }
 }
 
@@ -700,24 +688,10 @@ impl<A: CasVfsApi + Sync + ?Sized> LocalMaterializer<'_, A> {
             .await
             .map_err(crate::api_client::api_error)
             .with_context(|| format!("failed to download blob {blob_ref}"))?;
-        if response.blob_ref != blob_ref {
+        let bytes = response;
+        if file.size_bytes != bytes.len() as u64 || BlobRef::from_bytes(&bytes) != file.blob_ref {
             bail!(
-                "gateway returned blob {} for requested {}",
-                response.blob_ref,
-                blob_ref
-            );
-        }
-        let bytes = BASE64
-            .decode(&response.bytes_base64)
-            .with_context(|| format!("gateway returned invalid base64 for blob {blob_ref}"))?;
-        if response.bytes != bytes.len() as u64
-            || file.size_bytes != bytes.len() as u64
-            || BlobRef::from_bytes(&bytes) != file.blob_ref
-        {
-            bail!(
-                "downloaded blob {} did not match manifest metadata: response bytes={}, decoded bytes={}, manifest bytes={}",
-                blob_ref,
-                response.bytes,
+                "downloaded blob {blob_ref} did not match manifest metadata: downloaded bytes={}, manifest bytes={}",
                 bytes.len(),
                 file.size_bytes
             );
@@ -903,7 +877,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use api::{BlobHasItem, BlobReadResponse, VfsSnapshotCommitResponse, VfsSnapshotReadResponse};
+    use api::{BlobHasItem, VfsSnapshotCommitResponse, VfsSnapshotReadResponse};
     use tempfile::tempdir;
     use vfs::VfsEntry;
 
@@ -1183,16 +1157,12 @@ mod tests {
                 .collect())
         }
 
-        async fn get_blob(&self, blob_ref: String) -> Result<BlobReadResponse, AgentApiError> {
+        async fn get_blob(&self, blob_ref: String) -> Result<Vec<u8>, AgentApiError> {
             let blobs = self.blobs.lock().unwrap();
             let bytes = blobs
                 .get(&blob_ref)
                 .ok_or_else(|| AgentApiError::not_found(format!("blob not found: {blob_ref}")))?;
-            Ok(BlobReadResponse {
-                blob_ref,
-                bytes_base64: BASE64.encode(bytes),
-                bytes: bytes.len() as u64,
-            })
+            Ok(bytes.clone())
         }
 
         async fn commit_vfs_snapshot(

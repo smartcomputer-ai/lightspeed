@@ -14,8 +14,8 @@ fn main() {
     let exported = api::export_schemas();
     let artifacts = [
         ("api.schema.json", &exported.schema_bundle),
-        ("methods.json", &exported.methods),
-        ("openrpc.json", &exported.openrpc),
+        ("http.json", &exported.http),
+        ("openapi.json", &exported.openapi),
     ];
     for (name, value) in artifacts {
         let mut text = serde_json::to_string_pretty(value).expect("serialize artifact");

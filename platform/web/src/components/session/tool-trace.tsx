@@ -3,7 +3,7 @@ import { filesFromAttachments } from "@/lib/file-references";
 import { useContext, useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 import { MediaStrip } from "@/components/session/media";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
-import { AwaitToolIcon, BotEventIcon, CancelledIcon, CodeToolIcon, CopiedIcon, CopyIcon, DelegateToolIcon, EditToolIcon, EmitToSelfIcon, ExecuteToolIcon, ExploreToolIcon, FailedIcon, LoadingIcon, McpToolIcon, MessageToolIcon, NewTabIcon, OtherToolIcon, ThinkingIcon, ToolGroupIcon, WaitingIcon } from "@/icons";
+import { AwaitToolIcon, BotEventIcon, CancelledIcon, CodeToolIcon, CopiedIcon, CopyIcon, DelegateToolIcon, EditToolIcon, EmitToSelfIcon, ExecuteToolIcon, ExploreToolIcon, FailedIcon, LoadingIcon, McpToolIcon, NewTabIcon, OtherToolIcon, ThinkingIcon, ToolGroupIcon, WaitingIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MarkdownContent } from "@/components/session/markdown-content";
@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { isEmphasizedToolFailure } from "@/lib/sessions/tool-failures";
 
 /// Every step a run takes — thinking, a tool call, a sub-agent, a bot emit,
-/// a channel send — is one row: icon · verb · target · detail · duration.
+/// an external tool call — is one row: icon · verb · target · detail · duration.
 /// Success costs no ink; only running, waiting, failed and cancelled rows
 /// carry a mark. Clicking a row opens its details beneath it.
 
@@ -45,7 +45,6 @@ const GROUP_STYLES: Record<ToolCallDisplayGroup, GroupStyle> = {
   mcp: { icon: McpToolIcon, text: "text-violet-700 dark:text-violet-300", tile: "bg-violet-500/10" },
   agent: { icon: DelegateToolIcon, text: "text-indigo-700 dark:text-indigo-300", tile: "bg-indigo-500/10" },
   bot: { icon: BotEventIcon, text: "text-teal-700 dark:text-teal-300", tile: "bg-teal-500/10" },
-  message: { icon: MessageToolIcon, text: "text-emerald-700 dark:text-emerald-300", tile: "bg-emerald-500/10" },
   other: { icon: OtherToolIcon, text: "text-foreground/75", tile: "bg-muted" },
 };
 

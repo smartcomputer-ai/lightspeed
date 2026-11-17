@@ -4,7 +4,7 @@ import { transcribeRecording, type DictationRecording } from "./dictation";
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", () => ({ api: mocks.api }));
 let recording: DictationRecording;
-const base = "/api/v1/universes/universe/transcriptions";
+const base = "/api/ui/universes/universe/transcriptions";
 beforeEach(() => {
   vi.useFakeTimers();
   mocks.api.mockReset();

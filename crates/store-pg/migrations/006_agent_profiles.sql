@@ -4,7 +4,7 @@
 -- store credentials or runtime state; session-visible setup is materialized by
 -- the hosted runtime into existing session/resource operations.
 
-CREATE TABLE IF NOT EXISTS agent_profiles (
+CREATE TABLE agent_profiles (
     universe_id uuid NOT NULL
         REFERENCES universes (universe_id) ON DELETE CASCADE,
     profile_id text NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
         CHECK (updated_at_ms >= created_at_ms)
 );
 
-CREATE INDEX IF NOT EXISTS agent_profiles_updated_idx
+CREATE INDEX agent_profiles_updated_idx
     ON agent_profiles (universe_id, updated_at_ms DESC, profile_id);
 
 COMMENT ON TABLE agent_profiles IS

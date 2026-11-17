@@ -181,7 +181,7 @@ impl TestBoundPluginWorkflow {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SelfReceiverControllerSnapshot {
-    /// Channels-shaped durable outbox: invocation id is the idempotency key.
+    /// Plugin durable outbox: invocation id is the idempotency key.
     outbox: std::collections::BTreeMap<String, harness::WorkflowToolInvocation>,
     duplicate_invocations: u32,
     replies_sent: u32,
@@ -199,7 +199,7 @@ pub struct SelfReceiverControllerArgs {
     snapshot: SelfReceiverControllerSnapshot,
 }
 
-/// Channels-shaped lifecycle controller and promise-bearing tool receiver.
+/// Plugin lifecycle controller and promise-bearing tool receiver.
 /// Pushed invocations are processed directly from the workflow inbox while
 /// the declared session's run is active; run-terminal handling is a separate branch and
 /// is never a prerequisite for enqueue or reply.
@@ -328,7 +328,12 @@ impl TestStartPluginWorkflow {
         ctx: &mut WorkflowContext<Self>,
         args: WorkflowToolStartArgs,
     ) -> WorkflowResult<()> {
-        if ctx.workflow_id() != args.execution_id {
+        if ctx.workflow_id()
+            != temporal_workflow::compose_workflow_tool_execution_id(
+                args.universe_id,
+                &args.execution_id,
+            )
+        {
             return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "started execution id mismatch: workflow_id={} execution_id={}",
                 ctx.workflow_id(),
@@ -964,7 +969,7 @@ async fn start_integrated_session_and_run(
         })
         .await
         .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-    wait_for_terminal_run_slow(api, session_id, &run.result.run.id).await
+    wait_for_terminal_run_slow(api, session_id, &run.run.id).await
 }
 
 /// Start a run that calls `call_tool` and then stays in its next generation until
@@ -999,7 +1004,7 @@ async fn start_integrated_session_and_hold_run(
         })
         .await
         .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-    Ok(run.result.run.id)
+    Ok(run.run.id)
 }
 
 /// Delivery retries, recovery polls, and start backoff make some scenarios
@@ -1141,7 +1146,7 @@ async fn workflow_tool_bound_request_reply_resolves_via_plugin_worker() -> anyho
     .await
 }
 
-/// Channels-shaped Joined proof: one workflow is both lifecycle controller
+/// Plugin Joined proof: one workflow is both lifecycle controller
 /// and pushed bound receiver. It durably deduplicates an outbox enqueue,
 /// resolves the runtime-owned reply while the run is active, continues as
 /// new, and then consumes that run's terminal notification. The model sees
@@ -1156,11 +1161,11 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
 
     run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
         let universe_id = live_universe_id()?;
-        let controller_id = format!("channels/session-{}", uuid::Uuid::new_v4().simple());
+        let controller_id = format!("plugins/session-{}", uuid::Uuid::new_v4().simple());
         let receipt_ref = blobs.put_bytes(br#"{"status":"sent"}"#.to_vec()).await?;
         let controller = WorkflowEndpointRef {
             workflow_id: controller_id.clone(),
-            workflow_kind: "channels.session".to_owned(),
+            workflow_kind: "plugin.session".to_owned(),
         };
         client
             .start_workflow(
@@ -1175,13 +1180,13 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 WorkflowStartOptions::new(plugin_queue, controller_id.clone()).build(),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("start Channels controller: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("start plugin controller: {error}"))?;
 
         let definition = tool_definition(
             &blobs,
             "message-send",
             MESSAGE_SEND_TOOL,
-            "channels.message.send.v1",
+            "plugin.message.send.v1",
         )
         .await?;
         api.start_integrated_session_for_workflow_with_profile(
@@ -1201,7 +1206,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
             ),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("start declared Channels session: {error:?}"))?;
+        .map_err(|error| anyhow::anyhow!("start declared plugin session: {error:?}"))?;
 
         let terminal_token = format!("channel-terminal-{}", uuid::Uuid::new_v4().simple());
         let started = api
@@ -1221,8 +1226,8 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 config: None,
             })
             .await
-            .map_err(|error| anyhow::anyhow!("start declared Channels run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
+            .map_err(|error| anyhow::anyhow!("start declared plugin run: {error:?}"))?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let output = final_assistant_text(&run).expect("assistant output");
         assert!(
@@ -1266,7 +1271,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                         temporalio_client::WorkflowQueryOptions::default(),
                     )
                     .await
-                    .map_err(|error| anyhow::anyhow!("query Channels controller: {error}"))?;
+                    .map_err(|error| anyhow::anyhow!("query plugin controller: {error}"))?;
                 if snapshot
                     .terminal_tokens
                     .iter()
@@ -1309,7 +1314,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 temporalio_client::WorkflowSignalOptions::default(),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("redeliver Channels invocation: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("redeliver plugin invocation: {error}"))?;
         let started = std::time::Instant::now();
         loop {
             if started.elapsed() > Duration::from_secs(20) {
@@ -1354,7 +1359,7 @@ async fn workflow_tool_pushed_accepted_delivers_after_run_terminal() -> anyhow::
             &blobs,
             "accepted-message",
             MESSAGE_SEND_TOOL,
-            "channels.message.accepted.v1",
+            "plugin.message.accepted.v1",
         )
         .await?;
         let run = start_integrated_session_and_run(
@@ -1433,10 +1438,10 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
 
     run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
         let universe_id = live_universe_id()?;
-        let controller_id = format!("channels/stalled-{}", uuid::Uuid::new_v4().simple());
+        let controller_id = format!("plugins/stalled-{}", uuid::Uuid::new_v4().simple());
         let controller = WorkflowEndpointRef {
             workflow_id: controller_id.clone(),
-            workflow_kind: "channels.session".to_owned(),
+            workflow_kind: "plugin.session".to_owned(),
         };
         client
             .start_workflow(
@@ -1457,7 +1462,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             &blobs,
             "message-send",
             MESSAGE_SEND_TOOL,
-            "channels.message.send.v1",
+            "plugin.message.send.v1",
         )
         .await?;
         api.start_integrated_session_for_workflow_with_profile(
@@ -1498,7 +1503,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
             })
             .await
             .map_err(|error| anyhow::anyhow!("start stalled declared run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         let joined_call = run
             .tool_batches
@@ -1722,7 +1727,6 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             .await
             .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
         let promise_id = events
-            .result
             .events
             .iter()
             .find_map(|event| match &event.kind {
@@ -1858,7 +1862,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                         run_limit: None,
                     })
                     .await?;
-                assert_eq!(session.result.session.execution_failure, None);
+                assert_eq!(session.session.execution_failure, None);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1881,7 +1885,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             .await
             .map_err(|error| anyhow::anyhow!("signal authorized reply: {error}"))?;
 
-        let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
 
         // Stale reply: the promise is already terminal, so a re-delivered
@@ -2042,7 +2046,6 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             .await
             .map_err(|error| anyhow::anyhow!("read Start + Joined events: {error:?}"))?;
         let execution_id = events
-            .result
             .events
             .iter()
             .find_map(|event| match &event.kind {
@@ -2059,7 +2062,12 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             started.elapsed() < Duration::from_secs(45),
             "semantic reply must complete the Joined call before execution termination"
         );
-        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
+        let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(
+            temporal_workflow::compose_workflow_tool_execution_id(
+                live_universe_id()?,
+                &execution_id,
+            ),
+        );
         let _ = handle.terminate(WorkflowTerminateOptions::default()).await;
         Ok(())
     })
@@ -2194,8 +2202,8 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
     run_with_plugin_worker(
         |_client, api, blobs, session_id, _plugin_queue| async move {
             let absent_controller = WorkflowEndpointRef {
-                workflow_id: format!("channels/never-started-{}", uuid::Uuid::new_v4().simple()),
-                workflow_kind: "channels.session".to_owned(),
+                workflow_id: format!("plugins/never-started-{}", uuid::Uuid::new_v4().simple()),
+                workflow_kind: "plugin.session".to_owned(),
             };
             let definition = tool_definition(
                 &blobs,
@@ -2238,7 +2246,7 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                 })
                 .await
                 .map_err(|error| anyhow::anyhow!("start absent-controller run: {error:?}"))?;
-            let run = wait_for_terminal_run_slow(&api, &session_id, &started.result.run.id).await?;
+            let run = wait_for_terminal_run_slow(&api, &session_id, &started.run.id).await?;
 
             assert_eq!(run.status, api::RunStatus::Completed);
             let output = final_assistant_text(&run).expect("assistant output");
@@ -2259,7 +2267,7 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                 .await
                 .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
             assert!(
-                events.result.events.iter().any(|event| matches!(
+                events.events.iter().any(|event| matches!(
                     event.kind,
                     api::SessionEventKindView::WorkflowToolDeliveryFailed { .. }
                 )),
@@ -2289,7 +2297,6 @@ async fn started_execution_ids(
         .await
         .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
     Ok(events
-        .result
         .events
         .iter()
         .filter_map(|event| match &event.kind {
@@ -2318,7 +2325,6 @@ async fn invocation_promises(
         .await
         .map_err(|error| anyhow::anyhow!("read events: {error:?}"))?;
     Ok(events
-        .result
         .events
         .iter()
         .filter_map(|event| match &event.kind {
@@ -2416,12 +2422,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                     })
                     .await
                     .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-                let expected_promises = run
-                    .result
-                    .run
-                    .id
-                    .trim_start_matches("run_")
-                    .parse::<usize>()?;
+                let expected_promises = run.run.id.trim_start_matches("run_").parse::<usize>()?;
                 let started = std::time::Instant::now();
                 let promise_id = loop {
                     if started.elapsed() > Duration::from_secs(30) {
@@ -2448,7 +2449,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                     )
                     .await
                     .map_err(|error| anyhow::anyhow!("signal reply: {error}"))?;
-                let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+                let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
                 assert_eq!(run.status, api::RunStatus::Completed);
                 let output = final_assistant_text(&run)
                     .expect("assistant output")
@@ -2632,7 +2633,6 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 .await
                 .map_err(|error| anyhow::anyhow!("read continued Joined session: {error:?}"))?;
             let completion = &session
-                .result
                 .session
                 .integration
                 .as_ref()
@@ -2659,7 +2659,6 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 .await
                 .map_err(|error| anyhow::anyhow!("read continued Joined events: {error:?}"))?;
             let (event_call_id, promise_id) = events
-                .result
                 .events
                 .iter()
                 .find_map(|event| match &event.kind {
@@ -2674,7 +2673,7 @@ async fn workflow_tool_start_survives_continue_as_new() -> anyhow::Result<()> {
                 })
                 .ok_or_else(|| anyhow::anyhow!("continued Joined start event was not projected"))?;
             assert_eq!(event_call_id, joined_call.call_id);
-            assert!(events.result.events.iter().any(|event| matches!(
+            assert!(events.events.iter().any(|event| matches!(
                 &event.kind,
                 api::SessionEventKindView::PromiseResolved {
                     promise_id: resolved,
@@ -2755,7 +2754,7 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
             })
             .await
             .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
 
         let plugin_handle = client.get_workflow_handle::<TestBoundPluginWorkflow>(receiver_id);
@@ -2842,7 +2841,12 @@ async fn workflow_tool_start_goes_out_before_the_next_generation_finishes() -> a
                 .into_iter()
                 .next()
                 && client
-                    .get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id)
+                    .get_workflow_handle::<temporalio_client::UntypedWorkflow>(
+                        temporal_workflow::compose_workflow_tool_execution_id(
+                            live_universe_id()?,
+                            &execution_id,
+                        ),
+                    )
                     .describe(temporalio_client::WorkflowDescribeOptions::default())
                     .await
                     .is_ok()
@@ -2888,7 +2892,7 @@ async fn workflow_tool_pushed_accepted_delivers_before_the_next_generation_finis
             &blobs,
             "accepted-message",
             MESSAGE_SEND_TOOL,
-            "channels.message.accepted.v1",
+            "plugin.message.accepted.v1",
         )
         .await?;
         let run_id = start_integrated_session_and_hold_run(
@@ -2997,7 +3001,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
             })
             .await
             .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
-        let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
         // The execution id is a client fact on the start-requested event,
         // not part of the model-visible acknowledgement.
@@ -3010,7 +3014,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
         // The run terminal auto-cancels the run-scoped keyed promise; with
         // its last key terminal, the owned execution must be cancelled.
         let handle = client
-            .get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id);
+            .get_workflow_handle::<temporalio_client::UntypedWorkflow>(temporal_workflow::compose_workflow_tool_execution_id(live_universe_id()?, &execution_id));
         let started = std::time::Instant::now();
         loop {
             if started.elapsed() > Duration::from_secs(60) {

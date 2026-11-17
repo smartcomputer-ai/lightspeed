@@ -186,7 +186,7 @@ pub enum McpServerAuthPolicy {
 }
 
 /// Non-secret universe credential selected by this configured MCP server.
-/// Token material remains in the auth subsystem and is never returned.
+/// Token material remains in the credentials subsystem and is never returned.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
@@ -194,7 +194,8 @@ pub enum McpServerAuthPolicy {
     rename_all_fields = "camelCase"
 )]
 pub enum McpServerCredential {
-    AuthGrant { grant_id: String },
+    #[serde(rename = "authGrant")]
+    CredentialGrant { grant_id: String },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

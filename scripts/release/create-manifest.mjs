@@ -12,10 +12,14 @@ if (!version || !/^[0-9a-f]{40}$/.test(gitSha ?? "")) {
 
 const metadata = readMetadata();
 if (version !== metadata.LIGHTSPEED_PRODUCT_VERSION) throw new Error('unexpected product version');
+const httpContractRevision = JSON.parse(fs.readFileSync("dist/contracts/http.json", "utf8")).contractRevision;
+if (!httpContractRevision || httpContractRevision !== metadata.LIGHTSPEED_HTTP_CONTRACT_REVISION) {
+  throw new Error("packaged HTTP contract revision differs from release metadata");
+}
 const partial = process.argv.includes('--partial');
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const contractHash = crypto.createHash("sha256");
-for (const file of ["api.schema.json", "methods.json", "openrpc.json", "api-reference.md"]) {
+for (const file of ["api.schema.json", "http.json", "openapi.json", "api-reference.md"]) {
   contractHash.update(fs.readFileSync(path.join("dist/contracts", file)));
 }
 
@@ -139,7 +143,7 @@ const manifest = {
   envdBinaries,
   envdBuilds,
   buildImage,
-  protocolVersion: metadata.LIGHTSPEED_API_PROTOCOL_VERSION,
+  httpContractRevision,
   envdProtocolVersion,
   controllerProtocolVersion,
   contractRevision: `sha256:${contractHash.digest("hex")}`,
@@ -150,7 +154,6 @@ const manifest = {
     runtime: process.env.LIGHTSPEED_RUNTIME_IMAGE ?? null,
     configuratorMcp: process.env.LIGHTSPEED_CONFIGURATOR_MCP_IMAGE ?? null,
     platform: process.env.LIGHTSPEED_PLATFORM_IMAGE ?? null,
-    platformWorkers: process.env.LIGHTSPEED_PLATFORM_WORKERS_IMAGE ?? null,
   },
   binaries: {
     runtime: archive("RUNTIME", "-runtime-"),

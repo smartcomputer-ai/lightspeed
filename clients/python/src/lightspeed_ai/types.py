@@ -6,48 +6,15 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
-LightspeedAgentApi: TypeAlias = Any
+LightspeedHttpApi: TypeAlias = Any
 """
-All JSON-RPC wire types of the Lightspeed agent API.
-"""
-
-
-class AccessScopeDeployment(TypedDict):
-    """
-    What a key reaches or a request addresses: one universe, or the
-    deployment.
-    """
-
-    kind: Literal['deployment']
-
-
-class AccessScopeUniverse(TypedDict):
-    """
-    What a key reaches or a request addresses: one universe, or the
-    deployment.
-    """
-
-    kind: Literal['universe']
-    universeId: str
-
-
-AccessScope: TypeAlias = AccessScopeDeployment | AccessScopeUniverse
-"""
-What a key reaches or a request addresses: one universe, or the
-deployment.
-"""
-
-
-AccessScopeKind: TypeAlias = Literal['deployment', 'universe']
-"""
-The kind of an [`AccessScope`]: the deployment, or a universe. Where a
-record already belongs to one universe this is enough to tell a universe
-key of that universe from a deployment key.
+Logical operation inputs and direct response types for Lightspeed clients.
 """
 
 
 AgentApiErrorKind: TypeAlias = (
     Literal['invalidRequest', 'notFound', 'conflict', 'audioBlobTooLarge', 'internal']
+    | Literal['gone']
     | Literal['rejected']
     | Literal['unauthenticated']
     | Literal['forbidden']
@@ -101,16 +68,6 @@ class AgentNotificationWatchReset(TypedDict):
     params: dict[str, Any]
 
 
-class Params12(TypedDict):
-    message: str
-    sessionId: NotRequired[str | None]
-
-
-class AgentNotificationError(TypedDict):
-    method: Literal['error']
-    params: Params12
-
-
 ApprovalDecisionFailureKind: TypeAlias = (
     Literal[
         'invalidId',
@@ -156,25 +113,20 @@ class AttachmentSourceView(TypedDict):
 
 class AttributionActor(TypedDict):
     """
-    The actor a key asserted for its request.
+    The actor the caller named for its request.
     """
 
     id: str
     kind: Literal['actor']
 
 
-class AttributionKey(TypedDict):
+class AttributionToken(TypedDict):
     """
-    A key acting for itself, named by its key id. A key id is unique
-    among the keys of one scope, so `scopeKind` says whether it names a
-    deployment key or a key of the universe the record belongs to. The
-    id survives a change of secret; the secret's display prefix does not
-    and is deliberately not recorded.
+    The configured runtime token's name, never its secret.
     """
 
-    keyId: str
-    kind: Literal['key']
-    scopeKind: AccessScopeKind
+    kind: Literal['token']
+    name: str
 
 
 class AttributionLocal(TypedDict):
@@ -197,207 +149,34 @@ class AttributionInternal(TypedDict):
 
 
 Attribution: TypeAlias = (
-    AttributionActor | AttributionKey | AttributionLocal | AttributionInternal
+    AttributionActor | AttributionToken | AttributionLocal | AttributionInternal
 )
 """
-Who created a resource or authored bytes. An actor is whatever a key
-allowed to assert one said; core compares it and never resolves it.
+Who created a resource or authored bytes. Actors are opaque caller claims;
+the runtime records them without resolving caller permissions.
 """
 
 
-class AuthClientDeleteParams(TypedDict):
-    clientId: str
-
-
-class AuthClientListParams(TypedDict):
+class AvailableEnvironmentProviderListParams(TypedDict):
     pass
 
 
-class AuthClientReadParams(TypedDict):
-    clientId: str
-
-
-class AuthFlowStartResponse(TypedDict):
-    authorizeUrl: str
-    """
-    Authorization URL the user must open. It embeds the one-time `state`;
-    treat it as sensitive and do not log it server-side.
-    """
-    expiresAtMs: int
-    flowId: str
-
-
-AuthFlowStatus: TypeAlias = Literal['pending', 'completed', 'failed', 'expired']
-
-
-class AuthFlowStatusParams(TypedDict):
-    flowId: str
-
-
-class AuthFlowView(TypedDict):
-    clientId: str
-    createdAtMs: int
-    error: NotRequired[str | None]
-    expiresAtMs: int
-    flowId: str
-    grantId: NotRequired[str | None]
-    providerId: str
-    status: AuthFlowStatus
-    updatedAtMs: int
-
-
-class AuthGitHubInstallationListParams(TypedDict):
+class AvailableEnvironmentProviderReadParams(TypedDict):
     providerId: str
 
 
-AuthGrantExposure: TypeAlias = Literal['brokered', 'retrievable']
-"""
-Where a credential's plain value may go, fixed when it is created.
-"""
-
-
-class AuthGrantImportParams(TypedDict):
+class AvailableEnvironmentProviderView(TypedDict):
     """
-    Import a new token credential as an auth grant, under the given id or an
-    allocated one; an id already in use is a conflict. Together with
-    [`AuthGrantPutParams`] this is the deliberate inbound-plaintext path:
-    `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
-    logging must never echo these params.
+    A provider this universe may create environments from.
     """
 
-    audience: NotRequired[str | None]
+    availableToAllUniverses: bool
+    """
+    Available to every universe; otherwise to this one through its
+    binding.
+    """
     displayName: NotRequired[str | None]
-    expiresAtMs: NotRequired[int | None]
-    exposure: NotRequired[AuthGrantExposure]
-    grantId: NotRequired[str | None]
-    metadata: NotRequired[Any]
-    """
-    Non-secret, caller-defined metadata stored on the grant and returned
-    by reads (for example which product a pasted subscription token
-    belongs to). Must be a JSON object; never put secret material here.
-    """
-    providerId: NotRequired[str | None]
-    scopes: NotRequired[list[str]]
-    subjectHint: NotRequired[str | None]
-    token: str
-
-
-class AuthGrantLeaseParams(TypedDict):
-    """
-    Request a current access-token lease for a retrievable grant. Callers must
-    cache only in memory until shortly before `expiresAtMs` (or for at most
-    five minutes when it is absent), re-lease after target 401/403 responses,
-    and never persist the token or place it in a workflow payload.
-    """
-
-    audience: NotRequired[str | None]
-    grantId: str
-
-
-class AuthGrantPutParams(TypedDict):
-    """
-    Declare a token credential (`staticToken`): its id, its settings and the
-    token it holds. A credential that is missing is created. One that exists
-    has its settings replaced by these (an absent field is unset) and, when it
-    holds a different token, that token replaced, so MCP servers, headers,
-    bot polls and environment variables referencing the id use the new value
-    from their next request or process. Declaring it again changes nothing.
-
-    `token` is encrypted on receipt and never returned; `Debug` output redacts
-    it and request logging must never echo these params.
-    """
-
-    audience: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    dryRun: NotRequired[bool]
-    """
-    Report what the declaration would do without doing it.
-    """
-    expiresAtMs: NotRequired[int | None]
-    """
-    When the token expires. Absent means it does not expire.
-    """
-    exposure: NotRequired[AuthGrantExposure]
-    """
-    Whether the plain token may be leased to a service or bound into an
-    environment. It cannot be changed afterwards.
-    """
-    grantId: str
-    metadata: NotRequired[Any]
-    """
-    Non-secret, caller-defined metadata. Must be a JSON object; never put
-    secret material here.
-    """
-    providerId: NotRequired[str | None]
-    """
-    Label recorded on the credential; `static` when absent. It cannot be
-    changed afterwards.
-    """
-    scopes: NotRequired[list[str]]
-    subjectHint: NotRequired[str | None]
-    token: str
-
-
-class AuthGrantReadParams(TypedDict):
-    grantId: str
-
-
-class AuthGrantRevokeParams(TypedDict):
-    grantId: str
-
-
-AuthGrantStatus: TypeAlias = Literal['active', 'needsReauth', 'revoked', 'failed']
-
-
-class AuthProviderConfigInputGithubApp(TypedDict):
-    apiBaseUrl: NotRequired[str | None]
-    appId: str
-    type: Literal['githubApp']
-
-
-class AuthProviderConfigViewGithubApp(TypedDict):
-    """
-    Non-secret, provider-specific configuration. New providers add a
-    variant, not a table.
-    """
-
-    apiBaseUrl: str
-    appId: str
-    type: Literal['githubApp']
-
-
-class AuthProviderDeleteParams(TypedDict):
     providerId: str
-
-
-AuthProviderKind: TypeAlias = Literal[
-    'staticToken',
-    'mcpOAuth',
-    'gitHubApp',
-    'customOAuth',
-    'modelApiKey',
-    'modelOAuth',
-    'modelEndpoint',
-]
-"""
-On a grant, how its token is obtained; on a provider, what it configures.
-`staticToken` is a pasted secret, sent under whatever header its consumer
-uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
-endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
-on demand. The `model*` kinds configure model providers; `modelEndpoint`
-is a provider without a credential and never appears on a grant.
-"""
-
-
-class AuthProviderListParams(TypedDict):
-    pass
-
-
-class AuthProviderReadParams(TypedDict):
-    providerId: str
-
-
-AuthProviderStatus: TypeAlias = Literal['active', 'needsConfiguration', 'disabled']
 
 
 class BlobHasItem(TypedDict):
@@ -437,10 +216,8 @@ class BlobReadParams(TypedDict):
     blobRef: str
 
 
-class BlobReadResponse(TypedDict):
+class BlobUploadParams(TypedDict):
     blobRef: str
-    bytes: int
-    bytesBase64: str
 
 
 class BotActiveDeliverySnapshot(TypedDict):
@@ -507,9 +284,6 @@ class BotEventInput(TypedDict):
     links: NotRequired[list[str]]
     occurredAtMs: NotRequired[int | None]
     summary: str
-
-
-BotEventMediaKind: TypeAlias = Literal['image', 'audio', 'document']
 
 
 BotEventOutcome: TypeAlias = Literal[
@@ -667,30 +441,16 @@ class BotTriggerSecretsReadResponse(TypedDict):
     """
     Webhook triggers: the ingest path including its URL token.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code a conversation sends
-    once to connect.
-    """
 
 
 class BotTriggerSecretsView(TypedDict):
     """
-    What lets an outsider reach a trigger: whoever holds the ingest path can
-    post events to the bot, and whoever holds the pairing code can connect a
-    conversation to it. Kept apart from [`BotTriggerView`] so that reading or
-    listing triggers never discloses either; only bot-management methods
-    return this.
+    The webhook ingest path, available through bot-management methods.
     """
 
     ingestPath: NotRequired[str | None]
     """
     Webhook triggers: the ingest path including its URL token.
-    """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: the code a conversation sends
-    once to connect.
     """
 
 
@@ -703,105 +463,20 @@ How an invocation of a bound workflow tool reaches its receiver.
 """
 
 
-ChannelAccountId: TypeAlias = str
-
-
-class ChannelAccountReadParams(TypedDict):
-    accountId: ChannelAccountId
-
-
-class ChannelAccountSettings(TypedDict):
-    printQr: NotRequired[bool | None]
+class CallerAccess(TypedDict):
     """
-    WhatsApp: print the pairing QR code on the connector's terminal.
+    How the direct runtime connection authenticated. All runtime tokens have
+    full authority; permissions belong to the external gate.
     """
 
-
-class ChannelConversationReadParams(TypedDict):
-    accountId: ChannelAccountId
-    chatId: str
-    threadId: NotRequired[str | None]
-
-
-class ChannelConversationSnapshot(TypedDict):
+    single: bool
     """
-    The conversation workflow's live snapshot, for debugging.
+    True only for explicitly unauthenticated local development access.
     """
-
-    activeDeliveries: int
-    botId: str
-    deliveredCount: int
-    deniedInboundCount: int
-    droppedInboundCount: int
-    duplicateInboundCount: int
-    emittedCount: int
-    failedDeliveryCount: int
-    inboundCount: int
-    label: str
-    protocolErrors: NotRequired[list[str]]
-    triggerId: str
-    typing: bool
-
-
-ChannelInboundDecision: TypeAlias = Literal[
-    'bound', 'paired', 'pairingRequired', 'pairingPending', 'unbound'
-]
-"""
-What the connector should do after admission. Pairing replies are the
-connector's to send, in the provider's own voice.
-"""
-
-
-ChannelMediaKind: TypeAlias = Literal['image', 'audio', 'document']
-
-
-ChannelPairedVia: TypeAlias = Literal['open', 'code']
-"""
-How a chat got its route: claimed by an open trigger's first contact,
-or paired by code.
-"""
-
-
-class ChannelPairingDeleteParams(TypedDict):
-    accountId: ChannelAccountId
-    chatId: str
-
-
-class ChannelPairingListParams(TypedDict):
-    accountId: NotRequired[ChannelAccountId | None]
-    botId: NotRequired[BotId | None]
-
-
-class ChannelPairingView(TypedDict):
+    tokenName: NotRequired[str | None]
     """
-    A conversation's route: the chat is identified by `(accountId, chatId)`
-    and owned by the paired trigger.
+    Configured token name, absent for unauthenticated access.
     """
-
-    accountId: ChannelAccountId
-    botId: BotId
-    chatId: str
-    pairedAtMs: int
-    pairedVia: ChannelPairedVia
-    triggerId: BotTriggerId
-
-
-ChannelProvider: TypeAlias = str
-
-
-ChatGroupActivation: TypeAlias = Literal['mention', 'always']
-
-
-ChatPairing: TypeAlias = Literal['code', 'open']
-"""
-Whether a conversation must present a pairing code before it connects.
-"""
-
-
-ChatScope: TypeAlias = Literal['direct', 'group']
-
-
-ChatTurnAccess: TypeAlias = Literal['anyone', 'listed']
 
 
 class CitationView(TypedDict):
@@ -813,15 +488,6 @@ class CitationView(TypedDict):
     citedText: NotRequired[str | None]
     title: NotRequired[str | None]
     url: str
-
-
-class ClientCapabilities(TypedDict):
-    experimentalApi: NotRequired[bool]
-
-
-class ClientInfo(TypedDict):
-    name: str
-    version: NotRequired[str | None]
 
 
 class CodeModeFeature(TypedDict):
@@ -915,6 +581,10 @@ CompactionPolicy: TypeAlias = (
     | CompactionPolicyProviderTriggered
     | CompactionPolicyProviderStandalone
 )
+
+
+class ConnectionParams(TypedDict):
+    pass
 
 
 class ContentRefView(TypedDict):
@@ -1139,70 +809,223 @@ ContextReplaceStatus: TypeAlias = (
 )
 
 
+class CredentialClientDeleteParams(TypedDict):
+    clientId: str
+
+
+class CredentialClientListParams(TypedDict):
+    pass
+
+
+class CredentialClientReadParams(TypedDict):
+    clientId: str
+
+
+class CredentialFlowStartResponse(TypedDict):
+    authorizeUrl: str
+    """
+    Authorization URL the user must open. It embeds the one-time `state`;
+    treat it as sensitive and do not log it server-side.
+    """
+    expiresAtMs: int
+    flowId: str
+
+
+CredentialFlowStatus: TypeAlias = Literal['pending', 'completed', 'failed', 'expired']
+
+
+class CredentialFlowStatusParams(TypedDict):
+    flowId: str
+
+
+class CredentialFlowView(TypedDict):
+    clientId: str
+    createdAtMs: int
+    error: NotRequired[str | None]
+    expiresAtMs: int
+    flowId: str
+    grantId: NotRequired[str | None]
+    providerId: str
+    status: CredentialFlowStatus
+    updatedAtMs: int
+
+
+class CredentialGitHubInstallationListParams(TypedDict):
+    providerId: str
+
+
+CredentialGrantExposure: TypeAlias = Literal['brokered', 'retrievable']
+"""
+Where a credential's plain value may go, fixed when it is created.
+"""
+
+
+class CredentialGrantImportParams(TypedDict):
+    """
+    Import a new token credential as a credential grant, under the given id or an
+    allocated one; an id already in use is a conflict. Together with
+    [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
+    `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
+    logging must never echo these params.
+    """
+
+    audience: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    expiresAtMs: NotRequired[int | None]
+    exposure: NotRequired[CredentialGrantExposure]
+    grantId: NotRequired[str | None]
+    metadata: NotRequired[Any]
+    """
+    Non-secret, caller-defined metadata stored on the grant and returned
+    by reads (for example which product a pasted subscription token
+    belongs to). Must be a JSON object; never put secret material here.
+    """
+    providerId: NotRequired[str | None]
+    scopes: NotRequired[list[str]]
+    subjectHint: NotRequired[str | None]
+    token: str
+
+
+class CredentialGrantLeaseParams(TypedDict):
+    """
+    Request a current access-token lease for a retrievable grant. Callers must
+    cache only in memory until shortly before `expiresAtMs` (or for at most
+    five minutes when it is absent), re-lease after target 401/403 responses,
+    and never persist the token or place it in a workflow payload.
+    """
+
+    audience: NotRequired[str | None]
+    grantId: str
+
+
+class CredentialGrantPutParams(TypedDict):
+    """
+    Declare a token credential (`staticToken`): its id, its settings and the
+    token it holds. A credential that is missing is created. One that exists
+    has its settings replaced by these (an absent field is unset) and, when it
+    holds a different token, that token replaced, so MCP servers, headers,
+    bot polls and environment variables referencing the id use the new value
+    from their next request or process. Declaring it again changes nothing.
+
+    `token` is encrypted on receipt and never returned; `Debug` output redacts
+    it and request logging must never echo these params.
+    """
+
+    audience: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
+    """
+    Report what the declaration would do without doing it.
+    """
+    expiresAtMs: NotRequired[int | None]
+    """
+    When the token expires. Absent means it does not expire.
+    """
+    exposure: NotRequired[CredentialGrantExposure]
+    """
+    Whether the plain token may be leased to a service or bound into an
+    environment. It cannot be changed afterwards.
+    """
+    grantId: str
+    metadata: NotRequired[Any]
+    """
+    Non-secret, caller-defined metadata. Must be a JSON object; never put
+    secret material here.
+    """
+    providerId: NotRequired[str | None]
+    """
+    Label recorded on the credential; `static` when absent. It cannot be
+    changed afterwards.
+    """
+    scopes: NotRequired[list[str]]
+    subjectHint: NotRequired[str | None]
+    token: str
+
+
+class CredentialGrantReadParams(TypedDict):
+    grantId: str
+
+
+class CredentialGrantRevokeParams(TypedDict):
+    grantId: str
+
+
+CredentialGrantStatus: TypeAlias = Literal['active', 'needsReauth', 'revoked', 'failed']
+
+
+class CredentialProviderConfigInputGithubApp(TypedDict):
+    apiBaseUrl: NotRequired[str | None]
+    appId: str
+    type: Literal['githubApp']
+
+
+class CredentialProviderConfigViewGithubApp(TypedDict):
+    """
+    Non-secret, provider-specific configuration. New providers add a
+    variant, not a table.
+    """
+
+    apiBaseUrl: str
+    appId: str
+    type: Literal['githubApp']
+
+
+class CredentialProviderDeleteParams(TypedDict):
+    providerId: str
+
+
+CredentialProviderKind: TypeAlias = Literal[
+    'staticToken',
+    'mcpOAuth',
+    'gitHubApp',
+    'customOAuth',
+    'modelApiKey',
+    'modelOAuth',
+    'modelEndpoint',
+]
+"""
+On a grant, how its token is obtained; on a provider, what it configures.
+`staticToken` is a pasted secret, sent under whatever header its consumer
+uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+on demand. The `model*` kinds configure model providers; `modelEndpoint`
+is a provider without a credential and never appears on a grant.
+"""
+
+
+class CredentialProviderListParams(TypedDict):
+    pass
+
+
+class CredentialProviderReadParams(TypedDict):
+    providerId: str
+
+
+CredentialProviderStatus: TypeAlias = Literal[
+    'active', 'needsConfiguration', 'disabled'
+]
+
+
 class DeletedSessionView(TypedDict):
     deletedAtMs: int
     displayName: NotRequired[str | None]
     sessionId: str
 
 
-class DeploymentApiKeyListParams(TypedDict):
-    scope: NotRequired[AccessScope | None]
+class DeletedUniverseView(TypedDict):
     """
-    Only keys of this scope; absent lists every key.
-    """
-
-
-class DeploymentApiKeyRevokeParams(TypedDict):
-    keyId: str
-    scope: AccessScope
-    """
-    The scope the key belongs to.
+    Permanent resource inventory and attribution for a deleted universe.
     """
 
-
-class DeploymentApiKeyRotateParams(TypedDict):
-    keyId: str
-    scope: AccessScope
-    """
-    The scope the key belongs to.
-    """
-
-
-class DeploymentChannelAccountListParams(TypedDict):
-    includeDisabled: NotRequired[bool]
-    """
-    Include disabled accounts; by default only enabled ones are listed.
-    """
-    provider: NotRequired[ChannelProvider | None]
-
-
-class DeploymentChannelAccountView(TypedDict):
-    """
-    One channel account of any universe, for the connector host's discovery
-    pass.
-    """
-
-    accountId: ChannelAccountId
     createdAtMs: int
-    credentialGrantId: NotRequired[str | None]
-    """
-    Retrievable auth grant holding the provider token (a Telegram bot
-    token); the connector host leases it. Absent for providers whose
-    credential is a session state directory (WhatsApp).
-    """
-    displayName: str
-    enabled: NotRequired[bool]
-    provider: ChannelProvider
-    providerAccountId: str
-    """
-    Provider-native account identity: the Telegram bot username or
-    numeric id, the WhatsApp phone number. Unique per universe and
-    provider.
-    """
-    revision: int
-    settings: NotRequired[ChannelAccountSettings]
+    deletedAtMs: int
+    deletingAtMs: int
+    displayName: NotRequired[str | None]
+    handle: str
+    metadata: NotRequired[dict[str, str]]
+    requestedBy: Attribution
+    summary: Any
     universeId: str
-    updatedAtMs: int
 
 
 class DeploymentDeletedSessionsListParams(TypedDict):
@@ -1221,6 +1044,18 @@ class DeploymentDeletedSessionsListResponse(TypedDict):
     sessions: list[DeletedSessionView]
 
 
+class DeploymentDeletedUniversesListParams(TypedDict):
+    after: NotRequired[str | None]
+    """
+    Opaque exclusive cursor; each page contains at most 100 entries.
+    """
+
+
+class DeploymentDeletedUniversesListResponse(TypedDict):
+    nextAfter: NotRequired[str | None]
+    universes: list[DeletedUniverseView]
+
+
 class DeploymentEnvironmentProviderDeleteParams(TypedDict):
     providerId: str
 
@@ -1237,6 +1072,11 @@ class DeploymentEnvironmentProviderPutParams(TypedDict):
     redacts it; request logging must never echo these params.
     """
 
+    availableToAllUniverses: NotRequired[bool | None]
+    """
+    Allow every universe to use the provider. Set to `false` to require a binding.
+    Omit to keep the current setting. New providers default to `true`.
+    """
     clearCredential: NotRequired[bool]
     """
     Remove the stored credential. Excludes `credential`.
@@ -1265,6 +1105,11 @@ class DeploymentEnvironmentProviderReadParams(TypedDict):
 
 
 class DeploymentEnvironmentProviderView(TypedDict):
+    availableToAllUniverses: bool
+    """
+    Every universe may use the provider. Otherwise only the universes it
+    is bound to may.
+    """
     controllerEndpoint: str
     """
     `ws://`, `wss://` or `unix://` URL of the provider controller.
@@ -1301,13 +1146,11 @@ class DeploymentProviderBindingDeleteParams(TypedDict):
 
 class DeploymentProviderBindingPutParams(TypedDict):
     """
-    Create or replace a universe's binding to a deployment provider.
+    Allow a universe to use a provider that is not available to all
+    universes. Repeating it changes nothing; for a provider available to all
+    universes it has no effect.
     """
 
-    enabled: bool
-    """
-    Admits creates, template listing and data routes for the universe.
-    """
     providerId: str
     universe: str
     """
@@ -1331,7 +1174,28 @@ class DeploymentSessionPurgeResponse(TypedDict):
     """
 
 
+class DeploymentUniverseConfigurationPutParams(TypedDict):
+    """
+    Patch universe settings. Absent fields retain their values.
+    """
+
+    displayName: NotRequired[str | None]
+    metadata: NotRequired[dict[str, Any] | None]
+    """
+    Replaces the complete metadata map; omission leaves it unchanged.
+    """
+    protected: NotRequired[bool | None]
+    """
+    Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+    """
+    universe: str
+
+
 class DeploymentUniverseCreateParams(TypedDict):
+    expiresAtMs: NotRequired[int | None]
+    """
+    Future Unix time in milliseconds. Incompatible with protection.
+    """
     handle: NotRequired[str | None]
     """
     The new universe's handle: 1-63 lowercase letters, digits and
@@ -1339,6 +1203,12 @@ class DeploymentUniverseCreateParams(TypedDict):
     form of a UUID. Omit it to have one derived from the UUID. Ignored
     when the universe already exists.
     """
+    metadata: NotRequired[dict[str, str]]
+    """
+    At most 32 string entries; keys up to 64 bytes, values up to 256 bytes.
+    Caller keys cannot start with lightspeed.
+    """
+    protected: NotRequired[bool]
     universeId: str
 
 
@@ -1349,22 +1219,13 @@ class DeploymentUniverseDeleteParams(TypedDict):
     """
 
 
-class DeploymentUniverseDeleteResponse(TypedDict):
+class DeploymentUniverseExpiryPutParams(TypedDict):
     """
-    Purge report. The purge is idempotent: rerunning after a partial failure
-    resumes where it stopped, and the universe row is deleted last so a
-    half-purged universe is still visible to `deployment/universes/read`.
+    Replace or clear expiry. Explicit null clears it; omission is refused.
     """
 
-    blobObjectsDeleted: int
-    """
-    External object-store blobs deleted during the purge.
-    """
-    universeId: str
-    workflowsTerminated: int
-    """
-    Live session workflows terminated during the purge.
-    """
+    expiresAtMs: int | None
+    universe: str
 
 
 class DeploymentUniverseHandlePutParams(TypedDict):
@@ -1386,7 +1247,10 @@ class DeploymentUniverseHandlePutParams(TypedDict):
 
 
 class DeploymentUniverseListParams(TypedDict):
-    pass
+    metadata: NotRequired[dict[str, str]]
+    """
+    Return universes containing every supplied key/value pair.
+    """
 
 
 class DeploymentUniverseReadParams(TypedDict):
@@ -1438,6 +1302,7 @@ class EnvironmentCloseParams(TypedDict):
 
 
 EnvironmentCloseReasonView: TypeAlias = Literal[
+    'universeDeleted',
     'requested',
     'keyRevoked',
     'ephemeralGrace',
@@ -1598,22 +1463,13 @@ class EnvironmentPromptsConfig(TypedDict):
     """
 
 
-class EnvironmentProviderBindingListParams(TypedDict):
-    pass
-
-
-class EnvironmentProviderBindingReadParams(TypedDict):
-    providerId: str
-
-
 class EnvironmentProviderBindingView(TypedDict):
     """
-    A universe's binding to a deployment provider. Creates, templates and
-    data routes of the provider need it enabled.
+    A universe allowed to use a provider that is not available to all
+    universes.
     """
 
     createdAtMs: int
-    enabled: bool
     providerId: str
     updatedAtMs: int
 
@@ -1898,7 +1754,8 @@ Lifecycle phase of a provider target, as the provider reports it.
 class EnvironmentTemplateListParams(TypedDict):
     providerId: NotRequired[str | None]
     """
-    Only this provider's templates; omit for every enabled binding.
+    Only this provider's templates; omit for every provider available to
+    the universe.
     """
 
 
@@ -2021,11 +1878,6 @@ class GitHubInstallationView(TypedDict):
     Fine-grained permission map as GitHub reports it.
     """
     repositorySelection: NotRequired[str | None]
-
-
-class InitializeParams(TypedDict):
-    capabilities: NotRequired[ClientCapabilities | None]
-    clientInfo: NotRequired[ClientInfo | None]
 
 
 InputAdmissionFailureKind: TypeAlias = Literal[
@@ -2214,7 +2066,7 @@ McpServerAuthPolicy: TypeAlias = (
 class McpServerCredential1(TypedDict):
     """
     Non-secret universe credential selected by this configured MCP server.
-    Token material remains in the auth subsystem and is never returned.
+    Token material remains in the credentials subsystem and is never returned.
     """
 
     grantId: str
@@ -2224,7 +2076,7 @@ class McpServerCredential1(TypedDict):
 McpServerCredential: TypeAlias = McpServerCredential1
 """
 Non-secret universe credential selected by this configured MCP server.
-Token material remains in the auth subsystem and is never returned.
+Token material remains in the credentials subsystem and is never returned.
 """
 
 
@@ -2300,8 +2152,7 @@ class MethodAccessService(TypedDict):
 
 class MethodAccessDeployment(TypedDict):
     """
-    A deployment method: it addresses the deployment and needs a
-    deployment key.
+    A deployment method: it addresses the deployment.
     """
 
     kind: Literal['deployment']
@@ -2316,24 +2167,19 @@ MethodGroup: TypeAlias = (
         'mcp',
         'bots',
         'deployment/universes',
-        'deployment/api-keys',
         'deployment/sessions',
     ]
     | Literal['session']
     | Literal['session/delete']
     | Literal['blobs/put']
     | Literal['environments']
-    | Literal['channels']
-    | Literal['channels/inbound']
-    | Literal['auth']
-    | Literal['auth/lease']
+    | Literal['credentials']
+    | Literal['credentials/lease']
     | Literal['deployment/environment-providers']
-    | Literal['deployment/channels']
 )
 """
-The methods a key may call, by group. Every public method but
-`initialize` and `universe/watch` belongs to exactly one group, derived from its name, so a
-new method never changes what an existing key reaches beyond its group.
+The API family of a method, published for external authorization gates.
+`initialize` and `universe/watch` have no single family.
 """
 
 
@@ -2659,7 +2505,7 @@ Where a promise's answer comes from.
 ProviderNativeToolExecutionView: TypeAlias = Literal['providerHosted', 'clientEffect']
 
 
-RecommendedRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
+RecommendedRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'owner']
 """
 Universe roles as gates built on this contract name them. Core holds no
 roles; this is metadata only.
@@ -2805,11 +2651,7 @@ class RunTerminalNotificationInput(TypedDict):
     token: str
 
 
-class ServerCapabilities(TypedDict):
-    eventLog: NotRequired[bool]
-    historyRead: bool
-    localExecution: bool
-    notifications: bool
+RuntimeKind: TypeAlias = Literal['runtime', 'platform']
 
 
 class ServerInfo(TypedDict):
@@ -3666,7 +3508,6 @@ ToolCallDisplayGroup: TypeAlias = (
     | Literal['mcp']
     | Literal['agent']
     | Literal['bot']
-    | Literal['message']
 )
 """
 Coarse activity family of a tool call, chosen by the projection from the
@@ -3865,20 +3706,20 @@ UniverseAction: TypeAlias = (
     | Literal['configureResource']
 )
 """
-What a public method does, independent of its RPC spelling. Requests are
-gated by their key's groups; this classifies what the runtime's own work
-may do and which role a gate built on the contract should require.
+What a public method does, independent of its operation ID. This classifies
+the runtime's own work and the role an external gate should require.
 """
 
 
-UniverseMemberRole: TypeAlias = Literal['viewer', 'contributor', 'operator', 'admin']
+UniverseDeletionState: TypeAlias = Literal['deleting', 'deleted']
+"""
+Current state after the immediate deletion fence has been applied.
+"""
 
 
-class UniverseWatchResponse(TypedDict):
-    """
-    Final response when a watch reaches its lifetime. Reconnect and refetch on
-    watch/reset; notifications are lossy hints and have no durable resume cursor.
-    """
+UniverseDeletionStep: TypeAlias = Literal[
+    'intake', 'workflows', 'environments', 'storage'
+]
 
 
 class VfsPromptsConfig(TypedDict):
@@ -3985,7 +3826,7 @@ shared with the universe once, one way; everything else is shared.
 
 WatchKind: TypeAlias = Literal['session', 'bot', 'environment', 'workspace']
 """
-Collections whose list rows can be watched. Each requires its existing API-key group.
+Collections whose list rows can be watched. Each publishes its API family.
 """
 
 
@@ -4224,20 +4065,6 @@ class ActiveToolsView(TypedDict):
     tools: NotRequired[list[ToolView]]
 
 
-class AgentApiError(TypedDict):
-    kind: AgentApiErrorKind
-    message: str
-    modelDefaultSlot: NotRequired[ModelDefaultSlot | None]
-    """
-    Present for modelDefaultUnset; clients need not parse the message.
-    """
-    submissionId: NotRequired[str | None]
-    """
-    Present for operationPending on a call that took a submission id, including
-    one the server allocated. Retrying with it cannot land the same work twice.
-    """
-
-
 class Params6(TypedDict):
     workspace: VfsWorkspaceView
 
@@ -4253,12 +4080,6 @@ class AgentProfileSummary(TypedDict):
     profileId: ProfileId
     revision: int
     updatedAtMs: int
-
-
-ApiKeyGroups: TypeAlias = Literal['all'] | list[MethodGroup]
-"""
-The method groups a key is created or declared with: the literal `all`, which is every group the key's scope allows, or a non-empty list of groups.
-"""
 
 
 class ApprovalDecisionFailure(TypedDict):
@@ -4278,90 +4099,12 @@ class ApprovalDecisionResult(TypedDict):
     status: ApprovalDecisionStatus
 
 
-class AuthClientCreateParams(TypedDict):
-    """
-    Register an OAuth client configuration. `client_secret` is the second
-    deliberate inbound-plaintext path after `auth/grants/import`: it is
-    encrypted on receipt and never returned by any method. `Debug` output
-    redacts it; request logging must never echo these params.
-    """
-
-    audience: NotRequired[str | None]
-    authorizationEndpoint: str
-    authorizationResponseIssParameterSupported: NotRequired[bool]
-    authorizationServerIssuer: NotRequired[str | None]
-    authorizationServerScopesSupported: NotRequired[list[str]]
-    clientId: NotRequired[str | None]
-    clientSecret: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    providerId: NotRequired[str | None]
-    providerKind: AuthProviderKind
-    remoteClientId: str
-    scopesDefault: NotRequired[list[str]]
-    tokenEndpoint: str
-    tokenEndpointAuthMethod: NotRequired[TokenEndpointAuthMethod | None]
+class AvailableEnvironmentProviderListResponse(TypedDict):
+    providers: list[AvailableEnvironmentProviderView]
 
 
-class AuthFlowStartParams(TypedDict):
-    audience: NotRequired[str | None]
-    clientId: str
-    exposure: NotRequired[AuthGrantExposure]
-    scopes: NotRequired[list[str] | None]
-
-
-class AuthFlowStatusResponse(TypedDict):
-    flow: AuthFlowView
-
-
-class AuthGitHubInstallationGrantParams(TypedDict):
-    displayName: NotRequired[str | None]
-    exposure: NotRequired[AuthGrantExposure]
-    grantId: NotRequired[str | None]
-    installationId: int
-    providerId: str
-
-
-class AuthGitHubInstallationListResponse(TypedDict):
-    installations: NotRequired[list[GitHubInstallationView]]
-
-
-class AuthGrantLeaseResponse(TypedDict):
-    expiresAtMs: NotRequired[int | None]
-    grantId: str
-    providerKind: AuthProviderKind
-    token: str
-
-
-class AuthGrantListParams(TypedDict):
-    status: NotRequired[AuthGrantStatus | None]
-
-
-class AuthGrantView(TypedDict):
-    audience: NotRequired[str | None]
-    createdAtMs: int
-    createdBy: Attribution
-    """
-    Who created the grant. Attribution only; it confers no access.
-    """
-    displayName: NotRequired[str | None]
-    expiresAtMs: NotRequired[int | None]
-    exposure: AuthGrantExposure
-    grantId: str
-    hasAccessToken: bool
-    hasRefreshToken: bool
-    lastLeasedAtMs: NotRequired[int | None]
-    leaseCount: int
-    metadata: NotRequired[Any]
-    """
-    Non-secret provider-specific metadata (for GitHub App installation
-    grants: installation id, account, permissions, repository selection).
-    """
-    providerId: str
-    providerKind: AuthProviderKind
-    scopes: NotRequired[list[str]]
-    status: AuthGrantStatus
-    subjectHint: NotRequired[str | None]
-    updatedAtMs: int
+class AvailableEnvironmentProviderReadResponse(TypedDict):
+    provider: AvailableEnvironmentProviderView
 
 
 class BlobPutResponse(TypedDict):
@@ -4394,22 +4137,6 @@ class BotEventListParams(TypedDict):
     limit: NotRequired[int | None]
     """
     Page size; server-clamped.
-    """
-
-
-class BotEventMedia(TypedDict):
-    """
-    A prepared attachment appended to the run input after the rendering;
-    bytes live in the CAS.
-    """
-
-    blobRef: str
-    kind: BotEventMediaKind
-    mime: str
-    name: NotRequired[str | None]
-    textRef: NotRequired[str | None]
-    """
-    Optional prepared UTF-8 text; the source attachment remains in blobRef.
     """
 
 
@@ -4465,9 +4192,8 @@ class BotEventView(TypedDict):
     kind: str
     """
     Event kind as authored by the source (`github.push`,
-    `schedule.fire`, `chat.message`, `bot.reply`).
+    `schedule.fire`, `bot.reply`).
     """
-    media: NotRequired[list[BotEventMedia]]
     occurredAtMs: int
     """
     When the source says it happened.
@@ -4623,18 +4349,11 @@ class BotTriggerInputSchedule(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     atMs: NotRequired[int | None]
@@ -4670,18 +4389,11 @@ class BotTriggerInputWebhook(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     kind: Literal['webhook']
@@ -4703,18 +4415,11 @@ class BotTriggerInputPoll(TypedDict):
     CEL over `{event, data, headers}`; a non-matching event is refused
     and never stored. Fails closed.
     """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
     route: NotRequired[BotTriggerRoute | None]
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     cursor: PollCursorSpec
@@ -4735,7 +4440,6 @@ BotTriggerInputBot = TypedDict(
         'deliver': NotRequired[BotDeliverPolicy | None],
         'enabled': NotRequired[bool],
         'filter': NotRequired[str | None],
-        'pairingCode': NotRequired[str | None],
         'route': NotRequired[BotTriggerRoute | None],
         'sessionCloseAfterMs': NotRequired[int | None],
         'triggerId': BotTriggerId,
@@ -4743,6 +4447,28 @@ BotTriggerInputBot = TypedDict(
         'kind': Literal['bot'],
     },
 )
+
+
+BotTriggerInput: TypeAlias = (
+    BotTriggerInputSchedule
+    | BotTriggerInputWebhook
+    | BotTriggerInputPoll
+    | BotTriggerInputBot
+)
+"""
+The whole configuration of one trigger, replaced with an expected
+revision.
+"""
+
+
+class BotTriggerPutParams(TypedDict):
+    botId: BotId
+    expectedRevision: NotRequired[int | None]
+    """
+    Checked only when the trigger already exists; absent replaces (or
+    creates) unconditionally.
+    """
+    trigger: BotTriggerInput
 
 
 class BotTriggerViewSchedule(TypedDict):
@@ -4780,8 +4506,7 @@ class BotTriggerViewSchedule(TypedDict):
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     updatedAtMs: int
@@ -4839,8 +4564,7 @@ class BotTriggerViewWebhook(TypedDict):
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     updatedAtMs: int
@@ -4884,8 +4608,7 @@ class BotTriggerViewPoll(TypedDict):
     sessionCloseAfterMs: NotRequired[int | None]
     """
     Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
+    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely.
     """
     triggerId: BotTriggerId
     updatedAtMs: int
@@ -4923,6 +4646,18 @@ BotTriggerViewBot = TypedDict(
         'kind': Literal['bot'],
     },
 )
+
+
+BotTriggerView: TypeAlias = (
+    BotTriggerViewSchedule
+    | BotTriggerViewWebhook
+    | BotTriggerViewPoll
+    | BotTriggerViewBot
+)
+"""
+The whole configuration of one trigger, replaced with an expected
+revision.
+"""
 
 
 class BotView(TypedDict):
@@ -4992,173 +4727,19 @@ class BotView(TypedDict):
     updatedAtMs: int
 
 
-class CallerAccess(TypedDict):
+class ConnectionResponse(TypedDict):
     """
-    What the calling credential may do, so a client can offer only the
-    methods it may call. Descriptive: core still checks every call.
-    """
-
-    groups: list[MethodGroup]
-    """
-    The method groups the caller may call. A request without a key holds
-    every group. `initialize` belongs to no group and is always allowed.
-    """
-    keyId: NotRequired[str | None]
-    """
-    The calling key's id, unique among the keys of `scope`. It is what
-    records attribute the key's own requests to. Absent for a request
-    without a key, such as local development.
-    """
-    keyPrefix: NotRequired[str | None]
-    """
-    Display prefix of the calling key's current secret; absent for a
-    request without a key, such as local development.
-    """
-    scope: AccessScope
-    """
-    Credential scope, independent of a selected request universe.
-    """
-    single: bool
-    """
-    True only for explicitly unauthenticated local development access.
+    Connection discovery through the resource HTTP API.
     """
 
-
-class ChannelAccountDeleteParams(TypedDict):
-    accountId: ChannelAccountId
-
-
-class ChannelAccountInput(TypedDict):
+    caller: CallerAccess
+    contractRevision: str
+    defaultUniverse: NotRequired[str | None]
     """
-    A provider account served by the connector host. Secret material stays
-    in the referenced grant; this document is routing identity and
-    operational configuration.
+    Default URL universe for a gateway configured with a single universe.
     """
-
-    accountId: ChannelAccountId
-    credentialGrantId: NotRequired[str | None]
-    """
-    Retrievable auth grant holding the provider token (a Telegram bot
-    token); the connector host leases it. Absent for providers whose
-    credential is a session state directory (WhatsApp).
-    """
-    displayName: str
-    enabled: NotRequired[bool]
-    provider: ChannelProvider
-    providerAccountId: str
-    """
-    Provider-native account identity: the Telegram bot username or
-    numeric id, the WhatsApp phone number. Unique per universe and
-    provider.
-    """
-    settings: NotRequired[ChannelAccountSettings]
-
-
-class ChannelAccountListParams(TypedDict):
-    provider: NotRequired[ChannelProvider | None]
-
-
-class ChannelAccountPutParams(TypedDict):
-    account: ChannelAccountInput
-    expectedRevision: NotRequired[int | None]
-
-
-class ChannelAccountView(TypedDict):
-    """
-    A provider account served by the connector host. Secret material stays
-    in the referenced grant; this document is routing identity and
-    operational configuration.
-    """
-
-    accountId: ChannelAccountId
-    createdAtMs: int
-    credentialGrantId: NotRequired[str | None]
-    """
-    Retrievable auth grant holding the provider token (a Telegram bot
-    token); the connector host leases it. Absent for providers whose
-    credential is a session state directory (WhatsApp).
-    """
-    displayName: str
-    enabled: NotRequired[bool]
-    provider: ChannelProvider
-    providerAccountId: str
-    """
-    Provider-native account identity: the Telegram bot username or
-    numeric id, the WhatsApp phone number. Unique per universe and
-    provider.
-    """
-    revision: int
-    settings: NotRequired[ChannelAccountSettings]
-    updatedAtMs: int
-
-
-class ChannelConversationReadResponse(TypedDict):
-    conversation: NotRequired[ChannelConversationSnapshot | None]
-    """
-    Absent when no conversation workflow exists for the chat yet.
-    """
-
-
-class ChannelInboundAdmitResponse(TypedDict):
-    botId: NotRequired[BotId | None]
-    """
-    The bot serving the conversation, when decided.
-    """
-    decision: ChannelInboundDecision
-    triggerId: NotRequired[BotTriggerId | None]
-
-
-class ChannelInboundMedia(TypedDict):
-    """
-    A provider-owned attachment reference; never bytes. The connector
-    downloads it when the conversation workflow asks (`prepare_channel_media`).
-    """
-
-    byteSize: NotRequired[int | None]
-    fileId: str
-    """
-    Provider file handle (a Telegram file id, a sealed WhatsApp locator).
-    """
-    kind: ChannelMediaKind
-    mime: str
-    name: NotRequired[str | None]
-
-
-class ChannelPairingDeleteResponse(TypedDict):
-    pairing: ChannelPairingView
-
-
-class ChannelPairingListResponse(TypedDict):
-    pairings: NotRequired[list[ChannelPairingView]]
-
-
-class ChatAccess(TypedDict):
-    """
-    Who may take a turn and who may issue control commands, by provider
-    handle (Telegram user id, WhatsApp JID). Handle allowlists on the
-    trigger replace any platform membership lookup.
-    """
-
-    allowed: NotRequired[list[str]]
-    """
-    Handles allowed to take a turn when `turn` is `listed`.
-    """
-    controllers: NotRequired[list[str]]
-    """
-    Handles allowed to issue `/activation` and `/status`; empty denies
-    control commands to everyone.
-    """
-    turn: NotRequired[ChatTurnAccess]
-
-
-class ChatActivation(TypedDict):
-    """
-    When the bot acts in a conversation.
-    """
-
-    group: NotRequired[ChatGroupActivation | None]
-    mentionNames: NotRequired[list[str]]
-    triggerPrefixes: NotRequired[list[str]]
+    runtime: RuntimeKind
+    serverInfo: ServerInfo
 
 
 class ContextCompactResponse(TypedDict):
@@ -5194,113 +4775,90 @@ class ContextReplaceResult(TypedDict):
     status: ContextReplaceStatus
 
 
-class DeclaredUniverseMember(TypedDict):
-    email: NotRequired[str | None]
+class CredentialClientCreateParams(TypedDict):
     """
-    Select by verified email, or by issuer and subject, never both.
-    """
-    issuer: NotRequired[str | None]
-    role: UniverseMemberRole
-    subject: NotRequired[str | None]
-
-
-class DeploymentApiKeyCreateParams(TypedDict):
-    assertActor: NotRequired[bool]
-    """
-    Whether the key may name the actor a request acts for with the
-    `x-lightspeed-actor` header. Give it only to a gate that authenticates
-    people, such as the Platform. It cannot be changed afterwards.
-    """
-    displayName: str
-    """
-    Human-readable purpose shown in key-management interfaces.
-    """
-    groups: ApiKeyGroups
-    """
-    The method groups the key may call: a non-empty list, or `"all"` for
-    every group its scope allows. The key stores the resulting set.
-    """
-    keyId: NotRequired[str | None]
-    """
-    The key's id: 1-128 ASCII letters, digits, underscores, hyphens, dots
-    or colons, starting with a letter or digit, and not yet used by a key
-    of this scope. Omit it to have one allocated.
-    """
-    scope: AccessScope
-    """
-    A universe, or the deployment. A deployment key addresses a universe
-    with the `x-lightspeed-universe` header and may hold deployment groups.
+    Register an OAuth client configuration. `client_secret` is the second
+    deliberate inbound-plaintext path after `credentials/grants/import`: it is
+    encrypted on receipt and never returned by any method. `Debug` output
+    redacts it; request logging must never echo these params.
     """
 
-
-class DeploymentApiKeyPutParams(TypedDict):
-    """
-    Declare a key whose secret the caller supplies. `Debug` redacts the
-    secret; the serialized request remains sensitive and must not be logged.
-    """
-
-    assertActor: NotRequired[bool]
-    """
-    Whether the key may name the actor a request acts for. It cannot be
-    changed afterwards.
-    """
-    displayName: str
-    """
-    Human-readable purpose shown in key-management interfaces.
-    """
-    groups: ApiKeyGroups
-    """
-    The method groups the key may call: a non-empty list, or `"all"` for
-    every group its scope allows. An existing key's groups are replaced
-    by these, and `"all"` is resolved again on every call, so repeating a
-    declaration after an upgrade gives the key the groups added since.
-    """
-    keyId: str
-    """
-    The key's id within its scope: 1-128 ASCII letters, digits,
-    underscores, hyphens, dots or colons, starting with a letter or digit.
-    """
-    scope: AccessScope
-    """
-    A universe, or the deployment. It cannot be changed afterwards.
-    """
-    secret: str
-    """
-    The secret the key answers to: `lsk_` followed by 32 random bytes
-    encoded as base64url without padding. Generate it with a
-    cryptographic random source.
-    """
+    audience: NotRequired[str | None]
+    authorizationEndpoint: str
+    authorizationResponseIssParameterSupported: NotRequired[bool]
+    authorizationServerIssuer: NotRequired[str | None]
+    authorizationServerScopesSupported: NotRequired[list[str]]
+    clientId: NotRequired[str | None]
+    clientSecret: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    providerId: NotRequired[str | None]
+    providerKind: CredentialProviderKind
+    remoteClientId: str
+    scopesDefault: NotRequired[list[str]]
+    tokenEndpoint: str
+    tokenEndpointAuthMethod: NotRequired[TokenEndpointAuthMethod | None]
 
 
-class DeploymentApiKeyView(TypedDict):
-    """
-    Non-secret key metadata: what the key is called, reaches and may call,
-    and who minted it.
-    """
+class CredentialFlowStartParams(TypedDict):
+    audience: NotRequired[str | None]
+    clientId: str
+    exposure: NotRequired[CredentialGrantExposure]
+    scopes: NotRequired[list[str] | None]
 
-    assertActor: bool
+
+class CredentialFlowStatusResponse(TypedDict):
+    flow: CredentialFlowView
+
+
+class CredentialGitHubInstallationGrantParams(TypedDict):
+    displayName: NotRequired[str | None]
+    exposure: NotRequired[CredentialGrantExposure]
+    grantId: NotRequired[str | None]
+    installationId: int
+    providerId: str
+
+
+class CredentialGitHubInstallationListResponse(TypedDict):
+    installations: NotRequired[list[GitHubInstallationView]]
+
+
+class CredentialGrantLeaseResponse(TypedDict):
+    expiresAtMs: NotRequired[int | None]
+    grantId: str
+    providerKind: CredentialProviderKind
+    token: str
+
+
+class CredentialGrantListParams(TypedDict):
+    status: NotRequired[CredentialGrantStatus | None]
+
+
+class CredentialGrantView(TypedDict):
+    audience: NotRequired[str | None]
     createdAtMs: int
     createdBy: Attribution
+    """
+    Who created the grant. Attribution only; it confers no access.
+    """
     displayName: NotRequired[str | None]
-    groups: list[MethodGroup]
-    keyId: str
+    expiresAtMs: NotRequired[int | None]
+    exposure: CredentialGrantExposure
+    grantId: str
+    hasAccessToken: bool
+    hasRefreshToken: bool
+    lastLeasedAtMs: NotRequired[int | None]
+    leaseCount: int
+    metadata: NotRequired[Any]
     """
-    The key's name among the keys of its scope. Together with the scope
-    it addresses the key, and it is kept when the secret is replaced.
+    Non-secret provider-specific metadata (for GitHub App installation
+    grants: installation id, account, permissions, repository selection).
     """
-    keyPrefix: str
-    """
-    The first characters of the key's current secret: enough to tell
-    which secret the key holds without revealing it. It changes when the
-    secret does.
-    """
-    lastUsedAtMs: NotRequired[int | None]
-    revokedAtMs: NotRequired[int | None]
-    scope: AccessScope
-
-
-class DeploymentChannelAccountListResponse(TypedDict):
-    accounts: NotRequired[list[DeploymentChannelAccountView]]
+    providerId: str
+    providerKind: CredentialProviderKind
+    scopes: NotRequired[list[str]]
+    status: CredentialGrantStatus
+    subjectHint: NotRequired[str | None]
+    updatedAtMs: int
 
 
 class DeploymentEnvironmentProviderDeleteResponse(TypedDict):
@@ -5327,6 +4885,11 @@ class DeploymentProviderBindingPutResponse(TypedDict):
     binding: EnvironmentProviderBindingView
 
 
+class DeploymentUniverseDeleteResponse(TypedDict):
+    state: UniverseDeletionState
+    universeId: str
+
+
 class EnvironmentCreateParams(TypedDict):
     displayName: NotRequired[str | None]
     environmentId: NotRequired[str | None]
@@ -5342,8 +4905,8 @@ class EnvironmentCreateParams(TypedDict):
     metadata: NotRequired[dict[str, str]]
     providerId: str
     """
-    The provider to create the environment with; the universe needs an
-    enabled binding to it.
+    The provider to create the environment with; it must be available to
+    the universe.
     """
     requestId: str
     """
@@ -5462,11 +5025,11 @@ class EnvironmentPowerPutParams(TypedDict):
 
 
 class EnvironmentProviderBindingListResponse(TypedDict):
+    """
+    A universe's bindings, as a deployment administrator lists them.
+    """
+
     bindings: list[EnvironmentProviderBindingView]
-
-
-class EnvironmentProviderBindingReadResponse(TypedDict):
-    binding: EnvironmentProviderBindingView
 
 
 class EnvironmentRegistrationKeyCreateResponse(TypedDict):
@@ -5666,11 +5229,20 @@ class GenerationConfig(TypedDict):
     toolChoice: NotRequired[ToolChoice | None]
 
 
-class InitializeResponse(TypedDict):
-    caller: CallerAccess
-    capabilities: ServerCapabilities
-    protocolVersion: str
-    serverInfo: ServerInfo
+class HttpProblem(TypedDict):
+    """
+    Stable public HTTP error body. Service error details are retained as typed
+    extensions; the runtime redacts internal failures before constructing it.
+    """
+
+    deletedUniverse: NotRequired[DeletedUniverseView | None]
+    detail: str
+    kind: AgentApiErrorKind
+    modelDefaultSlot: NotRequired[ModelDefaultSlot | None]
+    status: int
+    submissionId: NotRequired[str | None]
+    title: str
+    type: str
 
 
 class InputItemMedia(TypedDict):
@@ -5694,12 +5266,6 @@ class InputItemMedia(TypedDict):
 InputItem: TypeAlias = (
     InputItemText | InputItemTextRef | InputItemMedia | InputItemCatalog
 )
-
-
-class JsonRpcError(TypedDict):
-    code: int
-    data: NotRequired[AgentApiError | None]
-    message: str
 
 
 class McpAdvertisedToolView(TypedDict):
@@ -5874,7 +5440,7 @@ class OAuthClientView(TypedDict):
     displayName: NotRequired[str | None]
     hasClientSecret: bool
     providerId: str
-    providerKind: AuthProviderKind
+    providerKind: CredentialProviderKind
     remoteClientId: str
     scopesDefault: NotRequired[list[str]]
     tokenEndpoint: str
@@ -6323,10 +5889,11 @@ class TranscriptionView(TypedDict):
     transcriptionId: str
 
 
-class UniverseDirectoryGroupMapping(TypedDict):
-    group: str
-    issuer: str
-    role: UniverseMemberRole
+class UniverseDeletion(TypedDict):
+    detail: NotRequired[str | None]
+    requestedBy: Attribution
+    startedAtMs: int
+    step: UniverseDeletionStep
 
 
 class UniverseWatchParams(TypedDict):
@@ -6459,191 +6026,6 @@ class AgentNotificationEnvironmentsChanged(TypedDict):
     params: Params4
 
 
-class AuthClientCreateResponse(TypedDict):
-    client: OAuthClientView
-
-
-class AuthClientDeleteResponse(TypedDict):
-    client: OAuthClientView
-
-
-class AuthClientListResponse(TypedDict):
-    clients: NotRequired[list[OAuthClientView]]
-
-
-class AuthClientReadResponse(TypedDict):
-    client: OAuthClientView
-
-
-class AuthGitHubInstallationGrantResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthGrantImportResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthGrantListResponse(TypedDict):
-    grants: NotRequired[list[AuthGrantView]]
-
-
-class AuthGrantPutResponse(TypedDict):
-    created: bool
-    """
-    False when the credential already existed.
-    """
-    grant: AuthGrantView
-    """
-    The credential as declared: as it is now, or as it would be for a
-    dry run.
-    """
-    tokenReplaced: bool
-    """
-    True when an existing credential held a different token.
-    """
-
-
-class AuthGrantReadResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthGrantRevokeResponse(TypedDict):
-    grant: AuthGrantView
-
-
-class AuthProviderConfigInputModelApiKey(TypedDict):
-    """
-    Stored model provider API key; the key arrives via `credential` and is
-    encrypted on receipt.
-    """
-
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    type: Literal['modelApiKey']
-
-
-class AuthProviderConfigInputModelOAuth(TypedDict):
-    """
-    Bind an existing auth grant as a model provider credential. No
-    `credential` is accepted; the grant's tokens stay in the grant store.
-    """
-
-    audience: NotRequired[str | None]
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    grantId: str
-    type: Literal['modelOAuth']
-
-
-class AuthProviderConfigInputModelEndpoint(TypedDict):
-    """
-    Register an endpoint that requires no provider credential.
-    """
-
-    endpoint: ModelEndpointConfig
-    type: Literal['modelEndpoint']
-
-
-AuthProviderConfigInput: TypeAlias = (
-    AuthProviderConfigInputGithubApp
-    | AuthProviderConfigInputModelApiKey
-    | AuthProviderConfigInputModelOAuth
-    | AuthProviderConfigInputModelEndpoint
-)
-
-
-class AuthProviderConfigViewModelApiKey(TypedDict):
-    """
-    Stored model provider API key (`model:<provider_id>` rows). The key itself
-    is the provider credential and never appears in views.
-    """
-
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    type: Literal['modelApiKey']
-
-
-class AuthProviderConfigViewModelOAuth(TypedDict):
-    """
-    OAuth-grant-backed model provider credential: provider calls send the
-    bound grant's access token as an OAuth bearer token.
-    """
-
-    audience: NotRequired[str | None]
-    endpoint: NotRequired[ModelEndpointConfig | None]
-    grantId: str
-    type: Literal['modelOAuth']
-
-
-class AuthProviderConfigViewModelEndpoint(TypedDict):
-    """
-    Credentialless OpenAI-compatible endpoint.
-    """
-
-    endpoint: ModelEndpointConfig
-    type: Literal['modelEndpoint']
-
-
-AuthProviderConfigView: TypeAlias = (
-    AuthProviderConfigViewGithubApp
-    | AuthProviderConfigViewModelApiKey
-    | AuthProviderConfigViewModelOAuth
-    | AuthProviderConfigViewModelEndpoint
-)
-"""
-Non-secret, provider-specific configuration. New providers add a
-variant, not a table.
-"""
-
-
-class AuthProviderCreateParams(TypedDict):
-    """
-    Register an auth provider. `credential` (for GitHub Apps: the private
-    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
-    on receipt and never returned by any method. `Debug` output redacts it;
-    request logging must never echo these params.
-    """
-
-    config: AuthProviderConfigInput
-    credential: NotRequired[str | None]
-    displayName: NotRequired[str | None]
-    providerId: NotRequired[str | None]
-
-
-class AuthProviderPutParams(TypedDict):
-    """
-    Declare a provider: its id, its configuration and its credential. A
-    provider that is missing is created. One that exists is rewritten in place
-    as if it were created again under the same id, where it differs: the new
-    settings are validated before anything changes, so a rejected declaration
-    leaves the provider as it was, and sessions and environment variables
-    referencing the id keep working throughout. Declaring it again changes
-    nothing. `credential` is encrypted on receipt and never returned; `Debug`
-    output redacts it.
-    """
-
-    config: AuthProviderConfigInput
-    credential: NotRequired[str | None]
-    """
-    The provider's credential, for the kinds that take one. Absent leaves
-    the provider without a credential.
-    """
-    displayName: NotRequired[str | None]
-    dryRun: NotRequired[bool]
-    """
-    Report what the declaration would do without doing it.
-    """
-    providerId: str
-
-
-class AuthProviderView(TypedDict):
-    config: AuthProviderConfigView
-    createdAtMs: int
-    displayName: NotRequired[str | None]
-    hasCredential: bool
-    providerId: str
-    providerKind: AuthProviderKind
-    status: AuthProviderStatus
-    updatedAtMs: int
-
-
 class BotCloseResponse(TypedDict):
     bot: BotView
 
@@ -6673,6 +6055,25 @@ class BotControllerSnapshot(TypedDict):
     runsToday: NotRequired[int]
     sessions: NotRequired[list[BotSessionSnapshot]]
     setupStatus: BotSetupStatus
+
+
+class BotCreateParams(TypedDict):
+    bot: BotInput
+    triggers: NotRequired[list[BotTriggerInput]]
+    """
+    Triggers created with the bot in one go; a failure rolls the bot
+    back.
+    """
+
+
+class BotCreateResponse(TypedDict):
+    bot: BotView
+    triggerSecrets: NotRequired[dict[str, BotTriggerSecretsView]]
+    """
+    Secrets of the triggers created with the bot, by trigger id; a
+    trigger that has none is left out.
+    """
+    triggers: NotRequired[list[BotTriggerView]]
 
 
 class BotDeleteResponse(TypedDict):
@@ -6846,189 +6247,24 @@ class BotStateView(TypedDict):
     """
 
 
-class BotTriggerInputChat(TypedDict):
-    """
-    The whole configuration of one trigger, replaced with an expected
-    revision.
-    """
-
-    coalesce: NotRequired[BotCoalescePolicy | None]
-    deliver: NotRequired[BotDeliverPolicy | None]
-    enabled: NotRequired[bool]
-    filter: NotRequired[str | None]
-    """
-    CEL over `{event, data, headers}`; a non-matching event is refused
-    and never stored. Fails closed.
-    """
-    pairingCode: NotRequired[str | None]
-    """
-    Chat triggers with `pairing: code`: set a specific pairing code
-    (8–64 chars) instead of the server-minted one. Absent keeps the
-    stored code, so an edit never has to send it back.
-    """
-    route: NotRequired[BotTriggerRoute | None]
-    sessionCloseAfterMs: NotRequired[int | None]
-    """
-    Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
-    """
-    triggerId: BotTriggerId
-    access: NotRequired[ChatAccess]
-    accountId: str
-    """
-    The universe's channel account this connection serves.
-    """
-    activation: NotRequired[ChatActivation]
-    kind: Literal['chat']
-    matchScope: NotRequired[ChatScope | None]
-    pairing: NotRequired[ChatPairing]
-    priority: NotRequired[int]
-    """
-    Lower wins among matching chat triggers on one account.
-    """
+class BotTriggerDeleteResponse(TypedDict):
+    trigger: BotTriggerView
 
 
-BotTriggerInput: TypeAlias = (
-    BotTriggerInputSchedule
-    | BotTriggerInputWebhook
-    | BotTriggerInputPoll
-    | BotTriggerInputBot
-    | BotTriggerInputChat
-)
-"""
-The whole configuration of one trigger, replaced with an expected
-revision.
-"""
+class BotTriggerListResponse(TypedDict):
+    triggers: NotRequired[list[BotTriggerView]]
 
 
-class BotTriggerPutParams(TypedDict):
-    botId: BotId
-    expectedRevision: NotRequired[int | None]
+class BotTriggerPutResponse(TypedDict):
+    secrets: NotRequired[BotTriggerSecretsView]
     """
-    Checked only when the trigger already exists; absent replaces (or
-    creates) unconditionally.
+    The trigger's secrets as stored after this write, minted or kept.
     """
-    trigger: BotTriggerInput
+    trigger: BotTriggerView
 
 
-class BotTriggerViewChat(TypedDict):
-    """
-    The whole configuration of one trigger, replaced with an expected
-    revision.
-    """
-
-    botId: BotId
-    coalesce: NotRequired[BotCoalescePolicy | None]
-    createdAtMs: int
-    cursorState: NotRequired[PollCursorState | None]
-    """
-    Poll triggers: the advancing runtime cursor. Named apart from the
-    poll spec's dedupe `cursor`, which the flattened document already
-    serializes under that key.
-    """
-    deliver: NotRequired[BotDeliverPolicy | None]
-    disabledAtMs: NotRequired[int | None]
-    disabledReason: NotRequired[BotTriggerDisabledReason | None]
-    enabled: NotRequired[bool]
-    filter: NotRequired[str | None]
-    """
-    CEL over `{event, data, headers}`; a non-matching event is refused
-    and never stored. Fails closed.
-    """
-    lastFilterError: NotRequired[str | None]
-    """
-    Last runtime failure of the CEL filter (the event was refused);
-    cleared by the next match.
-    """
-    lastFilterErrorAtMs: NotRequired[int | None]
-    revision: int
-    route: NotRequired[BotTriggerRoute | None]
-    sessionCloseAfterMs: NotRequired[int | None]
-    """
-    Idle-close policy for sessions this trigger routes to: absent inherits the
-    bot's `routedSessionCloseAfterMs`, `0` keeps them open indefinitely (the
-    chat default).
-    """
-    triggerId: BotTriggerId
-    updatedAtMs: int
-    access: NotRequired[ChatAccess]
-    accountId: str
-    """
-    The universe's channel account this connection serves.
-    """
-    activation: NotRequired[ChatActivation]
-    kind: Literal['chat']
-    matchScope: NotRequired[ChatScope | None]
-    pairing: NotRequired[ChatPairing]
-    priority: NotRequired[int]
-    """
-    Lower wins among matching chat triggers on one account.
-    """
-
-
-BotTriggerView: TypeAlias = (
-    BotTriggerViewSchedule
-    | BotTriggerViewWebhook
-    | BotTriggerViewPoll
-    | BotTriggerViewBot
-    | BotTriggerViewChat
-)
-"""
-The whole configuration of one trigger, replaced with an expected
-revision.
-"""
-
-
-class ChannelAccountCreateParams(TypedDict):
-    account: ChannelAccountInput
-
-
-class ChannelAccountCreateResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelAccountDeleteResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelAccountListResponse(TypedDict):
-    accounts: NotRequired[list[ChannelAccountView]]
-
-
-class ChannelAccountPutResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelAccountReadResponse(TypedDict):
-    account: ChannelAccountView
-
-
-class ChannelInbound(TypedDict):
-    """
-    One normalized provider message, as the connector host hands it to the
-    core. Provider and account come from the admitting account.
-    """
-
-    chatId: str
-    isDirect: bool
-    isReplyToBot: bool
-    media: NotRequired[list[ChannelInboundMedia]]
-    mentionedBot: bool
-    messageId: str
-    senderId: str
-    """
-    Provider handle of the sender (Telegram user id, WhatsApp JID).
-    """
-    senderName: str
-    text: str
-    threadId: NotRequired[str | None]
-    timestampMs: int
-
-
-class ChannelInboundAdmitParams(TypedDict):
-    accountId: ChannelAccountId
-    inbound: ChannelInbound
+class BotTriggerReadResponse(TypedDict):
+    trigger: BotTriggerView
 
 
 class ContextAppendEntry(TypedDict):
@@ -7159,59 +6395,189 @@ class ContextView(TypedDict):
     revision: int
 
 
-class DeploymentApiKeyCreateResponse(TypedDict):
-    """
-    A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
-    recovered later. Its custom `Debug` implementation redacts the DTO before
-    JSON-RPC serialization; the serialized response payload remains sensitive
-    and must not be logged.
-    """
-
-    apiKey: DeploymentApiKeyView
-    secret: str
+class CredentialClientCreateResponse(TypedDict):
+    client: OAuthClientView
 
 
-class DeploymentApiKeyListResponse(TypedDict):
-    apiKeys: NotRequired[list[DeploymentApiKeyView]]
+class CredentialClientDeleteResponse(TypedDict):
+    client: OAuthClientView
 
 
-class DeploymentApiKeyPutResponse(TypedDict):
-    apiKey: DeploymentApiKeyView
+class CredentialClientListResponse(TypedDict):
+    clients: NotRequired[list[OAuthClientView]]
+
+
+class CredentialClientReadResponse(TypedDict):
+    client: OAuthClientView
+
+
+class CredentialGitHubInstallationGrantResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialGrantImportResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialGrantListResponse(TypedDict):
+    grants: NotRequired[list[CredentialGrantView]]
+
+
+class CredentialGrantPutResponse(TypedDict):
     created: bool
     """
-    False when the key already existed.
+    False when the credential already existed.
     """
-    secretReplaced: bool
+    grant: CredentialGrantView
     """
-    True when an existing key held a different secret, which no longer
-    works.
+    The credential as declared: as it is now, or as it would be for a
+    dry run.
     """
-
-
-class DeploymentApiKeyRevokeResponse(TypedDict):
-    apiKey: DeploymentApiKeyView
-
-
-class DeploymentUniverseConfigurationPutParams(TypedDict):
+    tokenReplaced: bool
     """
-    Patch desired Platform configuration. Absent fields retain their values.
+    True when an existing credential held a different token.
     """
 
-    directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
+
+class CredentialGrantReadResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialGrantRevokeResponse(TypedDict):
+    grant: CredentialGrantView
+
+
+class CredentialProviderConfigInputModelApiKey(TypedDict):
     """
-    Exact issuer-qualified directory groups. Omit to leave unchanged;
-    an empty list clears declared group grants.
+    Stored model provider API key; the key arrives via `credential` and is
+    encrypted on receipt.
+    """
+
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    type: Literal['modelApiKey']
+
+
+class CredentialProviderConfigInputModelOAuth(TypedDict):
+    """
+    Bind an existing credential grant as a model provider credential. No
+    `credential` is accepted; the grant's tokens stay in the grant store.
+    """
+
+    audience: NotRequired[str | None]
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    grantId: str
+    type: Literal['modelOAuth']
+
+
+class CredentialProviderConfigInputModelEndpoint(TypedDict):
+    """
+    Register an endpoint that requires no provider credential.
+    """
+
+    endpoint: ModelEndpointConfig
+    type: Literal['modelEndpoint']
+
+
+CredentialProviderConfigInput: TypeAlias = (
+    CredentialProviderConfigInputGithubApp
+    | CredentialProviderConfigInputModelApiKey
+    | CredentialProviderConfigInputModelOAuth
+    | CredentialProviderConfigInputModelEndpoint
+)
+
+
+class CredentialProviderConfigViewModelApiKey(TypedDict):
+    """
+    Stored model provider API key (`model:<provider_id>` rows). The key itself
+    is the provider credential and never appears in views.
+    """
+
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    type: Literal['modelApiKey']
+
+
+class CredentialProviderConfigViewModelOAuth(TypedDict):
+    """
+    OAuth-grant-backed model provider credential: provider calls send the
+    bound grant's access token as an OAuth bearer token.
+    """
+
+    audience: NotRequired[str | None]
+    endpoint: NotRequired[ModelEndpointConfig | None]
+    grantId: str
+    type: Literal['modelOAuth']
+
+
+class CredentialProviderConfigViewModelEndpoint(TypedDict):
+    """
+    Credentialless OpenAI-compatible endpoint.
+    """
+
+    endpoint: ModelEndpointConfig
+    type: Literal['modelEndpoint']
+
+
+CredentialProviderConfigView: TypeAlias = (
+    CredentialProviderConfigViewGithubApp
+    | CredentialProviderConfigViewModelApiKey
+    | CredentialProviderConfigViewModelOAuth
+    | CredentialProviderConfigViewModelEndpoint
+)
+"""
+Non-secret, provider-specific configuration. New providers add a
+variant, not a table.
+"""
+
+
+class CredentialProviderCreateParams(TypedDict):
+    """
+    Register a credential provider. `credential` (for GitHub Apps: the private
+    key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+    on receipt and never returned by any method. `Debug` output redacts it;
+    request logging must never echo these params.
+    """
+
+    config: CredentialProviderConfigInput
+    credential: NotRequired[str | None]
+    displayName: NotRequired[str | None]
+    providerId: NotRequired[str | None]
+
+
+class CredentialProviderPutParams(TypedDict):
+    """
+    Declare a provider: its id, its configuration and its credential. A
+    provider that is missing is created. One that exists is rewritten in place
+    as if it were created again under the same id, where it differs: the new
+    settings are validated before anything changes, so a rejected declaration
+    leaves the provider as it was, and sessions and environment variables
+    referencing the id keep working throughout. Declaring it again changes
+    nothing. `credential` is encrypted on receipt and never returned; `Debug`
+    output redacts it.
+    """
+
+    config: CredentialProviderConfigInput
+    credential: NotRequired[str | None]
+    """
+    The provider's credential, for the kinds that take one. Absent leaves
+    the provider without a credential.
     """
     displayName: NotRequired[str | None]
+    dryRun: NotRequired[bool]
     """
-    Runtime-owned name. Named universes are adopted automatically by Platform.
+    Report what the declaration would do without doing it.
     """
-    members: NotRequired[list[DeclaredUniverseMember] | None]
-    """
-    Declared grants, independent of manual memberships. Omit to leave unmanaged;
-    an empty list clears declared members. Email selectors require verified email.
-    """
-    universe: str
+    providerId: str
+
+
+class CredentialProviderView(TypedDict):
+    config: CredentialProviderConfigView
+    createdAtMs: int
+    displayName: NotRequired[str | None]
+    hasCredential: bool
+    providerId: str
+    providerKind: CredentialProviderKind
+    status: CredentialProviderStatus
+    updatedAtMs: int
 
 
 class DeploymentUniverseView(TypedDict):
@@ -7222,15 +6588,9 @@ class DeploymentUniverseView(TypedDict):
 
     blobBytes: int
     createdAtMs: int
-    directoryGroupMappings: NotRequired[list[UniverseDirectoryGroupMapping] | None]
-    """
-    Exact issuer-qualified directory groups. Omit to leave unchanged;
-    an empty list clears declared group grants.
-    """
+    deletion: NotRequired[UniverseDeletion | None]
     displayName: NotRequired[str | None]
-    """
-    Runtime-owned name. Named universes are adopted automatically by Platform.
-    """
+    expiresAtMs: NotRequired[int | None]
     handle: str
     """
     The universe's deployment-unique name. Requests may address the
@@ -7241,12 +6601,15 @@ class DeploymentUniverseView(TypedDict):
     Most recent session activity (`max(sessions.updated_at_ms)`); absent
     when the universe has no sessions.
     """
-    members: NotRequired[list[DeclaredUniverseMember] | None]
+    metadata: NotRequired[dict[str, Any] | None]
     """
-    Declared grants, independent of manual memberships. Omit to leave unmanaged;
-    an empty list clears declared members. Email selectors require verified email.
+    Replaces the complete metadata map; omission leaves it unchanged.
     """
     profiles: int
+    protected: NotRequired[bool | None]
+    """
+    Deletion is refused while enabled. Cannot be enabled while an expiry exists.
+    """
     sessions: int
     universeId: str
     workspaces: int
@@ -7634,13 +6997,17 @@ class AgentNotificationBotsChanged(TypedDict):
     params: Params2
 
 
-class Params9(TypedDict):
-    event: SessionEventView
-
-
-class AgentNotificationSessionEvent(TypedDict):
-    method: Literal['session/event']
-    params: Params9
+AgentNotification: TypeAlias = (
+    AgentNotificationSessionChanged
+    | AgentNotificationSessionRemoved
+    | AgentNotificationBotsChanged
+    | AgentNotificationBotsRemoved
+    | AgentNotificationEnvironmentsChanged
+    | AgentNotificationEnvironmentsRemoved
+    | AgentNotificationWorkspacesChanged
+    | AgentNotificationWorkspacesRemoved
+    | AgentNotificationWatchReset
+)
 
 
 class AgentProfile(TypedDict):
@@ -7686,19 +7053,30 @@ class AgentProfileInput(TypedDict):
     """
 
 
-class AuthProviderCreateResponse(TypedDict):
-    provider: AuthProviderView
+class BotStateReadResponse(TypedDict):
+    state: BotStateView
 
 
-class AuthProviderDeleteResponse(TypedDict):
-    provider: AuthProviderView
+class ContextAppendResult(TypedDict):
+    entry: NotRequired[ContextEntryInputView | None]
+    failure: NotRequired[InputAdmissionFailureView | None]
+    key: str
+    status: ContextAppendStatus
 
 
-class AuthProviderListResponse(TypedDict):
-    providers: NotRequired[list[AuthProviderView]]
+class CredentialProviderCreateResponse(TypedDict):
+    provider: CredentialProviderView
 
 
-class AuthProviderPutResponse(TypedDict):
+class CredentialProviderDeleteResponse(TypedDict):
+    provider: CredentialProviderView
+
+
+class CredentialProviderListResponse(TypedDict):
+    providers: NotRequired[list[CredentialProviderView]]
+
+
+class CredentialProviderPutResponse(TypedDict):
     created: bool
     """
     False when the provider already existed.
@@ -7708,65 +7086,15 @@ class AuthProviderPutResponse(TypedDict):
     True when an existing provider held a different credential, or gained
     or lost one.
     """
-    provider: AuthProviderView
+    provider: CredentialProviderView
     """
     The provider as declared: as it is now, or as it would be for a dry
     run.
     """
 
 
-class AuthProviderReadResponse(TypedDict):
-    provider: AuthProviderView
-
-
-class BotCreateParams(TypedDict):
-    bot: BotInput
-    triggers: NotRequired[list[BotTriggerInput]]
-    """
-    Triggers created with the bot in one go; a failure rolls the bot
-    back.
-    """
-
-
-class BotCreateResponse(TypedDict):
-    bot: BotView
-    triggerSecrets: NotRequired[dict[str, BotTriggerSecretsView]]
-    """
-    Secrets of the triggers created with the bot, by trigger id; a
-    trigger that has none is left out.
-    """
-    triggers: NotRequired[list[BotTriggerView]]
-
-
-class BotStateReadResponse(TypedDict):
-    state: BotStateView
-
-
-class BotTriggerDeleteResponse(TypedDict):
-    trigger: BotTriggerView
-
-
-class BotTriggerListResponse(TypedDict):
-    triggers: NotRequired[list[BotTriggerView]]
-
-
-class BotTriggerPutResponse(TypedDict):
-    secrets: NotRequired[BotTriggerSecretsView]
-    """
-    The trigger's secrets as stored after this write, minted or kept.
-    """
-    trigger: BotTriggerView
-
-
-class BotTriggerReadResponse(TypedDict):
-    trigger: BotTriggerView
-
-
-class ContextAppendResult(TypedDict):
-    entry: NotRequired[ContextEntryInputView | None]
-    failure: NotRequired[InputAdmissionFailureView | None]
-    key: str
-    status: ContextAppendStatus
+class CredentialProviderReadResponse(TypedDict):
+    provider: CredentialProviderView
 
 
 class DeploymentUniverseCreateResponse(TypedDict):
@@ -7999,48 +7327,6 @@ class SessionView(TypedDict):
     updatedAtMs: int
 
 
-class Params8(TypedDict):
-    session: SessionView
-
-
-class AgentNotificationSessionStarted(TypedDict):
-    method: Literal['session/started']
-    params: Params8
-
-
-class Params10(TypedDict):
-    run: RunView
-    sessionId: str
-
-
-class AgentNotificationSessionRunsStarted(TypedDict):
-    method: Literal['session/runs/started']
-    params: Params10
-
-
-class AgentNotificationSessionRunsCompleted(TypedDict):
-    method: Literal['session/runs/completed']
-    params: Params10
-
-
-AgentNotification: TypeAlias = (
-    AgentNotificationSessionChanged
-    | AgentNotificationSessionRemoved
-    | AgentNotificationBotsChanged
-    | AgentNotificationBotsRemoved
-    | AgentNotificationEnvironmentsChanged
-    | AgentNotificationEnvironmentsRemoved
-    | AgentNotificationWorkspacesChanged
-    | AgentNotificationWorkspacesRemoved
-    | AgentNotificationWatchReset
-    | AgentNotificationSessionStarted
-    | AgentNotificationSessionEvent
-    | AgentNotificationSessionRunsStarted
-    | AgentNotificationSessionRunsCompleted
-    | AgentNotificationError
-)
-
-
 class ContextAppendResponse(TypedDict):
     contextRevision: int
     results: list[ContextAppendResult]
@@ -8085,713 +7371,3 @@ class SessionReadResponse(TypedDict):
     Exclusive upper run-id bound for `session/runs/list`.
     """
     session: SessionView
-
-
-class AgentApiOutcomeOfAuthClientCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientCreateResponse
-
-
-class AgentApiOutcomeOfAuthClientDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientDeleteResponse
-
-
-class AgentApiOutcomeOfAuthClientListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientListResponse
-
-
-class AgentApiOutcomeOfAuthClientReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthClientReadResponse
-
-
-class AgentApiOutcomeOfAuthFlowStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthFlowStartResponse
-
-
-class AgentApiOutcomeOfAuthFlowStatusResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthFlowStatusResponse
-
-
-class AgentApiOutcomeOfAuthGitHubInstallationGrantResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGitHubInstallationGrantResponse
-
-
-class AgentApiOutcomeOfAuthGitHubInstallationListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGitHubInstallationListResponse
-
-
-class AgentApiOutcomeOfAuthGrantImportResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantImportResponse
-
-
-class AgentApiOutcomeOfAuthGrantLeaseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantLeaseResponse
-
-
-class AgentApiOutcomeOfAuthGrantListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantListResponse
-
-
-class AgentApiOutcomeOfAuthGrantPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantPutResponse
-
-
-class AgentApiOutcomeOfAuthGrantReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantReadResponse
-
-
-class AgentApiOutcomeOfAuthGrantRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthGrantRevokeResponse
-
-
-class AgentApiOutcomeOfAuthProviderCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderCreateResponse
-
-
-class AgentApiOutcomeOfAuthProviderDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderDeleteResponse
-
-
-class AgentApiOutcomeOfAuthProviderListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderListResponse
-
-
-class AgentApiOutcomeOfAuthProviderPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderPutResponse
-
-
-class AgentApiOutcomeOfAuthProviderReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: AuthProviderReadResponse
-
-
-class AgentApiOutcomeOfBlobHasResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BlobHasResponse
-
-
-class AgentApiOutcomeOfBlobPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BlobPutResponse
-
-
-class AgentApiOutcomeOfBlobReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BlobReadResponse
-
-
-class AgentApiOutcomeOfBotCloseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotCloseResponse
-
-
-class AgentApiOutcomeOfBotCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotCreateResponse
-
-
-class AgentApiOutcomeOfBotDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotDeleteResponse
-
-
-class AgentApiOutcomeOfBotEventAdmitResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventAdmitResponse
-
-
-class AgentApiOutcomeOfBotEventListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventListResponse
-
-
-class AgentApiOutcomeOfBotEventReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventReadResponse
-
-
-class AgentApiOutcomeOfBotEventReplayResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotEventReplayResponse
-
-
-class AgentApiOutcomeOfBotFilterTestResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotFilterTestResponse
-
-
-class AgentApiOutcomeOfBotListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotListResponse
-
-
-class AgentApiOutcomeOfBotPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotPutResponse
-
-
-class AgentApiOutcomeOfBotReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotReadResponse
-
-
-class AgentApiOutcomeOfBotSessionRotateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotSessionRotateResponse
-
-
-class AgentApiOutcomeOfBotStateReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotStateReadResponse
-
-
-class AgentApiOutcomeOfBotTriggerDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerDeleteResponse
-
-
-class AgentApiOutcomeOfBotTriggerListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerListResponse
-
-
-class AgentApiOutcomeOfBotTriggerPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerPutResponse
-
-
-class AgentApiOutcomeOfBotTriggerReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerReadResponse
-
-
-class AgentApiOutcomeOfBotTriggerSecretsReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: BotTriggerSecretsReadResponse
-
-
-class AgentApiOutcomeOfChannelAccountCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountCreateResponse
-
-
-class AgentApiOutcomeOfChannelAccountDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountDeleteResponse
-
-
-class AgentApiOutcomeOfChannelAccountListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountListResponse
-
-
-class AgentApiOutcomeOfChannelAccountPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountPutResponse
-
-
-class AgentApiOutcomeOfChannelAccountReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelAccountReadResponse
-
-
-class AgentApiOutcomeOfChannelConversationReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelConversationReadResponse
-
-
-class AgentApiOutcomeOfChannelInboundAdmitResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelInboundAdmitResponse
-
-
-class AgentApiOutcomeOfChannelPairingDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelPairingDeleteResponse
-
-
-class AgentApiOutcomeOfChannelPairingListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ChannelPairingListResponse
-
-
-class AgentApiOutcomeOfContextAppendResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextAppendResponse
-
-
-class AgentApiOutcomeOfContextCompactResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextCompactResponse
-
-
-class AgentApiOutcomeOfContextRemoveResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextRemoveResponse
-
-
-class AgentApiOutcomeOfContextReplaceResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ContextReplaceResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyCreateResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyListResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyPutResponse
-
-
-class AgentApiOutcomeOfDeploymentApiKeyRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentApiKeyRevokeResponse
-
-
-class AgentApiOutcomeOfDeploymentChannelAccountListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentChannelAccountListResponse
-
-
-class AgentApiOutcomeOfDeploymentDeletedSessionsListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentDeletedSessionsListResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderDeleteResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderListResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderPutResponse
-
-
-class AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentEnvironmentProviderReadResponse
-
-
-class AgentApiOutcomeOfDeploymentProviderBindingDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentProviderBindingDeleteResponse
-
-
-class AgentApiOutcomeOfDeploymentProviderBindingPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentProviderBindingPutResponse
-
-
-class AgentApiOutcomeOfDeploymentSessionPurgeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentSessionPurgeResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseCreateResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseDeleteResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseListResponse
-
-
-class AgentApiOutcomeOfDeploymentUniverseReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: DeploymentUniverseReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentCloseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCloseResponse
-
-
-class AgentApiOutcomeOfEnvironmentCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentCredentialBindResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCredentialBindResponse
-
-
-class AgentApiOutcomeOfEnvironmentCredentialListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCredentialListResponse
-
-
-class AgentApiOutcomeOfEnvironmentCredentialUnbindResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentCredentialUnbindResponse
-
-
-class AgentApiOutcomeOfEnvironmentExternalCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentExternalCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentIngressPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentIngressPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentJobCancelResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentJobCancelResponse
-
-
-class AgentApiOutcomeOfEnvironmentJobCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentJobCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentJobReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentJobReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentListResponse
-
-
-class AgentApiOutcomeOfEnvironmentPowerPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentPowerPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentProviderBindingListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentProviderBindingListResponse
-
-
-class AgentApiOutcomeOfEnvironmentProviderBindingReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentProviderBindingReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegisteredPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegisteredPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegisteredReleaseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegisteredReleaseResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyCreateResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyListResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyPutResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyRevokeResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyRotateResponse
-
-
-class AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentRegistrationKeyUpdateResponse
-
-
-class AgentApiOutcomeOfEnvironmentTemplateListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentTemplateListResponse
-
-
-class AgentApiOutcomeOfEnvironmentTemplateReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentTemplateReadResponse
-
-
-class AgentApiOutcomeOfEnvironmentUpdateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: EnvironmentUpdateResponse
-
-
-class AgentApiOutcomeOfInitializeResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: InitializeResponse
-
-
-class AgentApiOutcomeOfMcpServerAuthDiscoverResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerAuthDiscoverResponse
-
-
-class AgentApiOutcomeOfMcpServerDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerDeleteResponse
-
-
-class AgentApiOutcomeOfMcpServerListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerListResponse
-
-
-class AgentApiOutcomeOfMcpServerPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerPutResponse
-
-
-class AgentApiOutcomeOfMcpServerReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerReadResponse
-
-
-class AgentApiOutcomeOfMcpServerToolsDiscoverResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: McpServerToolsDiscoverResponse
-
-
-class AgentApiOutcomeOfModelDefaultsResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ModelDefaultsResponse
-
-
-class AgentApiOutcomeOfModelListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ModelListResponse
-
-
-class AgentApiOutcomeOfProfileApplyResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileApplyResponse
-
-
-class AgentApiOutcomeOfProfileCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileCreateResponse
-
-
-class AgentApiOutcomeOfProfileDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileDeleteResponse
-
-
-class AgentApiOutcomeOfProfileListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileListResponse
-
-
-class AgentApiOutcomeOfProfilePutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfilePutResponse
-
-
-class AgentApiOutcomeOfProfileReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: ProfileReadResponse
-
-
-class AgentApiOutcomeOfRunApprovalsDecideResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunApprovalsDecideResponse
-
-
-class AgentApiOutcomeOfRunCancelResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunCancelResponse
-
-
-class AgentApiOutcomeOfRunListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunListResponse
-
-
-class AgentApiOutcomeOfRunReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunReadResponse
-
-
-class AgentApiOutcomeOfRunStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunStartResponse
-
-
-class AgentApiOutcomeOfRunSteerResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: RunSteerResponse
-
-
-class AgentApiOutcomeOfSessionCloseResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionCloseResponse
-
-
-class AgentApiOutcomeOfSessionConfigPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionConfigPutResponse
-
-
-class AgentApiOutcomeOfSessionDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionDeleteResponse
-
-
-class AgentApiOutcomeOfSessionEnvironmentActivateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionEnvironmentActivateResponse
-
-
-class AgentApiOutcomeOfSessionEnvironmentDeactivateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionEnvironmentDeactivateResponse
-
-
-class AgentApiOutcomeOfSessionEventsReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionEventsReadResponse
-
-
-class AgentApiOutcomeOfSessionListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionListResponse
-
-
-class AgentApiOutcomeOfSessionMetadataPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionMetadataPutResponse
-
-
-class AgentApiOutcomeOfSessionReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionReadResponse
-
-
-class AgentApiOutcomeOfSessionRenameResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionRenameResponse
-
-
-class AgentApiOutcomeOfSessionRestartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionRestartResponse
-
-
-class AgentApiOutcomeOfSessionRetentionPutResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionRetentionPutResponse
-
-
-class AgentApiOutcomeOfSessionShareResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionShareResponse
-
-
-class AgentApiOutcomeOfSessionStartResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SessionStartResponse
-
-
-class AgentApiOutcomeOfSkillListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: SkillListResponse
-
-
-class AgentApiOutcomeOfTranscriptionResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: TranscriptionResponse
-
-
-class AgentApiOutcomeOfUniverseWatchResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: UniverseWatchResponse
-
-
-class AgentApiOutcomeOfVfsSnapshotCommitResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsSnapshotCommitResponse
-
-
-class AgentApiOutcomeOfVfsSnapshotReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsSnapshotReadResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceCreateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceCreateResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceDeleteResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceDeleteResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceListResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceListResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceReadResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceReadResponse
-
-
-class AgentApiOutcomeOfVfsWorkspaceUpdateResponse(TypedDict):
-    notifications: NotRequired[list[AgentNotification]]
-    result: VfsWorkspaceUpdateResponse

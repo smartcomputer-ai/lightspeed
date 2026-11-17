@@ -4,7 +4,6 @@
 //! deterministic workflow contract remains in `temporal-workflow`.
 
 pub mod bots;
-pub mod channels;
 pub(crate) mod checkpoint;
 pub mod code;
 pub mod config;
@@ -15,6 +14,8 @@ pub mod roles;
 pub(crate) mod session_deletion;
 pub mod subagents;
 pub mod universe;
+mod universe_deletion;
+mod universe_workflows;
 pub mod worker;
 
 pub use config::{

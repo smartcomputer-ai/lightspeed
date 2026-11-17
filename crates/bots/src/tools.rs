@@ -12,7 +12,6 @@ use std::sync::LazyLock;
 use api::{
     BotCoalescePolicy, BotDeliverPolicy, BotEventOutcome, BotId, BotTriggerDocument, BotTriggerId,
     BotTriggerKind, BotTriggerRoute, BotTriggerSpec, BotWhenBusy, BoundWorkflowToolDispatchInput,
-    ChatAccess, ChatActivation, ChatGroupActivation, ChatPairing, ChatScope, ChatTurnAccess,
     PollCursorSpec, PollHttpAuth, PollSource, ToolParallelismView, WebhookPreset,
     WebhookVerification, WorkflowEndpointInput, WorkflowToolCompletionInput,
     WorkflowToolDeclarationInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
@@ -32,7 +31,7 @@ pub const BOT_BRIEF_PUT_TOOL_ID: &str = "lightspeed.bots.brief.put.v1";
 pub const BOT_EMIT_TOOL_ID: &str = "lightspeed.bots.emit.v1";
 
 /// Declared-tool revision stamped on every session the controller creates.
-pub const BOT_TOOLS_REVISION: u32 = 13;
+pub const BOT_TOOLS_REVISION: u32 = 14;
 /// How long a joined `bot_*` call waits for the controller's reply.
 pub const BOT_TOOL_REPLY_DEADLINE_MS: u64 = 60_000;
 
@@ -77,9 +76,9 @@ pub static BOT_TOOL_DESCRIPTIONS: LazyLock<Value> = LazyLock::new(|| {
         "status":
             "Inspect this bot's state: enabled flag, run budget, sessions, coalescing buffers, active and recent deliveries.",
         "triggerPut":
-            "Create or update one of this bot's triggers by name. kind=schedule needs cron (5-field) or at (one-shot ISO instant) plus summary; kind=webhook is reached at an ingest URL the sender posts to; kind=poll checks a source every intervalMs and delivers only new items (cursorId for id-based dedupe, or watermarkField for ordered feeds). The poll source is url (HTTP JSON) or argv (run a command in environmentId, or in this bot's own environment when omitted; its stdout must be JSON). kind=bot is this bot's inbox for events other bots address to it (at most one; from lists the bot ids allowed, omit for any). kind=chat connects a messaging account (channelAccount is the account id from bot_trigger_list or the operator, e.g. tg-main): every message becomes an event in a session per conversation with message_send/edit/react tools; a conversation connects once someone sends the trigger's pairing code in it. Secrets: a new webhook's ingestUrl and a new chat trigger's pairingCode are returned once, by the call that creates them, and only in the bot's main session; bot_trigger_list and later calls never show them, and an operator reads them in the bot's trigger settings. Filters and route keys are CEL over event, data, headers.",
+            "Create or update one of this bot's triggers by name. kind=schedule needs cron (5-field) or at (one-shot ISO instant) plus summary; kind=webhook is reached at an ingest URL the sender posts to; kind=poll checks a source every intervalMs and delivers only new items (cursorId for id-based dedupe, or watermarkField for ordered feeds). The poll source is url (HTTP JSON) or argv (run a command in environmentId, or in this bot's own environment when omitted; its stdout must be JSON). kind=bot is this bot's inbox for events other bots address to it (at most one; from lists the bot ids allowed, omit for any). A webhook's ingestUrl is returned once by the call that creates it, in the bot's main session. An operator can read it in the bot's trigger settings. Filters and route keys are CEL over event, data, headers.",
         "triggerDelete": "Delete one of this bot's triggers by name.",
-        "triggerList": "List this bot's configured triggers with their specs, filters, and routing. Ingest URLs and pairing codes are never listed.",
+        "triggerList": "List this bot's configured triggers with their specs, filters, and routing. Ingest URLs are never listed.",
         "filterTest":
             "Evaluate a candidate CEL filter. With payload ({kind?, data?, headers?}) it tests that one document; without it, recent stored events, so a filter that is too loose can be tightened against real traffic (events a filter refused are never stored).",
         "eventList": "List recent events that arrived at this bot: #N, kind, source, and summary.",
@@ -203,7 +202,7 @@ fn trigger_put_input_schema() -> Value {
     let groups = [
         json!({
             "name": { "type": "string", "minLength": 1 },
-            "kind": { "type": "string", "enum": ["schedule", "webhook", "poll", "bot", "chat"] },
+            "kind": { "type": "string", "enum": ["schedule", "webhook", "poll", "bot"] },
             "enabled": { "type": ["boolean", "null"] },
             "from": {
                 "type": ["array", "null"],
@@ -212,37 +211,9 @@ fn trigger_put_input_schema() -> Value {
             }
         }),
         json!({
-            "channelAccount": {
-                "type": ["string", "null"],
-                "description": "Chat kind: the messaging account id (from bot_trigger_list or the operator), e.g. tg-main"
-            },
-            "scope": {
-                "type": ["string", "null"],
-                "enum": ["direct", "group", null],
-                "description": "Chat kind: serve only direct chats or only groups; omit for both"
-            },
-            "groupActivation": {
-                "type": ["string", "null"],
-                "enum": ["mention", "always", null],
-                "description": "Chat kind: in groups, act on mentions/prefixes only (default) or on every message"
-            },
-            "pairing": {
-                "type": ["boolean", "null"],
-                "description": "Chat kind: require a pairing code before a conversation connects (default true)"
-            },
-            "allowedHandles": {
-                "type": ["array", "null"],
-                "items": { "type": "string" },
-                "description": "Chat kind: provider handles (user ids) allowed to take a turn; omit to let anyone in the conversation"
-            },
-            "controllerHandles": {
-                "type": ["array", "null"],
-                "items": { "type": "string" },
-                "description": "Chat kind: provider handles allowed to issue control commands (/activation, /status); omit to deny them to everyone"
-            },
             "sessionCloseAfterMs": {
                 "type": ["integer", "null"],
-                "description": "Close this trigger's routed sessions after this idle time; 0 keeps them open (chat default); omit to inherit the bot's setting"
+                "description": "Close this trigger's routed sessions after this idle time; 0 keeps them open; omit to inherit the bot's setting"
             }
         }),
         json!({
@@ -643,11 +614,7 @@ impl TriggerPutRequest {
                 route: self.route.clone().flatten(),
                 coalesce: self.coalesce.flatten(),
                 deliver: self.deliver.flatten(),
-                // Conversations keep their session: 0 = never close.
-                session_close_after_ms: match (self.session_close_after_ms.flatten(), self.kind) {
-                    (None, BotTriggerKind::Chat) => Some(0),
-                    (close_after, _) => close_after,
-                },
+                session_close_after_ms: self.session_close_after_ms.flatten(),
                 enabled: self.enabled.unwrap_or(true),
             });
         };
@@ -659,7 +626,7 @@ impl TriggerPutRequest {
             ));
         }
         let mut document = existing.clone();
-        document.spec = merge_spec(&self.spec, &existing.spec);
+        document.spec = self.spec.clone();
         if let Some(filter) = &self.filter {
             document.filter = filter.clone();
         }
@@ -682,40 +649,6 @@ impl TriggerPutRequest {
     }
 }
 
-/// The flat arguments cannot express a chat trigger's prefixes, mention
-/// names, or priority; an update keeps what the operator set there.
-fn merge_spec(new: &BotTriggerSpec, existing: &BotTriggerSpec) -> BotTriggerSpec {
-    match (new, existing) {
-        (
-            BotTriggerSpec::Chat {
-                account_id,
-                match_scope,
-                activation,
-                access,
-                pairing,
-                ..
-            },
-            BotTriggerSpec::Chat {
-                activation: existing_activation,
-                priority,
-                ..
-            },
-        ) => BotTriggerSpec::Chat {
-            account_id: account_id.clone(),
-            match_scope: *match_scope,
-            activation: ChatActivation {
-                group: activation.group,
-                trigger_prefixes: existing_activation.trigger_prefixes.clone(),
-                mention_names: existing_activation.mention_names.clone(),
-            },
-            access: access.clone(),
-            pairing: *pairing,
-            priority: *priority,
-        },
-        _ => new.clone(),
-    }
-}
-
 /// Flatten the model-facing `bot_trigger_put` arguments into a request.
 pub fn parse_trigger_put_args(value: &Value) -> Result<TriggerPutRequest, String> {
     let args = value
@@ -728,8 +661,7 @@ pub fn parse_trigger_put_args(value: &Value) -> Result<TriggerPutRequest, String
         Some("webhook") => BotTriggerKind::Webhook,
         Some("poll") => BotTriggerKind::Poll,
         Some("bot") => BotTriggerKind::Bot,
-        Some("chat") => BotTriggerKind::Chat,
-        _ => return Err("kind must be schedule, webhook, poll, bot, or chat".to_owned()),
+        _ => return Err("kind must be schedule, webhook, poll, or bot".to_owned()),
     };
     let enabled = args.get("enabled").and_then(Value::as_bool);
     let spec = match kind {
@@ -737,7 +669,6 @@ pub fn parse_trigger_put_args(value: &Value) -> Result<TriggerPutRequest, String
         BotTriggerKind::Webhook => parse_webhook_spec(args)?,
         BotTriggerKind::Poll => parse_poll_spec(args)?,
         BotTriggerKind::Bot => parse_inbox_spec(args)?,
-        BotTriggerKind::Chat => parse_chat_spec(args)?,
     };
     let common = if kind == BotTriggerKind::Schedule {
         CommonFields::default()
@@ -895,56 +826,6 @@ fn parse_inbox_spec(args: &serde_json::Map<String, Value>) -> Result<BotTriggerS
         }
     };
     Ok(BotTriggerSpec::Bot { from })
-}
-
-fn parse_chat_spec(args: &serde_json::Map<String, Value>) -> Result<BotTriggerSpec, String> {
-    let account_id = nullable_string(args, "channelAccount")
-        .ok_or("channelAccount (the messaging account id) is required for chat triggers")?;
-    let match_scope = match nullable_string(args, "scope") {
-        None => None,
-        Some("direct") => Some(ChatScope::Direct),
-        Some("group") => Some(ChatScope::Group),
-        Some(other) => return Err(format!("scope must be direct or group, got {other:?}")),
-    };
-    let group = match nullable_string(args, "groupActivation") {
-        None => None,
-        Some("mention") => Some(ChatGroupActivation::Mention),
-        Some("always") => Some(ChatGroupActivation::Always),
-        Some(other) => {
-            return Err(format!(
-                "groupActivation must be mention or always, got {other:?}"
-            ));
-        }
-    };
-    let allowed = string_array(args, "allowedHandles")?.unwrap_or_default();
-    let controllers = string_array(args, "controllerHandles")?.unwrap_or_default();
-    let access = ChatAccess {
-        turn: if allowed.is_empty() {
-            ChatTurnAccess::Anyone
-        } else {
-            ChatTurnAccess::Listed
-        },
-        allowed,
-        controllers,
-    };
-    // Omitted → the server mints a code; false → an open connection.
-    let pairing = if args.get("pairing").and_then(Value::as_bool) == Some(false) {
-        ChatPairing::Open
-    } else {
-        ChatPairing::Code
-    };
-    Ok(BotTriggerSpec::Chat {
-        account_id: account_id.to_owned(),
-        match_scope,
-        activation: ChatActivation {
-            group,
-            trigger_prefixes: Vec::new(),
-            mention_names: Vec::new(),
-        },
-        access,
-        pairing,
-        priority: 100,
-    })
 }
 
 /// Filter/route/coalesce/deliver/idle-close fields shared by every kind but
@@ -1210,22 +1091,6 @@ mod tests {
         assert_eq!(names, BOT_TOOL_NAMES.iter().copied().collect());
         assert!(is_bot_tool_name("bot_emit"));
         assert!(!is_bot_tool_name("message_send"));
-        // The chat account is addressed by its authored id, never a
-        // provider-prefixed handle.
-        let put = bot_tool_schema("triggerPutInput").unwrap();
-        let account = put["properties"]["channelAccount"]["description"]
-            .as_str()
-            .unwrap();
-        assert!(account.contains("tg-main"), "{account}");
-        assert!(!account.contains("provider:"));
-        assert!(put["properties"]["allowedHandles"].is_object());
-        assert!(put["properties"]["controllerHandles"].is_object());
-        assert_eq!(put["required"], json!(["name", "kind"]));
-        assert!(
-            bot_tool_description("triggerPut")
-                .unwrap()
-                .contains("e.g. tg-main")
-        );
     }
 
     #[test]
@@ -1242,7 +1107,6 @@ mod tests {
             }
             let text = bot_tool_description(name).unwrap();
             assert!(!text.contains("ingest URL"), "{name}");
-            assert!(!text.contains("pairing"), "{name}");
         }
     }
 
@@ -1760,7 +1624,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_inbox_and_chat_triggers() {
+    fn maps_inbox_triggers() {
         let inbox = parse_trigger_put_args(
             &json!({ "name": "inbox", "kind": "bot", "from": ["ops", "triage", "ops"] }),
         )
@@ -1778,90 +1642,12 @@ mod tests {
             parse_trigger_put_args(&json!({ "name": "inbox", "kind": "bot", "from": ["Bad"] }))
                 .is_err()
         );
-
-        let chat = parse_trigger_put_args(&json!({
-            "name": "tg",
-            "kind": "chat",
-            "channelAccount": "tg-main",
-            "scope": "group",
-            "groupActivation": "always",
-            "pairing": false,
-            "allowedHandles": ["6071843755"],
-            "controllerHandles": ["6071843755", "42"],
-            "sessionCloseAfterMs": 3_600_000
-        }))
-        .unwrap();
-        assert_eq!(
-            chat.spec,
-            BotTriggerSpec::Chat {
-                account_id: "tg-main".to_owned(),
-                match_scope: Some(ChatScope::Group),
-                activation: ChatActivation {
-                    group: Some(ChatGroupActivation::Always),
-                    trigger_prefixes: Vec::new(),
-                    mention_names: Vec::new(),
-                },
-                access: ChatAccess {
-                    turn: ChatTurnAccess::Listed,
-                    allowed: vec!["6071843755".to_owned()],
-                    controllers: vec!["6071843755".to_owned(), "42".to_owned()],
-                },
-                pairing: ChatPairing::Open,
-                priority: 100,
-            }
-        );
-        assert_eq!(chat.session_close_after_ms, Some(Some(3_600_000)));
-        let created = chat.apply_to(None).unwrap();
-        assert_eq!(created.session_close_after_ms, Some(3_600_000));
-        assert!(crate::validate::validate_trigger_document(&created, 0).is_ok());
-
-        let minimal = parse_trigger_put_args(
-            &json!({ "name": "tg", "kind": "chat", "channelAccount": "tg-main" }),
-        )
-        .unwrap();
-        assert!(matches!(
-            minimal.spec,
-            BotTriggerSpec::Chat {
-                pairing: ChatPairing::Code,
-                match_scope: None,
-                access: ChatAccess {
-                    turn: ChatTurnAccess::Anyone,
-                    ..
-                },
-                ..
-            }
-        ));
-        // Conversations keep their session by default.
-        assert_eq!(
-            minimal.apply_to(None).unwrap().session_close_after_ms,
-            Some(0)
-        );
-        assert!(
-            parse_trigger_put_args(&json!({ "name": "tg", "kind": "chat" }))
-                .unwrap_err()
-                .contains("channelAccount")
-        );
-        assert!(
-            parse_trigger_put_args(&json!({ "name": "tg", "kind": "chat", "channelAccount": "tg-main", "scope": "all" }))
-                .is_err()
-        );
     }
 
     #[test]
     fn updates_keep_the_existing_document_where_the_flat_shape_is_silent() {
         let existing = BotTriggerDocument {
-            spec: BotTriggerSpec::Chat {
-                account_id: "tg-main".to_owned(),
-                match_scope: Some(ChatScope::Direct),
-                activation: ChatActivation {
-                    group: Some(ChatGroupActivation::Mention),
-                    trigger_prefixes: vec!["!bot".to_owned()],
-                    mention_names: vec!["triage".to_owned()],
-                },
-                access: ChatAccess::default(),
-                pairing: ChatPairing::Code,
-                priority: 7,
-            },
+            spec: BotTriggerSpec::Bot { from: None },
             filter: Some("true".to_owned()),
             route: Some(BotTriggerRoute::PerEvent),
             coalesce: None,
@@ -1869,43 +1655,24 @@ mod tests {
             session_close_after_ms: Some(0),
             enabled: false,
         };
-        let request = parse_trigger_put_args(
-            &json!({ "name": "tg", "kind": "chat", "channelAccount": "tg-main", "pairing": false }),
-        )
-        .unwrap();
+        let request = parse_trigger_put_args(&json!({ "name": "inbox", "kind": "bot" })).unwrap();
         let updated = request.apply_to(Some(&existing)).unwrap();
-        // Prefixes, mention names, and priority survive; the rest is what the model said.
-        assert_eq!(
-            updated.spec,
-            BotTriggerSpec::Chat {
-                account_id: "tg-main".to_owned(),
-                match_scope: None,
-                activation: ChatActivation {
-                    group: None,
-                    trigger_prefixes: vec!["!bot".to_owned()],
-                    mention_names: vec!["triage".to_owned()],
-                },
-                access: ChatAccess::default(),
-                pairing: ChatPairing::Open,
-                priority: 7,
-            }
-        );
+        assert_eq!(updated.spec, BotTriggerSpec::Bot { from: None });
         // A model put replaces filter/route/coalesce/deliver (absent clears)…
         assert_eq!(updated.filter, None);
         assert_eq!(updated.route, None);
         // …and keeps the idle-close policy and the enabled flag when omitted.
         assert_eq!(updated.session_close_after_ms, Some(0));
         assert!(!updated.enabled);
-        let enabled = parse_trigger_put_args(
-            &json!({ "name": "tg", "kind": "chat", "channelAccount": "tg-main", "enabled": true }),
-        )
-        .unwrap()
-        .apply_to(Some(&existing))
-        .unwrap();
+        let enabled =
+            parse_trigger_put_args(&json!({ "name": "inbox", "kind": "bot", "enabled": true }))
+                .unwrap()
+                .apply_to(Some(&existing))
+                .unwrap();
         assert!(enabled.enabled);
 
         // A kind change is refused.
-        let error = parse_trigger_put_args(&json!({ "name": "tg", "kind": "webhook" }))
+        let error = parse_trigger_put_args(&json!({ "name": "inbox", "kind": "webhook" }))
             .unwrap()
             .apply_to(Some(&existing))
             .unwrap_err();
@@ -1913,7 +1680,7 @@ mod tests {
             error.contains("delete it before changing its kind"),
             "{error}"
         );
-        assert!(error.contains("is a chat"), "{error}");
+        assert!(error.contains("is a bot"), "{error}");
     }
 
     fn main_session() -> BotSessionInstructions<'static> {
@@ -1927,14 +1694,14 @@ mod tests {
     #[test]
     fn session_identity_distinguishes_main_keyed_and_per_event_successors() {
         let bot = BotId::new("triage");
-        let keyed = crate::ids::bot_keyed_session_id(&bot, "telegram:12345");
+        let keyed = crate::ids::bot_keyed_session_id(&bot, "customer-12345");
         let per_event = crate::ids::bot_per_event_session_id(&bot, "event-1");
         for (id, kind, key, label) in [
             (crate::ids::bot_main_session_id(&bot, 2), "main", None, None),
             (
                 crate::ids::routed_session_generation_id(&keyed, 3),
                 "keyed",
-                Some("telegram:12345"),
+                Some("customer-12345"),
                 Some("Ops room"),
             ),
             (

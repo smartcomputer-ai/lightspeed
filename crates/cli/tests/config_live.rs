@@ -1,12 +1,12 @@
 //! Live coverage for `config export`, `config diff` and `config apply`
 //! against a real runtime.
 //!
-//! The suite needs an authenticated runtime and a deployment key that may
+//! The suite needs an authenticated runtime and a runtime token that may
 //! create universes and write every resource a document holds:
 //!
 //! ```bash
-//! LIGHTSPEED_CONFIG_LIVE_API_URL=http://127.0.0.1:18080/rpc \
-//! LIGHTSPEED_CONFIG_LIVE_API_KEY_FILE=/path/to/deployment-key \
+//! LIGHTSPEED_CONFIG_LIVE_API_URL=http://127.0.0.1:18080/api/v1 \
+//! LIGHTSPEED_CONFIG_LIVE_API_TOKEN_FILE=/path/to/runtime-token \
 //!   cargo test -p cli --test config_live -- --ignored --test-threads=1
 //! ```
 //!
@@ -21,25 +21,25 @@ use serde_json::{Value, json};
 
 struct Live {
     api_url: String,
-    api_key: String,
+    token: String,
     directory: tempfile::TempDir,
 }
 
 impl Live {
     fn from_env() -> Self {
         let api_url = std::env::var("LIGHTSPEED_CONFIG_LIVE_API_URL").expect(
-            "LIGHTSPEED_CONFIG_LIVE_API_URL must name the JSON-RPC endpoint of a running, authenticated runtime",
+            "LIGHTSPEED_CONFIG_LIVE_API_URL must name the HTTP API base URL of a running, authenticated runtime",
         );
-        let key_file = std::env::var("LIGHTSPEED_CONFIG_LIVE_API_KEY_FILE").expect(
-            "LIGHTSPEED_CONFIG_LIVE_API_KEY_FILE must name a file holding a deployment API key",
+        let key_file = std::env::var("LIGHTSPEED_CONFIG_LIVE_API_TOKEN_FILE").expect(
+            "LIGHTSPEED_CONFIG_LIVE_API_TOKEN_FILE must name a file holding a runtime token",
         );
-        let api_key = std::fs::read_to_string(&key_file)
+        let token = std::fs::read_to_string(&key_file)
             .unwrap_or_else(|error| panic!("read {key_file}: {error}"))
             .trim()
             .to_owned();
         Self {
             api_url,
-            api_key,
+            token,
             directory: tempfile::tempdir().unwrap(),
         }
     }
@@ -55,7 +55,7 @@ impl Live {
             .args(args)
             .env("LIGHTSPEED_CONFIG_DIR", self.path("cli-config"))
             .env("LIGHTSPEED_API_URL", &self.api_url)
-            .env("LIGHTSPEED_API_KEY", &self.api_key)
+            .env("LIGHTSPEED_API_TOKEN", &self.token)
             .env_remove("LIGHTSPEED_UNIVERSE");
         for (name, value) in secrets {
             command.env(name, value);
@@ -96,21 +96,15 @@ impl Live {
     }
 
     async fn call(&self, method: &str, params: Value) -> Value {
-        let response: Value = reqwest::Client::new()
-            .post(&self.api_url)
-            .bearer_auth(&self.api_key)
-            .json(&json!({ "id": 1, "method": method, "params": params }))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert!(response.get("error").is_none(), "{method}: {response}");
-        response["result"]["result"].clone()
+        self.call_as_optional(None, method, params).await
     }
 
     async fn delete_universe(&self, handle: &str) {
+        self.call(
+            "deployment/universes/configuration/put",
+            json!({"universe":handle,"protected":false}),
+        )
+        .await;
         self.call("deployment/universes/delete", json!({ "universe": handle }))
             .await;
     }
@@ -172,20 +166,12 @@ profiles:
           environments:
             - {{ environmentId: build-box, default: true, access: read }}
   - file: triage.json
-apiKeys:
-  - keyId: release-bot
-    displayName: Release bot
-    groups: [session, profiles]
-    secretFrom: {{ env: LIVE_RELEASE_BOT_KEY }}
 "#
     )
 }
 
-fn generate(live: &Live, kind: &str) -> String {
-    let command: &[&str] = match kind {
-        "api-key" => &["api-key", "generate-secret"],
-        _ => &["environment", "registration-key", "generate-secret"],
-    };
+fn generate_registration_secret(live: &Live) -> String {
+    let command: &[&str] = &["environment", "registration-key", "generate-secret"];
     live.ok(command, &[]).trim().to_owned()
 }
 
@@ -204,12 +190,10 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
     )
     .unwrap();
     std::fs::write(live.path("model-key"), "model-secret-1\n").unwrap();
-    let runners_key = generate(&live, "registration-key");
-    let bot_key = generate(&live, "api-key");
+    let runners_key = generate_registration_secret(&live);
     let secrets = [
         ("LIVE_TRACKER_TOKEN", "tracker-secret-1"),
         ("LIVE_RUNNERS_KEY", runners_key.as_str()),
-        ("LIVE_RELEASE_BOT_KEY", bot_key.as_str()),
     ];
     let file_arg = file.to_str().unwrap();
 
@@ -222,7 +206,7 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
         "{plan}"
     );
     let applied = live.ok(&["config", "apply", "-f", file_arg], &secrets);
-    for resource in [
+    let resources = [
         "credentials/tracker-token",
         "providers/model:primary",
         "modelDefaults/agentRun",
@@ -233,14 +217,14 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
         "environments.credentials/build-box/TRACKER_TOKEN",
         "profiles/reviewer",
         "profiles/triage",
-        "apiKeys/release-bot",
-    ] {
+    ];
+    for resource in resources {
         assert!(
             applied.contains(&format!("created     {resource}")),
             "{resource} was not created:\n{applied}"
         );
     }
-    for secret in ["tracker-secret-1", "model-secret-1", &runners_key, &bot_key] {
+    for secret in ["tracker-secret-1", "model-secret-1", &runners_key] {
         assert!(!applied.contains(secret), "a secret reached the output");
     }
 
@@ -248,7 +232,12 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
     let (status, plan) = live.diff_status(&file, &secrets);
     assert_eq!(status, Some(0), "{plan}");
     let again = live.ok(&["config", "apply", "-f", file_arg], &secrets);
-    assert!(again.contains("11 unchanged"), "{again}");
+    assert!(
+        again
+            .lines()
+            .any(|line| line.trim() == format!("{} unchanged", resources.len())),
+        "{again}"
+    );
 
     // The declared environment waits for its machine under its chosen id,
     // and the profile already points at it.
@@ -279,7 +268,6 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
     let rotated = [
         ("LIVE_TRACKER_TOKEN", "tracker-secret-2"),
         ("LIVE_RUNNERS_KEY", runners_key.as_str()),
-        ("LIVE_RELEASE_BOT_KEY", bot_key.as_str()),
     ];
     let (status, drift) = live.diff_status(&file, &rotated);
     assert_eq!(status, Some(2), "{drift}");
@@ -342,13 +330,11 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
         serde_json::to_string_pretty(&promoted_document).unwrap(),
     )
     .unwrap();
-    let promoted_runners_key = generate(&live, "registration-key");
-    let promoted_bot_key = generate(&live, "api-key");
+    let promoted_runners_key = generate_registration_secret(&live);
     let bound = [
         ("TRACKER_TOKEN", "tracker-secret-2"),
         ("MODEL_PRIMARY_CREDENTIAL", "model-secret-1"),
         ("RUNNERS_REGISTRATION_KEY", promoted_runners_key.as_str()),
-        ("RELEASE_BOT_API_KEY", promoted_bot_key.as_str()),
     ];
     live.ok(
         &["config", "apply", "-f", promoted_file.to_str().unwrap()],
@@ -367,92 +353,37 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
 impl Live {
     /// Call a universe method directly, as an operator editing by hand would.
     async fn call_as(&self, universe: &str, method: &str, params: Value) -> Value {
-        let response: Value = reqwest::Client::new()
-            .post(&self.api_url)
-            .bearer_auth(&self.api_key)
-            .header("x-lightspeed-universe", universe)
-            .json(&json!({ "id": 1, "method": method, "params": params }))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert!(response.get("error").is_none(), "{method}: {response}");
-        response["result"]["result"].clone()
+        self.call_as_optional(Some(universe), method, params).await
     }
-}
-
-#[tokio::test(flavor = "current_thread")]
-#[ignore = "requires a running authenticated runtime; see the module documentation"]
-async fn a_deployment_key_is_declared_and_its_fixed_settings_are_a_conflict() {
-    let live = Live::from_env();
-    let key_id = format!(
-        "config-live-{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..10]
-    );
-    let file = live.path("deployment.yaml");
-    let document = |assert_actor: bool| {
-        format!(
-            "schemaVersion: 1\nkind: deployment\napiKeys:\n  - keyId: {key_id}\n    displayName: Config live\n    groups: [session]\n    assertActor: {assert_actor}\n    secretFrom: {{ file: key }}\n"
-        )
-    };
-    std::fs::write(&file, document(false)).unwrap();
-    std::fs::write(live.path("key"), generate(&live, "api-key")).unwrap();
-    let file_arg = file.to_str().unwrap();
-
-    let created = live.ok(&["config", "apply", "-f", file_arg], &[]);
-    assert!(
-        created.contains(&format!("created     apiKeys/{key_id}")),
-        "{created}"
-    );
-    let (status, plan) = live.diff_status(&file, &[]);
-    assert_eq!(status, Some(0), "{plan}");
-
-    // Another secret under the same id replaces the stored one.
-    std::fs::write(live.path("key"), generate(&live, "api-key")).unwrap();
-    let (status, plan) = live.diff_status(&file, &[]);
-    assert_eq!(status, Some(2), "{plan}");
-    assert!(
-        plan.contains(&format!("update      apiKeys/{key_id} (secret)")),
-        "{plan}"
-    );
-    live.ok(&["config", "apply", "-f", file_arg], &[]);
-
-    // Whether a key may assert an actor never changes.
-    std::fs::write(&file, document(true)).unwrap();
-    let refused = live.run(&["config", "apply", "-f", file_arg], &[]);
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stdout).contains("`assertActor` cannot be changed"),
-        "{}",
-        String::from_utf8_lossy(&refused.stdout)
-    );
-
-    // The deployment's export lists the key, and a revoked key is a
-    // conflict from then on.
-    let exported = live.ok(
-        &["config", "export", "--deployment", "--format", "json"],
-        &[],
-    );
-    assert!(exported.contains(&key_id), "{exported}");
-    live.call(
-        "deployment/api-keys/revoke",
-        json!({ "scope": { "kind": "deployment" }, "keyId": key_id }),
-    )
-    .await;
-    std::fs::write(&file, document(false)).unwrap();
-    let (status, plan) = live.diff_status(&file, &[]);
-    assert_eq!(status, Some(1), "{plan}");
-    assert!(plan.contains("is revoked"), "{plan}");
-    let exported = live.ok(
-        &["config", "export", "--deployment", "--format", "json"],
-        &[],
-    );
-    assert!(
-        !exported.contains(&key_id),
-        "a revoked key is not configuration"
-    );
+    async fn call_as_optional(
+        &self,
+        universe: Option<&str>,
+        operation: &str,
+        params: Value,
+    ) -> Value {
+        let parts = api::http_request(operation, universe, params).unwrap();
+        let url = format!(
+            "{}{}",
+            self.api_url.trim_end_matches('/'),
+            parts.path.strip_prefix("/api/v1").unwrap()
+        );
+        let mut request = reqwest::Client::new()
+            .request(
+                reqwest::Method::from_bytes(parts.method.as_str().as_bytes()).unwrap(),
+                url,
+            )
+            .bearer_auth(&self.token);
+        if let Some(body) = parts.body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.unwrap();
+        assert!(
+            response.status().is_success(),
+            "{operation}: {}",
+            response.status()
+        );
+        response.json().await.unwrap()
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -537,7 +468,7 @@ async fn a_provider_header_names_a_credential_the_same_document_adds() {
     // What is stored names the credential under the lowercased header and
     // holds no token, in a read and in an export.
     let providers = live
-        .call_as(&handle, "auth/providers/list", json!({}))
+        .call_as(&handle, "credentials/providers/list", json!({}))
         .await;
     assert_eq!(
         providers["providers"][0]["config"]["endpoint"]["headers"],
@@ -573,4 +504,43 @@ async fn a_provider_header_names_a_credential_the_same_document_adds() {
     );
 
     live.delete_universe(&handle).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires an authenticated runtime and deployment token; serialized"]
+async fn document_protection_defaults_only_apply_to_new_universes() {
+    let live = Live::from_env();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let names = [
+        format!("doc-default-{}", &suffix[..10]),
+        format!("doc-false-{}", &suffix[..10]),
+        format!("doc-existing-{}", &suffix[..10]),
+    ];
+    let expiry = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 3_600_000;
+    live.call("deployment/universes/create",json!({"universeId":uuid::Uuid::new_v4().to_string(),"handle":names[2],"expiresAtMs":expiry})).await;
+    for (index, name) in names.iter().enumerate() {
+        let file = live.path(&format!("{index}.yaml"));
+        let extra = if index == 1 { "protected: false\n" } else { "" };
+        std::fs::write(&file,format!("schemaVersion: 1\nkind: universe\nhandle: {name}\nmetadata: {{ purpose: config-test }}\n{extra}")).unwrap();
+        live.ok(&["config", "apply", "-f", file.to_str().unwrap()], &[]);
+        let value = live
+            .call("deployment/universes/read", json!({"universe":name}))
+            .await;
+        assert_eq!(value["universe"]["protected"], index == 0);
+        assert_eq!(
+            value["universe"]["metadata"],
+            json!({"purpose":"config-test"})
+        );
+        if index == 2 {
+            assert_eq!(value["universe"]["expiresAtMs"], expiry);
+        }
+        live.ok(&["config", "apply", "-f", file.to_str().unwrap()], &[]);
+    }
+    for name in names {
+        live.delete_universe(&name).await;
+    }
 }

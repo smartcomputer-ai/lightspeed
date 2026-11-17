@@ -6,7 +6,7 @@ editor: an agent that reads a short change list and writes release notes you
 can inspect and revise.
 
 Start with a running installation, a universe, and a connected model from the
-[quickstart](quickstart.md). Use an Operator or Admin account to create the
+[quickstart](quickstart.md). Use Operator or Owner access to create the
 profile and workspace. The agent will use VFS file tools, so it needs no
 execution environment.
 

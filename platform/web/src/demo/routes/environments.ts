@@ -129,9 +129,9 @@ export function provisionEnvironment(
 ): { environment: Environment; created: boolean } | { error: string } {
   const existing = findByRequestId(universe, params.requestId);
   if (existing) return { environment: existing, created: false };
-  const binding = universe.providerBindings.find((candidate) => candidate.providerId === params.providerId);
-  if (!binding) return { error: `environment provider binding not found: ${params.providerId}` };
-  if (!binding.enabled) return { error: `environment provider binding is disabled: ${params.providerId}` };
+  if (!availableProviderIds(store, universe).has(params.providerId)) {
+    return { error: `environment provider ${params.providerId} is not available to this universe` };
+  }
   const template = universe.environmentTemplates.find(
     (candidate) => candidate.providerId === params.providerId && candidate.templateId === params.templateId,
   );
@@ -321,23 +321,38 @@ function mintSecret(): string {
   return `lsrk_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "").slice(0, 11)}`;
 }
 
+/// A universe may use a provider available to every universe, or one it is
+/// bound to.
+function availableProviderIds(store: DemoStore, universe: UniverseState): Set<string> {
+  const bound = new Set(universe.providerBindings.map((binding) => binding.providerId));
+  return new Set([...store.environmentProviders.values()]
+    .filter((provider) => provider.availableToAllUniverses || bound.has(provider.providerId))
+    .map((provider) => provider.providerId));
+}
+
 export function environmentRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
-  app.get("/:id/environment-provider-bindings", (c) => {
+  app.get("/:id/environment-providers", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    return c.json(universe.providerBindings);
+    const available = availableProviderIds(store, universe);
+    return c.json([...store.environmentProviders.values()]
+      .filter((provider) => available.has(provider.providerId))
+      .map((provider) => ({
+        providerId: provider.providerId,
+        ...(provider.displayName ? { displayName: provider.displayName } : {}),
+        availableToAllUniverses: provider.availableToAllUniverses,
+      })));
   });
 
-  /// Templates of enabled bindings only, like `environments/templates/list`.
+  /// Templates of the providers available to the universe, like
+  /// `environments/templates/list`.
   app.get("/:id/environment-templates", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     const providerId = c.req.query("providerId");
-    const enabled = new Set(
-      universe.providerBindings.filter((binding) => binding.enabled).map((binding) => binding.providerId),
-    );
+    const enabled = availableProviderIds(store, universe);
     return c.json(
       universe.environmentTemplates.filter(
         (template) => enabled.has(template.providerId) && (!providerId || template.providerId === providerId),

@@ -1,434 +1,60 @@
-import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
-import {
-  CLIENT_HELPERS,
-  LightspeedClient,
-  LightspeedRpcError,
-  METHOD_INFO,
-  METHODS,
-  type LightspeedClientOptions,
-  type MethodData,
-  type RunFailureKindView,
-  type SessionEventKindOf,
-  type SessionEventView,
-} from "../src/index.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LightspeedClient, LightspeedApiError, LightspeedTransportError, type SessionEventView } from "../src/index.js";
+const jsonResponse = (body: unknown) => Response.json(body);
+const problem = (kind: string, status: number) => Response.json({ type: "about:blank", title: kind, detail: kind, kind, status }, { status });
+const hangingFetch = ((_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
+  const signal = init?.signal;
+  if (signal?.aborted) reject(signal.reason);
+  signal?.addEventListener("abort", () => reject(signal.reason));
+})) as typeof fetch;
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function decodeBody(init: RequestInit | undefined): Record<string, unknown> {
-  expect(init?.body).toBeTypeOf("string");
-  return JSON.parse(init?.body as string) as Record<string, unknown>;
-}
-
-/** Answers only by rejecting on abort, as fetch does, including a signal already aborted. */
-const hangingFetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
-  new Promise((_resolve, reject) => {
-    const signal = init?.signal;
-    if (signal?.aborted) {
-      reject(signal.reason);
-    }
-    signal?.addEventListener("abort", () => reject(signal.reason));
-  })) as typeof fetch;
-
-describe("LightspeedClient", () => {
-  it("classifies missing model defaults and retains the affected slot", () => {
-    const error = new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "modelDefaultUnset", message: "Choose a model", modelDefaultSlot: "agentRun" } });
-    expect(error.kind).toBe("modelDefaultUnset");
-    expect(new LightspeedRpcError({ code: -32015, message: "still held" }).kind).toBe("operationPending");
-    expect(new LightspeedRpcError({ code: -32016, message: "stopped" }).kind).toBe("sessionExecutionStopped");
-    expect(error.data?.modelDefaultSlot).toBe("agentRun");
-  });
-
-  it("takes the server's kind over the code, which several kinds can share", () => {
-    const kinds = [
-      [-32602, "audioBlobTooLarge"],
-      [-32011, "sessionBootstrapFailed"],
-      [-32013, "responseTooLarge"],
-    ] as const;
-    for (const [code, kind] of kinds) {
-      expect(new LightspeedRpcError({ code, message: "m", data: { kind, message: "m" } }).kind).toBe(kind);
-    }
-    expect(new LightspeedRpcError({ code: -32013, message: "m" }).kind).toBe("responseTooLarge");
-    expect(new LightspeedRpcError({ code: -32601, message: "m" }).kind).toBe("methodNotFound");
-    expect(new LightspeedRpcError({ code: -1, message: "m" }).kind).toBe("unknown");
-  });
-
-  it("omits universe selection on connection and deployment calls", async () => {
-    const captured: Headers[] = [];
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      captured.push(new Headers(init?.headers));
-      return jsonResponse({ id: decodeBody(init).id, result: { result: {}, notifications: [] } });
-    }) as unknown as typeof fetch;
-    const client = new LightspeedClient({ endpoint: "http://localhost/rpc", fetch: fetchImpl,
-      headers: { authorization: "Bearer fixture", "x-lightspeed-universe": "universe" } });
-    await client.call("initialize", {});
-    await client.call("deployment/universes/list", {});
-    await client.call("models/list", {});
-    expect(captured.map(h => h.get("x-lightspeed-universe"))).toEqual([null, null, "universe"]);
-    expect(captured.every(h => h.get("authorization") === "Bearer fixture")).toBe(true);
-  });
-  describe("connection options", () => {
-    function capturing(options: Partial<LightspeedClientOptions>) {
-      const captured: Headers[] = [];
-      const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        captured.push(new Headers(init?.headers));
-        return jsonResponse({ id: decodeBody(init).id, result: { result: {}, notifications: [] } });
-      }) as typeof fetch;
-      return { captured, client: new LightspeedClient({ endpoint: "http://localhost/rpc", fetch: fetchImpl, ...options }) };
-    }
-
-    it("sends the key, universe and actor as their headers", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_fixture", universe: "universe_1", actor: "user_1" });
-      await client.call("models/list", {});
-      expect(captured[0]?.get("authorization")).toBe("Bearer lsk_fixture");
-      expect(captured[0]?.get("x-lightspeed-universe")).toBe("universe_1");
-      expect(captured[0]?.get("x-lightspeed-actor")).toBe("user_1");
-    });
-
-    it("sends none of them when they are not given", async () => {
-      const { captured, client } = capturing({});
-      await client.call("models/list", {});
-      for (const name of ["authorization", "x-lightspeed-universe", "x-lightspeed-actor"]) {
-        expect(captured[0]?.has(name)).toBe(false);
-      }
-    });
-
-    it("omits the universe on calls that address no universe", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_fixture", universe: "universe_1" });
-      await client.call("initialize", {});
-      expect(captured[0]?.has("x-lightspeed-universe")).toBe(false);
-      expect(captured[0]?.get("authorization")).toBe("Bearer lsk_fixture");
-    });
-
-    it("lets explicit headers override the options, and a call override both", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_option", headers: { authorization: "Bearer lsk_headers" } });
-      await client.call("models/list", {});
-      await client.call("models/list", {}, { headers: { authorization: "Bearer lsk_call" } });
-      expect(captured.map((headers) => headers.get("authorization"))).toEqual(["Bearer lsk_headers", "Bearer lsk_call"]);
-    });
-
-    it("withActor attributes only the new client's requests", async () => {
-      const { captured, client } = capturing({ apiKey: "lsk_fixture" });
-      const alice = client.withActor("alice");
-      await alice.call("models/list", {});
-      await client.call("models/list", {});
-      await alice.withActor("bob").call("models/list", {});
-      expect(captured.map((headers) => headers.get("x-lightspeed-actor"))).toEqual(["alice", null, "bob"]);
-      expect(captured.every((headers) => headers.get("authorization") === "Bearer lsk_fixture")).toBe(true);
-    });
-  });
-
-  it("names a method's data and each kind of event", () => {
-    expectTypeOf<MethodData<"session/runs/read">["run"]["id"]>().toEqualTypeOf<string>();
-    expectTypeOf<SessionEventKindOf<"runFailed">["kind"]>().toEqualTypeOf<RunFailureKindView>();
-    expectTypeOf<SessionEventKindOf<"runFailed">["type"]>().toEqualTypeOf<"runFailed">();
-  });
-
-  it("ships canonical method documentation from the Rust manifest", () => {
-    expect(METHOD_INFO["session/config/put"]).toEqual({
-      scope: "universe",
-      streaming: false,
-      notifications: [],
-      access: { kind: "universe", action: "configureSession" },
-      summary: "Replace session configuration",
-      description:
-        "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.",
-    });
-    expect(METHOD_INFO["deployment/api-keys/create"]).toMatchObject({
-      scope: "deployment",
-      access: { kind: "deployment" },
-      summary: "Create a scoped API key",
-      description: expect.stringContaining("returned exactly once"),
-    });
-  });
-
-  it("calls fetch the way a browser requires, not as a method of the client", async () => {
-    const browserFetch = function (this: unknown, _input: RequestInfo | URL, init?: RequestInit) {
-      if (this !== undefined && this !== globalThis) {
-        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
-      }
-      return Promise.resolve(jsonResponse({ id: decodeBody(init).id, result: { result: {}, notifications: [] } }));
-    } as typeof fetch;
-    const client = new LightspeedClient({ endpoint: "http://localhost/rpc", fetch: browserFetch });
-
-    await expect(client.call("initialize", {})).resolves.toBeDefined();
-  });
-
-  it("posts typed JSON-RPC calls and returns the result envelope", async () => {
-    const requests: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
-    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push({
-        url: input.toString(),
-        body: decodeBody(init),
-        headers: new Headers(init?.headers),
-      });
-      return jsonResponse({
-        id: 42,
-        result: {
-          result: {
-            session: {
-              id: "session_1",
-              status: "idle",
-              runs: [],
-            },
-          },
-          notifications: [],
-        },
-      });
-    }) as unknown as typeof fetch;
-
-    const client = new LightspeedClient({
-      endpoint: "http://127.0.0.1:18080/rpc",
-      fetch: fetchImpl,
-      requestId: () => 42,
-      headers: { authorization: "Bearer local" },
-    });
-
-    const result = await client.call("session/start", {
-      sessionId: "session_1",
-      config: null,
-    });
-
-    expect(result.result.session.id).toBe("session_1");
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe("http://127.0.0.1:18080/rpc");
-    expect(requests[0]?.headers.get("content-type")).toBe("application/json");
-    expect(requests[0]?.headers.get("authorization")).toBe("Bearer local");
-    expect(requests[0]?.body).toEqual({
-      id: 42,
-      method: "session/start",
-      params: {
-        sessionId: "session_1",
-          config: null,
+describe("HTTP client", () => {
+  it("sends bearer and actor headers and returns direct DTOs", async () => {
+    const client = new LightspeedClient({ endpoint: "http://runtime/api/v1", universe: "u", token: "secret", actor: "a",
+      fetch: async function (url, init) {
+        expect(this).toBeUndefined();
+        expect(String(url)).toBe("http://runtime/api/v1/universes/u/models");
+        expect(init?.method).toBe("GET");
+        expect(init?.body).toBeUndefined();
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer secret");
+        expect(new Headers(init?.headers).get("x-lightspeed-actor")).toBe("a");
+        expect(new Headers(init?.headers).has("x-lightspeed-universe")).toBe(false);
+        return Response.json({ models: [] });
       },
     });
+    expect(await client.listModels()).toEqual({ models: [] });
   });
-
-  it("preserves JSON-RPC error code and data", async () => {
-    const fetchImpl = vi.fn(async () =>
-      jsonResponse({
-        id: "req_1",
-        error: {
-          code: -32009,
-          message: "submission id was reused with different input",
-          data: {
-            kind: "conflict",
-            message: "submission id was reused with different input",
-          },
-        },
-      }),
-    ) as unknown as typeof fetch;
-    const client = new LightspeedClient({
-      endpoint: "http://lightspeed.local/rpc",
-      fetch: fetchImpl,
-      requestId: () => "req_1",
-    });
-
-    await expect(
-      client.call("session/runs/start", {
-        sessionId: "session_1",
-        source: {
-          type: "input",
-          items: [{ type: "text", text: "hello" }],
-        },
-        submissionId: "sub_1",
-      }),
-    ).rejects.toMatchObject({
-      name: "LightspeedRpcError",
-      code: -32009,
-      kind: "conflict",
-      data: {
-        kind: "conflict",
-        message: "submission id was reused with different input",
-      },
-    } satisfies Partial<LightspeedRpcError>);
+  it("does not retry mutations and preserves explicit submission identifiers", async () => {
+    const bodies: unknown[] = [];
+    const client = new LightspeedClient({ endpoint: "http://runtime/api/v1", universe: "u", fetch: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      throw new TypeError("connection lost");
+    } });
+    await expect(client.startRun("s", "hello", { submissionId: "stable", config: null })).rejects.toBeInstanceOf(LightspeedTransportError);
+    expect(bodies).toEqual([{ source: { type: "input", items: [{ type: "text", text: "hello" }] }, submissionId: "stable", config: null }]);
   });
-
-  describe("blob helpers", () => {
-    const serving = (bytes: Uint8Array) => {
-      const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = decodeBody(init);
-        const bytesBase64 = btoa(String.fromCharCode(...bytes));
-        return jsonResponse({
-          id: body.id,
-          result: { result: { blobRef: "blob_1", bytes: bytes.length, bytesBase64 }, notifications: [] },
-        });
-      }) as typeof fetch;
-      return new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
-    };
-
-    it("returns the exact bytes, including those outside ASCII", async () => {
-      const bytes = new Uint8Array([0, 127, 128, 255]);
-      await expect(serving(bytes).readBlobBytes("blob_1")).resolves.toEqual(bytes);
-    });
-
-    it("decodes UTF-8 text", async () => {
-      const client = serving(new TextEncoder().encode("héllo ✓"));
-      await expect(client.readBlobText("blob_1")).resolves.toBe("héllo ✓");
-    });
-
-    it("refuses to present binary as text", async () => {
-      await expect(serving(new Uint8Array([0xff, 0xfe])).readBlobText("blob_1")).rejects.toBeInstanceOf(TypeError);
-    });
+  it("preserves HTTP problems and proxy statuses", async () => {
+    const client = new LightspeedClient({ endpoint: "http://runtime/api/v1", fetch: async () => problem("unauthenticated", 401) });
+    await expect(client.initialize()).rejects.toMatchObject({ name: "LightspeedApiError", status: 401, kind: "unauthenticated" });
+    const proxy = new LightspeedClient({ endpoint: "http://runtime/api/v1", fetch: async () => new Response("proxy", { status: 502 }) });
+    await expect(proxy.initialize()).rejects.toMatchObject({ name: "LightspeedTransportError", status: 502, transient: true });
+    const invalid = new LightspeedClient({ endpoint: "http://runtime/api/v1", fetch: async () => new Response("invalid") });
+    await expect(invalid.initialize()).rejects.toBeInstanceOf(LightspeedTransportError);
   });
-
-  describe("named helpers", () => {
-    function recording(data: unknown = {}) {
-      const calls: Array<{ method: string; params: unknown; signal: AbortSignal | null | undefined; headers: Headers }> = [];
-      const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const body = decodeBody(init);
-        calls.push({ method: body.method as string, params: body.params, signal: init?.signal, headers: new Headers(init?.headers) });
-        return jsonResponse({ id: body.id, result: { result: data, notifications: [] } });
-      }) as typeof fetch;
-      return { calls, client: new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl }) };
-    }
-
-    it("returns the method's data, without the envelope", async () => {
-      const { client } = recording({ session: { id: "session_1" } });
-      await expect(client.startSession({ displayName: "x" })).resolves.toEqual({ session: { id: "session_1" } });
-    });
-
-    it("sends positional IDs and options as one params object", async () => {
-      const { calls, client } = recording();
-      await client.closeSession("session_1", { force: true });
-      await client.readRun("session_1", "run_1");
-      await client.decideApprovals("session_1", "run_1", { decisions: [{ approvalId: "a", decision: "approve" }] });
-      expect(calls.map(({ method, params }) => ({ method, params }))).toEqual([
-        { method: "session/close", params: { sessionId: "session_1", force: true } },
-        { method: "session/runs/read", params: { sessionId: "session_1", runId: "run_1" } },
-        {
-          method: "session/runs/approvals/decide",
-          params: { sessionId: "session_1", runId: "run_1", decisions: [{ approvalId: "a", decision: "approve" }] },
-        },
-      ]);
-    });
-
-    it("keeps signal and headers out of the params and applies them to the request", async () => {
-      const { calls, client } = recording();
-      const controller = new AbortController();
-      await client.listSessions({ limit: 5, signal: controller.signal, headers: { "x-test": "1" } });
-      expect(calls[0]?.params).toEqual({ limit: 5 });
-      expect(calls[0]?.signal).toBe(controller.signal);
-      expect(calls[0]?.headers.get("x-test")).toBe("1");
-    });
-
-    it("keeps transport options out of the params of the hand-written helpers too", async () => {
-      const { calls, client } = recording({ run: { id: "run_1" } });
-      const options = { submissionId: "sub_1", signal: new AbortController().signal, headers: { "x-test": "1" } };
-      await client.startRun("session_1", "hi", options);
-      await client.steerRun("session_1", "run_1", "more", options);
-      await client.readEvents("session_1", { limit: 1, signal: options.signal });
-      expect(calls.map((call) => call.params)).toEqual([
-        { sessionId: "session_1", source: { type: "input", items: [{ type: "text", text: "hi" }] }, submissionId: "sub_1" },
-        { sessionId: "session_1", runId: "run_1", items: [{ type: "text", text: "more" }], submissionId: "sub_1" },
-        { sessionId: "session_1", limit: 1 },
-      ]);
-      expect(calls.map((call) => call.headers.get("x-test"))).toEqual(["1", "1", null]);
-    });
-
-    it("gives steering a submission ID unless the caller supplies one", async () => {
-      const { calls, client } = recording({});
-      await client.steerRun("session_1", "run_1", [{ type: "text", text: "more" }]);
-      expect((calls[0]?.params as { submissionId: unknown }).submissionId).toBeTypeOf("string");
-    });
-
-    it("rejects the same way as call", async () => {
-      const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) =>
-        jsonResponse({
-          id: decodeBody(init).id,
-          error: { code: -32004, message: "gone", data: { kind: "notFound", message: "gone" } },
-        })) as typeof fetch;
-      const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
-      await expect(client.readSession("session_1")).rejects.toMatchObject({ kind: "notFound" });
-    });
-
-    it("has a real method for every API method in the table", () => {
-      const client = new LightspeedClient("http://lightspeed.local/rpc");
-      for (const [helper, method] of Object.entries(CLIENT_HELPERS)) {
-        expect(METHODS).toContain(method);
-        expect(client[helper as keyof typeof CLIENT_HELPERS], helper).toBeTypeOf("function");
-      }
-    });
+  it("downloads raw bytes and uploads bytes with a verified length", async () => {
+    const client = new LightspeedClient({ endpoint: "http://runtime/api/v1", universe: "u", fetch: async (_url, init) => {
+      if (init?.method === "GET") return new Response(new Uint8Array([255, 0]));
+      expect(init?.body).toEqual(new Uint8Array([1, 2]));
+      expect(new Headers(init?.headers).get("content-type")).toBe("application/octet-stream");
+      expect(new Headers(init?.headers).get("content-length")).toBe("2");
+      return Response.json({ blobRef: "sha256:test", bytes: 2 });
+    } });
+    expect(await client.readBlobBytes("sha256:test")).toEqual(new Uint8Array([255, 0]));
+    await expect(client.readBlobText("sha256:test")).rejects.toBeInstanceOf(TypeError);
+    expect(await client.uploadBlob("sha256:test", new Uint8Array([1, 2]))).toEqual({ blobRef: "sha256:test", bytes: 2 });
+    const response = await client.openDownload("blobs/read", { blobRef: "sha256:test" });
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([255, 0]));
   });
-
-  it("putBlob stores text as UTF-8 and returns the reference", async () => {
-    let sent: { blobs: Array<{ bytesBase64: string }> } | undefined;
-    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = decodeBody(init);
-      sent = body.params as typeof sent;
-      return jsonResponse({ id: body.id, result: { result: { blobs: [{ blobRef: "blob_1" }] }, notifications: [] } });
-    }) as typeof fetch;
-    const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
-
-    await expect(client.putBlob("héllo")).resolves.toBe("blob_1");
-
-    expect(new TextDecoder().decode(Uint8Array.from(atob(sent?.blobs[0]?.bytesBase64 ?? ""), (c) => c.charCodeAt(0)))).toBe("héllo");
-  });
-
-  it("startRun takes plain text as a single text item", async () => {
-    let params: unknown;
-    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = decodeBody(init);
-      params = body.params;
-      return jsonResponse({ id: body.id, result: { result: { run: { id: "run_1" } }, notifications: [] } });
-    }) as typeof fetch;
-    const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
-
-    await client.startRun("session_1", "hello", { submissionId: "sub_1" });
-
-    expect(params).toEqual({
-      sessionId: "session_1",
-      source: { type: "input", items: [{ type: "text", text: "hello" }] },
-      submissionId: "sub_1",
-    });
-  });
-
-  it("generates submission ids for startRun unless the caller supplies one", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      bodies.push(decodeBody(init));
-      return jsonResponse({
-        id: bodies.length,
-        result: {
-          result: {
-            run: {
-              id: "run_1",
-              status: "queued",
-              source: { type: "input", items: [] },
-              entries: [],
-              toolBatches: [],
-            },
-          },
-          notifications: [],
-        },
-      });
-    }) as unknown as typeof fetch;
-    const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
-
-    await client.startRun("session_1", [{ type: "text", text: "hello" }]);
-    await client.startRun("session_1", [{ type: "text", text: "hello again" }], {
-      submissionId: "sub_fixed",
-      config: null,
-    });
-
-    const firstParams = bodies[0]?.params as { submissionId?: unknown };
-    expect(firstParams.submissionId).toBeTypeOf("string");
-    expect(firstParams.submissionId).not.toBe("");
-    expect(bodies[1]?.params).toMatchObject({
-      sessionId: "session_1",
-      source: {
-        type: "input",
-        items: [{ type: "text", text: "hello again" }],
-      },
-      submissionId: "sub_fixed",
-      config: null,
-    });
-  });
-
   describe("awaitRun", () => {
     const completed = (seq: number, runId = "run_1"): SessionEventView => ({
       cursor: { seq },
@@ -456,11 +82,17 @@ describe("LightspeedClient", () => {
     function gateway(handlers: Record<string, (params: Record<string, unknown>) => unknown>) {
       const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
       const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const { id, method, params } = decodeBody(init) as {
-          id: number;
-          method: string;
-          params: Record<string, unknown>;
-        };
+        const url = new URL(String(_input));
+        const segments = url.pathname.split("/");
+        const sessionId = decodeURIComponent(segments[6]!);
+        const method = segments[7] === "events" ? "session/events/read" : segments[7] === "runs" ? "session/runs/read" : "session/read";
+        const params: Record<string, unknown> = { sessionId };
+        if (method === "session/events/read") {
+          params.after = url.searchParams.has("after") ? JSON.parse(url.searchParams.get("after")!) : null;
+          params.waitMs = Number(url.searchParams.get("waitMs"));
+          if (url.searchParams.has("limit")) params.limit = Number(url.searchParams.get("limit"));
+        }
+        if (method === "session/runs/read") params.runId = decodeURIComponent(segments[8]!);
         calls.push({ method, params });
         const handler = handlers[method];
         if (!handler) {
@@ -469,9 +101,9 @@ describe("LightspeedClient", () => {
         const result = handler(params);
         return result instanceof Response
           ? result
-          : jsonResponse({ id, result: { result, notifications: [] } });
+          : jsonResponse(result);
       }) as typeof fetch;
-      return { calls, client: new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl }) };
+      return { calls, client: new LightspeedClient({ endpoint: "http://lightspeed.local/api/v1", universe: "u", fetch: fetchImpl }) };
     }
 
     it("resumes from cursors, returns the finished run, and reports only its own events", async () => {
@@ -540,7 +172,7 @@ describe("LightspeedClient", () => {
       });
 
       await expect(client.awaitRun("session_1", "run_1", { after: { seq: 3 } })).rejects.toMatchObject({
-        name: "LightspeedRpcError",
+        name: "LightspeedApiError",
         kind: "sessionExecutionStopped",
       });
     });
@@ -550,10 +182,7 @@ describe("LightspeedClient", () => {
         "session/events/read": () => page([], 3),
         "session/read": () => ({ session: { runs: [] } }),
         "session/runs/read": () =>
-          jsonResponse({
-            id: 3,
-            error: { code: -32004, message: "run not found", data: { kind: "notFound", message: "run not found" } },
-          }),
+          problem("notFound", 404),
       });
 
       await expect(client.awaitRun("session_1", "missing")).rejects.toMatchObject({ kind: "notFound" });
@@ -622,7 +251,7 @@ describe("LightspeedClient", () => {
       it("does not repeat a read the server refused", async () => {
         const { calls, client } = gateway({
           "session/events/read": () =>
-            jsonResponse({ id: 1, error: { code: -32003, message: "no", data: { kind: "forbidden", message: "no" } } }),
+            problem("forbidden", 403),
         });
 
         await expect(client.awaitRun("session_1", "run_1")).rejects.toMatchObject({ kind: "forbidden" });
@@ -637,16 +266,15 @@ describe("LightspeedClient", () => {
         if (attempts === 1) {
           return hangingFetch(input, init);
         }
-        const { id } = decodeBody(init) as { id: number };
         const result = attempts === 2 ? page([completed(1)]) : { run: finishedRun };
-        return Promise.resolve(jsonResponse({ id, result: { result, notifications: [] } }));
+        return Promise.resolve(jsonResponse(result));
       }) as typeof fetch;
       const shortTimeout = vi.spyOn(AbortSignal, "timeout").mockImplementationOnce(() => {
         const controller = new AbortController();
         setTimeout(() => controller.abort(new DOMException("timed out", "TimeoutError")), 5);
         return controller.signal;
       });
-      const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
+      const client = new LightspeedClient({ endpoint: "http://lightspeed.local/api/v1", universe: "u", fetch: fetchImpl });
 
       await expect(client.awaitRun("session_1", "run_1")).resolves.toMatchObject({ cursor: { seq: 1 } });
 
@@ -655,7 +283,7 @@ describe("LightspeedClient", () => {
     });
 
     it("rejects with the caller's own abort reason", async () => {
-      const client = new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: hangingFetch });
+      const client = new LightspeedClient({ endpoint: "http://lightspeed.local/api/v1", universe: "u", fetch: hangingFetch });
       const controller = new AbortController();
 
       const waiting = client.awaitRun("session_1", "run_1", { signal: controller.signal });
@@ -665,86 +293,32 @@ describe("LightspeedClient", () => {
     });
   });
 
-  describe("transport failures", () => {
-    const client = (fetchImpl: typeof fetch) =>
-      new LightspeedClient({ endpoint: "http://lightspeed.local/rpc", fetch: fetchImpl });
+});
 
-    it("rejects with the signal's reason, not a transport error", async () => {
-      const controller = new AbortController();
-      const call = client(hangingFetch).call("initialize", {}, { signal: controller.signal });
-      controller.abort();
-      await expect(call).rejects.toMatchObject({ name: "AbortError" });
+it("named helpers preserve full run sources, terminal notifications and backward event pagination", async () => {
+  const calls: Array<{ url: URL; body: unknown }> = [];
+  const client = new LightspeedClient({ endpoint: "https://runtime.test", universe: "u", fetch: async (url, init) => {
+    calls.push({ url: new URL(String(url)), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    return Response.json({});
+  } });
+  const source = { type: "input", items: [{ type: "text", text: "hello" }] } as const;
+  await client.startRun("session", { ...source, items: [...source.items] }, { submissionId: null, notifyOnTerminal: { token: "controller" }, config: null });
+  expect(calls[0]!.body).toEqual({ source, submissionId: null, notifyOnTerminal: { token: "controller" }, config: null });
+  await client.readEvents("session", { direction: "backward", before: { seq: 42 }, limit: 10 });
+  expect(calls[1]!.url.searchParams.get("direction")).toBe("backward");
+  expect(JSON.parse(calls[1]!.url.searchParams.get("before")!)).toEqual({ seq: 42 });
+  expect(calls[1]!.url.searchParams.get("limit")).toBe("10");
+});
 
-      const reason = new DOMException("gave up", "TimeoutError");
-      const timedOut = new AbortController();
-      const timedOutCall = client(hangingFetch).call("initialize", {}, { signal: timedOut.signal });
-      timedOut.abort(reason);
-      await expect(timedOutCall).rejects.toBe(reason);
-    });
-
-    it("keeps the underlying network failure as its cause", async () => {
-      const failure = new TypeError("fetch failed");
-      const call = client((async () => { throw failure; }) as typeof fetch).call("initialize", {});
-      await expect(call).rejects.toMatchObject({
-        name: "LightspeedTransportError",
-        cause: failure,
-        transient: true,
-      });
-    });
-
-    it("reports a proxy's HTML error page by its status", async () => {
-      const call = client((async () => new Response("<html>Bad Gateway</html>", { status: 502 })) as typeof fetch)
-        .call("initialize", {});
-      await expect(call).rejects.toMatchObject({
-        name: "LightspeedTransportError",
-        message: "Lightspeed API request failed with HTTP 502",
-        status: 502,
-        body: "<html>Bad Gateway</html>",
-        transient: true,
-      });
-    });
-
-    it("reports the gateway's 401 as the server's unauthenticated error", async () => {
-      // No valid key: the gateway answers before reading the body, so there is no request id.
-      const refusal = {
-        id: null,
-        error: {
-          code: -32001,
-          message: "request is not authenticated",
-          data: { kind: "unauthenticated", message: "request is not authenticated" },
-        },
-      };
-      const call = client((async () => Response.json(refusal, { status: 401 })) as typeof fetch)
-        .call("initialize", {});
-      await expect(call).rejects.toBeInstanceOf(LightspeedRpcError);
-      await expect(call).rejects.toMatchObject({ kind: "unauthenticated", code: -32001 });
-    });
-
-    it("reports a 401 that is not the gateway's by its status", async () => {
-      const call = client((async () => new Response("<html>Sign in</html>", { status: 401 })) as typeof fetch)
-        .call("initialize", {});
-      await expect(call).rejects.toMatchObject({
-        name: "LightspeedTransportError",
-        status: 401,
-        transient: false,
-      });
-    });
-
-    it("points at the endpoint when the URL is wrong", async () => {
-      const call = client((async () => new Response("", { status: 404 })) as typeof fetch).call("initialize", {});
-      await expect(call).rejects.toMatchObject({
-        status: 404,
-        message: expect.stringContaining("http://lightspeed.local/rpc is the gateway's /rpc URL"),
-        transient: false,
-      });
-    });
-
-    it("does not treat a malformed success as transient", async () => {
-      const call = client((async () => new Response("not json", { status: 200 })) as typeof fetch).call("initialize", {});
-      await expect(call).rejects.toMatchObject({
-        message: expect.stringContaining("not valid JSON"),
-        transient: false,
-      });
-    });
-  });
+it("named binary helpers carry streams and raw workspace bytes", async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([9, 8])); controller.close(); } });
+  const client = new LightspeedClient({ endpoint: "https://runtime.test", universe: "u", fetch: async (_url, init) => {
+    if (init?.method === "GET") return new Response(new Uint8Array([255, 0]));
+    expect(init?.body).toBe(stream);
+    expect(new Headers(init?.headers).get("content-length")).toBe("2");
+    expect(new Headers(init?.headers).get("content-type")).toBe("application/octet-stream");
+    return Response.json({ blobRef: "digest", bytes: 2 });
+  } });
+  expect(await client.uploadBlob("digest", stream, { contentLength: 2 })).toEqual({ blobRef: "digest", bytes: 2 });
+  expect(await client.readWorkspaceFile("workspace", "file.bin")).toEqual(new Uint8Array([255, 0]));
 });

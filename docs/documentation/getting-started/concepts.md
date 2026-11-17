@@ -13,17 +13,16 @@ own. The same few concepts cover each stage.
 
 ## A universe groups the team's resources
 
-A universe is the boundary around a set of sessions, profiles, bots,
-workspaces, environments, and credentials. The incident response team can keep
-these resources in one universe, while another team uses a different universe
-on the same Lightspeed deployment.
+A universe contains the sessions, profiles, bots, workspaces, environments,
+and credentials for a body of work. An organization groups universes and
+manages who can use them. For example, the incident response team could keep
+live investigations in one universe and practice drills in another, both
+under the same organization.
 
-Resources in one universe cannot resolve resources from another. Within a
-universe, the Platform handles user membership and access. The runtime's
-universe boundary does not itself provide permissions between individual users
-in that universe. This distinction matters when deciding which teams or
-customers should share resources. [Access and security](../access-and-security/overview.md)
-follows a person's request through both layers.
+Each universe has its own resources. A session running a drill can use only
+resources from the drill universe, and a person gains access according to
+their Platform permissions there. See
+[Organizations, members, and roles](../access-and-security/people-and-roles.md).
 
 ## A session continues across runs
 
@@ -122,22 +121,17 @@ available to that script.
 
 A bot adds ongoing behavior around managed sessions. Instead of waiting for a
 person to send every message, the incident reviewer could wake when an alert
-arrives through a webhook, on a schedule, or through a chat connection.
+arrives through a webhook or when a schedule fires.
 
 Triggers determine which events a bot receives and how they reach its
 sessions. A bot can maintain several conversations, so a bot and a session are
 not interchangeable terms. The bot coordinates the ongoing work; each session
 holds a particular conversation and executes its runs.
 
-Chat channels connect Telegram or WhatsApp conversations to bots. A channel
-account supplies the connection to the messaging service, and a chat trigger
-routes incoming messages to the bot.
-
 ```mermaid
 flowchart TB
   Schedule["Schedule"] --> Triggers
   Webhook["Alert webhook"] --> Triggers
-  Chat["Chat message"] --> Triggers
   Triggers["Configured triggers<br/>Admit and route events"] --> Routing
   subgraph Bot["Incident response bot"]
     Routing["Choose the conversation"]

@@ -330,14 +330,8 @@ impl EnvironmentProviderBindingStore for InMemoryEnvironmentRegistryStore {
         provider_id: &EnvironmentProviderId,
     ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
         let mut state = self.write_state()?;
-        if universe_id == self.universe_id
-            && state.environments.values().any(|record| {
-                record.state != EnvironmentState::Closed
-                    && record.provider_id() == Some(provider_id)
-            })
-        {
-            return invalid("provider binding is referenced by a non-closed environment");
-        }
+        // Unbinding is how a universe is cut off: its open environments on
+        // the provider lose their routes until it is bound again.
         state
             .bindings
             .remove(&(universe_id, provider_id.clone()))
@@ -363,12 +357,15 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
                 })
             };
         }
-        let binding = state
+        let provider = state
+            .providers
+            .get(&request.provider_id)
+            .ok_or_else(|| not_found("environment_provider", &request.provider_id))?;
+        let bound = state
             .bindings
-            .get(&(self.universe_id, request.provider_id.clone()))
-            .ok_or_else(|| not_found("environment_provider_binding", &request.provider_id))?;
-        if !binding.enabled {
-            return invalid("environment provider binding is disabled");
+            .contains_key(&(self.universe_id, request.provider_id.clone()));
+        if !crate::provider_available(provider, bound) {
+            return invalid("environment provider is not available to this universe");
         }
         let record = request.record()?;
         state.insert_new(record)

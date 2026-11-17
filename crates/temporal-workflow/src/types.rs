@@ -106,6 +106,14 @@ pub fn compose_workflow_id(universe_id: Uuid, session_id: &SessionId) -> String 
     format!("{universe_id}/{session_id}")
 }
 
+/// Temporal identity of a workflow-tool execution; the harness keeps its logical id.
+pub fn compose_workflow_tool_execution_id(universe_id: Uuid, execution_id: &str) -> String {
+    format!("{universe_id}/{execution_id}")
+}
+
+pub const UNIVERSE_UNKNOWN_ERROR_TYPE: &str = "UniverseUnknown";
+pub const ENVIRONMENT_GONE_ERROR_TYPE: &str = "EnvironmentGone";
+
 pub fn compose_environment_job_workflow_id(
     universe_id: Uuid,
     environment_id: &str,
@@ -318,6 +326,8 @@ pub struct WorkflowToolRecoveryResult {
 pub struct WorkflowToolStartArgs {
     pub universe_id: uuid::Uuid,
     pub holder_workflow_id: String,
+    /// Logical execution id used as the emission producer. The Temporal workflow id
+    /// is `{universe_id}/{execution_id}`.
     pub execution_id: String,
     pub invocation: harness::WorkflowToolInvocation,
 }
@@ -375,12 +385,14 @@ pub enum WorkflowToolStartActivityResult {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolExecutionCheckRequest {
+    pub universe_id: Uuid,
     pub execution_id: String,
     pub completion_key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolExecutionCancelRequest {
+    pub universe_id: Uuid,
     pub execution_id: String,
 }
 

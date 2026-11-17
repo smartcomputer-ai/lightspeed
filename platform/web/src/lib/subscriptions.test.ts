@@ -33,9 +33,4 @@ describe("subscription grant bindings", () => {
     expect(subscriptionBinding({ providerKind: "gitHubApp", metadata: {} })).toBeNull();
   });
 
-  it("bootstrap writes a 0600 auth.json and clears the variable", () => {
-    expect(CODEX_AUTH_JSON_BOOTSTRAP).toContain("chmod 600");
-    expect(CODEX_AUTH_JSON_BOOTSTRAP).toContain("unset CODEX_AUTH_JSON");
-    expect(CODEX_AUTH_JSON_BOOTSTRAP).toContain('/auth.json"');
-  });
 });

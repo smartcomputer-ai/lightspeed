@@ -1,15 +1,10 @@
 # Networking and ingress
 
-Environment networking has two paths. The runtime needs a protected route to
-the daemon that executes file and process operations. An application running
-inside the machine may separately need a route for people using a browser.
-Enabling application ingress does not expose the daemon or grant access to
-Lightspeed's runtime API.
-
-Deployment operators configure these routes. The connection path depends on
-whether the environment is registered, externally attached, or provisioned.
-The application publishing procedure later in this guide needs an Operator
-or Admin account in the universe.
+The environment gateway carries file and process operations between the
+runtime and a machine. If someone also needs to open a web application
+running on that machine, configure a separate application endpoint.
+Deployment operators set up the network routes. Publishing an application
+requires Operator or Owner access in its universe.
 
 ## Follow an environment operation
 
@@ -22,28 +17,20 @@ flowchart LR
   Registered[Registered daemon] -->|Outbound control and data sockets|Gateway
 ```
 
-For a file or process tool, the runtime resolves the selected environment to
-its current machine and connection. The request follows that route and the
-response returns as the tool result. Registered machines initiate their own
-outbound connections; external daemons and Incus guests are reached over
-private deployment networks.
+For a file or process tool, the runtime finds the machine the session is
+using. A registered daemon connects outbound. The gateway dials an externally
+attached daemon directly or reaches a provisioned VM through its provider.
 
-Several **environment-gateway** processes can share one load-balanced address.
-Each process registers its own direct peer URL in PostgreSQL and renews its
-lease. The database records which process holds each daemon's control
-connection. A worker route may land on any replica, and the daemon's data
-connection may land on another; the replicas route setup to the owner and
-relay data to the replica holding the worker socket. Sticky sessions are not
-required. A stream crosses one or two gateway processes, regardless of the
-fleet's size.
+For multiple **environment-gateway** replicas, workers and daemons can use
+stable load-balanced endpoints. Control and data connections can land on
+different replicas. The gateways relay them over private peer routes.
 
-Set `LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL` on every replica to an HTTP(S)
-origin that other replicas can reach directly, such as its pod IP and listener
-port. Use the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on all replicas.
-The peer URL identifies this process and must not point to the shared load
-balancer. A deployment with a single gateway can omit it.
+Set `LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL` on each replica to its own
+directly reachable HTTP(S) origin, such as its pod IP and listener port.
+All replicas use the same `LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN`. A single
+gateway can omit the peer URL.
 
-For an IPv4 Kubernetes Deployment listening on port 18080, the container's
+For an IPv4 Kubernetes Deployment listening on port 18083, the container's
 environment can derive its address automatically:
 
 ```yaml
@@ -53,29 +40,25 @@ env:
       fieldRef:
         fieldPath: status.podIP
   - name: LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL
-    value: "http://$(POD_IP):18080"
+    value: "http://$(POD_IP):18083"
 ```
 
-Every new pod registers its own address; scaling needs no list of peers.
 Allow gateway-to-gateway traffic on that port and use `/ready` for readiness.
-Starting a replica does not disconnect other replicas' daemons.
-
-Processes that do not run the environment-gateway role need
-`LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` and
-`LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN`. The URL is the gateway's stable base
-URL; the token authenticates deployment workers using its data routes. Keep
-that token within the deployment. It is not a daemon registration key.
+Workers running separately from the gateway use its stable base URL in
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` and authenticate with
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN`. Keep that token within the deployment.
 
 ## Connect a registered daemon through a public edge
 
 A registered daemon opens its connection outward, which lets it run behind
 NAT without exposing an inbound daemon listener. Publish these runtime paths
-through an HTTPS/WebSocket-capable proxy:
+through an HTTPS/WebSocket-capable proxy targeting the environment listener
+(`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`, default `127.0.0.1:18083`):
 
 | Path | Purpose |
 | --- | --- |
-| `/environment-gateway/connect` | Long-lived daemon control connection and identity admission/reconnection. |
-| `/environment-gateway/data` | Additional outbound data sockets opened when the gateway requests a worker route. |
+| `/environments/connect` | Long-lived daemon control connection and identity admission/reconnection. |
+| `/environments/data` | Additional outbound data sockets opened when the gateway requests a worker route. |
 
 Use `wss://` for a remote gateway. The daemon accepts plain `ws://` only for
 loopback, unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` opts in for a
@@ -85,29 +68,21 @@ trusted private network. For a private certificate authority, configure
 The daemon derives the data path from its configured connect URL, on the same
 origin and under the same path prefix, so both paths must be published on one
 host. The daemon signs the origin it dialed when it proves its identity, and
-the gateway accepts the origin of its `LIGHTSPEED_PUBLIC_BASE_URL` plus those
+the gateway accepts the origin of its `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` plus those
 listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, such as a
 cluster-internal service address. A daemon that dials the gateway under any
 other hostname is refused. [Run registered daemons](registered-daemons.md)
 shows the in-cluster setup.
 
-The first connection uses a registration key and the daemon's identity. Later
-connections use the retained identity, and requested data sockets use a
-one-time pairing token. Publishing only the control path can therefore make
-the machine appear connected while its actual tool operations fail. Both
-paths need WebSocket upgrades and suitable long-lived-connection handling.
-
-The worker route under `/environment-gateway/routes/` and the replica routes
-under `/environment-gateway/peer/` are private, bearer-authenticated paths.
-Reject both prefixes at the public edge. Peers use `POST .../peer/streams`
-for stream setup and WebSocket `GET .../peer/data` for a dial-back relay.
-Pairing tokens authenticate the acceptor and expire quickly; only the acceptor
-can consume each token, once. Do not give the deployment token to borrowed
-machines. The daemon registration flow supplies what those machines need.
+Both public paths need WebSocket upgrades and support for long-lived
+connections. A machine can appear connected through the control path even
+when operations fail because the data path is missing. Keep the
+bearer-authenticated worker and replica paths under `/environments/routes/`
+and `/environments/peer/` private. Reject both prefixes at the public edge.
 
 Follow [Bring your own compute](bring-your-own-compute.md) for the complete
 registration procedure. [Self-hosting](../deployment/self-hosting.md#configure-the-public-edge)
-shows how to publish the daemon routes while keeping the runtime RPC
+shows how to publish the daemon routes while keeping the runtime HTTP API
 listener private.
 
 ## Reach passive daemons and Incus guests
@@ -122,37 +97,18 @@ with the network or transport boundary. A filesystem root setting or default
 working directory does not make a publicly reachable process service safe to
 expose.
 
-For a provider, the environment gateway reaches the controller URL registered
-for it and the provider's data routes. Unless a data route base is
-registered with the provider, the routes live under `/routes` on the
-controller's scheme, host, and port. Both carry the provider credential as a
-bearer token when one is configured. For Incus, those are the provider's
-`/control` and `/routes/...` paths on one listener. Connecting to a data
-route also wakes a paused or stopped VM. The provider then dials the guest
-daemon over the private guest IPv4 network, normally on port 19091. That guest listener has no
-authentication of its own, so keep guest networks private. The provider's
-connection to the Incus API uses HTTPS client credentials and server trust
-separately.
+For Incus, allow the environment gateway to reach the provider's controller
+and data routes. The provider then dials the daemon on the private guest
+IPv4 network, normally on port 19091. Keep that network private because the
+guest listener has no authentication of its own. Standalone Incus uses a
+managed bridge per universe. Cluster mode uses a managed OVN network over
+the configured uplink. The provider and its application edge need routes to
+those guest addresses as well as access to the Incus API. See
+[Incus VMs](incus-vms.md) for endpoints and egress controls.
 
-Standalone Incus uses a managed bridge per universe. Cluster mode
-uses a managed OVN network over the configured uplink. The provider and its
-application edge must be able to route to the resulting guest addresses; API
-access to Incus alone does not establish guest connectivity.
-
-The provider separates the networks of different universes and applies
-configured `deniedEgressCidrs`. That list defaults to empty. Add the
-destinations the deployment needs to block, and avoid overlapping the
-universe subnets. These
-specific rules are not a general application-aware egress policy.
-
-Relay connection timeouts and VM idle policies control different resources.
-An idle relay can close without closing the machine or deleting its files.
-The next operation can open another route while the daemon remains available.
-Every hop between a worker and a daemon, including reverse proxies in front of
-the environment gateway, must pass WebSocket ping frames through and must not
-close a connection that has been quiet for less than 60 seconds: a worker
-waiting on a long command read pings every 20 seconds and otherwise sends
-nothing. Hops must also accept WebSocket messages of up to 16 MiB.
+Proxies between a worker and daemon must pass WebSocket pings, allow at
+least 60 seconds of inactivity, and accept messages up to 16 MiB. An idle
+relay can reopen on the next operation while the daemon remains available.
 
 ## Configure public application ingress
 
@@ -218,10 +174,8 @@ printf 'Acorn environment is reachable\n' > ingress-demo/index.html
 python3 -m http.server 8080 --bind 0.0.0.0 --directory ingress-demo
 ```
 
-Run the server as a tracked environment process, allowing the tool to yield
-while the root process stays alive, and retain its process handle. Avoid a
-short command kill timeout for the duration of this check. Do not simply
-background it with a shell and forget which process serves it.
+Run the server as a [tracked environment process](processes-and-jobs.md) and
+keep the process handle so you can stop it after the check.
 
 In **Environments → Details**, choose **Enable public ingress** and open the
 generated HTTPS endpoint. The page should show `Acorn environment is
@@ -237,10 +191,6 @@ flowchart LR
   Edge -->|Approved guest port|App[Application inside the VM]
 ```
 
-The edge resolves the enabled route from current Incus target metadata and
-proxies HTTP, streaming bodies, and WebSockets. You supply the application and
-its content on the guest machine.
-
 ## Keep application lifetime and power aligned
 
 The route is useful only while the application and machine are available.
@@ -253,26 +203,11 @@ command started and left running after it exited. Choose a template whose
 idle policy matches how the application should remain available; see
 [Power and cleanup](power-and-cleanup.md#set-an-idle-policy).
 
-Choose **Disable public ingress** to remove the route. This does not stop the
-application process. Stop the tracked server separately when it is no longer
-needed, and close a disposable VM only after saving its useful output.
-Removing a route should not be treated as a promise that an already-open
-stream was terminated immediately.
-
-The API equivalent is `environments/ingress/put`, with params such as:
-
-```json
-{
-  "environmentId": "<environment-id>",
-  "enabled": false
-}
-```
-
-The call waits for the provider and returns the environment with the
-endpoint the provider reported. It fails when the provider cannot be reached;
-nothing is retried later. See the
-[API reference](../../../crates/api/contract/api-reference.md) for its
-response and the environment's endpoint fields.
+Choose **Disable public ingress** to remove the route, then stop the tracked
+server separately. Stop the server to end existing connections as well.
+Save any useful output before closing a disposable VM. The equivalent API
+operation is `environments/ingress/put` in the
+[API reference](../../../crates/api/contract/api-reference.md).
 
 ## Locate a connection failure
 

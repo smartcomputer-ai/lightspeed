@@ -1,23 +1,19 @@
-import { proxyWatch } from "../watch.js";
-import { UniverseHandleCacheConflict } from "../universe-handles.js";
-import { deploymentClient, GatewayUnconfigured, GateRefusal, memberClient } from "../runtime-client.js";
+import { deploymentClient, universeClient, GateRefusal } from "../runtime-client.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import {
   LightspeedClient,
-  LightspeedRpcError,
+  LightspeedApiError,
   type AgentProfileInput,
-  type AuthFlowStatusResponse,
-  type AuthGrantImportParams,
-  type AuthGrantPutParams,
-  type AuthGrantView,
-  type AuthGitHubInstallationGrantParams,
-  type AuthGitHubInstallationListParams,
-  type AuthGrantListParams,
-  type AuthProviderCreateParams,
-  type DeploymentApiKeyCreateParams,
-  type DeploymentApiKeyCreateResponse,
+  type CredentialFlowStatusResponse,
+  type CredentialGrantImportParams,
+  type CredentialGrantPutParams,
+  type CredentialGrantView,
+  type CredentialGitHubInstallationGrantParams,
+  type CredentialGitHubInstallationListParams,
+  type CredentialGrantListParams,
+  type CredentialProviderCreateParams,
   type EnvironmentCreateParams,
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
@@ -42,7 +38,6 @@ import {
   messageInputItems,
   messageRunConfig,
   modelDefaultsPutSchema,
-  roleAtLeast,
   sessionMessageSchema,
   sessionSteerSchema,
   slugify,
@@ -56,7 +51,6 @@ import {
   formatUploadBytes,
   prepareWorkspaceUpload,
   workspaceDownload,
-  WorkspaceTransferError,
   workspaceEntryDeleteSchema,
   workspaceEntryRenameSchema,
   renameWorkspaceEntry,
@@ -65,14 +59,14 @@ import {
   removeWorkspaceEntry,
 } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
-import { parseBody } from "../http.js";
+import { parseBody, withApiErrors } from "../http.js";
 import {
   conflictingAnthropicEnv,
   isSubscriptionGrant,
   parseSubscriptionCredential,
   SubscriptionCredentialError,
 } from "../subscriptions.js";
-import { universeForSession, type UniverseAccess } from "./universes.js";
+import { universeForRequest } from "./universes.js";
 import {
   asManifest,
   removeFile,
@@ -380,9 +374,9 @@ const credentialReplaceSchema = z.object({
 /// with the new token: its settings are carried over, the old token's expiry
 /// is not.
 export function credentialReplaceParams(
-  current: AuthGrantView,
+  current: CredentialGrantView,
   input: z.infer<typeof credentialReplaceSchema>,
-): AuthGrantPutParams {
+): CredentialGrantPutParams {
   return {
     grantId: current.grantId,
     providerId: current.providerId,
@@ -401,7 +395,7 @@ export function credentialReplaceParams(
 /// plain form, which the engine allows only for a retrievable credential.
 export function environmentSecretGrantParams(
   input: z.infer<typeof environmentSecretCreateSchema>,
-): AuthGrantImportParams {
+): CredentialGrantImportParams {
   return {
     grantId: input.grantId,
     providerId: ENVIRONMENT_SECRET_PROVIDER_ID,
@@ -454,52 +448,35 @@ const mcpOAuthFlowCompleteSchema = z.object({
   expectedRevision: z.number().int().min(0),
 });
 
-/// Universe methods for the signed-in member, through the member gate.
-export function engineClientFor(ctx: AppContext, access: UniverseAccess): LightspeedClient {
-  return memberClient(ctx.env, access.universe, access.member);
-}
-
-/// Deployment methods with the Platform's deployment key. Callers check that
-/// the user is a platform admin, or a universe admin for its own keys.
-export function deploymentClientFor(ctx: AppContext, endpoint?: string | null): LightspeedClient {
-  return deploymentClient(ctx.env, endpoint);
-}
-
 export function gatewayRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   // One set of limits for the body cap, the schema, and what the web is told.
   const uploadLimits = ctx.env.workspaceUploadLimits ?? DEFAULT_WORKSPACE_UPLOAD_LIMITS;
   const uploadSchema = workspaceUploadSchemaFor(uploadLimits);
 
-  app.get("/:id/watch", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => proxyWatch(engineClientFor(ctx, access), c.req.raw.signal));
-  });
-
   app.get("/:id/profiles", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("profiles/list", {});
-      return c.json(response.result.profiles ?? []);
+      return c.json(response.profiles ?? []);
     });
   });
 
   app.get("/:id/profiles/:profileId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("profiles/read", {
         profileId: c.req.param("profileId"),
       });
-      return c.json(response.result.profile);
+      return c.json(response.profile);
     });
   });
 
@@ -507,7 +484,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// GET) rides along as `expectedRevision` — a stale editor gets a 409
   /// instead of silently clobbering a concurrent edit.
   app.put("/:id/profiles/:profileId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -523,23 +500,23 @@ export function gatewayRoutes(ctx: AppContext) {
       createdAtMs?: number;
       updatedAtMs?: number;
     } & Record<string, unknown>;
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("profiles/put", {
         profile: document as unknown as AgentProfileInput,
         expectedRevision: revision,
       });
-      return c.json({ profile: response.result.profile });
+      return c.json({ profile: response.profile });
     });
   });
 
   app.delete("/:id/profiles/:profileId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       await client.call("profiles/delete", { profileId: c.req.param("profileId") });
       return c.json({ ok: true });
     });
@@ -550,7 +527,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// `subagent` are yes/no, absent lists both; `parent` lists direct
   /// sub-agents.
   app.get("/:id/sessions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -562,8 +539,8 @@ export function gatewayRoutes(ctx: AppContext) {
     const subagent = booleanQuery(c.req.query("subagent"));
     const parent = c.req.query("parent") || null;
     const metadata = metadataQueryFilter(c.req.queries("metadata"));
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/list", {
         cursor,
         limit,
@@ -574,41 +551,41 @@ export function gatewayRoutes(ctx: AppContext) {
         ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       });
       return c.json({
-        sessions: response.result.sessions ?? [],
-        nextCursor: response.result.nextCursor ?? null,
+        sessions: response.sessions ?? [],
+        nextCursor: response.nextCursor ?? null,
       });
     });
   });
 
   app.get("/:id/sessions/:sessionId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
   app.post("/:id/sessions/:sessionId/context/compact", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("session/context/compact", {
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("session/context/compact", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   /// Closing is a lifecycle transition that retains session history.
   /// `force=true` also cancels active/queued work.
   app.post("/:id/sessions/:sessionId/close", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -616,34 +593,34 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/close", {
         sessionId: c.req.param("sessionId"),
         force: body.data.force ?? false,
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
   /// A new execution for an open session whose last one stopped, from its log.
   app.post("/:id/sessions/:sessionId/restart", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/restart", {
         sessionId: c.req.param("sessionId"),
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -651,18 +628,18 @@ export function gatewayRoutes(ctx: AppContext) {
   /// after the selected sessions are closed. Non-cascade deletion requires a
   /// leaf; cascade includes delegated children.
   app.delete("/:id/sessions/:sessionId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/delete", {
         sessionId: c.req.param("sessionId"),
         softDelete: true,
         cascade: c.req.query("cascade") === "true",
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -670,7 +647,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// from the previous page; `waitMs` long-polls at the engine (clamped
   /// to 30s) so the web tail follows live sessions without spinning.
   app.get("/:id/sessions/:sessionId/events", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -690,8 +667,8 @@ export function gatewayRoutes(ctx: AppContext) {
         (direction === "forward" && before !== null)) {
       return c.json({ error: "Invalid event pagination parameters" }, 400);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/events/read", {
         sessionId: c.req.param("sessionId"),
         direction: direction as "forward" | "backward",
@@ -700,14 +677,14 @@ export function gatewayRoutes(ctx: AppContext) {
         limit: Math.min(limit, 500),
         waitMs: Math.min(waitMs, 30_000),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   /// New session from the web (no chat binding involved). The engine
   /// mints the session id; the response is the full session view.
   app.post("/:id/sessions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -716,11 +693,11 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     const input = body.data;
-    if (input.access?.visibility === "universe" && !roleAtLeast(access.role, "operator")) {
-      return c.json({ error: "operator role required to start shared work" }, 403);
+    if (input.access?.visibility === "universe" && !access.actions.has("configureSession")) {
+      return c.json({ error: "universe permission required to start shared work: configureSession" }, 403);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/start", {
         ...(input.displayName ? { displayName: input.displayName } : {}),
         ...(input.metadata && Object.keys(input.metadata).length > 0
@@ -733,31 +710,31 @@ export function gatewayRoutes(ctx: AppContext) {
         ...(input.access ? { access: input.access } : {}),
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
   /// Shares an unshared root session with the universe, one way. The member
   /// gate lets only its creator or an admin do it.
   app.post("/:id/sessions/:sessionId/share", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("session/share", {
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("session/share", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   /// Retention belongs to the root session. Null keeps the tree until an
   /// operator deletes it; a positive duration schedules deletion after close.
   app.put("/:id/sessions/:sessionId/retention", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -765,8 +742,8 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       await client.call("session/retention/put", {
         sessionId: c.req.param("sessionId"),
         deleteAfterCloseMs: body.data.deleteAfterCloseMs,
@@ -774,14 +751,14 @@ export function gatewayRoutes(ctx: AppContext) {
       const current = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
   /// Metadata is a complete map: put replaces, an empty map clears. The
   /// engine validates the bounds and rejects reserved keys.
   app.put("/:id/sessions/:sessionId/metadata", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -789,8 +766,8 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       await client.call("session/metadata/put", {
         sessionId: c.req.param("sessionId"),
         metadata: body.data.metadata,
@@ -798,13 +775,13 @@ export function gatewayRoutes(ctx: AppContext) {
       const current = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
   /// Session config is a sparse whole document with optimistic concurrency.
   app.put("/:id/sessions/:sessionId/config", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -812,17 +789,17 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/config/put", {
         sessionId: c.req.param("sessionId"),
         config: body.data.config as SessionConfig,
         expectedConfigRevision: body.data.expectedConfigRevision,
       });
       const current = await client.call("session/read", {
-        sessionId: response.result.session.id,
+        sessionId: response.session.id,
       });
-      return c.json(current.result.session);
+      return c.json(current.session);
     });
   });
 
@@ -831,16 +808,16 @@ export function gatewayRoutes(ctx: AppContext) {
   /// instruction-only inline profile apply; raw context edits would not
   /// preserve the default/profile/VFS fallback invariants.
   app.get("/:id/sessions/:sessionId/instructions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/read", {
         sessionId: c.req.param("sessionId"),
       });
-      const active = (response.result.session.activeContext.entries ?? [])
+      const active = (response.session.activeContext.entries ?? [])
         .filter((entry) => entry.kind.type === "instructions")
         .map((entry) => ({
           key: entry.key ?? null,
@@ -851,18 +828,18 @@ export function gatewayRoutes(ctx: AppContext) {
       let text: string | null = null;
       if (custom) {
         const blob = await client.call("blobs/read", { blobRef: custom.blobRef });
-        text = Buffer.from(blob.result.bytesBase64, "base64").toString("utf8");
+        text = Buffer.from(blob).toString("utf8");
       }
       return c.json({
         text,
-        contextRevision: response.result.session.activeContext.revision,
+        contextRevision: response.session.activeContext.revision,
         active,
       });
     });
   });
 
   app.put("/:id/sessions/:sessionId/instructions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -871,8 +848,8 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     const text = body.data.text?.trim() ? body.data.text : null;
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/profiles/apply", {
         sessionId: c.req.param("sessionId"),
         profile: {
@@ -882,36 +859,36 @@ export function gatewayRoutes(ctx: AppContext) {
             : {},
         },
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
   app.post("/:id/sessions/:sessionId/environments/:environmentId/activate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/environments/activate", {
         sessionId: c.req.param("sessionId"),
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
   app.post("/:id/sessions/:sessionId/environments/deactivate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/environments/deactivate", {
         sessionId: c.req.param("sessionId"),
       });
-      return c.json(response.result.session);
+      return c.json(response.session);
     });
   });
 
@@ -922,7 +899,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// follows via the long-poll tail. No server-side await: runs can take
   /// minutes and an HTTP request must not.
   app.post("/:id/sessions/:sessionId/messages", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -931,8 +908,8 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     const input = body.data;
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const config = messageRunConfig(input.options);
       const response = await client.call("session/runs/start", {
         sessionId: c.req.param("sessionId"),
@@ -943,20 +920,20 @@ export function gatewayRoutes(ctx: AppContext) {
         submissionId: input.submissionId,
         ...(config ? { config } : {}),
       });
-      const run = response.result.run;
+      const run = response.run;
       return c.json({ run: { id: run.id, status: run.status } });
     });
   });
 
   app.get("/:id/sessions/:sessionId/runs/:runId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("session/runs/read", {
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("session/runs/read", {
         sessionId: c.req.param("sessionId"),
         runId: c.req.param("runId"),
       });
-      return c.json(response.result.run);
+      return c.json(response.run);
     });
   });
 
@@ -964,17 +941,17 @@ export function gatewayRoutes(ctx: AppContext) {
   /// after the cancel was admitted (`cancelling` for an active run,
   /// `cancelled` for a queued one); the terminal event arrives on the tail.
   app.post("/:id/sessions/:sessionId/runs/:runId/cancel", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/runs/cancel", {
         sessionId: c.req.param("sessionId"),
         runId: c.req.param("runId"),
       });
-      const run = response.result.run;
+      const run = response.run;
       return c.json({ run: { id: run.id, status: run.status, startedAtMs: run.startedAtMs } });
     });
   });
@@ -983,7 +960,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// run and reach the model at its next turn boundary without interrupting
   /// the in-flight turn. Rejected for queued, cancelling, or finished runs.
   app.post("/:id/sessions/:sessionId/runs/:runId/steer", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -991,8 +968,8 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const runId = c.req.param("runId");
       try {
         const response = await client.call("session/runs/steer", {
@@ -1001,9 +978,9 @@ export function gatewayRoutes(ctx: AppContext) {
           items: messageInputItems(body.data.text, body.data.attachments, `user:${c.get("session").user.id}`),
           ...(body.data.submissionId ? { submissionId: body.data.submissionId } : {}),
         });
-        const run = response.result.run;
+        const run = response.run;
         return c.json({
-          steeringId: response.result.steeringId,
+          steeringId: response.steeringId,
           run: { id: run.id, status: run.status },
         });
       } catch (error) {
@@ -1011,7 +988,7 @@ export function gatewayRoutes(ctx: AppContext) {
         // admission waits. Only these pre-submit failures prove no steering
         // was sent. In particular, "run ended before steering reached it"
         // can follow submission and must retain the uncertain-outcome UI.
-        if (error instanceof LightspeedRpcError && error.kind === "rejected"
+        if (error instanceof LightspeedApiError && error.kind === "rejected"
           && (error.message === `run is already terminal: ${runId}`
             || error.message === `run is not accepting steering: ${runId}`)) {
           return c.json({ error: error.message, kind: "steering_not_submitted" }, 409);
@@ -1022,7 +999,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/sessions/:sessionId/runs/:runId/approvals", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1030,56 +1007,56 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("session/runs/approvals/decide", {
         sessionId: c.req.param("sessionId"),
         runId: c.req.param("runId"),
         decisions: body.data.decisions,
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   app.get("/:id/workspaces", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("vfs/workspaces/list", {});
-      return c.json(response.result.workspaces ?? []);
+      return c.json(response.workspaces ?? []);
     });
   });
 
   /// MCP server catalog (the U5a page + the profile editor's picker).
   app.get("/:id/mcp-servers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("mcp/servers/list", {});
-      return c.json(response.result.servers ?? []);
+      return c.json(response.servers ?? []);
     });
   });
 
   /// Live inventory from the configured server. The runtime resolves the
   /// server's current credential and deliberately does not persist the result.
   app.post("/:id/mcp-servers/:serverId/tools/discover", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const params: McpServerToolsDiscoverParams = {
         serverId: c.req.param("serverId"),
       };
       const response = await client.call("mcp/servers/tools/discover", params);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1087,7 +1064,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// does not classify the server as public; it only means the standard
   /// protected-resource document was not found and the user must choose.
   app.post("/:id/mcp-servers/discover-auth", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1095,11 +1072,11 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const params: McpServerAuthDiscoverParams = body.data;
       const response = await client.call("mcp/servers/auth/discover", params);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
@@ -1108,136 +1085,136 @@ export function gatewayRoutes(ctx: AppContext) {
   /// the ordinary blob grace period. Type and per-API limits are checked at
   /// pick time in the browser and again by the runtime on admission.
   app.post("/:id/attachments", bodyLimit({ maxSize: 16 * 1024 * 1024 }), async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     const body = await parseBody(c, attachmentUploadSchema);
     if (!body.ok) return body.response;
     if (Buffer.from(body.data.bytesBase64, "base64").length > MAX_ATTACHMENT_BYTES) {
       return c.json({ error: "Attachment exceeds the 10 MiB limit." }, 413);
     }
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("blobs/put", { blobs: [body.data] });
-      return c.json(response.result);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("blobs/put", { blobs: [body.data] });
+      return c.json(response);
     });
   });
 
   app.post("/:id/transcriptions/audio", bodyLimit({ maxSize: 36 * 1024 * 1024 }), async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     const body = await parseBody(c, transcriptionUploadSchema);
     if (!body.ok) return body.response;
     if (Buffer.from(body.data.bytesBase64, "base64").length > MAX_DICTATION_AUDIO_BYTES) {
       return c.json({ error: "Recording exceeds the 25 MiB limit." }, 413);
     }
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("blobs/put", { blobs: [body.data] });
-      return c.json(response.result);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("blobs/put", { blobs: [body.data] });
+      return c.json(response);
     });
   });
   app.post("/:id/transcriptions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     const body = await parseBody(c, transcriptionStartSchema);
     if (!body.ok) return body.response;
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("transcriptions/start", body.data);
-      return c.json(response.result.transcription);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("transcriptions/start", body.data);
+      return c.json(response.transcription);
     });
   });
   app.get("/:id/transcriptions/:transcriptionId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("transcriptions/read", { transcriptionId: c.req.param("transcriptionId") });
-      return c.json(response.result.transcription);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("transcriptions/read", { transcriptionId: c.req.param("transcriptionId") });
+      return c.json(response.transcription);
     });
   });
   app.post("/:id/transcriptions/:transcriptionId/cancel", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("transcriptions/cancel", { transcriptionId: c.req.param("transcriptionId") });
-      return c.json(response.result.transcription);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("transcriptions/cancel", { transcriptionId: c.req.param("transcriptionId") });
+      return c.json(response.transcription);
     });
   });
 
   app.get("/:id/models/defaults", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("models/defaults/read", {});
-      return c.json(response.result.defaults);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("models/defaults/read", {});
+      return c.json(response.defaults);
     });
   });
 
   app.put("/:id/models/defaults", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
     const body = await parseBody(c, modelDefaultsPutSchema);
     if (!body.ok) return body.response;
-    return withGateway(c, async () => {
-      const response = await engineClientFor(ctx, access).call("models/defaults/put", body.data);
-      return c.json(response.result.defaults);
+    return withApiErrors(c, async () => {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("models/defaults/put", body.data);
+      return c.json(response.defaults);
     });
   });
 
   /// Provider-discovered routes for agent and speech model pickers.
   /// Lightspeed owns credential injection and sanitizes per-provider errors.
   app.get("/:id/models", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const params: ModelListParams = { selectableOnly: true };
       const response = await client.call("models/list", params);
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   /// Non-secret active grant metadata for universe MCP-server credential selection.
-  app.get("/:id/auth-grants", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+  app.get("/:id/credential-grants", async (c) => {
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const params: AuthGrantListParams = { status: "active" };
-      const response = await client.call("auth/grants/list", params);
-      return c.json(response.result.grants ?? []);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const params: CredentialGrantListParams = { status: "active" };
+      const response = await client.call("credentials/grants/list", params);
+      return c.json(response.grants ?? []);
     });
   });
 
   /// Universe secret inventory. Values are intentionally absent: providers
   /// expose only `hasCredential`, while grants expose token-presence flags.
   app.get("/:id/secrets", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const [providers, grants] = await Promise.all([
-        client.call("auth/providers/list", {}),
-        client.call("auth/grants/list", {}),
+        client.call("credentials/providers/list", {}),
+        client.call("credentials/grants/list", {}),
       ]);
       return c.json({
-        providers: (providers.result.providers ?? [])
+        providers: (providers.providers ?? [])
           .filter((provider) =>
             provider.config.type === "modelApiKey" ||
             provider.config.type === "modelOAuth" ||
             provider.config.type === "modelEndpoint"
           )
           .map(modelProviderCredentialView),
-        grants: grants.result.grants ?? [],
+        grants: grants.grants ?? [],
       });
     });
   });
 
   app.post("/:id/secrets/providers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1245,40 +1222,40 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const params: AuthProviderCreateParams = {
+    return withApiErrors(c, async () => {
+      const params: CredentialProviderCreateParams = {
         providerId: modelProviderCredentialId(body.data.providerId),
         displayName: body.data.displayName,
         config: { type: "modelApiKey" },
         credential: body.data.credential,
       };
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/create", params);
-      return c.json(modelProviderCredentialView(response.result.provider), 201);
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/providers/create", params);
+      return c.json(modelProviderCredentialView(response.provider), 201);
     });
   });
 
   app.delete("/:id/secrets/providers/:providerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/delete", {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/providers/delete", {
         providerId: c.req.param("providerId"),
       });
-      return c.json(modelProviderCredentialView(response.result.provider));
+      return c.json(modelProviderCredentialView(response.provider));
     });
   });
 
   /// Model provider API keys for Lightspeed sessions (`model:<provider>` rows).
-  /// `replace` declares the row through `auth/providers/put`, which swaps an
+  /// `replace` declares the row through `credentials/providers/put`, which swaps an
   /// existing one in place: the engine validates first, so a rejected
   /// replacement keeps the old key, and sessions or environment variables
   /// using the provider never see it missing.
   app.post("/:id/integrations/model-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1286,15 +1263,15 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const providerId = modelProviderCredentialId(body.data.provider);
-      const config: AuthProviderCreateParams["config"] = body.data.endpoint
+      const config: CredentialProviderCreateParams["config"] = body.data.endpoint
         ? body.data.credential
           ? { type: "modelApiKey", endpoint: body.data.endpoint }
           : { type: "modelEndpoint", endpoint: body.data.endpoint }
         : { type: "modelApiKey" };
-      const params: AuthProviderCreateParams = {
+      const params: CredentialProviderCreateParams = {
         providerId,
         displayName: body.data.displayName,
         config,
@@ -1302,32 +1279,32 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       if (body.data.replace) {
         // Creates the row when there is nothing to replace yet.
-        const put = await client.call("auth/providers/put", { ...params, providerId });
-        return c.json(modelProviderCredentialView(put.result.provider), put.result.created ? 201 : 200);
+        const put = await client.call("credentials/providers/put", { ...params, providerId });
+        return c.json(modelProviderCredentialView(put.provider), put.created ? 201 : 200);
       }
-      const response = await client.call("auth/providers/create", params);
-      return c.json(modelProviderCredentialView(response.result.provider), 201);
+      const response = await client.call("credentials/providers/create", params);
+      return c.json(modelProviderCredentialView(response.provider), 201);
     });
   });
 
   /// Coding-agent subscription credentials (Claude Code / Codex): grant
   /// metadata only, never token material.
   app.get("/:id/integrations/subscriptions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/list", {});
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/grants/list", {});
       return c.json(
-        (response.result.grants ?? []).filter((grant) => isSubscriptionGrant(grant)),
+        (response.grants ?? []).filter((grant) => isSubscriptionGrant(grant)),
       );
     });
   });
 
   app.post("/:id/integrations/subscriptions", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1344,8 +1321,8 @@ export function gatewayRoutes(ctx: AppContext) {
       }
       throw error;
     }
-    return withGateway(c, async () => {
-      const params: AuthGrantImportParams = {
+    return withApiErrors(c, async () => {
+      const params: CredentialGrantImportParams = {
         providerId: parsed.providerId,
         exposure: "retrievable",
         token: parsed.secret,
@@ -1354,44 +1331,44 @@ export function gatewayRoutes(ctx: AppContext) {
         expiresAtMs: parsed.expiresAtMs,
         metadata: parsed.metadata,
       };
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/import", params);
-      return c.json({ grant: response.result.grant, shape: parsed.shape }, 201);
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/grants/import", params);
+      return c.json({ grant: response.grant, shape: parsed.shape }, 201);
     });
   });
 
   app.delete("/:id/integrations/subscriptions/:grantId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/revoke", {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/grants/revoke", {
         grantId: c.req.param("grantId"),
       });
-      return c.json(response.result.grant);
+      return c.json(response.grant);
     });
   });
 
   /// GitHub integration inventory: universe-owned GitHub Apps (BYO providers)
   /// and the installation grants minted through them. No secret material.
   app.get("/:id/integrations/github", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const [providers, grants] = await Promise.all([
-        client.call("auth/providers/list", {}),
-        client.call("auth/grants/list", {}),
+        client.call("credentials/providers/list", {}),
+        client.call("credentials/grants/list", {}),
       ]);
       return c.json({
-        apps: (providers.result.providers ?? []).filter(
+        apps: (providers.providers ?? []).filter(
           (provider) => provider.config.type === "githubApp",
         ),
-        grants: (grants.result.grants ?? []).filter(
+        grants: (grants.grants ?? []).filter(
           (grant) => grant.providerKind === "gitHubApp",
         ),
       });
@@ -1399,7 +1376,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/integrations/github/apps", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1407,8 +1384,8 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const params: AuthProviderCreateParams = {
+    return withApiErrors(c, async () => {
+      const params: CredentialProviderCreateParams = {
         providerId: body.data.providerId ?? gitHubAppProviderId(body.data.appId),
         displayName: body.data.displayName,
         config: {
@@ -1418,47 +1395,47 @@ export function gatewayRoutes(ctx: AppContext) {
         },
         credential: body.data.privateKey,
       };
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/create", params);
-      return c.json(response.result.provider, 201);
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/providers/create", params);
+      return c.json(response.provider, 201);
     });
   });
 
   app.delete("/:id/integrations/github/apps/:providerId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/providers/delete", {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/providers/delete", {
         providerId: c.req.param("providerId"),
       });
-      return c.json(response.result.provider);
+      return c.json(response.provider);
     });
   });
 
   /// Live from GitHub through the App's own JWT: only installations of this
   /// universe-owned App are visible, so listing is safe to expose to members.
   app.get("/:id/integrations/github/apps/:providerId/installations", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const params: AuthGitHubInstallationListParams = {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const params: CredentialGitHubInstallationListParams = {
         providerId: c.req.param("providerId"),
       };
-      const response = await client.call("auth/github/installations/list", params);
-      return c.json(response.result.installations ?? []);
+      const response = await client.call("credentials/github/installations/list", params);
+      return c.json(response.installations ?? []);
     });
   });
 
   app.post(
     "/:id/integrations/github/apps/:providerId/installations/:installationId/grant",
     async (c) => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) {
         return c.json({ error: "not found" }, 404);
       }
@@ -1470,25 +1447,25 @@ export function gatewayRoutes(ctx: AppContext) {
       if (!body.ok) {
         return body.response;
       }
-      return withGateway(c, async () => {
+      return withApiErrors(c, async () => {
         // Retrievable, so the installation's short-lived tokens can be bound
         // into environments. That is the way a machine gets GitHub access:
         // the App's private key itself can never be bound.
-        const params: AuthGitHubInstallationGrantParams = {
+        const params: CredentialGitHubInstallationGrantParams = {
           providerId: c.req.param("providerId"),
           installationId,
           exposure: "retrievable",
           displayName: body.data.displayName,
         };
-        const client = engineClientFor(ctx, access);
-        const response = await client.call("auth/github/installations/grant", params);
-        return c.json(response.result.grant, 201);
+        const client = universeClient(ctx.env, access.universe, access.caller);
+        const response = await client.call("credentials/github/installations/grant", params);
+        return c.json(response.grant, 201);
       });
     },
   );
 
   app.post("/:id/secrets/grants", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1496,29 +1473,29 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const params: AuthGrantImportParams = body.data;
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const params: CredentialGrantImportParams = body.data;
+      const client = universeClient(ctx.env, access.universe, access.caller);
       if (body.data.grantId) {
         try {
-          const existing = await client.call("auth/grants/read", {
+          const existing = await client.call("credentials/grants/read", {
             grantId: body.data.grantId,
           });
           return c.json(
-            { error: credentialIdConflictMessage(body.data.grantId, existing.result.grant.status) },
+            { error: credentialIdConflictMessage(body.data.grantId, existing.grant.status) },
             409,
           );
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
+          if (!(error instanceof LightspeedApiError && error.kind === "notFound")) {
             throw error;
           }
         }
       }
       try {
-        const response = await client.call("auth/grants/import", params);
-        return c.json(response.result.grant, 201);
+        const response = await client.call("credentials/grants/import", params);
+        return c.json(response.grant, 201);
       } catch (error) {
-        if (body.data.grantId && error instanceof LightspeedRpcError && error.kind === "conflict") {
+        if (body.data.grantId && error instanceof LightspeedApiError && error.kind === "conflict") {
           return c.json(
             { error: credentialIdConflictMessage(body.data.grantId) },
             409,
@@ -1533,7 +1510,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// engine's static-grant path is the encrypted write-only primitive; the
   /// dedicated provider id keeps these distinct from actual bearer tokens.
   app.post("/:id/secrets/environment", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1541,31 +1518,31 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       if (body.data.grantId) {
         try {
-          const existing = await client.call("auth/grants/read", {
+          const existing = await client.call("credentials/grants/read", {
             grantId: body.data.grantId,
           });
           return c.json(
-            { error: credentialIdConflictMessage(body.data.grantId, existing.result.grant.status) },
+            { error: credentialIdConflictMessage(body.data.grantId, existing.grant.status) },
             409,
           );
         } catch (error) {
-          if (!(error instanceof LightspeedRpcError && error.kind === "notFound")) {
+          if (!(error instanceof LightspeedApiError && error.kind === "notFound")) {
             throw error;
           }
         }
       }
       try {
         const response = await client.call(
-          "auth/grants/import",
+          "credentials/grants/import",
           environmentSecretGrantParams(body.data),
         );
-        return c.json(response.result.grant, 201);
+        return c.json(response.grant, 201);
       } catch (error) {
-        if (body.data.grantId && error instanceof LightspeedRpcError && error.kind === "conflict") {
+        if (body.data.grantId && error instanceof LightspeedApiError && error.kind === "conflict") {
           return c.json(
             { error: credentialIdConflictMessage(body.data.grantId) },
             409,
@@ -1580,7 +1557,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// id, so every server, header, poll and environment variable that names
   /// it picks up the new value without being edited.
   app.post("/:id/secrets/grants/:grantId/replace", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1588,30 +1565,30 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const current = await client.call("auth/grants/read", { grantId: c.req.param("grantId") });
-      const response = await client.call("auth/grants/put", credentialReplaceParams(current.result.grant, body.data));
-      return c.json(response.result.grant);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const current = await client.call("credentials/grants/read", { grantId: c.req.param("grantId") });
+      const response = await client.call("credentials/grants/put", credentialReplaceParams(current.grant, body.data));
+      return c.json(response.grant);
     });
   });
 
   app.delete("/:id/secrets/grants/:grantId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/grants/revoke", {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/grants/revoke", {
         grantId: c.req.param("grantId"),
       });
-      return c.json(response.result.grant);
+      return c.json(response.grant);
     });
   });
 
   app.post("/:id/mcp-servers", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1620,19 +1597,19 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     const { revision, createdAtMs, updatedAtMs, ...input } = body.data;
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("mcp/servers/put", {
         server: input as unknown as McpServerInput,
       });
-      return c.json(response.result.server, 201);
+      return c.json(response.server, 201);
     });
   });
 
   /// Create-or-replace, mirroring the engine's mcp/servers/put semantics.
   /// A `revision` field from GET is forwarded as the CAS guard.
   app.put("/:id/mcp-servers/:serverId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1644,23 +1621,23 @@ export function gatewayRoutes(ctx: AppContext) {
       return c.json({ error: "serverId in document does not match URL" }, 400);
     }
     const { revision, createdAtMs, updatedAtMs, access: _summary, ...server } = body.data;
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("mcp/servers/put", {
         server: server as unknown as McpServerInput,
         expectedRevision: revision,
       });
-      return c.json(response.result.server);
+      return c.json(response.server);
     });
   });
 
   app.delete("/:id/mcp-servers/:serverId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       await client.call("mcp/servers/delete", { serverId: c.req.param("serverId") });
       return c.json({ ok: true });
     });
@@ -1671,7 +1648,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// server metadata, then reuses CIMD/dynamic client registration as
   /// appropriate before creating the PKCE flow.
   app.post("/:id/mcp-servers/:serverId/oauth/start", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1679,35 +1656,35 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const server = await client.call("mcp/servers/read", {
         serverId: c.req.param("serverId"),
       });
-      const response = await client.call("auth/flows/start", {
+      const response = await client.call("credentials/flows/start", {
         clientId: `mcp:${c.req.param("serverId")}`,
         exposure: "brokered",
         scopes: body.data.scopes,
         audience: body.data.audience,
       });
       return c.json({
-        ...response.result,
-        serverRevision: server.result.server.revision,
+        ...response,
+        serverRevision: server.server.revision,
       }, 201);
     });
   });
 
   app.get("/:id/mcp-servers/:serverId/oauth/flows/:flowId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("auth/flows/read", {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("credentials/flows/read", {
         flowId: c.req.param("flowId"),
       });
-      return c.json(response.result.flow);
+      return c.json(response.flow);
     });
   });
 
@@ -1715,7 +1692,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// when login started. A concurrent catalog or credential edit returns a
   /// conflict instead of being overwritten after the user comes back.
   app.post("/:id/mcp-servers/:serverId/oauth/flows/:flowId/complete", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1723,13 +1700,13 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const flowResponse = await client.call("auth/flows/read", {
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const flowResponse = await client.call("credentials/flows/read", {
         flowId: c.req.param("flowId"),
       });
-      const flow = flowResponse.result.flow;
-      const flowError = mcpOAuthFlowCompletionError(flowResponse.result);
+      const flow = flowResponse.flow;
+      const flowError = mcpOAuthFlowCompletionError(flowResponse);
       if (flowError) {
         return c.json({ error: flowError }, 409);
       }
@@ -1737,7 +1714,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const serverResponse = await client.call("mcp/servers/read", {
         serverId: c.req.param("serverId"),
       });
-      const current = serverResponse.result.server;
+      const current = serverResponse.server;
       if (
         current.authPolicy.type !== "optionalOAuth" &&
         current.authPolicy.type !== "requiredOAuth"
@@ -1756,59 +1733,58 @@ export function gatewayRoutes(ctx: AppContext) {
         server: mcpServerInputWithOAuthGrant(current, grantId),
         expectedRevision: body.data.expectedRevision,
       });
-      return c.json(response.result.server);
+      return c.json(response.server);
     });
   });
 
-  /// Universe-scoped admission bindings. Physical provider registration is
-  /// deployment state and is never exposed through this member API.
-  app.get("/:id/environment-provider-bindings", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+  /// The providers this universe may create environments from. Provider
+  /// registration is deployment state and is never exposed through this
+  /// member API.
+  app.get("/:id/environment-providers", async (c) => {
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
-      const response = await client.call("environments/provider-bindings/list", {});
-      return c.json(response.result.bindings);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
+      const response = await client.call("environments/providers/list", {});
+      return c.json(response.providers);
     });
   });
 
   app.get("/:id/environment-templates", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const providerId = c.req.query("providerId");
       if (providerId) {
         const response = await client.call("environments/templates/list", { providerId });
-        return c.json(response.result.templates);
+        return c.json(response.templates);
       }
-      // One call per enabled provider so an unreachable provider drops only
-      // its own templates instead of failing the whole listing.
-      const bindings = await client.call("environments/provider-bindings/list", {});
+      // One call per available provider so an unreachable provider drops
+      // only its own templates instead of failing the whole listing.
+      const available = await client.call("environments/providers/list", {});
       const results = await Promise.allSettled(
-        bindings.result.bindings
-          .filter((binding) => binding.enabled)
-          .map((binding) => client.call("environments/templates/list", {
-            providerId: binding.providerId,
-          })),
+        available.providers.map((provider) => client.call("environments/templates/list", {
+          providerId: provider.providerId,
+        })),
       );
       return c.json(results.flatMap((result) =>
-        result.status === "fulfilled" ? result.value.result.templates : []
+        result.status === "fulfilled" ? result.value.templates : []
       ));
     });
   });
 
   app.get("/:id/environments", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const query = environmentListQuerySchema.safeParse(c.req.query());
       if (!query.success) {
         return c.json({ error: query.error.issues[0]?.message ?? "invalid query" }, 400);
@@ -1820,8 +1796,8 @@ export function gatewayRoutes(ctx: AppContext) {
       };
       const response = await client.call("environments/list", params);
       return c.json({
-        environments: response.result.environments ?? [],
-        nextAfter: response.result.nextAfter ?? null,
+        environments: response.environments ?? [],
+        nextAfter: response.nextAfter ?? null,
       });
     });
   });
@@ -1829,20 +1805,20 @@ export function gatewayRoutes(ctx: AppContext) {
   /// Registration keys admit outbound `lightspeed-envd` daemons as
   /// environments; each key is the group of the environments it admitted.
   app.get("/:id/environment-registration-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/registration-keys/list", {});
-      return c.json(response.result.registrationKeys ?? []);
+      return c.json(response.registrationKeys ?? []);
     });
   });
 
   /// The plaintext secret is in the response exactly once.
   app.post("/:id/environment-registration-keys", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1850,21 +1826,21 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const { registrationKeyId } = body.data;
       try {
         const response = await client.call(
           "environments/registration-keys/create",
           body.data as EnvironmentRegistrationKeyCreateParams,
         );
-        return c.json(response.result, 201);
+        return c.json(response, 201);
       } catch (error) {
         if (registrationKeyId && isConflict(error)) {
           const holder = await client
             .call("environments/registration-keys/read", { registrationKeyId })
             .catch(() => null);
-          const revoked = holder?.result.registrationKey.status === "revoked";
+          const revoked = holder?.registrationKey.status === "revoked";
           return c.json({ error: keyIdConflictMessage(registrationKeyId, revoked) }, 409);
         }
         throw error;
@@ -1873,7 +1849,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/environment-registration-keys/:keyId/revoke", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1881,19 +1857,19 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/registration-keys/revoke", {
         registrationKeyId: c.req.param("keyId"),
         closeEnvironments: body.data.closeEnvironments ?? false,
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   /// Replace a key's editable policy; its identity mode never changes.
   app.put("/:id/environment-registration-keys/:keyId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1901,35 +1877,35 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const params: EnvironmentRegistrationKeyUpdateParams = {
         registrationKeyId: c.req.param("keyId"),
         ...body.data,
       };
       const response = await client.call("environments/registration-keys/update", params);
-      return c.json(response.result.registrationKey);
+      return c.json(response.registrationKey);
     });
   });
 
   /// Retire the key's live secret and mint a new one. The plaintext secret
   /// is in the response exactly once.
   app.post("/:id/environment-registration-keys/:keyId/rotate", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/registration-keys/rotate", {
         registrationKeyId: c.req.param("keyId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     });
   });
 
   app.post("/:id/environments", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1937,18 +1913,18 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call(
         "environments/create",
         body.data as EnvironmentCreateParams,
       );
-      return c.json(response.result.environment, 201);
+      return c.json(response.environment, 201);
     });
   });
 
   app.put("/:id/environments/:environmentId/ingress", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1956,18 +1932,18 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/ingress/put", {
         environmentId: c.req.param("environmentId"),
         enabled: body.data.enabled,
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
   app.put("/:id/environments/:environmentId/power", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1975,19 +1951,19 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/power/put", {
         environmentId: c.req.param("environmentId"),
         power: body.data.power,
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
   /// Replace an environment's display name and caller metadata.
   app.patch("/:id/environments/:environmentId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -1995,14 +1971,14 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/update", {
         environmentId: c.req.param("environmentId"),
         ...(body.data.displayName ? { displayName: body.data.displayName } : {}),
         metadata: body.data.metadata ?? {},
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
@@ -2010,7 +1986,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// (no provider). The request id is derived from the endpoint so repeating
   /// the registration converges on the same environment.
   app.post("/:id/environments/external", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2018,15 +1994,15 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const params: EnvironmentExternalCreateParams = {
         requestId: externalEnvironmentRequestId(body.data.endpoint),
         endpoint: body.data.endpoint,
         displayName: body.data.displayName,
       };
       const response = await client.call("environments/external/create", params);
-      return c.json(response.result.environment, 201);
+      return c.json(response.environment, 201);
     });
   });
 
@@ -2034,7 +2010,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// registration key. Repeating the declaration converges on the same
   /// environment, so only a first declaration answers 201.
   app.post("/:id/environments/registered", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2042,33 +2018,33 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const params: EnvironmentRegisteredPutParams = body.data;
       const response = await client.call("environments/registered/put", params);
-      return c.json(response.result.environment, response.result.created ? 201 : 200);
+      return c.json(response.environment, response.created ? 201 : 200);
     });
   });
 
   /// Forget the daemon bound to a declared environment so that a machine
   /// with another identity may bind to it.
   app.post("/:id/environments/:environmentId/release", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/registered/release", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
   /// Environment-related hints for the UI (development daemon endpoint).
   app.get("/:id/environments/hints", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2076,21 +2052,21 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.get("/:id/environments/:environmentId/credentials", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/credentials/list", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.credentials ?? []);
+      return c.json(response.credentials ?? []);
     });
   });
 
   app.post("/:id/environments/:environmentId/credentials", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2098,14 +2074,14 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const existing = await client.call("environments/credentials/list", {
         environmentId: c.req.param("environmentId"),
       });
       const conflict = conflictingAnthropicEnv(
         body.data.envName,
-        (existing.result.credentials ?? []).map((credential) => credential.envName),
+        (existing.credentials ?? []).map((credential) => credential.envName),
       );
       if (conflict) {
         return c.json(
@@ -2120,64 +2096,64 @@ export function gatewayRoutes(ctx: AppContext) {
         envName: body.data.envName,
         source: body.data.source,
       });
-      return c.json(response.result.credential, 201);
+      return c.json(response.credential, 201);
     });
   });
 
   app.delete("/:id/environments/:environmentId/credentials/:envName", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/credentials/unbind", {
         environmentId: c.req.param("environmentId"),
         envName: c.req.param("envName"),
       });
-      return c.json(response.result.credential);
+      return c.json(response.credential);
     });
   });
 
   app.get("/:id/environments/:environmentId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/read", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
   app.delete("/:id/environments/:environmentId", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const response = await client.call("environments/close", {
         environmentId: c.req.param("environmentId"),
       });
-      return c.json(response.result.environment);
+      return c.json(response.environment);
     });
   });
 
   app.patch("/:id/workspaces/:workspaceId", (c) =>
-    withGateway(c, async () => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+    withApiErrors(c, async () => {
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "operator"))
-        throw new GateRefusal(403, "operator role required");
+      if (!access.actions.has("configureResource"))
+        throw new GateRefusal(403, "universe permission required: configureResource");
       const body = await parseBody(c, workspaceRenameSchema);
       if (!body.ok) return body.response;
-      const client = engineClientFor(ctx, access);
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const workspaceId = c.req.param("workspaceId");
-      const { workspace } = (await client.call("vfs/workspaces/read", { workspaceId })).result;
+      const { workspace } = (await client.call("vfs/workspaces/read", { workspaceId }));
       if (workspace.revision !== body.data.expectedRevision)
         return c.json({ error: "Workspace changed. Close this dialog and try again." }, 409);
       const response = await client.call("vfs/workspaces/update", {
@@ -2186,40 +2162,40 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
         displayName: body.data.displayName,
       });
-      return c.json(response.result);
+      return c.json(response);
     }),
   );
 
   app.delete("/:id/workspaces/:workspaceId", (c) =>
-    withGateway(c, async () => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+    withApiErrors(c, async () => {
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "operator"))
-        throw new GateRefusal(403, "operator role required");
-      const response = await engineClientFor(ctx, access).call("vfs/workspaces/delete", {
+      if (!access.actions.has("configureResource"))
+        throw new GateRefusal(403, "universe permission required: configureResource");
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("vfs/workspaces/delete", {
         workspaceId: c.req.param("workspaceId"),
       });
-      return c.json(response.result);
+      return c.json(response);
     }),
   );
 
   /// Workspace head + full manifest in one roundtrip (the explorer tree).
   app.get("/:id/workspaces/:workspaceId/tree", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const workspace = await client.call("vfs/workspaces/read", {
         workspaceId: c.req.param("workspaceId"),
       });
       const snapshot = await client.call("vfs/snapshots/read", {
-        snapshotRef: workspace.result.workspace.headSnapshotRef,
+        snapshotRef: workspace.workspace.headSnapshotRef,
       });
       return c.json({
-        workspace: workspace.result.workspace,
-        manifest: snapshot.result.manifest,
+        workspace: workspace.workspace,
+        manifest: snapshot.manifest,
         uploadLimits,
       });
     });
@@ -2238,18 +2214,18 @@ export function gatewayRoutes(ctx: AppContext) {
         ),
     }),
     (c) =>
-      withGateway(c, async () => {
-        const access = await universeForSession(ctx, c, c.req.param("id"));
+      withApiErrors(c, async () => {
+        const access = await universeForRequest(ctx, c, c.req.param("id"));
         if (!access) return c.json({ error: "not found" }, 404);
-        if (!roleAtLeast(access.role, "contributor"))
-          throw new GateRefusal(403, "contributor role required");
+        if (!access.actions.has("useResource"))
+          throw new GateRefusal(403, "universe permission required: useResource");
         const body = await parseBody(c, uploadSchema);
         if (!body.ok) return body.response;
-        const client = engineClientFor(ctx, access);
+        const client = universeClient(ctx.env, access.universe, access.caller);
         const workspaceId = c.req.param("workspaceId");
         const { workspace } = (
           await client.call("vfs/workspaces/read", { workspaceId })
-        ).result;
+        );
         if (workspace.revision !== body.data.expectedRevision) {
           return c.json(
             { error: "Workspace changed since it was loaded — reload and retry" },
@@ -2260,7 +2236,7 @@ export function gatewayRoutes(ctx: AppContext) {
           snapshotRef: workspace.headSnapshotRef,
         });
         const { manifest, files } = prepareWorkspaceUpload(
-          asManifest(snapshot.result.manifest),
+          asManifest(snapshot.manifest),
           body.data,
         );
         for (const { input, entry } of files) {
@@ -2268,7 +2244,7 @@ export function gatewayRoutes(ctx: AppContext) {
             await client.call("blobs/put", {
               blobs: [{ bytesBase64: input.contentBase64 }],
             })
-          ).result.blobs?.[0];
+          ).blobs?.[0];
           if (!stored) throw new Error("Blob upload returned nothing");
           entry.blob_ref = stored.blobRef;
         }
@@ -2284,18 +2260,18 @@ export function gatewayRoutes(ctx: AppContext) {
   );
 
   app.post("/:id/workspaces/:workspaceId/rename", (c) =>
-    withGateway(c, async () => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+    withApiErrors(c, async () => {
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "contributor"))
-        throw new GateRefusal(403, "contributor role required");
+      if (!access.actions.has("useResource"))
+        throw new GateRefusal(403, "universe permission required: useResource");
       const body = await parseBody(c, workspaceEntryRenameSchema);
       if (!body.ok) return body.response;
-      const client = engineClientFor(ctx, access);
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const workspaceId = c.req.param("workspaceId");
       const { workspace } = (
         await client.call("vfs/workspaces/read", { workspaceId })
-      ).result;
+      );
       if (workspace.revision !== body.data.expectedRevision)
         return c.json(
           { error: "Workspace changed. Close this dialog and try again." },
@@ -2305,7 +2281,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
       });
       const manifest = renameWorkspaceEntry(
-        asManifest(snapshot.result.manifest), body.data.path, body.data.name,
+        asManifest(snapshot.manifest), body.data.path, body.data.name,
       );
       return c.json(
         await commitHead(client, workspaceId, manifest, body.data.expectedRevision),
@@ -2314,18 +2290,18 @@ export function gatewayRoutes(ctx: AppContext) {
   );
 
   app.post("/:id/workspaces/:workspaceId/move", (c) =>
-    withGateway(c, async () => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+    withApiErrors(c, async () => {
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "contributor"))
-        throw new GateRefusal(403, "contributor role required");
+      if (!access.actions.has("useResource"))
+        throw new GateRefusal(403, "universe permission required: useResource");
       const body = await parseBody(c, workspaceEntryMoveSchema);
       if (!body.ok) return body.response;
-      const client = engineClientFor(ctx, access);
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const workspaceId = c.req.param("workspaceId");
       const { workspace } = (
         await client.call("vfs/workspaces/read", { workspaceId })
-      ).result;
+      );
       if (workspace.revision !== body.data.expectedRevision)
         return c.json(
           { error: "Workspace changed. Reload and try the move again." },
@@ -2335,7 +2311,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
       });
       const manifest = moveWorkspaceEntry(
-        asManifest(snapshot.result.manifest), body.data.path, body.data.destination,
+        asManifest(snapshot.manifest), body.data.path, body.data.destination,
       );
       return c.json(
         await commitHead(client, workspaceId, manifest, body.data.expectedRevision),
@@ -2344,11 +2320,11 @@ export function gatewayRoutes(ctx: AppContext) {
   );
 
   app.delete("/:id/workspaces/:workspaceId/entries", (c) =>
-    withGateway(c, async () => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+    withApiErrors(c, async () => {
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "contributor"))
-        throw new GateRefusal(403, "contributor role required");
+      if (!access.actions.has("useResource"))
+        throw new GateRefusal(403, "universe permission required: useResource");
       const parsed = workspaceEntryDeleteSchema.safeParse({
         path: c.req.query("path"),
         expectedRevision: c.req.query("expectedRevision")
@@ -2360,11 +2336,11 @@ export function gatewayRoutes(ctx: AppContext) {
           { error: "A valid path and expectedRevision are required" },
           400,
         );
-      const client = engineClientFor(ctx, access);
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const workspaceId = c.req.param("workspaceId");
       const { workspace } = (
         await client.call("vfs/workspaces/read", { workspaceId })
-      ).result;
+      );
       if (workspace.revision !== parsed.data.expectedRevision)
         return c.json(
           {
@@ -2376,7 +2352,7 @@ export function gatewayRoutes(ctx: AppContext) {
         snapshotRef: workspace.headSnapshotRef,
       });
       const manifest = removeWorkspaceEntry(
-        asManifest(snapshot.result.manifest),
+        asManifest(snapshot.manifest),
         parsed.data.path,
       );
       return c.json(
@@ -2391,49 +2367,41 @@ export function gatewayRoutes(ctx: AppContext) {
   );
 
   app.get("/:id/workspaces/:workspaceId/download", (c) =>
-    withGateway(c, async () => {
-      const access = await universeForSession(ctx, c, c.req.param("id"));
+    withApiErrors(c, async () => {
+      const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      const client = engineClientFor(ctx, access);
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const { workspace } = (
         await client.call("vfs/workspaces/read", {
           workspaceId: c.req.param("workspaceId"),
         })
-      ).result;
+      );
       const snapshot = await client.call("vfs/snapshots/read", {
         snapshotRef: workspace.headSnapshotRef,
       });
       return workspaceDownload(
-        asManifest(snapshot.result.manifest),
+        asManifest(snapshot.manifest),
         c.req.query("path") ?? "",
         workspace.workspaceId,
         async (blobRef) => {
           const blob = await client.call("blobs/read", { blobRef });
-          return new Uint8Array(Buffer.from(blob.result.bytesBase64, "base64"));
+          return new Uint8Array(blob);
         },
       );
     }),
   );
 
-  app.get("/:id/workspaces/:workspaceId/files/:path{.+}", (c) => withGateway(c, async () => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
-    if (!access) return c.json({ error: "not found" }, 404);
-    return c.json((await engineClientFor(ctx, access).call("vfs/workspaces/files/read", {
-      workspaceId: c.req.param("workspaceId"), path: c.req.param("path"),
-    })).result);
-  }));
-
   app.get("/:id/blobs/:blobRef", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    return withGateway(c, async () => {
+    return withApiErrors(c, async () => {
       // A digest is a capability within the universe.
-      const response = await engineClientFor(ctx, access).call("blobs/read", {
+      const response = await universeClient(ctx.env, access.universe, access.caller).call("blobs/read", {
         blobRef: c.req.param("blobRef"),
       });
-      return c.json(response.result);
+      return c.json({ blobRef: c.req.param("blobRef"), bytes: response.byteLength, bytesBase64: Buffer.from(response).toString("base64") });
     });
   });
 
@@ -2441,7 +2409,7 @@ export function gatewayRoutes(ctx: AppContext) {
   /// commit the new snapshot, advance the head at `expectedRevision`.
   /// The engine validates the manifest and enforces the revision (409).
   app.put("/:id/workspaces/:workspaceId/files/:path{.+}", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2452,8 +2420,8 @@ export function gatewayRoutes(ctx: AppContext) {
     const bytesBase64 =
       body.data.contentBase64 ??
       Buffer.from(body.data.contentText ?? "", "utf8").toString("base64");
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const manifest = await headManifestAt(
         client,
         c.req.param("workspaceId"),
@@ -2463,7 +2431,7 @@ export function gatewayRoutes(ctx: AppContext) {
         return manifest;
       }
       const put = await client.call("blobs/put", { blobs: [{ bytesBase64 }] });
-      const stored = put.result.blobs?.[0];
+      const stored = put.blobs?.[0];
       if (!stored) {
         return c.json({ error: "engine error: blob upload returned nothing" }, 502);
       }
@@ -2492,21 +2460,21 @@ export function gatewayRoutes(ctx: AppContext) {
       expectedRevision: number,
     ): Promise<VfsManifest | Response> {
       const workspace = await client.call("vfs/workspaces/read", { workspaceId });
-      if (workspace.result.workspace.revision !== expectedRevision) {
+      if (workspace.workspace.revision !== expectedRevision) {
         return c.json(
           { error: "workspace changed since it was loaded — reload and retry" },
           409,
         );
       }
       const snapshot = await client.call("vfs/snapshots/read", {
-        snapshotRef: workspace.result.workspace.headSnapshotRef,
+        snapshotRef: workspace.workspace.headSnapshotRef,
       });
-      return asManifest(snapshot.result.manifest);
+      return asManifest(snapshot.manifest);
     }
   });
 
   app.delete("/:id/workspaces/:workspaceId/files/:path{.+}", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2514,20 +2482,20 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
       return c.json({ error: "expectedRevision query parameter is required" }, 400);
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       const workspaceId = c.req.param("workspaceId");
       const workspace = await client.call("vfs/workspaces/read", { workspaceId });
-      if (workspace.result.workspace.revision !== expectedRevision) {
+      if (workspace.workspace.revision !== expectedRevision) {
         return c.json(
           { error: "workspace changed since it was loaded — reload and retry" },
           409,
         );
       }
       const snapshot = await client.call("vfs/snapshots/read", {
-        snapshotRef: workspace.result.workspace.headSnapshotRef,
+        snapshotRef: workspace.workspace.headSnapshotRef,
       });
-      const manifest = asManifest(snapshot.result.manifest);
+      const manifest = asManifest(snapshot.manifest);
       if (!removeFile(manifest, c.req.param("path"))) {
         return c.json({ error: "file not found" }, 404);
       }
@@ -2536,7 +2504,7 @@ export function gatewayRoutes(ctx: AppContext) {
   });
 
   app.post("/:id/workspaces", async (c) => {
-    const access = await universeForSession(ctx, c, c.req.param("id"));
+    const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
@@ -2544,8 +2512,8 @@ export function gatewayRoutes(ctx: AppContext) {
     if (!body.ok) {
       return body.response;
     }
-    return withGateway(c, async () => {
-      const client = engineClientFor(ctx, access);
+    return withApiErrors(c, async () => {
+      const client = universeClient(ctx.env, access.universe, access.caller);
       // No snapshotRef: the engine starts the workspace from the empty
       // snapshot. Friendly id derived from the display name (profile
       // workspace links reference workspaceId — "notes" beats an opaque mint);
@@ -2557,7 +2525,7 @@ export function gatewayRoutes(ctx: AppContext) {
         workspaceId,
         displayName: body.data.displayName ?? null,
       });
-      return c.json(response.result.workspace, 201);
+      return c.json(response.workspace, 201);
     });
   });
 
@@ -2575,7 +2543,7 @@ export function modelProviderCredentialId(providerId: string): string {
 }
 
 export function mcpOAuthFlowCompletionError(
-  response: AuthFlowStatusResponse,
+  response: CredentialFlowStatusResponse,
 ): string | null {
   switch (response.flow.status) {
     case "completed":
@@ -2622,26 +2590,7 @@ export function credentialIdConflictMessage(grantId: string, status?: string): s
 }
 
 function isConflict(error: unknown): boolean {
-  return error instanceof LightspeedRpcError && error.kind === "conflict";
-}
-
-/// `deployment/api-keys/create` for a key of `scope`. A chosen id the
-/// runtime refuses as taken becomes a 409 that says whether its holder,
-/// looked up among the scope's keys, is revoked.
-export async function createApiKey(
-  c: { json: (body: unknown, status?: 409) => Response },
-  client: LightspeedClient,
-  params: DeploymentApiKeyCreateParams,
-): Promise<DeploymentApiKeyCreateResponse | Response> {
-  try {
-    return (await client.call("deployment/api-keys/create", params)).result;
-  } catch (error) {
-    const { keyId, scope } = params;
-    if (!keyId || !isConflict(error)) throw error;
-    const keys = await client.call("deployment/api-keys/list", { scope }).catch(() => null);
-    const holder = keys?.result.apiKeys?.find((key) => key.keyId === keyId);
-    return c.json({ error: keyIdConflictMessage(keyId, holder?.revokedAtMs != null) }, 409);
-  }
+  return error instanceof LightspeedApiError && error.kind === "conflict";
 }
 
 /// The engine deliberately namespaces model credentials as
@@ -2674,52 +2623,8 @@ async function commitHead(
   const commit = await client.call("vfs/snapshots/commit", { manifest });
   const updated = await client.call("vfs/workspaces/update", {
     workspaceId,
-    snapshotRef: commit.result.snapshotRef,
+    snapshotRef: commit.snapshotRef,
     expectedRevision,
   });
-  return { workspace: updated.result.workspace };
-}
-
-/// Maps gateway failures onto API responses: engine notFound/conflict pass
-/// through as 404/409, transport or internal errors surface as 502. Only
-/// typed errors carry their message; anything else (a database driver error
-/// includes its SQL and parameters) is logged here and answered generically.
-export async function withGateway(
-  c: { json: (body: unknown, status?: 400 | 403 | 404 | 409 | 500 | 501 | 502) => Response },
-  fn: () => Promise<Response>,
-): Promise<Response> {
-  try {
-    return await fn();
-  } catch (error) {
-    if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
-    if (error instanceof UniverseHandleCacheConflict) return c.json({ error: error.message }, 409);
-    if (error instanceof GatewayUnconfigured) {
-      return c.json({ error: error.message }, 501);
-    }
-    if (error instanceof GateRefusal) {
-      return c.json({ error: error.status === 404 ? "not found" : error.message }, error.status);
-    }
-    const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
-    if (code === "23505") return c.json({ error: "record already exists" }, 409);
-    if (error instanceof LightspeedRpcError) {
-      if (error.kind === "modelDefaultUnset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
-      if (error.kind === "operationPending") return c.json({ error: error.message, kind: error.kind, submissionId: error.data?.submissionId }, 409);
-      if (error.kind === "invalidRequest" || error.kind === "audioBlobTooLarge") return c.json({ error: error.message }, 400);
-      // Core refusing the Platform means its own key or gate is wrong: the
-      // member was already admitted here.
-      if (error.kind === "unauthenticated") return c.json({ error: "runtime rejected the Platform key" }, 502);
-      if (error.kind === "forbidden") return c.json({ error: "runtime refused the Platform" }, 500);
-      if (error.kind === "rejected") return c.json({ error: error.message }, 409);
-      if (error.kind === "sessionExecutionStopped") return c.json({ error: error.message, kind: error.kind }, 409);
-      if (error.kind === "notFound") {
-        return c.json({ error: "not found in engine" }, 404);
-      }
-      if (error.kind === "conflict") {
-        return c.json({ error: `engine conflict: ${error.message}` }, 409);
-      }
-      return c.json({ error: `engine error: ${error.message}` }, 502);
-    }
-    console.error("unhandled request error", error);
-    return c.json({ error: "internal error" }, 502);
-  }
+  return { workspace: updated.workspace };
 }

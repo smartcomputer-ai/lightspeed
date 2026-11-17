@@ -29,7 +29,7 @@ use super::{
 const BATCH_INTERVAL: Duration = Duration::from_millis(250);
 const STREAM_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const MAX_STREAMS: usize = 1024;
-const MAX_KEY_STREAMS: usize = 64;
+const MAX_ACTOR_STREAMS: usize = 64;
 const MAX_PENDING_IDS: usize = 2048;
 const MAX_QUEUE_ROWS: usize = 256;
 const MAX_QUEUE_BYTES: usize = 2 * 1024 * 1024;
@@ -77,14 +77,16 @@ impl WatchRegistry {
         context: &RequestContext,
         params: UniverseWatchParams,
     ) -> Result<Subscription, AgentApiError> {
-        validate(context, &params)?;
-        let key = context.key.as_ref().map_or_else(
-            || "local".to_owned(),
-            |key| format!("{:?}/{}", key.scope, key.key_id),
-        );
+        validate(&params)?;
+        // Tag each identity class so an actor cannot collide with a token name.
+        let key = match (&context.actor, &context.token_name) {
+            (Some(actor), _) => format!("actor/{actor}"),
+            (None, Some(name)) => format!("token/{name}"),
+            (None, None) => "local".to_owned(),
+        };
         let mut state = lock(&self.0);
         if state.total >= MAX_STREAMS
-            || state.keys.get(&key).copied().unwrap_or(0) >= MAX_KEY_STREAMS
+            || state.keys.get(&key).copied().unwrap_or(0) >= MAX_ACTOR_STREAMS
         {
             return Err(AgentApiError::rejected("watch connection limit reached"));
         }
@@ -127,7 +129,7 @@ impl WatchRegistry {
     }
 }
 
-fn validate(context: &RequestContext, params: &UniverseWatchParams) -> Result<(), AgentApiError> {
+fn validate(params: &UniverseWatchParams) -> Result<(), AgentApiError> {
     if params.kinds.is_empty() || params.kinds.len() > WatchKind::all().len() {
         return Err(AgentApiError::invalid_request(
             "watch kinds must contain one to four collections",
@@ -139,14 +141,6 @@ fn validate(context: &RequestContext, params: &UniverseWatchParams) -> Result<()
         .is_some_and(|actor| !super::authentication::valid_actor(actor))
     {
         return Err(AgentApiError::invalid_request("invalid visibleTo actor"));
-    }
-    if context.key.as_ref().is_some_and(|key| {
-        params
-            .kinds
-            .iter()
-            .any(|kind| !key.groups.contains(&kind.group()))
-    }) {
-        return Err(AgentApiError::forbidden());
     }
     Ok(())
 }
@@ -196,6 +190,14 @@ impl Hub {
             state.closed = true;
         }
         state.closed
+    }
+
+    fn close(&self) {
+        let mut state = lock(&self.subscribers);
+        state.closed = true;
+        for subscriber in state.items.values() {
+            subscriber.queue.reset();
+        }
     }
 
     fn reset(&self) {
@@ -303,45 +305,51 @@ impl Drop for Subscription {
 }
 
 impl Subscription {
-    async fn next(&mut self) -> Arc<str> {
+    async fn next(&mut self) -> Option<Arc<str>> {
         loop {
+            if lock(&self.hub.subscribers).closed {
+                return None;
+            }
             if let Some(data) = self.queue.take() {
-                return data;
+                return Some(data);
             }
             let _ = self.receiver.changed().await;
         }
     }
 
-    pub(super) fn response(self, id: api::RequestId) -> Response {
-        self.response_for(id, STREAM_LIFETIME)
+    pub(super) fn resource_response(self) -> Response {
+        self.resource_response_for(STREAM_LIFETIME)
     }
 
-    fn response_for(self, id: api::RequestId, lifetime: Duration) -> Response {
+    fn resource_response_for(self, lifetime: Duration) -> Response {
         let deadline = tokio::time::Instant::now() + lifetime;
-        let stream = futures_util::stream::unfold(Some(self), move |state| {
-            let id = id.clone();
-            async move {
-                let mut subscription = state?;
-                let next_message = if tokio::time::Instant::now() >= deadline {
-                    None
-                } else {
-                    tokio::time::timeout_at(deadline, subscription.next())
-                        .await
-                        .ok()
-                };
-                let (data, next) = match next_message {
-                    Some(data) => (data.to_string(), Some(subscription)),
-                    None => (
-                        serde_json::to_string(&api::JsonRpcResponse::success(
-                            id,
-                            api::AgentApiOutcome::new(api::UniverseWatchResponse {}),
-                        ))
-                        .expect("watch response serializes"),
-                        None,
-                    ),
-                };
-                Some((Ok::<_, Infallible>(Event::default().data(data)), next))
-            }
+        let stream = futures_util::stream::unfold(Some(self), move |state| async move {
+            let mut subscription = state?;
+            let next = if tokio::time::Instant::now() >= deadline {
+                None
+            } else {
+                tokio::time::timeout_at(deadline, subscription.next())
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            let (event, next) = match next {
+                Some(data) => {
+                    let notification: serde_json::Value = serde_json::from_str(&data)
+                        .expect("watch queue contains serialized notifications");
+                    let name = notification["method"]
+                        .as_str()
+                        .expect("notification method");
+                    let params = serde_json::to_string(&notification["params"])
+                        .expect("notification params serialize");
+                    (
+                        Event::default().event(name).data(params),
+                        Some(subscription),
+                    )
+                }
+                None => (Event::default().event("watch/end").data("{}"), None),
+            };
+            Some((Ok::<_, Infallible>(event), next))
         });
         let mut response = Sse::new(stream)
             .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -358,6 +366,7 @@ impl Subscription {
 
 fn row_key(change: Change) -> Option<RowKey> {
     let kind = match change.kind {
+        ChangeKind::Universe => return None,
         ChangeKind::Session if change.rev.is_none() => return None,
         ChangeKind::Session => WatchKind::Session,
         ChangeKind::Bot => WatchKind::Bot,
@@ -372,14 +381,21 @@ async fn run_hub(hub: Arc<Hub>, mut changes: broadcast::Receiver<Option<Change>>
     let mut tick = tokio::time::interval(BATCH_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tick.tick().await;
+    let mut validate = tokio::time::interval(Duration::from_secs(30));
     loop {
         if hub.close_if_empty() {
             break;
         }
         tokio::select! {
             _ = hub.wake.notified() => {},
+            _ = validate.tick() => {
+                if matches!(store_pg::universe_exists(hub.store.pool(), hub.store.config().universe_id).await, Ok(false)) {
+                    hub.close(); break;
+                }
+            },
             change = changes.recv() => match change {
                 Ok(Some(change)) if change.universe == hub.store.config().universe_id => {
+                    if change.kind == ChangeKind::Universe { hub.close(); break; }
                     if let Some(key) = row_key(change) { pending.insert(key); }
                     if pending.len() > MAX_PENDING_IDS { pending.clear(); hub.reset(); }
                 }
@@ -528,8 +544,7 @@ async fn load_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::request_context::KeyContext;
-    use api::{AccessScope, Attribution, MethodGroup, Visibility};
+    use api::{AccessScope, Attribution, Visibility};
 
     fn context() -> RequestContext {
         RequestContext::local(AccessScope::Universe {
@@ -545,29 +560,17 @@ mod tests {
     }
 
     #[test]
-    fn each_requested_collection_requires_its_group() {
-        let mut caller = context();
-        caller.key = Some(KeyContext {
-            scope: caller.scope,
-            key_id: "reader".into(),
-            prefix: "test".into(),
-            groups: BTreeSet::from([MethodGroup::Session]),
-        });
-        assert_eq!(
-            validate(&caller, &params()).unwrap_err().kind,
-            api::AgentApiErrorKind::Forbidden
-        );
+    fn collections_and_visibility_filters_are_validated_without_permissions() {
+        assert!(validate(&params()).is_ok());
         let mut selected = params();
-        selected.kinds = vec![WatchKind::Session];
-        assert!(validate(&caller, &selected).is_ok());
         selected.kinds.clear();
         assert_eq!(
-            validate(&caller, &selected).unwrap_err().kind,
+            validate(&selected).unwrap_err().kind,
             api::AgentApiErrorKind::InvalidRequest
         );
         selected = params();
         selected.visible_to = Some("\n".into());
-        assert!(validate(&context(), &selected).is_err());
+        assert!(validate(&selected).is_err());
     }
 
     #[test]
@@ -645,7 +648,7 @@ mod tests {
         let registry = Arc::new(WatchRegistry::default());
         let store = store();
         let mut subscriptions = Vec::new();
-        for _ in 0..MAX_KEY_STREAMS {
+        for _ in 0..MAX_ACTOR_STREAMS {
             subscriptions.push(
                 registry
                     .subscribe(store.clone(), &context(), params())
@@ -661,6 +664,40 @@ mod tests {
         drop(subscriptions);
         assert_eq!(lock(&registry.0).total, 0);
         assert!(registry.subscribe(store, &context(), params()).is_ok());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn stream_limits_follow_actors_across_tokens_and_release_on_drop() {
+        let registry = Arc::new(WatchRegistry::default());
+        let store = store();
+        let mut alice = context();
+        alice.actor = Some("alice".into());
+        alice.token_name = Some("platform".into());
+        let mut permits = Vec::new();
+        for _ in 0..MAX_ACTOR_STREAMS {
+            permits.push(registry.subscribe(store.clone(), &alice, params()).unwrap());
+        }
+        let mut same_actor = alice.clone();
+        same_actor.token_name = Some("operator".into());
+        assert!(
+            registry
+                .subscribe(store.clone(), &same_actor, params())
+                .is_err()
+        );
+        let mut bob = alice.clone();
+        bob.actor = Some("bob".into());
+        assert!(registry.subscribe(store.clone(), &bob, params()).is_ok());
+        // An omitted actor uses the token identity, without colliding with actor names.
+        let mut component = alice.clone();
+        component.actor = None;
+        component.token_name = Some("alice".into());
+        assert!(
+            registry
+                .subscribe(store.clone(), &component, params())
+                .is_ok()
+        );
+        permits.pop();
+        assert!(registry.subscribe(store, &same_actor, params()).is_ok());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -697,11 +734,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn stream_starts_with_reset_and_ends_with_response_and_releases_subscription() {
+    async fn stream_starts_with_reset_and_ends_with_event_and_releases_subscription() {
         let registry = Arc::new(WatchRegistry::default());
         let subscription = registry.subscribe(store(), &context(), params()).unwrap();
-        let response =
-            subscription.response_for(api::RequestId::Number(7), Duration::from_millis(5));
+        let response = subscription.resource_response_for(Duration::from_millis(5));
         assert_eq!(response.headers()["content-type"], "text/event-stream");
         let bytes = tokio::time::timeout(
             Duration::from_secs(1),
@@ -716,9 +752,41 @@ mod tests {
             .filter_map(|line| line.strip_prefix("data: "))
             .map(|data| serde_json::from_str(data).unwrap())
             .collect();
-        assert_eq!(events[0]["method"], "watch/reset");
-        assert_eq!(events[1]["id"], 7);
-        assert_eq!(events[1]["result"]["result"], serde_json::json!({}));
+        assert!(text.contains("event: watch/reset"));
+        assert!(text.contains("event: watch/end"));
+        assert_eq!(events[1], serde_json::json!({}));
+        assert_eq!(lock(&registry.0).total, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn resource_stream_uses_named_events_and_releases_subscription() {
+        let registry = Arc::new(WatchRegistry::default());
+        let subscription = registry.subscribe(store(), &context(), params()).unwrap();
+        let response = subscription.resource_response_for(Duration::from_millis(5));
+        let bytes = tokio::time::timeout(
+            Duration::from_secs(1),
+            axum::body::to_bytes(response.into_body(), 4096),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(text.contains("event: watch/reset\ndata: {}"), "{text}");
+        assert!(text.contains("event: watch/end\ndata: {}"), "{text}");
+        assert!(!text.contains("result"));
+        assert!(!text.contains("method"));
+        assert_eq!(lock(&registry.0).total, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dropping_resource_stream_releases_its_subscription_immediately() {
+        let registry = Arc::new(WatchRegistry::default());
+        let response = registry
+            .subscribe(store(), &context(), params())
+            .unwrap()
+            .resource_response();
+        assert_eq!(lock(&registry.0).total, 1);
+        drop(response);
         assert_eq!(lock(&registry.0).total, 0);
     }
 }

@@ -2011,13 +2011,7 @@ fn promise_source_to_api(source: &harness::PromiseSource) -> api::PromiseSourceK
 fn attribution(value: Option<&harness::Attribution>) -> Option<api::Attribution> {
     Some(match value?.clone() {
         harness::Attribution::Actor { id } => api::Attribution::Actor { id },
-        harness::Attribution::Key { key_id, scope_kind } => api::Attribution::Key {
-            key_id,
-            scope_kind: match scope_kind {
-                harness::AttributedKeyScope::Deployment => api::AccessScopeKind::Deployment,
-                harness::AttributedKeyScope::Universe => api::AccessScopeKind::Universe,
-            },
-        },
+        harness::Attribution::Token { name } => api::Attribution::Token { name },
         harness::Attribution::Local => api::Attribution::Local,
         harness::Attribution::Internal { component, cause } => {
             api::Attribution::Internal { component, cause }
@@ -3342,27 +3336,6 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["brief"]))
                 .map(|brief| summary_line(&brief)),
         },
-        "message_send" => ToolCallDisplayView {
-            group: ToolCallDisplayGroup::Message,
-            verb: "Send".to_owned(),
-            target: json
-                .as_ref()
-                .and_then(|json| first_string(json, &["text"]))
-                .map(|text| summary_line(&text)),
-            detail: json
-                .as_ref()
-                .and_then(|json| first_string(json, &["replyTo", "reply_to"]))
-                .map(|reply| format!("reply to #{reply}")),
-        },
-        "message_noop" => ToolCallDisplayView {
-            group: ToolCallDisplayGroup::Message,
-            verb: "Skip".to_owned(),
-            target: None,
-            detail: json
-                .as_ref()
-                .and_then(|json| first_string(json, &["reason"]))
-                .map(|reason| summary_line(&reason)),
-        },
         "sleep" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Other,
             verb: "Sleep".to_owned(),
@@ -3583,23 +3556,19 @@ mod tests {
                 },
             ),
             (
-                harness::Attribution::Key {
-                    key_id: "ci-bot".into(),
-                    scope_kind: harness::AttributedKeyScope::Universe,
+                harness::Attribution::Token {
+                    name: "ci-bot".into(),
                 },
-                api::Attribution::Key {
-                    key_id: "ci-bot".into(),
-                    scope_kind: api::AccessScopeKind::Universe,
+                api::Attribution::Token {
+                    name: "ci-bot".into(),
                 },
             ),
             (
-                harness::Attribution::Key {
-                    key_id: "platform".into(),
-                    scope_kind: harness::AttributedKeyScope::Deployment,
+                harness::Attribution::Token {
+                    name: "platform".into(),
                 },
-                api::Attribution::Key {
-                    key_id: "platform".into(),
-                    scope_kind: api::AccessScopeKind::Deployment,
+                api::Attribution::Token {
+                    name: "platform".into(),
                 },
             ),
             (harness::Attribution::Local, api::Attribution::Local),
@@ -4002,27 +3971,6 @@ mod tests {
     }
 
     #[test]
-    fn channel_message_tools_display_as_messages() {
-        let display = tool_call_display(
-            "message_send",
-            r#"{"text":"On it — checking the logs now.\nMore soon.","replyTo":12}"#,
-        )
-        .expect("display");
-        assert_eq!(display.group, ToolCallDisplayGroup::Message);
-        assert_eq!(display.verb, "Send");
-        assert_eq!(
-            display.target.as_deref(),
-            Some("On it — checking the logs now.")
-        );
-        assert_eq!(display.detail.as_deref(), Some("reply to #12"));
-
-        let display =
-            tool_call_display("message_noop", r#"{"reason":"already answered"}"#).expect("display");
-        assert_eq!(display.verb, "Skip");
-        assert_eq!(display.detail.as_deref(), Some("already answered"));
-    }
-
-    #[test]
     fn summary_line_takes_the_first_line_and_cuts_on_a_char_boundary() {
         assert_eq!(summary_line("\n  first 🦀 line \nsecond"), "first 🦀 line");
         let long = "é".repeat(100);
@@ -4342,8 +4290,8 @@ mod tests {
         let mut state = CoreAgentState::new();
         state.workflow_tools.declaration_version = Some(1);
         state.workflow_tools.lifecycle_controller = Some(harness::WorkflowEndpointRef {
-            workflow_id: "channels/session-1".to_owned(),
-            workflow_kind: "channelSessionWorkflowV1".to_owned(),
+            workflow_id: "plugins/session-1".to_owned(),
+            workflow_kind: "PluginSessionWorkflow".to_owned(),
         });
 
         assert_eq!(
@@ -4351,8 +4299,8 @@ mod tests {
             Some(SessionIntegrationInput {
                 version: 1,
                 lifecycle_controller: Some(WorkflowEndpointInput {
-                    workflow_id: "channels/session-1".to_owned(),
-                    workflow_kind: "channelSessionWorkflowV1".to_owned(),
+                    workflow_id: "plugins/session-1".to_owned(),
+                    workflow_kind: "PluginSessionWorkflow".to_owned(),
                 }),
                 tools: Vec::new(),
             })
@@ -4368,8 +4316,8 @@ mod tests {
             .parse()
             .expect("universe id");
         let receiver = harness::WorkflowEndpointRef {
-            workflow_id: "channels/session-1".to_owned(),
-            workflow_kind: "channels.session".to_owned(),
+            workflow_id: "plugins/session-1".to_owned(),
+            workflow_kind: "plugin.session".to_owned(),
         };
         let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
         let binding = harness::WorkflowToolBinding::admit(
@@ -4377,7 +4325,7 @@ mod tests {
             harness::WorkflowToolDefinition {
                 workflow_tool_id: harness::WorkflowToolId::new("message-send"),
                 schema_revision: 1,
-                semantic_type: "channels.message.send.v1".to_owned(),
+                semantic_type: "plugin.message.send.v1".to_owned(),
                 tool: ToolSpec {
                     id: harness::ToolId::new("message_send"),
                     execution: Default::default(),

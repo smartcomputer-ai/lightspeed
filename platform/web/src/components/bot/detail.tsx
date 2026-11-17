@@ -80,7 +80,7 @@ export function BotDetail({
   const enabled = bot.enabled ?? true;
   const togglePause = useMutation({
     mutationFn: () =>
-      api<{ bot: BotView }>("PUT", `/api/v1/universes/${universeId}/bots/${bot.botId}`, {
+      api<{ bot: BotView }>("PUT", `/api/ui/universes/${universeId}/bots/${bot.botId}`, {
         bot: { ...botInputOf(bot), enabled: !enabled },
         expectedRevision: bot.revision,
       }),
@@ -124,7 +124,7 @@ export function BotDetail({
   // The newest event, for the activity item's tooltip; the dialog loads the rest.
   const latestEvent = useQuery({
     queryKey: ["bot-events", universeId, bot.botId, "latest"],
-    queryFn: () => api<BotEventListResponse>("GET", `/api/v1/universes/${universeId}/bots/${bot.botId}/events?limit=1`),
+    queryFn: () => api<BotEventListResponse>("GET", `/api/ui/universes/${universeId}/bots/${bot.botId}/events?limit=1`),
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
   });
@@ -268,7 +268,7 @@ function ConversationMenu({
     queryFn: () =>
       api<SessionView>(
         "GET",
-        `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`,
+        `/api/ui/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`,
       ),
   });
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
@@ -277,7 +277,7 @@ function ConversationMenu({
     mutationFn: () =>
       api(
         "POST",
-        `/api/v1/universes/${universeId}/bots/${bot.botId}/sessions/${encodeURIComponent(sessionId)}/rotate`,
+        `/api/ui/universes/${universeId}/bots/${bot.botId}/sessions/${encodeURIComponent(sessionId)}/rotate`,
       ),
     onSuccess: () => {
       setResetOpen(false);

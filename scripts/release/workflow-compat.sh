@@ -16,7 +16,7 @@ from=$(git rev-parse --verify "$1^{commit}")
 to=$(git rev-parse --verify "${2:-HEAD}^{commit}")
 
 # temporal-workflow and every workspace crate it depends on.
-crates=(crates/temporal-workflow crates/harness crates/api crates/bots crates/channels)
+crates=(crates/temporal-workflow crates/harness crates/api crates/bots)
 
 # A version bump leaves the package's name line unchanged, so compare whole
 # package stanzas rather than grepping the diff for temporalio.

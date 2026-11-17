@@ -25,6 +25,7 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires", { withTimezone: true }),
+  // Lightspeed's columns, declared to Better Auth in auth-fields.ts.
   identitySource: text("identity_source").default("local").notNull(),
   oidcIssuer: text("oidc_issuer"),
   oidcSubject: text("oidc_subject"),
@@ -52,10 +53,28 @@ export const session = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     activeOrganizationId: text("active_organization_id"),
     impersonatedBy: text("impersonated_by"),
+    // Lightspeed's columns, declared to Better Auth in auth-fields.ts.
     accessVersion: integer("access_version").default(0).notNull(),
+    sessionKind: text("session_kind", { enum: ["browser", "cli"] }).default("browser").notNull(),
   },
   (table) => [index("session_userId_idx").on(table.userId)],
 );
+
+/** Better Auth owns the device grant state machine and single-use redemption. */
+export const deviceCode = pgTable("device_code", {
+  id: text("id").primaryKey(),
+  deviceCode: text("device_code").notNull(),
+  userCode: text("user_code").notNull(),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull(),
+  lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+  pollingInterval: integer("polling_interval"),
+  clientId: text("client_id"),
+  scope: text("scope"),
+  // Lightspeed's column, declared to Better Auth in auth-fields.ts.
+  approvalAccessVersion: integer("approval_access_version"),
+}, table => [uniqueIndex("device_code_device_code_idx").on(table.deviceCode), uniqueIndex("device_code_user_code_idx").on(table.userCode)]);
 
 export const account = pgTable(
   "account",
@@ -106,6 +125,21 @@ export const organization = pgTable(
     logo: text("logo"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     metadata: text("metadata"),
+    // Lightspeed's columns, declared to Better Auth in auth-fields.ts.
+    personalUserId: text("personal_user_id").unique().references(() => user.id, { onDelete: "set null" }),
+    /// The organization's own universe limit; null follows the deployment
+    /// default for its kind (personal or shared).
+    universeQuota: integer("universe_quota"),
+    /// The default universe access: the universe role every member person
+    /// holds on each universe of the organization; null limits members to
+    /// their explicit grants.
+    baseUniverseRole: text("base_universe_role", { enum: ["viewer", "contributor", "operator", "owner"] }).default("viewer"),
+    defaultProtected: boolean("default_protected").default(true).notNull(),
+    requireProtected: boolean("require_protected").default(false).notNull(),
+    membershipPolicy: jsonb("membership_policy").$type<{
+      members?: { email?: string; issuer?: string; subject?: string; role: "admin" | "creator" | "member" }[];
+      directoryGroupMappings?: { issuer: string; group: string; role: "admin" | "creator" | "member" }[];
+    }>().default({}).notNull(),
   },
   (table) => [uniqueIndex("organization_slug_uidx").on(table.slug)],
 );
@@ -126,6 +160,7 @@ export const member = pgTable(
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
     index("member_userId_idx").on(table.userId),
+    uniqueIndex("member_organization_user_idx").on(table.organizationId, table.userId),
   ],
 );
 
@@ -198,3 +233,33 @@ export const invitationRelations = relations(invitation, ({ one }) => ({
     references: [user.id],
   }),
 }));
+
+/** Better Auth's API Key plugin owns generation, hashing, expiry and verification. */
+export const apikey = pgTable("apikey", {
+  id: text("id").primaryKey(),
+  configId: text("config_id").default("default").notNull(),
+  name: text("name"),
+  start: text("start"),
+  referenceId: text("reference_id").notNull(),
+  prefix: text("prefix"),
+  key: text("key").notNull(),
+  refillInterval: integer("refill_interval"),
+  refillAmount: integer("refill_amount"),
+  lastRefillAt: timestamp("last_refill_at", { withTimezone: true }),
+  enabled: boolean("enabled").default(true).notNull(),
+  rateLimitEnabled: boolean("rate_limit_enabled").default(true).notNull(),
+  rateLimitTimeWindow: integer("rate_limit_time_window").default(86400000),
+  rateLimitMax: integer("rate_limit_max").default(10),
+  requestCount: integer("request_count").default(0).notNull(),
+  remaining: integer("remaining"),
+  lastRequest: timestamp("last_request", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  permissions: text("permissions"),
+  metadata: text("metadata"),
+}, (table) => [
+  index("apikey_config_idx").on(table.configId),
+  index("apikey_reference_idx").on(table.referenceId),
+  uniqueIndex("apikey_key_idx").on(table.key),
+]);

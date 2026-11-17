@@ -17,8 +17,7 @@ for (const profile of ["full", "platform"]) {
       encoding: "utf8",
       env: {
         ...process.env,
-        LIGHTSPEED_CHANNELS_CONNECTORS: "",
-        LIGHTSPEED_API_URL: "http://127.0.0.1:28080/runtime/rpc",
+        LIGHTSPEED_API_URL: "http://127.0.0.1:28080/runtime/api/v1",
         LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080",
         LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT: "28081",
         LIGHTSPEED_AUTH_MODE: "authenticated",
@@ -27,11 +26,36 @@ for (const profile of ["full", "platform"]) {
     });
     assert.match(output, /process: platform ->[^\n]+\n  after: runtime gateway -> http:\/\/127\.0\.0\.1:28080\/runtime\/health/);
   });
+  test(`${profile} uses the browser origin for CLI approval regardless of the backend port`, () => {
+    const env = { ...process.env, PORT: "23000" };
+    delete env.LIGHTSPEED_PLATFORM_BASE_URL;
+    const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
+      cwd: repoRoot, encoding: "utf8", env,
+    });
+    assert.match(output, /^platform public URL: http:\/\/localhost:5173$/m);
+    assert.match(output, /^ready: platform web -> http:\/\/localhost:5173\/app\/$/m);
+    assert.match(output, /^ready: platform API -> http:\/\/127\.0\.0\.1:23000\/health$/m);
+  });
 }
+
+test("an explicit development public origin remains authoritative", () => {
+  const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "platform"], {
+    cwd: repoRoot, encoding: "utf8",
+    env: { ...process.env, LIGHTSPEED_PLATFORM_BASE_URL: "https://dev.example.test" },
+  });
+  assert.match(output, /^platform public URL: https:\/\/dev\.example\.test$/m);
+});
+
+test("the development web origin forwards API and device approval to the configured backend", () => {
+  const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e",
+    'import configure from "./platform/web/vite.config.ts"; const config = configure({ command: "serve", mode: "development" }); console.log(JSON.stringify(config.server.proxy));',
+  ], { cwd: repoRoot, encoding: "utf8", env: { ...process.env, PORT: "23000" } });
+  assert.deepEqual(JSON.parse(output), { "/api": "http://localhost:23000", "/device": "http://localhost:23000" });
+});
 
 for (const profile of ["full", "platform", "runtime", "demo", "infra"]) {
   test(`${profile} scopes development fixtures to the authenticated full profile`, () => {
-    const env = { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "authenticated" };
+    const env = { ...process.env, LIGHTSPEED_AUTH_MODE: "authenticated" };
     delete env.LIGHTSPEED_PLATFORM_DEV_SEED;
     const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
       cwd: repoRoot, encoding: "utf8", env,
@@ -43,7 +67,7 @@ for (const profile of ["full", "platform", "runtime", "demo", "infra"]) {
 test("full profile can opt out of development fixtures", () => {
   const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
     cwd: repoRoot, encoding: "utf8",
-    env: { ...process.env, LIGHTSPEED_CHANNELS_CONNECTORS: "", LIGHTSPEED_AUTH_MODE: "authenticated",
+    env: { ...process.env, LIGHTSPEED_AUTH_MODE: "authenticated",
       LIGHTSPEED_PLATFORM_DEV_SEED: "false" },
   });
   assert.match(output, /development fixtures: false/);
@@ -133,3 +157,22 @@ test("readiness distinguishes a refused connection from an HTTP failure", { time
     return true;
   });
 });
+
+
+test("full profile routes Configurator through Platform", () => {
+  const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", "full"], {
+    cwd: repoRoot, encoding: "utf8", env: { ...process.env },
+  });
+  assert.match(output, /^process: configurator ->/m);
+});
+
+for (const profile of ["runtime", "full"]) {
+  test(`${profile} preflights and waits for private HTTP API, public callbacks, and environment routes separately`, () => {
+    const output = execFileSync(process.execPath, ["scripts/dev/stack.mjs", "--plan", "--no-envd", profile], {
+      cwd: repoRoot, encoding: "utf8", env: { ...process.env, LIGHTSPEED_GATEWAY_BIND: "127.0.0.1:28080", LIGHTSPEED_PUBLIC_BIND: "127.0.0.1:28082", LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND: "127.0.0.1:28083" },
+    });
+    assert.match(output, /^ready: runtime gateway -> http:\/\/127\.0\.0\.1:28080\/health$/m);
+    assert.match(output, /^ready: runtime public -> http:\/\/127\.0\.0\.1:28082\/health$/m);
+    assert.match(output, /^ready: environment gateway -> http:\/\/127\.0\.0\.1:28083\/health$/m);
+  });
+}

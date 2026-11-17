@@ -1,133 +1,69 @@
 # Tenant isolation and data protection
 
-A universe separates one team's Lightspeed records from another team's within
-the same deployment. Sessions, profiles, workspaces, bots, credentials,
-channels, and environment records belong to a universe. The runtime processes
-and infrastructure serving those universes can be shared.
+A universe separates its Lightspeed records from other universes in the same
+deployment. Sessions, profiles, workspaces, bots, credentials, and
+environment records belong to a universe. An organization
+groups universes for administration and access.
 
-Consider Acorn and Cedar, each with a workspace named `release-notes`. A
-request authenticated for Acorn resolves that name inside Acorn's universe.
-It does not reach Cedar's workspace, even when the two names are identical.
-The same boundary follows requests into storage and workflows.
+For example, Acorn and Cedar can each have a workspace named
+`release-notes`. A request for that name in Acorn resolves to Acorn's
+workspace. A person needs access to Cedar to open Cedar's workspace through
+the Platform.
 
-## How the universe follows a request
+## Where the universe boundary applies
 
-A universe API key selects its one stored universe. A deployment key can
-address a universe by supplying its UUID or handle in `x-lightspeed-universe`, subject
-to the key's method groups. The Platform uses this second path after checking
-the person's membership and permissions. The runtime resolves a service bound
-to that universe before dispatching ordinary resource operations.
+The Platform authorizes a request for a universe and forwards it to the
+runtime. The runtime scopes database records, stored blobs and caches, and
+Temporal workflows to that universe. A delegated child stays in its
+parent's universe. Identical blobs in separate universes are stored
+separately. A member with permission to read blobs in one universe can
+retrieve a known digest there, independently of access to a particular
+session. See [Private and shared work](private-and-shared-work.md).
 
-| Layer | How resources remain separate |
-| --- | --- |
-| Runtime API | Key authentication resolves the request's universe and allowed method groups. |
-| PostgreSQL | Universe-bound queries and composite keys/foreign keys associate tenant records with `universe_id`. |
-| Content-addressed storage | The blob catalog includes the universe in its key. External objects live under `<prefix>/universes/<uuid>/cas/…`. |
-| Blob cache | Cache lookups include both the universe UUID and blob reference. |
-| Temporal | Workflow identities include the universe, and workers resolve the corresponding universe service. |
-| Encrypted secrets | Authenticated encryption binds ciphertext to the universe UUID, secret ID, and secret kind. |
-
-A session's Temporal workflow ID is `<universe-uuid>/<session-id>`. Bots and
-channel conversations also use universe-prefixed workflow IDs. A delegated
-child stays in its parent's universe.
-
-Identical blobs in two universes are stored separately; there is no physical
-blob deduplication across universes. Knowing Acorn's content digest does not
-let a caller read those bytes through Cedar's service. Inside Acorn, however,
-`blobs/read` accepts a digest without a session visibility check. A caller
-allowed to read blobs can retrieve known digests in that universe. This is
-one reason [private session visibility](private-and-shared-work.md) is a
-narrower property than isolation between tenants.
-
-PostgreSQL isolation uses application queries and schema constraints, not
-PostgreSQL row-level security policies. Database and storage administrators
-remain able to access the infrastructure they operate. The Platform also gives
-its administrators Admin access in every universe. These are trusted
-administrative boundaries, not accounts constrained by an ordinary member's
-session visibility.
+Runtime tokens can select any universe. The runtime and its stores are
+trusted infrastructure. Database isolation relies on universe-scoped
+queries and schema constraints. Database and storage administrators can
+access the infrastructure they operate. Platform Admins have Owner access
+across the deployment, and Organization Admins have it within their
+organizations.
 
 ## What a deployment shares
 
-Universes share runtime processes, a PostgreSQL pool, optional object storage,
-provider clients, and other process resources. Session, bot, and channel task
-queues provide common worker capacity. Creating a universe does not reserve
-CPU, memory, queue throughput, or provider quota for it. A bot's own limits
-can bound its work without establishing tenant-wide resource quotas.
+Universes share runtime processes, database and blob infrastructure, and
+worker capacity. A universe does not reserve CPU, memory, or queue throughput.
+An environment provider can serve all universes or only the ones it is bound
+to. Universe-specific model credentials can use separate provider accounts.
+Where a deployment fallback key supplies model requests, those universes
+share that provider account and its quota. See [Models and
+credentials](../using-lightspeed/models-and-credentials.md).
 
-Some registries have deployment-wide meaning: universes and API keys support
-routing, and environment providers are registered once before being bound to
-universes. Daemon identities and provider-native channel account identities
-have deployment-wide uniqueness.
+Use separate deployments when teams need independent infrastructure
+administration, encryption keys, capacity, or failure domains. See
+[Deployment configuration](../deployment/configuration.md) for configuring
+database, storage, and Temporal connections.
 
-Separate deployments are the appropriate unit when teams need independent
-operator access, database credentials, encryption keys, infrastructure
-capacity, or failure domains. If deployments share a Temporal namespace, give
-all three runtime task queues distinct names. A separate namespace also
-separates workflow identity space and namespace settings. See
-[deployment configuration](../deployment/configuration.md).
+## Credentials, files, and external services
 
-## Credentials and encryption
+Lightspeed encrypts secret material using the deployment's master key. The
+ciphertext is bound to its universe and secret identity. Encryption for
+database storage, backups, and other blob data is configured in the
+infrastructure. Preserve the master key with the [recovery
+set](../deployment/upgrades-and-recovery.md#preserve-a-complete-recovery-set).
 
-Secret values and grant tokens use the deployment's
-`LIGHTSPEED_SECRETS_MASTER_KEY`. Binding ciphertext to its universe and secret
-identity prevents moving it to a different identity and decrypting it there.
-There is no independently managed encryption key per universe. This mechanism
-encrypts secret material; encryption of database storage, backups, and CAS
-objects belongs to the infrastructure configuration. Preserve the master key
-as part of the [recovery set](../deployment/upgrades-and-recovery.md).
+A registered machine retains the filesystem, network access, and
+operating-system permissions supplied by its operator or provider. Its
+environment record belongs to a universe. Sessions allowed to use the
+machine share its filesystem and may have access to its injected credentials.
+VFS workspace files and machine files are separate, with [explicit
+transfer](../environments/vfs-transfer.md) between them.
 
-A universe can configure its own model credentials. When a built-in provider
-record is absent, a deployment fallback key can supply the request, so several
-universes may consume the same provider account and quota. A disabled or
-unusable universe record blocks fallback rather than silently using that
-shared key. [Models and credentials](../using-lightspeed/models-and-credentials.md)
-explains credential selection.
+Model providers and external tools receive the inputs sent to them. Their
+service permissions and retention policies govern those copies. See [Agent
+and tool access](agent-and-tool-access.md) for how a run uses resources and
+credentials.
 
-Credentials used by tools deserve the same attention as credentials used to
-enter Lightspeed. Sharing an environment also shares access to credentials
-injected into processes on that environment. Keeping a session private does
-not narrow the external permissions of those credentials.
-
-A bot trigger also holds access material: a webhook's ingest path is a bearer
-value, and a chat trigger's pairing code connects a conversation. Trigger read
-and list responses, which the Platform permits from Viewer upward, never
-include either. They are returned only by bot-management methods, which the
-Platform holds to Operator: `bots/triggers/secrets/read`, and the answers to
-creating a bot with triggers or creating or replacing a trigger. A universe
-API key with the `bots` group can call all of these, since key groups do not
-tell reading from managing; give that group only to keys that may manage
-bots. One value can still reach every member: a bot allowed to change its own
-triggers is told the ingest URL or pairing code of a trigger it creates, once,
-in its Main conversation, and bot conversations are readable by the whole
-universe. See [Bots and triggers](../using-lightspeed/bots-and-triggers.md) for
-trigger setup and the separate HMAC and pairing mechanisms.
-
-## Machines, files, and external services
-
-An environment record belongs to a universe, while its machine has the
-filesystem, network access, and operating-system permissions supplied by its
-operator or provider. Registering a machine does not create an additional
-operating-system sandbox around it. Choose templates, host permissions,
-network rules, and credential bindings for the work that should run there.
-
-The VFS and an environment's filesystem are separate domains. Files transfer
-only through explicit operations; session visibility does not make a shared
-workspace or machine private. See [using environments](../environments/using-environments.md),
-[environment credentials](../environments/credentials.md), and
-[networking and ingress](../environments/networking-and-ingress.md).
-
-Model providers and external tools receive the inputs sent to them. Universe
-scoping inside Lightspeed does not impose a retention policy or access model
-on those services. Their credentials and deployment configuration determine
-that part of the boundary.
-
-## Check an installation
-
-Create two disposable universes with different content under the same
-workspace name. Read each through its own universe key, and verify that the
-other universe's content is unavailable. Inspect the corresponding
-universe-prefixed workflow IDs. These checks exercise the installation's
-routing; they do not establish every isolation property on their own.
-
-For adopting existing universes, preserving their UUIDs during recovery, and
-retiring a tenant, follow [Managing universes](../deployment/multi-tenancy.md).
+To verify an installation, create a disposable workspace with the same name in
+two universes and place different content in each. Sign in as a person whose
+access reaches only one universe and confirm that only its workspace is
+available. A trusted runtime operator can select either universe and confirm
+each resolves to its own content.

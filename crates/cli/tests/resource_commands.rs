@@ -1,4 +1,6 @@
 //! Drive the real command tree against a stateful, isolated runtime fixture.
+#[path = "../src/test_http.rs"]
+mod test_http;
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -28,7 +30,7 @@ impl Runtime {
     ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("local fixture must bind");
         listener.set_nonblocking(true).unwrap();
-        let endpoint = format!("http://{}/rpc", listener.local_addr().unwrap());
+        let endpoint = format!("http://{}/api/v1", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
         let stop = Arc::new(AtomicBool::new(false));
@@ -54,15 +56,15 @@ impl Runtime {
                     assert!(count > 0, "request ended before its body");
                     bytes.extend_from_slice(&buf[..count]);
                     if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                        let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
                         let size: usize = headers
                             .lines()
                             .find_map(|line| line.strip_prefix("content-length: "))
-                            .unwrap()
+                            .unwrap_or("0")
                             .parse()
                             .unwrap();
                         if bytes.len() >= end + 4 + size {
-                            break serde_json::from_slice(&bytes[end + 4..end + 4 + size]).unwrap();
+                            break test_http::decode(&headers, &bytes[end + 4..end + 4 + size]);
                         }
                     }
                 };
@@ -74,7 +76,7 @@ impl Runtime {
                     assert_ne!(params.run_limit, Some(0), "runLimit must be positive");
                 }
                 let result = if method == "initialize" {
-                    json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":{"kind":"deployment"},"single":false,"keyPrefix":"lsk_fixture","groups":api::MethodGroup::ALL}})
+                    json!({"runtime":"runtime","contractRevision":"1","defaultUniverse":"00000000-0000-0000-0000-000000000001","serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "caller":{"single":false,"tokenName":"fixture"}})
                 } else {
                     Value::Null
                 };
@@ -83,14 +85,26 @@ impl Runtime {
                 } else {
                     handler(method, &request["params"])
                 };
-                let response = match outcome {
-                    Ok(result) => {
-                        json!({"id":request["id"],"result":{"result":result,"notifications":[]}})
+                let (status, response) = match outcome {
+                    Ok(result) => (200, result),
+                    Err(error) => {
+                        let detail = error["message"].as_str().unwrap_or("fixture error");
+                        let kind = error["kind"].as_str().unwrap_or("internal");
+                        let status = if kind == "notFound" {
+                            404
+                        } else if kind == "conflict" {
+                            409
+                        } else {
+                            400
+                        };
+                        (
+                            status,
+                            json!({"type":"about:blank","title":"Request failed","status":status,"detail":detail,"kind":kind}),
+                        )
                     }
-                    Err(error) => json!({"id":request["id"],"error":error}),
-                }
-                .to_string();
-                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).unwrap();
+                };
+                let response = response.to_string();
+                write!(socket,"HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).unwrap();
             }
         });
         Self {
@@ -110,7 +124,7 @@ impl Runtime {
                 self.directory.path().join("config"),
             )
             .env("LIGHTSPEED_API_URL", &self.endpoint)
-            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
             .env(
                 "LIGHTSPEED_UNIVERSE",
                 "00000000-0000-0000-0000-000000000001",
@@ -248,9 +262,9 @@ fn chat_resume_reports_empty_closed_or_deleted_sessions_without_creating_replace
                 session["lifecycleStatus"] = json!("closed");
                 Ok(json!({"session":session,"hasOlderRuns":false}))
             }
-            "session/read" if state == "deleted" => Err(
-                json!({"code":-32000,"message":"session deleted","data":{"kind":"notFound","message":"session deleted"}}),
-            ),
+            "session/read" if state == "deleted" => {
+                Err(json!({"kind":"notFound","message":"session deleted"}))
+            }
             _ => panic!("resume must not create a replacement: {method}"),
         });
         let output = runtime.run(&["chat", "--resume", "--json"]);
@@ -302,9 +316,7 @@ fn chat_upload_and_workspace_flags_preserve_other_attachments_and_plain_resume()
     let runtime = Runtime::start_api(move |method, params| {
         Ok(match method {
             "session/start" => {
-                return Err(
-                    json!({"code":-32000,"message":"exists","data":{"kind":"conflict","message":"exists"}}),
-                );
+                return Err(json!({"kind":"conflict","message":"exists"}));
             }
             "session/read" => {
                 json!({"session":stored.lock().unwrap().clone(),"hasOlderRuns":false})
@@ -395,8 +407,8 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
     );
     let model = provider("model:openai", "modelApiKey", json!({"type":"modelApiKey"}));
     let runtime = Runtime::start(move |method, _| match method {
-        "auth/providers/list" => json!({"providers":[github,model]}),
-        "auth/providers/read" => json!({"provider":model}),
+        "credentials/providers/list" => json!({"providers":[github,model]}),
+        "credentials/providers/read" => json!({"provider":model}),
         _ => panic!("unexpected request: {method}"),
     });
     let listed = runtime.json(&["credentials", "github", "app", "list", "--json"]);
@@ -414,7 +426,7 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
             .lock()
             .unwrap()
             .iter()
-            .any(|r| r["method"] == "auth/providers/delete")
+            .any(|r| r["method"] == "credentials/providers/delete")
     );
     assert_eq!(
         runtime.json(&["models", "providers", "list", "--json"])[0]["providerId"],
@@ -423,9 +435,48 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
 }
 
 #[test]
+fn environment_provider_put_only_changes_availability_when_requested() {
+    let runtime = Runtime::start(|method, params| {
+        assert_eq!(method, "deployment/environment-providers/put");
+        json!({"provider": {
+            "providerId": params["providerId"],
+            "controllerEndpoint": params["controllerEndpoint"],
+            "hasCredential": false,
+            "availableToAllUniverses": false,
+            "createdAtMs": 1,
+            "updatedAtMs": 2
+        }})
+    });
+    let base = [
+        "environment",
+        "provider",
+        "put",
+        "incus",
+        "--controller-endpoint",
+        "wss://provider.example/control",
+        "--json",
+    ];
+    for (flag, expected) in [
+        (None, None),
+        (Some("--selected-universes"), Some(json!(false))),
+        (Some("--all-universes"), Some(json!(true))),
+    ] {
+        let mut args = base.to_vec();
+        args.extend(flag);
+        runtime.success(&args);
+        let requests = runtime.requests.lock().unwrap();
+        let params = &requests.last().unwrap()["params"];
+        assert_eq!(params.get("availableToAllUniverses"), expected.as_ref());
+    }
+    let mut conflicting = base.to_vec();
+    conflicting.extend(["--selected-universes", "--all-universes"]);
+    assert!(!runtime.run(&conflicting).status.success());
+}
+
+#[test]
 fn model_provider_put_sends_each_header_with_its_value_source() {
     let runtime = Runtime::start(|method, params| {
-        assert_eq!(method, "auth/providers/put");
+        assert_eq!(method, "credentials/providers/put");
         assert_eq!(params["providerId"], "model:router");
         assert_eq!(params["config"]["type"], "modelEndpoint");
         assert_eq!(
@@ -476,7 +527,7 @@ fn model_provider_put_sends_each_header_with_its_value_source() {
 #[test]
 fn oauth_no_wait_and_empty_lists_have_useful_output_and_clean_json() {
     let runtime = Runtime::start(|method, _| match method {
-        "auth/flows/start" => {
+        "credentials/flows/start" => {
             json!({"flowId":"flow1","authorizeUrl":"https://auth.example/authorize","expiresAtMs":9999999999999_i64})
         }
         "vfs/workspaces/list" => json!({"workspaces":[]}),
@@ -546,7 +597,7 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
             json!({"environment":{"environmentId":"env1","displayName":"Build box","metadata":{"team":"platform"},"source":{"type":"external","endpoint":"wss://env.example/ws"},"state":"open","status":"ready","stateChangedAtMs":0,"createdAtMs":0,"updatedAtMs":1}})
         }
         "deployment/environment-providers/list" => json!({"providers":[]}),
-        "environments/provider-bindings/list" => json!({"bindings":[]}),
+        "environments/providers/list" => json!({"providers":[]}),
         _ => panic!("unexpected request {method}"),
     });
     let templates = runtime.json(&[
@@ -590,8 +641,8 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
     );
     assert!(
         runtime
-            .success(&["environment", "binding", "list"])
-            .contains("No environment provider bindings")
+            .success(&["environment", "provider", "available"])
+            .contains("No environment providers are available to this universe")
     );
     let page = runtime.success(&["environment", "list", "--include-closed", "--after", "env0"]);
     assert!(page.contains("STATE"), "{page}");
@@ -843,9 +894,7 @@ fn model_defaults_commands_round_trip_routes_clear_explicitly_and_guard_revision
 fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
     let runtime = Runtime::start_api(|method, _params| {
         assert_eq!(method, "models/defaults/put");
-        Err(
-            json!({"code":-32009, "message":"defaults changed", "data":{"kind":"conflict","message":"defaults changed"}}),
-        )
+        Err(json!({"kind":"conflict","message":"defaults changed"}))
     });
     let output = runtime.run(&[
         "model",
@@ -870,210 +919,14 @@ fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
 }
 
 #[test]
-fn a_generated_secret_declares_an_api_key_and_a_registration_key() {
-    // Generation contacts nothing: it works with no connection configured.
-    let offline = tempfile::tempdir().unwrap();
-    let generate = |kind: &[&str]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
-            .current_dir(offline.path())
-            .args(kind)
-            .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
-            .env_remove("LIGHTSPEED_API_URL")
-            .env_remove("LIGHTSPEED_API_KEY")
-            .env_remove("LIGHTSPEED_UNIVERSE")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
-    let api_secret = generate(&["api-key", "generate-secret"]);
-    let registration_secret = generate(&["environment", "registration-key", "generate-secret"]);
-    assert!(api_secret.starts_with("lsk_") && api_secret.len() == 4 + 43);
-    assert!(registration_secret.starts_with("lsrk_") && registration_secret.len() == 5 + 43);
-
-    let (expected_api, expected_registration) = (api_secret.clone(), registration_secret.clone());
-    let runtime = Runtime::start(move |method, params| match method {
-        // Every group is asked for by name, never by leaving the field out.
-        "deployment/api-keys/put" if params["keyId"] == "operator" => {
-            assert_eq!(
-                *params,
-                json!({
-                    "scope": {"kind":"deployment"},
-                    "keyId": "operator",
-                    "groups": "all",
-                    "assertActor": false,
-                    "displayName": "Operator",
-                    "secret": expected_api,
-                })
-            );
-            json!({"apiKey":{"keyId":"operator","keyPrefix":&expected_api[..12],"scope":params["scope"],"groups":["session","deployment/api-keys"],"assertActor":false,"createdBy":{"kind":"local"},"displayName":"Operator","createdAtMs":1},"created":false,"secretReplaced":false})
-        }
-        "deployment/api-keys/put" => {
-            assert_eq!(
-                *params,
-                json!({
-                    "scope": {"kind":"universe","universeId":"00000000-0000-0000-0000-000000000001"},
-                    "keyId": "release-bot",
-                    "groups": ["session", "profiles"],
-                    "assertActor": false,
-                    "displayName": "Release bot",
-                    "secret": expected_api,
-                })
-            );
-            json!({"apiKey":{"keyId":"release-bot","keyPrefix":&expected_api[..12],"scope":params["scope"],"groups":["session","profiles"],"assertActor":false,"createdBy":{"kind":"local"},"displayName":"Release bot","createdAtMs":1},"created":true,"secretReplaced":false})
-        }
-        "deployment/api-keys/rotate" | "deployment/api-keys/revoke" => {
-            assert_eq!(
-                *params,
-                json!({"scope":{"kind":"deployment"},"keyId":"platform"})
-            );
-            let api_key = json!({"keyId":"platform","keyPrefix":"lsk_rotated1","scope":{"kind":"deployment"},"groups":["session"],"assertActor":true,"createdBy":{"kind":"local"},"createdAtMs":1});
-            if method.ends_with("rotate") {
-                json!({"apiKey":api_key,"secret":"lsk_rotated_secret"})
-            } else {
-                json!({"apiKey":api_key})
-            }
-        }
-        "environments/registration-keys/put" => {
-            assert_eq!(
-                *params,
-                json!({
-                    "registrationKeyId": "build-pool",
-                    "displayName": "Build pool",
-                    "identityMode": "ephemeral",
-                    "maxActiveEnvironments": 4,
-                    "secret": expected_registration,
-                })
-            );
-            json!({"registrationKey":{"registrationKeyId":"build-pool","displayName":"Build pool","keyPrefix":&expected_registration[..12],"identityMode":"ephemeral","maxActiveEnvironments":4,"ephemeralDisconnectGraceMs":300000,"status":"active","registeredEnvironmentCount":0,"activeEnvironmentCount":0,"createdAtMs":1,"updatedAtMs":1},"created":false,"secretReplaced":true})
-        }
-        _ => panic!("unexpected request {method}"),
-    });
-
-    // The secret is read from a file or the environment, never an argument.
-    let file = runtime.directory.path().join("api-key");
-    std::fs::write(&file, format!("{api_secret}\n")).unwrap();
-    let output = runtime.json(&[
-        "api-key",
-        "put",
-        "release-bot",
-        "--display-name",
-        "Release bot",
-        "--group",
-        "session",
-        "--group",
-        "profiles",
-        "--secret-file",
-        file.to_str().unwrap(),
-        "--json",
-    ]);
-    assert_eq!(output["created"], true);
-    assert!(!output.to_string().contains(&api_secret));
-
-    // A key's groups are always stated: a list, or every group by name.
-    let operator = [
-        "api-key",
-        "put",
-        "operator",
-        "--display-name",
-        "Operator",
-        "--deployment",
-        "--secret-file",
-        file.to_str().unwrap(),
-        "--json",
-    ];
-    let unstated = runtime.run(&operator);
-    assert!(!unstated.status.success());
-    assert!(String::from_utf8_lossy(&unstated.stderr).contains("--group"));
-    let mut everything = operator.to_vec();
-    everything.push("--all-groups");
-    assert_eq!(runtime.json(&everything)["created"], false);
-    let mut both = everything.clone();
-    both.extend(["--group", "session"]);
-    assert!(!runtime.run(&both).status.success());
-    assert!(
-        !runtime
-            .run(&["api-key", "create", "--display-name", "x", "--deployment"])
-            .status
-            .success()
-    );
-
-    let declared = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
-        .current_dir(runtime.directory.path())
-        .args([
-            "environment",
-            "registration-key",
-            "put",
-            "build-pool",
-            "--display-name",
-            "Build pool",
-            "--mode",
-            "ephemeral",
-            "--max-active",
-            "4",
-            "--secret-env",
-            "POOL_SECRET",
-        ])
-        .env(
-            "LIGHTSPEED_CONFIG_DIR",
-            runtime.directory.path().join("config"),
-        )
-        .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-        .env("LIGHTSPEED_API_KEY", "lsk_fixture")
-        .env(
-            "LIGHTSPEED_UNIVERSE",
-            "00000000-0000-0000-0000-000000000001",
-        )
-        .env("POOL_SECRET", &registration_secret)
-        .output()
-        .unwrap();
-    assert!(
-        declared.status.success(),
-        "{}",
-        String::from_utf8_lossy(&declared.stderr)
-    );
-    let stdout = String::from_utf8(declared.stdout).unwrap();
-    assert!(stdout.contains("The previous secret is retired."));
-    assert!(!stdout.contains(&registration_secret));
-
-    // A declared key needs a secret source, and exactly one.
-    for sources in [
-        &[][..],
-        &["--secret-stdin", "--secret-env", "POOL_SECRET"][..],
-    ] {
-        let mut args = vec![
-            "api-key",
-            "put",
-            "x",
-            "--display-name",
-            "x",
-            "--deployment",
-            "--all-groups",
-        ];
-        args.extend_from_slice(sources);
-        assert!(!runtime.run(&args).status.success());
-    }
-
-    // Rotation and revocation address a key by its id and scope: the
-    // selected universe unless --deployment is given.
-    let rotated = runtime.json(&["api-key", "rotate", "platform", "--deployment", "--json"]);
-    assert_eq!(rotated["secret"], "lsk_rotated_secret");
-    runtime.success(&["api-key", "revoke", "platform", "--deployment"]);
-}
-
-#[test]
 fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
     let grant = |token_marker: &str| json!({"grantId":"tracker-token","providerId":"static","providerKind":"staticToken","exposure":"brokered","createdBy":{"kind":"local"},"displayName":"Tracker","subjectHint":"ci","scopes":["read"],"audience":"https://tracker.example.com/mcp","hasAccessToken":true,"hasRefreshToken":false,"expiresAtMs":99,"status":"active","metadata":{"owner":token_marker},"leaseCount":0,"createdAtMs":1,"updatedAtMs":2});
     let runtime = Runtime::start(move |method, params| match method {
-        "auth/grants/read" => {
+        "credentials/grants/read" => {
             assert_eq!(*params, json!({"grantId":"tracker-token"}));
             json!({"grant": grant("ops")})
         }
-        "auth/grants/put" => {
+        "credentials/grants/put" => {
             if params["dryRun"] == true {
                 // A declaration: exactly the settings given, nothing carried over.
                 assert_eq!(
@@ -1119,7 +972,7 @@ fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
                 runtime.directory.path().join("config"),
             )
             .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
             .env(
                 "LIGHTSPEED_UNIVERSE",
                 "00000000-0000-0000-0000-000000000001",
@@ -1179,11 +1032,15 @@ fn a_credential_is_declared_and_its_value_replaced_with_its_settings_kept() {
         .unwrap()
         .iter()
         .map(|request| request["method"].as_str().unwrap().to_owned())
-        .filter(|method| method.starts_with("auth/"))
+        .filter(|method| method.starts_with("credentials/"))
         .collect();
     assert_eq!(
         methods,
-        ["auth/grants/put", "auth/grants/read", "auth/grants/put"]
+        [
+            "credentials/grants/put",
+            "credentials/grants/read",
+            "credentials/grants/put"
+        ]
     );
 }
 
@@ -1201,9 +1058,7 @@ fn document_runtime() -> Runtime {
             "deployment/universes/read" => match &universe {
                 Some(universe) => json!({ "universe": universe }),
                 None => {
-                    return Err(
-                        json!({"code":-32004,"message":"unknown universe","data":{"kind":"notFound","message":"unknown universe"}}),
-                    );
+                    return Err(json!({"kind":"notFound","message":"unknown universe"}));
                 }
             },
             "deployment/universes/create" => {
@@ -1213,10 +1068,10 @@ fn document_runtime() -> Runtime {
                 );
                 json!({ "universe": universe, "created": true })
             }
-            "auth/grants/list" => json!({
+            "credentials/grants/list" => json!({
                 "grants": tokens.values().map(|(view, _)| view.clone()).collect::<Vec<_>>()
             }),
-            "auth/grants/put" => {
+            "credentials/grants/put" => {
                 let id = params["grantId"].as_str().unwrap().to_owned();
                 let token = params["token"].as_str().unwrap().to_owned();
                 assert!(!token.is_empty(), "a put carries the resolved token");
@@ -1299,7 +1154,7 @@ fn run_documents(runtime: &Runtime, args: &[&str], secrets: &[(&str, &str)]) -> 
             runtime.directory.path().join("config"),
         )
         .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-        .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+        .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .env_remove("TRACKER_TOKEN")
         .env_remove("RUNNERS_KEY");
@@ -1495,7 +1350,7 @@ fn the_document_schema_is_printed_without_a_connection() {
         .args(["config", "schema"])
         .env("LIGHTSPEED_CONFIG_DIR", offline.path().join("config"))
         .env_remove("LIGHTSPEED_API_URL")
-        .env_remove("LIGHTSPEED_API_KEY")
+        .env_remove("LIGHTSPEED_API_TOKEN")
         .env_remove("LIGHTSPEED_UNIVERSE")
         .output()
         .unwrap();
@@ -1526,7 +1381,7 @@ fn a_connection_from_the_environment_needs_no_home_directory() {
             .args(args)
             .env_clear()
             .env("LIGHTSPEED_API_URL", &runtime.endpoint)
-            .env("LIGHTSPEED_API_KEY", "lsk_fixture")
+            .env("LIGHTSPEED_API_TOKEN", "lsr_fixture")
             .output()
             .unwrap()
     };
@@ -1545,5 +1400,80 @@ fn a_connection_from_the_environment_needs_no_home_directory() {
         String::from_utf8_lossy(&named.stderr).contains("LIGHTSPEED_CONFIG_DIR or HOME"),
         "{}",
         String::from_utf8_lossy(&named.stderr)
+    );
+}
+
+#[test]
+fn configuration_resource_requests_stay_on_the_created_and_resolved_uuid() {
+    let runtime = document_runtime();
+    std::fs::write(
+        runtime.directory.path().join("research.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: research\nmcpServers:\n  - serverId: tracker\n    serverUrl: https://tracker.example.com/mcp\n    defaultServerLabel: tracker\n",
+    ).unwrap();
+    for _ in 0..2 {
+        let applied = run_documents(&runtime, &["config", "apply", "-f", "research.yaml"], &[]);
+        assert!(
+            applied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&applied.stderr)
+        );
+    }
+    let requests = runtime.requests.lock().unwrap();
+    let created = requests
+        .iter()
+        .find(|request| request["method"] == "deployment/universes/create")
+        .unwrap();
+    let universe_id = &created["params"]["universeId"];
+    let resources: Vec<_> = requests
+        .iter()
+        .filter(|request| {
+            request["method"]
+                .as_str()
+                .unwrap()
+                .starts_with("mcp/servers/")
+        })
+        .collect();
+    assert!(
+        resources
+            .iter()
+            .any(|request| request["method"] == "mcp/servers/list")
+    );
+    assert!(
+        resources
+            .iter()
+            .any(|request| request["method"] == "mcp/servers/put")
+    );
+    for request in resources {
+        assert_eq!(&request["universe"], universe_id, "{request}");
+    }
+}
+
+#[test]
+fn configuration_does_not_treat_a_malformed_successful_read_as_a_missing_universe() {
+    let runtime = Runtime::start(|method, _| match method {
+        "deployment/universes/read" => json!({"universe":{"handle":"research"}}),
+        _ => panic!("unexpected request {method}"),
+    });
+    std::fs::write(
+        runtime.directory.path().join("research.yaml"),
+        "schemaVersion: 1\nkind: universe\nhandle: research\n",
+    )
+    .unwrap();
+    let applied = run_documents(&runtime, &["config", "apply", "-f", "research.yaml"], &[]);
+    assert!(!applied.status.success());
+    assert!(
+        String::from_utf8_lossy(&applied.stderr)
+            .contains("server did not return the existing universe UUID")
+    );
+    assert!(
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| matches!(
+                request["method"].as_str(),
+                Some("initialize" | "deployment/universes/read")
+            ))
     );
 }

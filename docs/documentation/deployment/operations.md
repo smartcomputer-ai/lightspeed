@@ -7,22 +7,17 @@ verification task that exercises the capabilities your installation actually
 provides, alongside process and infrastructure monitoring.
 
 After a deployment change, sign in, read a known workspace file, and complete
-a short session run. If the installation supplies compute or chat channels,
-check those paths too. [Troubleshooting](troubleshooting.md) follows failures
+a short session run. If the installation supplies compute, check that path too. [Troubleshooting](troubleshooting.md) follows failures
 across the services; [upgrades and recovery](upgrades-and-recovery.md)
 covers planned maintenance and restored state.
 
 ## Know what health checks establish
-
-The components expose different observations:
 
 | Component | Endpoint | Meaning |
 | --- | --- | --- |
 | Runtime process with `gateway` or `environment-gateway` | `GET /health` | Returns `ok` once HTTP is serving. It does not continuously check dependencies or worker readiness. |
 | Runtime worker-only process | No HTTP health endpoint | Observe the process and its Temporal pollers, task progress, and failures. |
 | Platform | `GET /health` | Returns `{"ok":true}`. Startup migrations precede serving, but the endpoint does not recheck the database or runtime. |
-| Connector host | `GET /healthz` | Reports discovery and served-account state, including degraded state, with HTTP 200. |
-| Connector host | `GET /readyz` | Returns 200 after at least one successful discovery and while every currently served account is ready; otherwise 503. |
 | Incus provider | `GET /health` | Checks the active Incus topology and returns topology information or HTTP 503. |
 | Environment daemon | No HTTP health endpoint | Observe daemon output and environment readiness, then test a harmless filesystem or process operation. Its passive listener speaks WebSocket. |
 
@@ -38,16 +33,10 @@ are not automatically published by the self-hosting recipe. Keep operational
 listeners and the Temporal management interface on the intended private
 network.
 
-Connector readiness needs context. A host with zero selected accounts can be
-ready, and readiness has no discovery-freshness deadline. After an initial
-successful pass, later discovery failures may leave it ready if its existing
-accounts remain ready. Monitor `discovery.lastSuccessAtMs`, `lastError`, and
-the expected account inventory in `/healthz` as well as `/readyz`.
-
 ## Find the responsible process and workflow
 
-Start with the universe UUID and the affected session, run, bot, environment,
-or channel account ID. Record the error time and deployed release. These
+Start with the universe UUID and the affected session, run, bot, or
+environment ID. Record the error time and deployed release. These
 identifiers connect the user-visible problem to logs and workflow history.
 
 Inspect the single-host services with:
@@ -66,7 +55,7 @@ Restart the affected process to apply an environment-file change.
 Session logs can include `universe_id`, `session_id`, `workflow_id`,
 `temporal_run_id`, `lightspeed_run_id`, and `session_head_seq`. A session's
 Temporal workflow ID is `<universe-uuid>/<session-id>`. Use the runtime UUID,
-which is visible in **Settings → General → Identifiers**, rather than the
+which is visible in the universe's **Settings → General → Identifiers**, rather than the
 handle in the Platform URL.
 
 The Temporal execution ID and Lightspeed run ID identify different things.
@@ -96,12 +85,8 @@ no SDK metrics. Every reaper pass logs a summary with `duration_ms`, `sessions_s
 
 ### Metrics and diagnostic payloads
 
-The connector host exposes Prometheus metrics at `/metrics` on its health
-listener, port `8090` by default. These cover discovery, readiness, reconnects,
-and inbound admission. Its Temporal SDK exporter is a separate listener,
-defaulting to port `9090`. Configure collection for both if those signals are
-needed. The Rust runtime and Platform do not currently expose an application
-Prometheus endpoint; use their logs and the infrastructure's own monitoring.
+Use application logs and the infrastructure's metrics for routine
+monitoring.
 
 `LIGHTSPEED_LLM_DEBUG_DUMPS=true` stores raw provider request and response
 payloads as unreferenced CAS blobs and logs their references at debug level.
@@ -114,133 +99,61 @@ are not a permanent audit archive.
 
 ## Scale the process that does the work
 
-The runtime binary supports five roles:
+Run the [runtime roles](overview.md#runtime-roles-and-scaling) together at
+first. Select a subset with `LIGHTSPEED_ROLES` or `--roles` when you want
+to place or scale it separately. Keep storage, secrets, Temporal, and
+environment routing aligned across processes. Each worker replica polls
+its role's task queue.
 
-| Role | Work it owns |
-| --- | --- |
-| `gateway` | JSON-RPC requests, OAuth callbacks, and bot webhook ingress. |
-| `environment-gateway` | Daemon connections, worker environment routes, and environment lifecycle reconciliation: creating and closing provisioned environments and sweeping registered ones. |
-| `sessions` | Session, sub-agent, and environment-job workflows and activities, plus session/promise maintenance and CAS collection. |
-| `bots` | Bot controllers, trigger workflows and activities, and schedule reconciliation. |
-| `channels` | Conversation workflows and core channel activities. |
+Consider pending work, activity duration, provider rate limits, and storage
+load before adding workers. Each process has its own blob cache, so budget
+memory per replica. See [Configure a deployment](configuration.md).
 
-Select roles with `LIGHTSPEED_ROLES` or `--roles`. Environment gateways can
-run behind one shared address. Each replica needs its own directly reachable
-`LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL`; all replicas and workers share
-`LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN`. Workers keep the shared
-`LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`. A single gateway can omit the peer URL.
-
-Each gateway registers its address and a 20-second lease in PostgreSQL,
-renewed every five seconds. Startup leaves other replicas' connections alone.
-A gateway that loses its lease stops accepting work and closes its sockets;
-daemons reconnect through the shared address. PostgreSQL advisory locks select
-one leader for each environment lifecycle, display, and registered sweep loop.
-
-Use `/ready` for gateway readiness and `/health` for process liveness. On
-shutdown, readiness fails and new routes and registrations are refused while
-existing streams drain for up to ten seconds. The gateway then closes its
-control sockets normally so daemons reconnect. Allow time for this drain and
-cleanup in the deployment's termination grace period. Active streams can be
-interrupted by shutdown or failure; reconnection does not automatically replay
-an operation that may already have run.
-
-Split roles when they need independent capacity. All processes must agree on
-stores, secrets, namespace, task queues, and environment routing. Every process
-without `environment-gateway` needs its internal URL and token.
-[Configuration](configuration.md) describes that shared setup.
-
-Each worker role runs its workflows and activities together. Add replicas of
-the role that needs more capacity; each replica polls that role's task queue.
-
-Use pending tasks, activity duration/failures, provider limits, and storage
-load to decide which capacity is missing. Adding session workers does not
-increase a provider account's quota. Each process also has its own
-`LIGHTSPEED_BLOB_CACHE_BYTES` budget, defaulting to 256 MiB, so account for
-aggregate memory when adding replicas.
-
-### Partition connector accounts
-
-Connector hosts discover all enabled accounts for their selected providers
-by default. They do not coordinate account ownership across hosts. Two
-identically configured replicas can both consume the same account's updates.
-
-Partition providers or set nonoverlapping
-`LIGHTSPEED_CONNECTOR_ACCOUNTS=<universe-id>/<account-id>,…` selections. Keep
-one update consumer for each Telegram token. For WhatsApp, retain the account's
-authentication directory when moving it and stop the old host before starting
-another owner. Verify the new host's discovered and ready account inventory.
+To run environment gateways as replicas, give each a reachable
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_PEER_URL`. Configure one shared
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` for workers and the same
+`LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN` on workers and gateways. During
+shutdown, readiness drops and existing streams have a short drain window.
+Daemons reconnect through the shared address. Confirm what completed before
+retrying an interrupted operation. See
+[Networking and ingress](../environments/networking-and-ingress.md).
 
 ## Manage retention and blob collection
 
-Session closure, soft deletion, permanent deletion, blob collection, Temporal
-history retention, and machine cleanup are separate operations. Closing a session
-keeps its history. If the root session has a `deleteAfterCloseMs` policy,
-it owns the later soft-deletion deadline; otherwise there is no automatic
-deletion deadline. In Platform, setting deletion retention requires an Admin.
+Closing a session preserves its history. A universe Owner can set a
+soft-deletion delay for a root session. Automatic deletion waits until the
+delay has elapsed and all retained descendants are closed. Soft deletion
+hides sessions but keeps their storage. A Platform Admin can purge retained
+history from the universe's **Settings → General → Deleted sessions**. See
+[Sessions and runs](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session).
 
-Delegated descendants share that retained root. Automatic soft deletion waits until
-the deadline and until the entire retained tree is closed. An open descendant therefore
-prevents deletion of the tree. The session retention reaper checks every five minutes
-and reports due roots, deletions, open-tree skips, conflicts, and errors. A skip also
-logs a warning naming up to eight of the stuck roots. Force close clears a child that
-never opened, since a session that never started has nothing to retain: it answers
-`notFound` afterwards.
+The `sessions` role collects blobs with no durable references after a grace
+period. The default is seven days since the last write or API admission of
+a reference. A read does not extend it. Set the grace period in
+`LIGHTSPEED_CAS_SWEEP_GRACE_MS` to cover expected upload-to-use and workflow
+handoff delays. A value of zero disables background collection.
 
-Soft deletion hides sessions but retains events, checkpoints and blob roots.
-There is no automatic purge: use `deployment/sessions/purge` or
-[Platform administration](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
-to permanently remove retained history and release its blob roots. Retention
-alone therefore does not reclaim that storage. Direct runtime `session/delete` calls permanently delete closed
-sessions by default; `softDelete: true` retains them instead. Neither mode
-removes workspaces, environments, backups or Temporal history.
-
-Blob collection runs separately. One elected `sessions` process examines the
-CAS catalog hourly for old blobs without durable holders. The default grace
-is seven days since the last put or API admission of the reference. Reading a
-blob does not refresh that time. Committed durable references protect content;
-profiles and uncommitted workflow handoffs do not hold blobs indefinitely.
-Choose a grace period that covers expected upload-to-use and workflow handoff
-delays.
-
-Inspect one collection pass without deleting anything, using the same runtime
-configuration as the deployment:
+To inspect a sweep without deleting content, run it with the deployment's
+runtime configuration.
 
 ```bash
 docker run --rm --network lightspeed --env-file runtime.env \
   "lightspeed-runtime:$LIGHTSPEED_RELEASE_ID" cas-sweep --dry-run
 ```
 
-This continues the self-hosting recipe: run it from the deployment directory
-with `LIGHTSPEED_RELEASE_ID` set to the deployed image's revision-specific tag.
-The standalone binary equivalent is `lightspeed-runtime cas-sweep --dry-run`.
+A pass is bounded. Review candidate and error counts, and check object delete
+failures separately from database errors. Run without `--dry-run` to remove
+eligible content. A manual sweep yields to an active background leader.
 
-The report includes `rows_scanned`, `candidates`, `rows_deleted`, `bytes_freed`,
-`objects_deleted`, `walks_completed`, and errors/conflicts. A pass is bounded, so its
-candidate count is not a complete inventory of all reclaimable storage. Current passes
-examine at most 100,000 rows per universe in pages of up to 1,024, with a soft
-ten-minute deadline. Each universe's position is stored, so a restart or a new leader
-carries on where the last pass stopped, and `walks_completed` counts universes that
-reached the end of the catalog. A dry run reads that position and never writes it.
-
-Removing `--dry-run` requests deletion of eligible content. A manual deleting
-pass yields to an active background leader and can report `leader_busy: true`.
-`LIGHTSPEED_CAS_SWEEP_GRACE_MS=0` disables background collection; an explicit
-sweep also requires a positive configured grace period.
-
-Monitor object deletion failures as well as database results. Session deletion
-does not set Temporal namespace history retention, remove separately retained
-workspaces, erase connector authentication files, or guarantee machine
-destruction. See [Sessions and runs](../using-lightspeed/sessions-and-runs.md)
-and [Power and cleanup](../environments/power-and-cleanup.md) for their lifecycle
-controls.
+For deleting a whole universe, see
+[Managing universes](multi-tenancy.md#archive-and-delete-a-universe).
 
 ## Stop and restart services
 
-Use the service manager's normal shutdown path. The runtime, Platform and connector
-hosts all handle both SIGINT and SIGTERM, and the self-hosting container sets
-`--stop-timeout 30` to give the runtime time. Worker shutdown is bounded; stopping the
-process is not proof that every long-running external operation completed. A foreground
-command whose tool call is dropped by the shutdown is sent a terminate.
+Use the service manager's normal shutdown path. The runtime and Platform
+handle SIGINT and SIGTERM. The self-hosting container allows 30 seconds
+for runtime shutdown. Check the outcome of any in-flight external
+operation before retrying it.
 
 Restarting a worker is distinct from canceling a run, closing a session, or
 deleting data. With compatible code and retained Temporal/store state, workers

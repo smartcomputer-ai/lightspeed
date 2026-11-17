@@ -1,61 +1,18 @@
-import type {
-  AgentApiError,
-  AgentApiErrorKind,
-  JsonRpcError as ApiJsonRpcError,
-} from "./generated/types.js";
+import type { HttpProblem } from "./generated/types.js";
 
-export type JsonRpcErrorPayload = ApiJsonRpcError;
+/** A structured failure returned by the HTTP API. */
+export class LightspeedApiError extends Error {
+  readonly status: number;
+  readonly kind: HttpProblem["kind"];
+  readonly data: HttpProblem;
+  readonly payload: HttpProblem;
 
-export type LightspeedRpcErrorKind = AgentApiErrorKind | "methodNotFound" | "unknown";
-
-export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
-  switch (code) {
-    case -32602:
-      return "invalidRequest";
-    case -32601:
-      return "methodNotFound";
-    case -32001:
-      return "unauthenticated";
-    case -32003:
-      return "forbidden";
-    case -32004:
-      return "notFound";
-    case -32009:
-      return "conflict";
-    case -32010:
-      return "rejected";
-    case -32011:
-      return "sessionBootstrapFailed";
-    case -32012:
-      return "environmentNotReady";
-    case -32013:
-      return "responseTooLarge";
-    case -32603:
-      return "internal";
-    case -32014:
-      return "modelDefaultUnset";
-    case -32015:
-      return "operationPending";
-    case -32016:
-      return "sessionExecutionStopped";
-    default:
-      return "unknown";
-  }
-}
-
-export class LightspeedRpcError extends Error {
-  readonly code: number;
-  readonly data: AgentApiError | null | undefined;
-  readonly kind: LightspeedRpcErrorKind;
-  readonly payload: JsonRpcErrorPayload;
-
-  constructor(payload: JsonRpcErrorPayload) {
-    super(payload.message);
-    this.name = "LightspeedRpcError";
-    this.code = payload.code;
-    this.data = payload.data;
-    // Several kinds can share a code, so the server's own kind comes first.
-    this.kind = payload.data?.kind ?? lightspeedRpcErrorKind(payload.code);
+  constructor(payload: HttpProblem) {
+    super(payload.detail);
+    this.name = "LightspeedApiError";
+    this.status = payload.status;
+    this.kind = payload.kind;
+    this.data = payload;
     this.payload = payload;
     Object.setPrototypeOf(this, new.target.prototype);
   }

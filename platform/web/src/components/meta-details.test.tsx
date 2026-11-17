@@ -91,7 +91,3 @@ it("keeps the popover open for a keep-open action", async () => {
   expect(onLoadMore).toHaveBeenCalledOnce();
   expect(list()).not.toBeNull();
 });
-
-it("maps every resource tone onto a status dot tone", () => {
-  expect(RESOURCE_STATUS_TONE).toEqual({ ok: "ready", idle: "idle", busy: "waiting", problem: "attention" });
-});

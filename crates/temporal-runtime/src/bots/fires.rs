@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use api::AgentApiService as _;
 use api::{
-    AgentApiError, AgentApiErrorKind, AuthGrantLeaseParams, BotEventDocument,
-    BotTriggerDisabledReason, BotTriggerId, BotTriggerKind, BotTriggerSpec,
-    EnvironmentJobCancelParams, EnvironmentJobCreateParams, EnvironmentJobReadParams,
-    PollCursorSpec, PollCursorState, PollHttpAuth, PollHttpMethod, PollSource, ProfileId,
-    ProfileReadParams, SessionJobCancelScopeView, SessionJobHandleInput,
-    SessionJobOutputStreamView, SessionJobStartSpecInput, SessionJobStatusView,
+    AgentApiError, AgentApiErrorKind, BotEventDocument, BotTriggerDisabledReason, BotTriggerId,
+    BotTriggerKind, BotTriggerSpec, CredentialGrantLeaseParams, EnvironmentJobCancelParams,
+    EnvironmentJobCreateParams, EnvironmentJobReadParams, PollCursorSpec, PollCursorState,
+    PollHttpAuth, PollHttpMethod, PollSource, ProfileId, ProfileReadParams,
+    SessionJobCancelScopeView, SessionJobHandleInput, SessionJobOutputStreamView,
+    SessionJobStartSpecInput, SessionJobStatusView,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use bots::{
@@ -582,12 +582,12 @@ async fn lease_poll_credential(
     api: &GatewayAgentApi,
     auth: &PollHttpAuth,
 ) -> Result<String, PollFetchError> {
-    api.lease_bot_poll_grant(AuthGrantLeaseParams {
+    api.lease_bot_poll_grant(CredentialGrantLeaseParams {
         grant_id: auth.grant_id.clone(),
         audience: auth.audience.clone(),
     })
     .await
-    .map(|outcome| outcome.result.token)
+    .map(|outcome| outcome.token)
     .map_err(|error| {
         PollFetchError::Failed(format!(
             "lease credential {}: {}",
@@ -643,7 +643,7 @@ async fn fetch_http_payload(
     // into, and no redirects (a 3xx is a failed fire, not a forwarded token).
     let parsed = url::Url::parse(url)
         .map_err(|error| PollFetchError::Failed(format!("invalid poll URL: {error}")))?;
-    let client = auth::PinnedHttpPolicy::public_only()
+    let client = credentials::PinnedHttpPolicy::public_only()
         .with_private_access(api.private_networks().access(url, true))
         .with_timeout(HTTP_POLL_TIMEOUT)
         .client_for_url(&parsed)
@@ -711,7 +711,6 @@ async fn resolve_bot_profile_environment(
         .map_err(|error| {
             PollFetchError::Failed(format!("read profile {profile_id}: {}", error.message))
         })?
-        .result
         .profile;
     let default = profile
         .document
@@ -792,7 +791,7 @@ async fn fetch_exec_payload(
         })
         .await
         .map_err(|error| map_job_api_error("start poll command", error))?;
-    let started = created.result.jobs.into_iter().next().ok_or_else(|| {
+    let started = created.jobs.into_iter().next().ok_or_else(|| {
         PollFetchError::Failed("environment job start returned no job".to_owned())
     })?;
     let handle = SessionJobHandleInput {
@@ -814,7 +813,7 @@ async fn fetch_exec_payload(
             })
             .await
             .map_err(|error| map_job_api_error("read poll command", error))?;
-        let entry = read.result.jobs.into_iter().next().ok_or_else(|| {
+        let entry = read.jobs.into_iter().next().ok_or_else(|| {
             PollFetchError::Failed("environment job read returned no entry".to_owned())
         })?;
         if let Some(error) = entry.error {

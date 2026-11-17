@@ -44,8 +44,7 @@ import { foldActivity } from "@/components/activity-dot";
 import { badRequest, conflict, intQuery, notFound, readBody, universeFor } from "./common";
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const TRIGGER_KINDS: ReadonlySet<string> = new Set(["schedule", "webhook", "poll", "bot", "chat"]);
-const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+const TRIGGER_KINDS: ReadonlySet<string> = new Set(["schedule", "webhook", "poll", "bot"]);
 /// The controller's "picking it up" pause before a delivery becomes a run.
 const DELIVERY_DELAY_MS = 800;
 const ROTATE_DELAY_MS = 600;
@@ -55,7 +54,7 @@ const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_PROMPT_PAYLOAD_CHARS = 2_000;
 const COLLATOR = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 
-type TriggerKind = "schedule" | "webhook" | "poll" | "bot" | "chat";
+type TriggerKind = "schedule" | "webhook" | "poll" | "bot";
 type WhenBusy = "queue" | "steer" | "append";
 type PerKeyRoute = Extract<BotTriggerRoute, { policy: "perKey" }>;
 
@@ -100,13 +99,6 @@ function optionalNumber(value: unknown): number | null {
 function randomHex(bytes: number): string {
   const buffer = crypto.getRandomValues(new Uint8Array(bytes));
   return [...buffer].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function mintPairingCode(length = 12): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  let code = "";
-  for (const byte of bytes) code += PAIRING_ALPHABET[byte % PAIRING_ALPHABET.length];
-  return code;
 }
 
 interface Found {
@@ -300,14 +292,6 @@ function routeKey(
     const value = body?.[route.key];
     if ((typeof value === "string" && value) || typeof value === "number") return keyed(String(value).slice(0, 200));
   }
-  if (trigger?.kind === "chat") {
-    const conversation = asRecord(body?.conversation);
-    const key = conversation?.key;
-    const label = conversation?.label;
-    if (typeof key === "string" && key) {
-      return { key, label: typeof label === "string" && label ? label.slice(0, 200) : key };
-    }
-  }
   if (trigger?.kind === "webhook" && trigger.preset === "github") {
     const pullRequest = asRecord(body?.pull_request)?.number;
     if (typeof pullRequest === "number") return keyed(`pr-${pullRequest}`);
@@ -350,8 +334,6 @@ function resolveTarget(
   }
   const trigger = input.trigger;
   let route: BotTriggerRoute | null = trigger?.route ?? null;
-  // A chat conversation always gets its own session.
-  if (trigger?.kind === "chat" && (route === null || route.policy === "bot")) route = { policy: "perKey", key: null };
   if (route === null || route.policy === "bot") return mainSession(store, universe, record);
   if (route.policy === "perEvent") {
     return addControlled(store, universe, record, `event ${input.eventId.slice(0, 24)}`, "perEvent");
@@ -778,20 +760,6 @@ function normalizeRoute(route: unknown): BotTriggerRoute | null {
   throw new BotConfigError("validation failed", 400);
 }
 
-/// Chat triggers route per conversation; the main session cannot carry a
-/// conversation's reply tools.
-function chatRoute(route: unknown): BotTriggerRoute {
-  const normalized = normalizeRoute(route);
-  if (normalized === null) return { policy: "perKey", key: null };
-  if (normalized.policy === "bot") {
-    throw new BotConfigError(
-      "chat triggers route per conversation (perKey or perEvent); the main session cannot take a chat",
-      400,
-    );
-  }
-  return normalized;
-}
-
 function normalizeCoalesce(value: unknown): { debounceMs: number; maxWaitMs: number; maxCount: number } | null {
   const input = asRecord(value);
   if (!input) return null;
@@ -823,21 +791,17 @@ function webhookTokenOf(trigger: StoredBotTrigger | undefined): string | null {
   return path.slice(path.lastIndexOf("/") + 1) || null;
 }
 
-/// A trigger as every reader sees it: never with its ingest path or pairing
-/// code, like the core's trigger view.
+/// The trigger view omits the webhook ingest path.
 function triggerViewOf(stored: StoredBotTrigger): BotTriggerView {
-  const { ingestPath: _ingestPath, pairingCode: _pairingCode, ...view } = stored;
+  const { ingestPath: _ingestPath, ...view } = stored;
   return view as BotTriggerView;
 }
 
 /// What only bot managers read, and what creating or replacing a trigger
 /// answers with beside the view (`bots/triggers/secrets/read`).
-function triggerSecretsOf(stored: StoredBotTrigger): { ingestPath?: string; pairingCode?: string } {
+function triggerSecretsOf(stored: StoredBotTrigger): { ingestPath?: string } {
   return {
     ...(stored.ingestPath ? { ingestPath: stored.ingestPath } : {}),
-    ...(stored.kind === "chat" && stored.pairing !== "open" && stored.pairingCode
-      ? { pairingCode: stored.pairingCode }
-      : {}),
   };
 }
 
@@ -875,10 +839,10 @@ function normalizeTrigger(
     triggerId,
     revision: (existing?.revision ?? 0) + 1,
     filter: routed ? optionalString(body.filter) : null,
-    route: kind === "chat" ? chatRoute(body.route) : routed ? normalizeRoute(body.route) : null,
+    route: routed ? normalizeRoute(body.route) : null,
     coalesce: routed ? normalizeCoalesce(body.coalesce) : null,
     deliver: routed ? normalizeDeliver(body.deliver) : null,
-    sessionCloseAfterMs: routed ? (normalizeSessionCloseAfter(body.sessionCloseAfterMs) ?? (kind === "chat" ? 0 : null)) : null,
+    sessionCloseAfterMs: routed ? normalizeSessionCloseAfter(body.sessionCloseAfterMs) : null,
     enabled,
     disabledReason: enabled ? null : ("operator" as const),
     disabledAtMs: enabled ? null : Date.now(),
@@ -919,7 +883,7 @@ function normalizeTrigger(
           ? (verification as unknown as Extract<BotTriggerView, { kind: "webhook" }>["verification"])
           : { scheme: "token" },
         preset: body.preset === "github" ? "github" : null,
-        ingestPath: `/hooks/bots/${universe.universe.lightspeedUniverseId}/${record.bot.botId}/${triggerId}/${token}`,
+        ingestPath: `/ingress/webhooks/bots/${universe.universe.lightspeedUniverseId}/${record.bot.botId}/${triggerId}/${token}`,
       } as StoredBotTrigger;
     }
     case "poll": {
@@ -947,42 +911,6 @@ function normalizeTrigger(
         ? [...new Set(body.from.filter((value): value is string => typeof value === "string"))]
         : null;
       return { ...base, kind: "bot", from: from && from.length > 0 ? from : null } as BotTriggerView;
-    }
-    case "chat": {
-      const accountId = optionalString(body.accountId);
-      if (!accountId) throw new BotConfigError("validation failed", 400);
-      if (!universe.channelAccounts.has(accountId)) {
-        throw new BotConfigError("unknown channel account", 400);
-      }
-      const matchScope = body.matchScope === "direct" || body.matchScope === "group" ? body.matchScope : null;
-      const pairing =
-        body.pairing === "open" || body.pairing === "code"
-          ? body.pairing
-          : existing?.kind === "chat"
-            ? (existing.pairing ?? "code")
-            : "code";
-      // A write that names no code keeps the stored one; opening the
-      // connection drops it, so requiring pairing again mints a new one.
-      const pairingCode =
-        pairing === "code"
-          ? (optionalString(body.pairingCode) ?? existing?.pairingCode ?? mintPairingCode())
-          : null;
-      return {
-        ...base,
-        kind: "chat",
-        accountId,
-        matchScope,
-        ...(isRecord(body.activation) ? { activation: body.activation } : {}),
-        ...(isRecord(body.access) ? { access: body.access } : {}),
-        pairing,
-        priority:
-          typeof body.priority === "number"
-            ? body.priority
-            : existing?.kind === "chat"
-              ? (existing.priority ?? 100)
-              : 100,
-        pairingCode,
-      } as StoredBotTrigger;
     }
   }
 }
@@ -1161,9 +1089,6 @@ export function botRoutes(store: DemoStore): Hono {
     const { universe, record } = found;
     closeBot(universe, record);
     const deletedSessions: string[] = [];
-    universe.channelPairings = universe.channelPairings.filter(
-      (pairing) => pairing.botId !== record.bot.botId,
-    );
     universe.bots.delete(record.bot.botId);
     return c.json({ bot: botViewOf(record), deletedSessions });
   });
@@ -1204,7 +1129,7 @@ export function botRoutes(store: DemoStore): Hono {
     return c.json({ trigger: triggerViewOf(trigger) });
   });
 
-  /// The ingest path or pairing code of one trigger, like the core's
+  /// The ingest path of one trigger, like the core's
   /// `bots/triggers/secrets/read`; an empty object for a trigger with neither.
   app.get("/:id/bots/:botId/triggers/:triggerId/secrets", (c) => {
     const found = botFor(store, c);
@@ -1462,7 +1387,7 @@ function universeByAnyId(store: DemoStore, id: string): UniverseState | null {
   return store.universe(id);
 }
 
-/// Public ingress: `POST /hooks/bots/{universe}/{bot}/{trigger}/{token}`,
+/// Public ingress: `POST /ingress/webhooks/bots/{universe}/{bot}/{trigger}/{token}`,
 /// authenticated by the per-trigger URL token alone. A wrong token is
 /// indistinguishable from an unknown endpoint, like the core's route.
 export function hookRoutes(store: DemoStore): Hono {

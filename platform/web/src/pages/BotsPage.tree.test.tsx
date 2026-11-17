@@ -83,8 +83,8 @@ afterEach(async () => {
 async function show(path: string) {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}><Routes>
-      <Route path="/u/:handle/bots/:botId" element={<BotsPage admin={false} />} />
-      <Route path="/u/:handle/bots/:botId/chat/:sessionId" element={<BotsPage admin={false} />} />
+      <Route path="/u/:handle/bots/:botId" element={<BotsPage />} />
+      <Route path="/u/:handle/bots/:botId/chat/:sessionId" element={<BotsPage />} />
     </Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10); });
@@ -106,14 +106,14 @@ it("opens the selected bot one level down and reads no other bot's conversations
   expect(caret("beta's")!.getAttribute("aria-expanded")).toBe("false");
   expect(caret("gamma's")).toBeUndefined();
   expect(caret("delta's")).toBeUndefined();
-  expect(new Set(stateReads())).toEqual(new Set(["/api/v1/universes/universe/bots/alpha/state"]));
+  expect(new Set(stateReads())).toEqual(new Set(["/api/ui/universes/universe/bots/alpha/state"]));
 });
 
 it("reads another bot's conversations only once its row is opened", async () => {
   await show("/u/universe/bots/alpha");
   await act(async () => caret("beta's")!.click());
   for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-  expect(stateReads()).toContain("/api/v1/universes/universe/bots/beta/state");
+  expect(stateReads()).toContain("/api/ui/universes/universe/bots/beta/state");
   expect(titles()).toContain("beta/chat/beta-thread");
 
   // Closed again, it is no longer refreshed.

@@ -2312,6 +2312,7 @@ mod tests {
             llm_clients::RequestAuth::None => "none".to_owned(),
             llm_clients::RequestAuth::ApiKey(value) => format!("api_key:{value}"),
             llm_clients::RequestAuth::Bearer(value) => format!("bearer:{value}"),
+            llm_clients::RequestAuth::ScopedBearer(_) => "scoped bearer".to_owned(),
         })
     }
 

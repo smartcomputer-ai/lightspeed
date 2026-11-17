@@ -514,7 +514,7 @@ impl SessionStore for PgStore {
                 message: "deleteAfterCloseMs must be positive".to_owned(),
             });
         }
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
@@ -940,7 +940,7 @@ impl SessionStore for PgStore {
         &self,
         request: CreateClonedSession,
     ) -> Result<SessionRecord, SessionStoreError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
@@ -1011,7 +1011,7 @@ impl SessionStore for PgStore {
         &self,
         request: CreateForkedSession,
     ) -> Result<SessionRecord, SessionStoreError> {
-        self.ensure_universe()
+        self.require_active_universe()
             .await
             .map_err(|error| session_store_error("ensure universe", error))?;
         let source_record = self
@@ -2033,19 +2033,6 @@ impl PgStore {
             .bind(self.config.universe_id).bind(session_id).fetch_one(&self.pool).await
             .map_err(|error| session_sql_error("check deleted session", error))
     }
-
-    /// Sessions a controller starting without a carry must begin past: all the
-    /// bot's retained ids, from any incarnation or namespace. Per-event ids are
-    /// left out: a busy bot can retain any number of them while the seeding has
-    /// no use for them.
-    pub async fn previous_bot_session_ids(
-        &self,
-        bot_id: &api::BotId,
-    ) -> Result<Vec<String>, SessionStoreError> {
-        sqlx::query_scalar("SELECT session_id FROM sessions WHERE universe_id=$1 AND bot_id=$2 AND session_id NOT LIKE '%:e-%'")
-            .bind(self.config.universe_id).bind(bot_id.as_str())
-            .fetch_all(&self.pool).await.map_err(|error| session_sql_error("read previous bot sessions", error))
-    }
 }
 
 /// Administrative purge requires prior soft deletion.
@@ -2252,7 +2239,17 @@ impl PgStore {
         sqlx::query("UPDATE sessions SET source_session_id = NULL WHERE universe_id=$1 AND source_session_id=ANY($2) AND source_seq IS NULL")
             .bind(self.config.universe_id).bind(&selected_ids).execute(&mut *tx).await
             .map_err(|error| session_sql_error("detach deleted clone sources", error))?;
-        let bot_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT COALESCE(r.bot_id,s.bot_id) FROM sessions s LEFT JOIN sessions r ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id) WHERE s.universe_id=$1 AND s.session_id=ANY($2) AND COALESCE(r.bot_id,s.bot_id) IS NOT NULL").bind(self.config.universe_id).bind(&selected_ids).fetch_all(&mut *tx).await.map_err(|error| session_sql_error("read deleted bot owners", error))?;
+        let bot_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT owner.bot_id FROM sessions s
+             JOIN bot_sessions owner ON owner.universe_id = s.universe_id
+               AND owner.root_session_id = COALESCE(s.origin_root_session_id, s.session_id)
+             WHERE s.universe_id = $1 AND s.session_id = ANY($2)",
+        )
+        .bind(self.config.universe_id)
+        .bind(&selected_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|error| session_sql_error("read deleted bot owners", error))?;
         if soft_delete {
             sqlx::query(
                 "UPDATE sessions SET deleted_at_ms = $3, revision=revision+1 WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL",
@@ -2381,11 +2378,16 @@ async fn session_bot_in_tx(
     session_id: &SessionId,
 ) -> Result<Option<String>, SessionStoreError> {
     sqlx::query_scalar(
-        "SELECT COALESCE(r.bot_id,s.bot_id) FROM sessions s LEFT JOIN sessions r
-         ON r.universe_id=s.universe_id AND r.session_id=COALESCE(s.origin_root_session_id,s.session_id)
-         WHERE s.universe_id=$1 AND s.session_id=$2"
-    ).bind(universe_id).bind(session_id.as_str()).fetch_one(&mut **tx).await
-        .map_err(|error| session_sql_error("read session bot owner", error))
+        "SELECT owner.bot_id FROM sessions s
+         LEFT JOIN bot_sessions owner ON owner.universe_id = s.universe_id
+           AND owner.root_session_id = COALESCE(s.origin_root_session_id, s.session_id)
+         WHERE s.universe_id = $1 AND s.session_id = $2",
+    )
+    .bind(universe_id)
+    .bind(session_id.as_str())
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|error| session_sql_error("read session bot owner", error))
 }
 
 async fn bump_retention_descendants(

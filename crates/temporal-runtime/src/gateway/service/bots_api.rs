@@ -14,9 +14,8 @@ use ::bots::{
         bot_controller_workflow_id, is_bot_session, manual_event_id, replay_event_id,
         routed_session_base,
     },
-    validate::{validate_pairing_code, validate_trigger_document},
+    validate::validate_trigger_document,
 };
-use ::channels::ChannelAccountStore;
 use rand::TryRng as _;
 use serde_json::Value;
 use temporalio_client::{UntypedQuery, UntypedSignal, UntypedWorkflow, errors::WorkflowQueryError};
@@ -37,7 +36,7 @@ const MAX_FILTER_SAMPLE: usize = 50;
 /// How long `bots/delete` waits for a closing controller to complete.
 const BOT_CLOSE_WAIT: Duration = Duration::from_secs(30);
 
-/// Public ingest path of a webhook trigger. The route is outside RPC auth,
+/// Public ingest path of a webhook trigger. The route is outside application token authentication,
 /// so it names the universe, bot, and trigger; the token is the secret.
 pub fn webhook_ingest_path(
     universe_id: uuid::Uuid,
@@ -45,11 +44,11 @@ pub fn webhook_ingest_path(
     trigger_id: &BotTriggerId,
     token: &str,
 ) -> String {
-    format!("/hooks/bots/{universe_id}/{bot_id}/{trigger_id}/{token}")
+    format!("/ingress/webhooks/bots/{universe_id}/{bot_id}/{trigger_id}/{token}")
 }
 
 /// The stored secrets in their wire form: a webhook's URL token as the
-/// ingest path it completes, a chat trigger's pairing code as it is.
+/// ingest path it completes.
 pub(crate) fn trigger_secrets_view(
     universe_id: uuid::Uuid,
     record: &BotTriggerRecord,
@@ -58,7 +57,6 @@ pub(crate) fn trigger_secrets_view(
         ingest_path: record.secrets.webhook_token.as_deref().map(|token| {
             webhook_ingest_path(universe_id, &record.bot_id, &record.trigger_id, token)
         }),
-        pairing_code: record.secrets.pairing_code.clone(),
     }
 }
 
@@ -81,10 +79,6 @@ fn hex_encode(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
-}
-
-fn mint_pairing_code() -> String {
-    ::bots::pairing_code_from_bytes(&random_bytes(::bots::PAIRING_CODE_LEN))
 }
 
 fn decode_raw_value<T: serde::de::DeserializeOwned>(raw: RawValue) -> Result<T, AgentApiError> {
@@ -177,13 +171,16 @@ impl GatewayAgentApi {
     async fn validate_retrievable_grant_id(
         &self,
         grant_id: &str,
-    ) -> Result<auth::AuthGrantRecord, AgentApiError> {
-        let grant_id = parse_auth_grant_id(grant_id.to_owned())?;
-        let grants: &dyn AuthGrantStore = self.store().as_ref();
-        let record = grants.read_grant(&grant_id).await.map_err(map_auth_error)?;
-        if record.status != auth::AuthGrantStatus::Active {
+    ) -> Result<credentials::CredentialGrantRecord, AgentApiError> {
+        let grant_id = parse_credential_grant_id(grant_id.to_owned())?;
+        let grants: &dyn CredentialGrantStore = self.store().as_ref();
+        let record = grants
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_credential_error)?;
+        if record.status != credentials::CredentialGrantStatus::Active {
             return Err(AgentApiError::rejected(format!(
-                "auth grant {grant_id} is not active"
+                "credential grant {grant_id} is not active"
             )));
         }
         require_retrievable_grant(&record)?;
@@ -216,9 +213,9 @@ impl GatewayAgentApi {
             } => {
                 let grant = self.validate_retrievable_grant_id(&auth.grant_id).await?;
                 match &grant.audience {
-                    Some(audience) if auth::audience_covers(audience, url) => Ok(()),
+                    Some(audience) if credentials::audience_covers(audience, url) => Ok(()),
                     Some(audience) => Err(AgentApiError::rejected(format!(
-                        "auth grant {} is bound to {audience}, which does not cover the poll URL",
+                        "credential grant {} is bound to {audience}, which does not cover the poll URL",
                         grant.grant_id
                     ))),
                     None => {
@@ -240,8 +237,8 @@ impl GatewayAgentApi {
         }
     }
 
-    /// Create or replace a trigger: validation, one inbox per bot, chat
-    /// account existence, grant checks, secret minting, poll cursor reset,
+    /// Create or replace a trigger: validation, one inbox per bot,
+    /// grant checks, secret minting, poll cursor reset,
     /// then the row and its Schedule.
     pub(crate) async fn put_bot_trigger_record(
         &self,
@@ -291,23 +288,6 @@ impl GatewayAgentApi {
                 )));
             }
         }
-        if let BotTriggerSpec::Chat { account_id, .. } = &input.document.spec {
-            let account_id = ChannelAccountId::try_new(account_id.clone()).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid channel account id: {error}"))
-            })?;
-            let accounts: &dyn ChannelAccountStore = store.as_ref();
-            accounts
-                .read_channel_account(&account_id)
-                .await
-                .map_err(|error| match error {
-                    ::channels::ChannelError::AccountNotFound { .. } => {
-                        AgentApiError::invalid_request(format!(
-                            "unknown channel account: {account_id}"
-                        ))
-                    }
-                    other => AgentApiError::internal(other.to_string()),
-                })?;
-        }
         self.validate_trigger_grants(&input.document).await?;
         let mut secrets = existing
             .as_ref()
@@ -320,18 +300,6 @@ impl GatewayAgentApi {
                 if secrets.webhook_token.is_none() {
                     secrets.webhook_token = Some(mint_webhook_token());
                 }
-            }
-            BotTriggerSpec::Chat { pairing, .. } => {
-                secrets.pairing_code = match pairing {
-                    ChatPairing::Open => None,
-                    ChatPairing::Code => match input.pairing_code {
-                        Some(code) => {
-                            validate_pairing_code(&code).map_err(map_bot_error)?;
-                            Some(code)
-                        }
-                        None => Some(secrets.pairing_code.unwrap_or_else(mint_pairing_code)),
-                    },
-                };
             }
             _ => secrets = BotTriggerSecrets::default(),
         }
@@ -588,8 +556,7 @@ impl GatewayAgentApi {
                         trees: trees.clone(),
                         ..Default::default()
                     })
-                    .await?
-                    .result;
+                    .await?;
                 sessions.extend(page.sessions);
                 match page.next_cursor {
                     Some(next) => cursor = Some(next),
@@ -668,7 +635,6 @@ impl GatewayAgentApi {
         input.trigger_id = original.trigger_id.clone();
         input.document_ref = Some(original.document_ref.clone());
         input.session = original.session.clone();
-        input.media = original.media.clone();
         input.receiver = original.receiver.clone();
         input.hops = original.hops;
         input.sender_bot_id = original.sender_bot_id.clone();
@@ -1008,7 +974,7 @@ mod tests {
     }
 
     #[test]
-    fn a_trigger_view_holds_no_secret_and_the_secrets_view_holds_both() {
+    fn a_trigger_view_holds_no_secret_and_the_secrets_view_holds_the_ingest_path() {
         let universe_id = uuid::Uuid::from_u128(7);
         let webhook = record(
             BotTriggerSpec::Webhook {
@@ -1017,13 +983,11 @@ mod tests {
             },
             BotTriggerSecrets {
                 webhook_token: Some("tok-1".to_owned()),
-                pairing_code: Some("ABCDEFGH2345".to_owned()),
             },
         );
         let view = serde_json::to_string(&webhook.view()).expect("trigger view");
         assert!(!view.contains("tok-1"), "{view}");
-        assert!(!view.contains("ABCDEFGH2345"), "{view}");
-        assert!(!view.contains("/hooks/"), "{view}");
+        assert!(!view.contains("/ingress/webhooks/"), "{view}");
 
         let secrets = trigger_secrets_view(universe_id, &webhook);
         assert_eq!(
@@ -1033,7 +997,6 @@ mod tests {
                     .as_str()
             )
         );
-        assert_eq!(secrets.pairing_code.as_deref(), Some("ABCDEFGH2345"));
     }
 
     #[test]

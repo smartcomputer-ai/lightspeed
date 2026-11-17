@@ -425,8 +425,6 @@ pub enum ToolCallDisplayGroup {
     Agent,
     /// Bot-to-bot traffic and a bot's own configuration tools.
     Bot,
-    /// Sends into a chat conversation on a channel.
-    Message,
     Other,
 }
 

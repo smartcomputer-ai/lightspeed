@@ -1,26 +1,50 @@
-# Lightspeed JSON-RPC API Reference
+# Lightspeed HTTP API Reference
 
-Generated from the Rust API method manifest. Parameter and result field details live in `api.schema.json` and `openrpc.json`; this reference focuses on operation semantics.
+Generated from the Rust operation catalog. `openapi.json` defines the HTTP request and response shapes; `http.json` supplies the same route, policy and input-partition metadata to generated adapters.
 
-A key calls a method when it holds the method's group. Role and target are metadata for gates that decide for people, such as the Platform; core does not evaluate them.
+Calls use resource URLs under `/api/v1` and return their response DTO directly. Errors use `application/problem+json` with a stable `kind` and typed extensions. Universe selection comes from the URL; a caller-supplied `x-lightspeed-universe` header is refused.
 
-## Universe methods
+Every configured runtime token can call every operation. API family, role and target metadata support external gates such as Platform; the runtime does not enforce caller permissions.
+
+SDK logical inputs and response DTOs use the draft-07 `api.schema.json` bundle.
+
+Path identifiers are omitted from JSON bodies, including nested identifiers. Query scalars use their ordinary spelling, arrays repeat the key, and structured values use JSON encoding as declared in OpenAPI. Unknown query/body fields and duplicate scalar query keys are refused.
+
+## Connection operations
+
+### `initialize`
+
+**Inspect the runtime connection**
+
+Returns runtime identity, HTTP contract revision and configured-token attribution before selecting a universe. Requires authentication in authenticated mode; universe target headers are refused.
+
+- HTTP: `GET /api/v1/connection`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"kind":"connection"}`
+- Group: `none`
+- Role: `none`
+
+
+## Universe operations
 
 ### `universe/watch`
 
 **Watch universe list changes**
 
-Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Each requested kind requires its own API-key group. Includes sub-agents; visibleTo restricts session access as on session/list.
+Requires Accept: text/event-stream. Emits list rows after a short batching window, starting with watch/reset. Refetch on reset and periodically: signals can be lost. Ends after 15 minutes; reconnect to reauthenticate. Includes sub-agents; visibleTo restricts session access as on session/list.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/events`
+- Success: `200`
+- Transfer: `sse`
+- Query: `kinds`, `visibleTo`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `none`
 - Role: `viewer`
-- Target: `none`
-- Params: `UniverseWatchParams`
-- Result: `AgentApiOutcome<UniverseWatchResponse>`
-
-- Transport: `text/event-stream`
-- Notifications: session/changed, session/removed, bots/changed, bots/removed, environments/changed, environments/removed, workspaces/changed, workspaces/removed, watch/reset
+- Events: named SSE events with params-only JSON data; `watch/end` ends the stream. Reconnect and refetch; no replay cursor is promised.
 
 ### `vfs/workspaces/files/read`
 
@@ -28,31 +52,15 @@ Requires Accept: text/event-stream. Emits list rows after a short batching windo
 
 Reads bytes at a path in the current workspace head.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/vfs/workspaces/{workspaceId}/files/content`
+- Success: `200`
+- Transfer: `binaryDownload`
+- Query: `path`
+- Path input fields: `workspaceId` → `workspaceId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `vfs`
 - Role: `viewer`
-- Target: `none`
-- Params: `VfsWorkspaceFileReadParams`
-- Result: `AgentApiOutcome<BlobReadResponse>`
-
-
-## Connection methods
-
-### `initialize`
-
-**Inspect the Lightspeed protocol**
-
-Returns protocol version, server identity, credential scope and allowed groups before universe selection. Requires authentication in authenticated mode; no universe header is accepted.
-
-- Access: `{"kind":"connection"}`
-- Group: `none`
-- Role: `none`
-- Target: `none`
-- Params: `InitializeParams`
-- Result: `AgentApiOutcome<InitializeResponse>`
-
-
-## Universe methods
 
 ### `session/start`
 
@@ -60,12 +68,14 @@ Returns protocol version, server identity, credential scope and allowed groups b
 
 Creates a session, unshared unless access says universe, with optional config, profile and immutable integration. Explicit values override profile metadata and retention; the default environment attachment becomes active. Retrying an id returns it and restarts a stopped execution from its log, unless integrated. Failed setup closes a server-allocated id.
 
-- Access: `{"kind":"universe","action":"createSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `access`, `config`, `deleteAfterCloseMs`, `displayName`, `integration`, `metadata`, `profile`, `sessionId`
+- Access: `{"action":"createSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `SessionStartParams`
-- Result: `AgentApiOutcome<SessionStartResponse>`
 
 ### `session/read`
 
@@ -73,12 +83,15 @@ Creates a session, unshared unless access says universe, with optional config, p
 
 Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/sessions/{sessionId}`
+- Success: `200`
+- Transfer: `json`
+- Query: `runLimit`
+- Path input fields: `sessionId` → `sessionId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `sessionId`
-- Params: `SessionReadParams`
-- Result: `AgentApiOutcome<SessionReadResponse>`
 
 ### `session/list`
 
@@ -86,12 +99,14 @@ Returns stored state plus a bounded newest-first run-summary page, and needs no 
 
 Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by filters such as visibleTo, which keeps sessions whose root is shared with the universe or was created by that actor. An unknown parameter is refused. Pages may shift while sessions are changing.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/sessions`
+- Success: `200`
+- Transfer: `json`
+- Query: `closed`, `cursor`, `lifecycleControlled`, `limit`, `metadata`, `parent`, `subagent`, `trees`, `visibleTo`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `none`
-- Params: `SessionListParams`
-- Result: `AgentApiOutcome<SessionListResponse>`
 
 ### `session/config/put`
 
@@ -99,12 +114,15 @@ Returns a cursor-paginated summary list ordered by most recent update, optionall
 
 Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op. A newly attached MCP server must be usable; a held one that has gone away only drops out of later runs.
 
-- Access: `{"kind":"universe","action":"configureSession"}`
+- HTTP: `PUT /api/v1/universes/{universe}/sessions/{sessionId}/config`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `config`, `expectedConfigRevision`
+- Access: `{"action":"configureSession","kind":"universe"}`
 - Group: `session`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `SessionConfigPutParams`
-- Result: `AgentApiOutcome<SessionConfigPutResponse>`
 
 ### `session/rename`
 
@@ -112,12 +130,15 @@ Replaces the complete sparse config while the session is idle. Use the current c
 
 Sets the display name, or clears it when displayName is omitted.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `PUT /api/v1/universes/{universe}/sessions/{sessionId}/name`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `displayName`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `SessionRenameParams`
-- Result: `AgentApiOutcome<SessionRenameResponse>`
 
 ### `session/metadata/put`
 
@@ -125,12 +146,15 @@ Sets the display name, or clears it when displayName is omitted.
 
 Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.
 
-- Access: `{"kind":"universe","action":"configureSession"}`
+- HTTP: `PUT /api/v1/universes/{universe}/sessions/{sessionId}/metadata`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `metadata`
+- Access: `{"action":"configureSession","kind":"universe"}`
 - Group: `session`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `SessionMetadataPutParams`
-- Result: `AgentApiOutcome<SessionMetadataPutResponse>`
 
 ### `session/retention/put`
 
@@ -138,12 +162,15 @@ Replaces the complete descriptive key/value map (bounded like session/start); an
 
 Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
 
-- Access: `{"kind":"universe","action":"setSessionRetention"}`
+- HTTP: `PUT /api/v1/universes/{universe}/sessions/{sessionId}/retention`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `deleteAfterCloseMs`
+- Access: `{"action":"setSessionRetention","kind":"universe"}`
 - Group: `session/delete`
-- Role: `admin`
-- Target: `sessionId`
-- Params: `SessionRetentionPutParams`
-- Result: `AgentApiOutcome<SessionRetentionPutResponse>`
+- Role: `owner`
 
 ### `session/restart`
 
@@ -151,12 +178,15 @@ Sets the positive close-relative automatic soft-deletion duration on a retention
 
 Starts a new workflow execution for an open session whose last one stopped, from its log. A run that was not parked fails, a parked run keeps waiting, and queued runs start afterwards. A running session is left alone. Refused for a closed session and for one with no run history.
 
-- Access: `{"kind":"universe","action":"configureSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/restart`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"configureSession","kind":"universe"}`
 - Group: `session`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `SessionRestartParams`
-- Result: `AgentApiOutcome<SessionRestartResponse>`
 
 ### `session/close`
 
@@ -164,12 +194,15 @@ Starts a new workflow execution for an open session whose last one stopped, from
 
 Closes an idle session and detaches its environment bindings. Without force, active work of any kind, including a pending detached promise, rejects the call. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
 
-- Access: `{"kind":"universe","action":"closeSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/close`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `force`
+- Access: `{"action":"closeSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `SessionCloseParams`
-- Result: `AgentApiOutcome<SessionCloseResponse>`
 
 ### `session/delete`
 
@@ -177,12 +210,15 @@ Closes an idle session and detaches its environment bindings. Without force, act
 
 Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
 
-- Access: `{"kind":"universe","action":"deleteSession"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/sessions/{sessionId}`
+- Success: `200`
+- Transfer: `json`
+- Query: `cascade`, `sharedOnly`, `softDelete`
+- Path input fields: `sessionId` → `sessionId`
+- Request body: none
+- Access: `{"action":"deleteSession","kind":"universe"}`
 - Group: `session/delete`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `SessionDeleteParams`
-- Result: `AgentApiOutcome<SessionDeleteResponse>`
 
 ### `session/share`
 
@@ -190,12 +226,15 @@ Permanently deletes a closed retention-tree leaf, or its closed delegated-child 
 
 Moves an unshared root session to universe visibility, one way; its delegated children follow it. Refused on a bot's session, a delegated child, and a session already shared. Core applies it for any caller of the method; who may share is the caller's gate's decision.
 
-- Access: `{"kind":"universe","action":"shareSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/share`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"shareSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `SessionShareParams`
-- Result: `AgentApiOutcome<SessionShareResponse>`
 
 ### `session/events/read`
 
@@ -203,12 +242,15 @@ Moves an unshared root session to universe visibility, one way; its delegated ch
 
 Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/sessions/{sessionId}/events`
+- Success: `200`
+- Transfer: `json`
+- Query: `after`, `before`, `direction`, `limit`, `waitMs`
+- Path input fields: `sessionId` → `sessionId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `sessionId`
-- Params: `SessionEventsReadParams`
-- Result: `AgentApiOutcome<SessionEventsReadResponse>`
 
 ### `session/context/append`
 
@@ -216,12 +258,15 @@ Returns chronological events. Forward (default) follows after and supports long-
 
 Admits a batch of keyed context entries with per-entry results. The same content under a key is a no-op. Different content replaces the earlier entry, which leaves active context, and goes last under a new id; a catalog supersedes instead. Invalid input can fail one entry without discarding successful entries.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/context/append`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `entries`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `ContextAppendParams`
-- Result: `AgentApiOutcome<ContextAppendResponse>`
 
 ### `session/context/remove`
 
@@ -229,12 +274,15 @@ Admits a batch of keyed context entries with per-entry results. The same content
 
 Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/context/remove`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `keys`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `ContextRemoveParams`
-- Result: `AgentApiOutcome<ContextRemoveResponse>`
 
 ### `session/context/replace`
 
@@ -242,12 +290,15 @@ Removes active entries by stable key with per-key results. Missing keys are idem
 
 Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/context/replace`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `entries`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `ContextReplaceParams`
-- Result: `AgentApiOutcome<ContextReplaceResponse>`
 
 ### `session/context/compact`
 
@@ -255,12 +306,15 @@ Replaces active tool results and user messages in place by entry id, with per-en
 
 Performs one standalone compaction in any automatic mode, including Disabled, and waits for its outcome. Active work queues it until a safe turn boundary. A failed compaction leaves the context unchanged and fails the call with its reason. A wait that runs out fails with operationPending while it can still complete; session events report the outcome.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/context/compact`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `ContextCompactParams`
-- Result: `AgentApiOutcome<ContextCompactResponse>`
 
 ### `session/runs/start`
 
@@ -268,12 +322,15 @@ Performs one standalone compaction in any automatic mode, including Disabled, an
 
 Returns once the run is accepted — queued behind an active run, or running — not when it finishes. A compacting session holds the request; if the wait runs out the call fails with operationPending and the submission id, and the run still starts later. Retrying with that id cannot start a second run. Follow session events or reread the session.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/runs`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `config`, `notifyOnTerminal`, `source`, `submissionId`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `RunStartParams`
-- Result: `AgentApiOutcome<RunStartResponse>`
 
 ### `session/runs/list`
 
@@ -281,12 +338,15 @@ Returns once the run is accepted — queued behind an active run, or running —
 
 Returns a newest-first keyset page of bounded run summaries, from current state for recent runs and from the session's log for older ones.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/sessions/{sessionId}/runs`
+- Success: `200`
+- Transfer: `json`
+- Query: `cursor`, `limit`
+- Path input fields: `sessionId` → `sessionId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `sessionId`
-- Params: `RunListParams`
-- Result: `AgentApiOutcome<RunListResponse>`
 
 ### `session/runs/read`
 
@@ -294,12 +354,15 @@ Returns a newest-first keyset page of bounded run summaries, from current state 
 
 Projects one run from its events. A run past the server's detail limit keeps its opening and its most recent turns and sets earlierEventsOmitted; session/events/read has the rest.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/sessions/{sessionId}/runs/{runId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`, `runId` → `runId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `sessionId`
-- Params: `RunReadParams`
-- Result: `AgentApiOutcome<RunReadResponse>`
 
 ### `session/runs/cancel`
 
@@ -307,12 +370,15 @@ Projects one run from its events. A run past the server's detail limit keeps its
 
 Requests cancellation of the named queued or active run and returns its summary; observe session events for terminal completion. In-flight model and tool activity is aborted; no grace turn runs.
 
-- Access: `{"kind":"universe","action":"stopSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/runs/{runId}/cancel`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`, `runId` → `runId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"stopSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `RunCancelParams`
-- Result: `AgentApiOutcome<RunCancelResponse>`
 
 ### `session/runs/approvals/decide`
 
@@ -320,12 +386,15 @@ Requests cancellation of the named queued or active run and returns its summary;
 
 Approves or rejects pending MCP tool calls on the named active run. Valid decisions apply independently; the run resumes only after every pending approval has a decision. A decision whose wait runs out reports status pending and can still apply.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/runs/{runId}/approvals/decide`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`, `runId` → `runId`
+- Request body: JSON object: `decisions`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `RunApprovalsDecideParams`
-- Result: `AgentApiOutcome<RunApprovalsDecideResponse>`
 
 ### `session/runs/steer`
 
@@ -333,12 +402,15 @@ Approves or rejects pending MCP tool calls on the named active run. Valid decisi
 
 Injects input into the named active run; the model sees it at the next turn boundary without interrupting the in-flight turn. A parked run holds it without waking. Rejected for queued, cancelling, or finished runs. Supply submissionId so a retry lands once; a wait that runs out fails with operationPending and the steering can still land.
 
-- Access: `{"kind":"universe","action":"controlSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/runs/{runId}/steer`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`, `runId` → `runId`
+- Request body: JSON object: `items`, `submissionId`
+- Access: `{"action":"controlSession","kind":"universe"}`
 - Group: `session`
 - Role: `contributor`
-- Target: `sessionId`
-- Params: `RunSteerParams`
-- Result: `AgentApiOutcome<RunSteerResponse>`
 
 ### `session/skills/list`
 
@@ -346,12 +418,15 @@ Injects input into the named active run; the model sees it at the next turn boun
 
 Returns separate VFS and environment catalogs with source, reference, availability, readable skill paths, and warnings. Refreshes only when open with no active or queued run, without waking environments. Absent catalogs are omitted.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/sessions/{sessionId}/skills`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `sessionId`
-- Params: `SkillListParams`
-- Result: `AgentApiOutcome<SkillListResponse>`
 
 ### `session/profiles/apply`
 
@@ -359,12 +434,15 @@ Returns separate VFS and environment catalogs with source, reference, availabili
 
 Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
 
-- Access: `{"kind":"universe","action":"configureSession"}`
+- HTTP: `POST /api/v1/universes/{universe}/sessions/{sessionId}/profiles/apply`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `expectedConfigRevision`, `expectedToolsRevision`, `profile`
+- Access: `{"action":"configureSession","kind":"universe"}`
 - Group: `session`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `ProfileApplyParams`
-- Result: `AgentApiOutcome<ProfileApplyResponse>`
 
 ### `session/environments/activate`
 
@@ -372,12 +450,15 @@ Applies a named or inline profile's config, instructions, and environment setup 
 
 Selects an attached, live universe environment for environment-targeted tools while the session is idle.
 
-- Access: `{"kind":"universe","action":"configureSession"}`
+- HTTP: `PUT /api/v1/universes/{universe}/sessions/{sessionId}/active-environment`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: JSON object: `environmentId`
+- Access: `{"action":"configureSession","kind":"universe"}`
 - Group: `session`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `SessionEnvironmentActivateParams`
-- Result: `AgentApiOutcome<SessionEnvironmentActivateResponse>`
 
 ### `session/environments/deactivate`
 
@@ -385,12 +466,15 @@ Selects an attached, live universe environment for environment-targeted tools wh
 
 Clears active environment selection without changing or closing the universe environment.
 
-- Access: `{"kind":"universe","action":"configureSession"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/sessions/{sessionId}/active-environment`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `sessionId` → `sessionId`
+- Request body: none
+- Access: `{"action":"configureSession","kind":"universe"}`
 - Group: `session`
 - Role: `operator`
-- Target: `sessionId`
-- Params: `SessionEnvironmentDeactivateParams`
-- Result: `AgentApiOutcome<SessionEnvironmentDeactivateResponse>`
 
 ### `environments/credentials/bind`
 
@@ -398,12 +482,15 @@ Clears active environment selection without changing or closing the universe env
 
 Maps an environment variable name to a retrievable credential grant or to a model API key provider's stored key. Commands in the environment receive the plain value, so a brokered grant and any other provider credential are refused. Requires configuring resources in the universe. The response exposes only the source handle, never secret material.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/environments/{environmentId}/credentials/{envName}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`, `envName` → `envName`
+- Request body: JSON object: `source`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentCredentialBindParams`
-- Result: `AgentApiOutcome<EnvironmentCredentialBindResponse>`
 
 ### `environments/credentials/list`
 
@@ -411,12 +498,15 @@ Maps an environment variable name to a retrievable credential grant or to a mode
 
 Returns variable names and credential source handles for a universe environment; resolved secret values are never returned.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `GET /api/v1/universes/{universe}/environments/{environmentId}/credentials`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentCredentialListParams`
-- Result: `AgentApiOutcome<EnvironmentCredentialListResponse>`
 
 ### `environments/credentials/unbind`
 
@@ -424,12 +514,15 @@ Returns variable names and credential source handles for a universe environment;
 
 Removes one variable-to-credential mapping without deleting the underlying grant or provider credential.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/environments/{environmentId}/credentials/{envName}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`, `envName` → `envName`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentCredentialUnbindParams`
-- Result: `AgentApiOutcome<EnvironmentCredentialUnbindResponse>`
 
 ### `environments/create`
 
@@ -437,12 +530,14 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environments`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `displayName`, `environmentId`, `idle`, `metadata`, `providerId`, `requestId`, `templateId`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentCreateParams`
-- Result: `AgentApiOutcome<EnvironmentCreateResponse>`
 
 ### `environments/read`
 
@@ -450,12 +545,15 @@ Creates a provisioned environment, attributed to the caller, from a template of 
 
 Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environments/{environmentId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentReadParams`
-- Result: `AgentApiOutcome<EnvironmentReadResponse>`
 
 ### `environments/update`
 
@@ -463,12 +561,15 @@ Returns one environment: its source, lifecycle state, derived display status, st
 
 Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PATCH /api/v1/universes/{universe}/environments/{environmentId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: JSON object: `displayName`, `metadata`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentUpdateParams`
-- Result: `AgentApiOutcome<EnvironmentUpdateResponse>`
 
 ### `environments/list`
 
@@ -476,12 +577,14 @@ Replaces the display name and caller metadata of an environment of any kind. Ref
 
 Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environments`
+- Success: `200`
+- Transfer: `json`
+- Query: `after`, `includeClosed`, `limit`, `metadata`, `providerId`, `registrationKeyId`, `state`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentListParams`
-- Result: `AgentApiOutcome<EnvironmentListResponse>`
 
 ### `environments/close`
 
@@ -489,12 +592,15 @@ Lists the universe environments in id order, one page at a time, optionally filt
 
 Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environments/{environmentId}/close`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentCloseParams`
-- Result: `AgentApiOutcome<EnvironmentCloseResponse>`
 
 ### `environments/external/create`
 
@@ -502,12 +608,14 @@ Closes an environment; idempotent. A provisioned environment moves to closing wh
 
 Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/external-environments`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `displayName`, `endpoint`, `environmentId`, `metadata`, `requestId`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentExternalCreateParams`
-- Result: `AgentApiOutcome<EnvironmentExternalCreateResponse>`
 
 ### `environments/registered/put`
 
@@ -515,12 +623,15 @@ Creates an open environment backed by a Lightspeed-reachable envd endpoint, attr
 
 Declares a fixed machine as an open environment with a chosen id before its daemon registers. The first daemon its persistent key admits under the given name is bound to it; until then it is away and tools wait. Repeating it changes nothing; display name and metadata converge. The key and name are fixed. Conflict: an id or name in use.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/environments/{environmentId}/registration`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: JSON object: `displayName`, `metadata`, `name`, `registrationKeyId`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegisteredPutParams`
-- Result: `AgentApiOutcome<EnvironmentRegisteredPutResponse>`
 
 ### `environments/registered/release`
 
@@ -528,12 +639,15 @@ Declares a fixed machine as an open environment with a chosen id before its daem
 
 Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environments/{environmentId}/release`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegisteredReleaseParams`
-- Result: `AgentApiOutcome<EnvironmentRegisteredReleaseResponse>`
 
 ### `environments/ingress/put`
 
@@ -541,12 +655,15 @@ Forgets the daemon bound to a declared environment and ends its connection, so a
 
 Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/environments/{environmentId}/ingress`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: JSON object: `enabled`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentIngressPutParams`
-- Result: `AgentApiOutcome<EnvironmentIngressPutResponse>`
 
 ### `environments/power/put`
 
@@ -554,64 +671,78 @@ Synchronously ensures or removes public ingress of an open provisioned environme
 
 Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/environments/{environmentId}/power`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: JSON object: `power`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentPowerPutParams`
-- Result: `AgentApiOutcome<EnvironmentPowerPutResponse>`
 
-### `environments/provider-bindings/list`
+### `environments/providers/list`
 
-**List environment provider bindings**
+**List available environment providers**
 
-Lists this universe's bindings to deployment providers and whether each is enabled.
+Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentProviderBindingListParams`
-- Result: `AgentApiOutcome<EnvironmentProviderBindingListResponse>`
 
-### `environments/provider-bindings/read`
+### `environments/providers/read`
 
-**Read an environment provider binding**
+**Read an available environment provider**
 
-Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
+Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentProviderBindingReadParams`
-- Result: `AgentApiOutcome<EnvironmentProviderBindingReadResponse>`
 
 ### `environments/templates/list`
 
 **List environment templates**
 
-Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.
+Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers/{providerId}/templates`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentTemplateListParams`
-- Result: `AgentApiOutcome<EnvironmentTemplateListResponse>`
 
 ### `environments/templates/read`
 
 **Read an environment template**
 
-Returns one template, read live from a bound provider's controller.
+Returns one template, read live from the controller of a provider available to the universe.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers/{providerId}/templates/{templateId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`, `templateId` → `templateId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentTemplateReadParams`
-- Result: `AgentApiOutcome<EnvironmentTemplateReadResponse>`
 
 ### `environments/jobs/create`
 
@@ -619,12 +750,15 @@ Returns one template, read live from a bound provider's controller.
 
 Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environments/{environmentId}/jobs`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `environmentId` → `environmentId`
+- Request body: JSON object: `jobs`, `requestId`
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `environments`
 - Role: `contributor`
-- Target: `none`
-- Params: `EnvironmentJobCreateParams`
-- Result: `AgentApiOutcome<EnvironmentJobCreateResponse>`
 
 ### `environments/jobs/read`
 
@@ -632,12 +766,14 @@ Starts a dependency-aware job group on one environment instance, injecting its c
 
 Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-jobs`
+- Success: `200`
+- Transfer: `json`
+- Query: `after`, `jobs`, `maxBytes`, `tailBytes`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `environments`
 - Role: `viewer`
-- Target: `none`
-- Params: `EnvironmentJobReadParams`
-- Result: `AgentApiOutcome<EnvironmentJobReadResponse>`
 
 ### `environments/jobs/cancel`
 
@@ -645,12 +781,14 @@ Reads selected job handles with bounded output from a byte offset or the output 
 
 Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environment-jobs/cancel`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `force`, `jobs`, `scope`
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `environments`
 - Role: `contributor`
-- Target: `none`
-- Params: `EnvironmentJobCancelParams`
-- Result: `AgentApiOutcome<EnvironmentJobCancelResponse>`
 
 ### `environments/registration-keys/create`
 
@@ -658,12 +796,14 @@ Requests cancellation for selected jobs, optionally including dependents. Force 
 
 Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environment-registration-keys`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `declaredOnly`, `displayName`, `ephemeralDisconnectGraceMs`, `expiresAtMs`, `identityMode`, `maxActiveEnvironments`, `offlineCloseAfterMs`, `registrationKeyId`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyCreateParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>`
 
 ### `environments/registration-keys/put`
 
@@ -671,12 +811,15 @@ Creates a reusable universe-scoped key that lets outbound envd daemons register 
 
 Makes the key of this id exist with this policy and answer to exactly the supplied secret. Repeating it changes nothing. A missing key is created; a different secret retires the previous one at once, as rotation does. Conflict: a changed identity mode, a revoked key, or a secret that is or was a key's.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/environment-registration-keys/{registrationKeyId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `registrationKeyId` → `registrationKeyId`
+- Request body: JSON object: `declaredOnly`, `displayName`, `ephemeralDisconnectGraceMs`, `expiresAtMs`, `identityMode`, `maxActiveEnvironments`, `offlineCloseAfterMs`, `secret`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyPutParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyPutResponse>`
 
 ### `environments/registration-keys/read`
 
@@ -684,12 +827,15 @@ Makes the key of this id exist with this policy and answer to exactly the suppli
 
 Returns the key's display prefix, policy, status, and derived environment counts; never the secret or its hash.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-registration-keys/{registrationKeyId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `registrationKeyId` → `registrationKeyId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyReadParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyReadResponse>`
 
 ### `environments/registration-keys/list`
 
@@ -697,12 +843,14 @@ Returns the key's display prefix, policy, status, and derived environment counts
 
 Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-registration-keys`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyListParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyListResponse>`
 
 ### `environments/registration-keys/update`
 
@@ -710,12 +858,15 @@ Lists this universe's registration keys with policy, status, and derived counts.
 
 Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PATCH /api/v1/universes/{universe}/environment-registration-keys/{registrationKeyId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `registrationKeyId` → `registrationKeyId`
+- Request body: JSON object: `declaredOnly`, `displayName`, `ephemeralDisconnectGraceMs`, `expiresAtMs`, `maxActiveEnvironments`, `offlineCloseAfterMs`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyUpdateParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>`
 
 ### `environments/registration-keys/rotate`
 
@@ -723,12 +874,15 @@ Replaces a key's editable policy: display name, active limit, disconnect grace, 
 
 Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environment-registration-keys/{registrationKeyId}/rotate`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `registrationKeyId` → `registrationKeyId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyRotateParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>`
 
 ### `environments/registration-keys/revoke`
 
@@ -736,12 +890,15 @@ Replaces the key's secret and display prefix and retires the old secret at once.
 
 Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/environment-registration-keys/{registrationKeyId}/revoke`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `registrationKeyId` → `registrationKeyId`
+- Request body: JSON object: `closeEnvironments`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `environments`
 - Role: `operator`
-- Target: `none`
-- Params: `EnvironmentRegistrationKeyRevokeParams`
-- Result: `AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>`
 
 ### `transcriptions/start`
 
@@ -749,38 +906,46 @@ Stops the key from admitting new daemon identities; already registered daemons k
 
 Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/transcriptions`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `audio`, `idempotencyKey`, `language`, `model`, `prompt`
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `transcriptions`
 - Role: `contributor`
-- Target: `none`
-- Params: `TranscriptionStartParams`
-- Result: `AgentApiOutcome<TranscriptionResponse>`
 
 ### `transcriptions/read`
 
 **Read transcription**
 
-Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.
+Read status and transcript text. Caller visibility is enforced by the external gate. Unsubmitted CAS results may expire.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/transcriptions/{transcriptionId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `transcriptionId` → `transcriptionId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `transcriptions`
 - Role: `viewer`
-- Target: `none`
-- Params: `TranscriptionReadParams`
-- Result: `AgentApiOutcome<TranscriptionResponse>`
 
 ### `transcriptions/cancel`
 
 **Cancel transcription**
 
-Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
+Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. Caller ownership is enforced by the external gate.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/transcriptions/{transcriptionId}/cancel`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `transcriptionId` → `transcriptionId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `transcriptions`
 - Role: `contributor`
-- Target: `none`
-- Params: `TranscriptionCancelParams`
-- Result: `AgentApiOutcome<TranscriptionResponse>`
 
 ### `models/defaults/read`
 
@@ -788,12 +953,14 @@ Cancel unfinished transcription. Repeated cancellation is safe; completed result
 
 Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/model-defaults`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `models`
 - Role: `viewer`
-- Target: `none`
-- Params: `ModelDefaultsReadParams`
-- Result: `AgentApiOutcome<ModelDefaultsResponse>`
 
 ### `models/defaults/put`
 
@@ -801,12 +968,15 @@ Returns the revision and independent agentRun and speechToText selections. Revis
 
 Sets or explicitly clears one purpose slot. With expectedRevision the write is refused if the defaults changed since. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/model-defaults/{slot}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `slot` → `slot`
+- Request body: JSON object: `expectedRevision`, `model`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `models`
 - Role: `operator`
-- Target: `none`
-- Params: `ModelDefaultsPutParams`
-- Result: `AgentApiOutcome<ModelDefaultsResponse>`
 
 ### `models/list`
 
@@ -814,12 +984,14 @@ Sets or explicitly clears one purpose slot. With expectedRevision the write is r
 
 Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/models`
+- Success: `200`
+- Transfer: `json`
+- Query: `selectableOnly`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `models`
 - Role: `viewer`
-- Target: `none`
-- Params: `ModelListParams`
-- Result: `AgentApiOutcome<ModelListResponse>`
 
 ### `profiles/create`
 
@@ -827,12 +999,14 @@ Queries supported providers directly, with a brief process-local burst cache, an
 
 Creates a new universe-scoped reusable profile document; use profiles/put for create-or-replace revision semantics.
 
-- Access: `{"kind":"universe","action":"createProfile"}`
+- HTTP: `POST /api/v1/universes/{universe}/profiles`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `profile`
+- Access: `{"action":"createProfile","kind":"universe"}`
 - Group: `profiles`
 - Role: `operator`
-- Target: `none`
-- Params: `ProfileCreateParams`
-- Result: `AgentApiOutcome<ProfileCreateResponse>`
 
 ### `profiles/read`
 
@@ -840,12 +1014,15 @@ Creates a new universe-scoped reusable profile document; use profiles/put for cr
 
 Returns the complete profile document and current revision.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/profiles/{profileId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `profileId` → `profileId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `profiles`
 - Role: `viewer`
-- Target: `none`
-- Params: `ProfileReadParams`
-- Result: `AgentApiOutcome<ProfileReadResponse>`
 
 ### `profiles/list`
 
@@ -853,12 +1030,14 @@ Returns the complete profile document and current revision.
 
 Returns lightweight summaries of universe-scoped reusable profiles.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/profiles`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `profiles`
 - Role: `viewer`
-- Target: `none`
-- Params: `ProfileListParams`
-- Result: `AgentApiOutcome<ProfileListResponse>`
 
 ### `profiles/put`
 
@@ -866,12 +1045,15 @@ Returns lightweight summaries of universe-scoped reusable profiles.
 
 Stores the complete profile document. Use expectedRevision from profiles/read when replacing to prevent lost updates; absence writes unconditionally.
 
-- Access: `{"kind":"universe","action":"manageProfile"}`
+- HTTP: `PUT /api/v1/universes/{universe}/profiles/{profileId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `profileId` → `profile.profileId`
+- Request body: JSON object: `expectedRevision`, `profile`
+- Access: `{"action":"manageProfile","kind":"universe"}`
 - Group: `profiles`
 - Role: `operator`
-- Target: `none`
-- Params: `ProfilePutParams`
-- Result: `AgentApiOutcome<ProfilePutResponse>`
 
 ### `profiles/delete`
 
@@ -879,12 +1061,15 @@ Stores the complete profile document. Use expectedRevision from profiles/read wh
 
 Deletes the catalog document; sessions previously created or configured from it retain their materialized state.
 
-- Access: `{"kind":"universe","action":"manageProfile"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/profiles/{profileId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `profileId` → `profileId`
+- Request body: none
+- Access: `{"action":"manageProfile","kind":"universe"}`
 - Group: `profiles`
 - Role: `operator`
-- Target: `none`
-- Params: `ProfileDeleteParams`
-- Result: `AgentApiOutcome<ProfileDeleteResponse>`
 
 ### `blobs/put`
 
@@ -892,25 +1077,30 @@ Deletes the catalog document; sessions previously created or configured from it 
 
 Decodes and stores a batch of base64 payloads, returning immutable content references in request order. Re-uploading identical bytes is naturally deduplicated.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/blobs/batch`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `blobs`
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `blobs/put`
 - Role: `contributor`
-- Target: `none`
-- Params: `BlobPutParams`
-- Result: `AgentApiOutcome<BlobPutResponse>`
 
 ### `blobs/read`
 
 **Read a content-addressed blob**
 
-Returns the complete immutable blob of this universe as base64; large values count against gateway and MCP response limits.
+Streams immutable blob bytes from this universe. Content-Length reports the complete representation size. Range requests are not supported.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/blobs/{blobRef}/content`
+- Success: `200`
+- Transfer: `binaryDownload`
+- Query: none
+- Path input fields: `blobRef` → `blobRef`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `none`
-- Params: `BlobReadParams`
-- Result: `AgentApiOutcome<BlobReadResponse>`
 
 ### `blobs/has`
 
@@ -918,12 +1108,14 @@ Returns the complete immutable blob of this universe as base64; large values cou
 
 Checks a batch of content references without returning blob bodies, preserving request order.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/blobs/presence`
+- Success: `200`
+- Transfer: `json`
+- Query: `blobRefs`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `session`
 - Role: `viewer`
-- Target: `none`
-- Params: `BlobHasParams`
-- Result: `AgentApiOutcome<BlobHasResponse>`
 
 ### `vfs/snapshots/commit`
 
@@ -931,12 +1123,14 @@ Checks a batch of content references without returning blob bodies, preserving r
 
 Validates and stores an immutable filesystem manifest. Upload referenced file blobs first; the returned snapshot ref is content-addressed.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/vfs/snapshots`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `manifest`
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `vfs`
 - Role: `contributor`
-- Target: `none`
-- Params: `VfsSnapshotCommitParams`
-- Result: `AgentApiOutcome<VfsSnapshotCommitResponse>`
 
 ### `vfs/snapshots/read`
 
@@ -944,12 +1138,15 @@ Validates and stores an immutable filesystem manifest. Upload referenced file bl
 
 Returns an immutable snapshot manifest and aggregate file/byte counts; file bodies remain separate blobs.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/vfs/snapshots/{snapshotRef}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `snapshotRef` → `snapshotRef`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `vfs`
 - Role: `viewer`
-- Target: `none`
-- Params: `VfsSnapshotReadParams`
-- Result: `AgentApiOutcome<VfsSnapshotReadResponse>`
 
 ### `vfs/workspaces/create`
 
@@ -957,12 +1154,14 @@ Returns an immutable snapshot manifest and aggregate file/byte counts; file bodi
 
 Creates a universe workspace attributed to the caller at an optional seed snapshot; absence starts from a server-created empty snapshot.
 
-- Access: `{"kind":"universe","action":"createWorkspace"}`
+- HTTP: `POST /api/v1/universes/{universe}/vfs/workspaces`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `displayName`, `snapshotRef`, `workspaceId`
+- Access: `{"action":"createWorkspace","kind":"universe"}`
 - Group: `vfs`
 - Role: `operator`
-- Target: `none`
-- Params: `VfsWorkspaceCreateParams`
-- Result: `AgentApiOutcome<VfsWorkspaceCreateResponse>`
 
 ### `vfs/workspaces/read`
 
@@ -970,12 +1169,15 @@ Creates a universe workspace attributed to the caller at an optional seed snapsh
 
 Returns workspace metadata, current head snapshot, and revision for safe updates.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/vfs/workspaces/{workspaceId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `workspaceId` → `workspaceId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `vfs`
 - Role: `viewer`
-- Target: `none`
-- Params: `VfsWorkspaceReadParams`
-- Result: `AgentApiOutcome<VfsWorkspaceReadResponse>`
 
 ### `vfs/workspaces/list`
 
@@ -983,12 +1185,14 @@ Returns workspace metadata, current head snapshot, and revision for safe updates
 
 Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/vfs/workspaces`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `vfs`
 - Role: `viewer`
-- Target: `none`
-- Params: `VfsWorkspaceListParams`
-- Result: `AgentApiOutcome<VfsWorkspaceListResponse>`
 
 ### `vfs/workspaces/update`
 
@@ -996,12 +1200,15 @@ Lists the mutable universe workspaces with head snapshots, sizes, and revisions.
 
 Moves the workspace head to an existing snapshot, which requires use of the workspace, and updates its display name, which requires configuring it. Pass expectedRevision from a read to prevent lost updates.
 
-- Access: `{"kind":"universe","action":"useResource"}`
+- HTTP: `PATCH /api/v1/universes/{universe}/vfs/workspaces/{workspaceId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `workspaceId` → `workspaceId`
+- Request body: JSON object: `displayName`, `expectedRevision`, `snapshotRef`
+- Access: `{"action":"useResource","kind":"universe"}`
 - Group: `vfs`
 - Role: `contributor`
-- Target: `none`
-- Params: `VfsWorkspaceUpdateParams`
-- Result: `AgentApiOutcome<VfsWorkspaceUpdateResponse>`
 
 ### `vfs/workspaces/delete`
 
@@ -1009,25 +1216,31 @@ Moves the workspace head to an existing snapshot, which requires use of the work
 
 Deletes the mutable workspace record; immutable snapshots and blobs remain content-addressed resources.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/vfs/workspaces/{workspaceId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `workspaceId` → `workspaceId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `vfs`
 - Role: `operator`
-- Target: `none`
-- Params: `VfsWorkspaceDeleteParams`
-- Result: `AgentApiOutcome<VfsWorkspaceDeleteResponse>`
 
 ### `mcp/servers/put`
 
 **Create or replace an MCP server record**
 
-Stores the complete catalog document with its optional auth-grant credential. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
+Stores the complete catalog document with its optional credential grant. A new server is attributed to the caller. Use expectedRevision when replacing; token material is never accepted or returned, but serverUrl is stored and shown as written, so keep secrets out of it.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `PUT /api/v1/universes/{universe}/mcp/servers/{serverId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `serverId` → `server.serverId`
+- Request body: JSON object: `expectedRevision`, `server`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `mcp`
 - Role: `operator`
-- Target: `none`
-- Params: `McpServerPutParams`
-- Result: `AgentApiOutcome<McpServerPutResponse>`
 
 ### `mcp/servers/auth/discover`
 
@@ -1035,12 +1248,14 @@ Stores the complete catalog document with its optional auth-grant credential. A 
 
 Looks for standards-based OAuth protected-resource metadata without creating a server, OAuth client, flow, or grant. An absent OAuth result is inconclusive and callers must allow manual auth selection.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/mcp/auth/discover`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `serverUrl`
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `mcp`
 - Role: `operator`
-- Target: `none`
-- Params: `McpServerAuthDiscoverParams`
-- Result: `AgentApiOutcome<McpServerAuthDiscoverResponse>`
 
 ### `mcp/servers/tools/discover`
 
@@ -1048,12 +1263,15 @@ Looks for standards-based OAuth protected-resource metadata without creating a s
 
 Connects directly to the configured MCP server with its current universe credential and returns one bounded live tools/list result. The inventory is never persisted or cached and no tool is invoked.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `POST /api/v1/universes/{universe}/mcp/servers/{serverId}/tools/discover`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `serverId` → `serverId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `mcp`
 - Role: `operator`
-- Target: `none`
-- Params: `McpServerToolsDiscoverParams`
-- Result: `AgentApiOutcome<McpServerToolsDiscoverResponse>`
 
 ### `mcp/servers/read`
 
@@ -1061,12 +1279,15 @@ Connects directly to the configured MCP server with its current universe credent
 
 Returns one catalog document with defaults, auth policy, non-secret grant binding, status, and revision; no credential value is exposed.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/mcp/servers/{serverId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `serverId` → `serverId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `mcp`
 - Role: `viewer`
-- Target: `none`
-- Params: `McpServerReadParams`
-- Result: `AgentApiOutcome<McpServerReadResponse>`
 
 ### `mcp/servers/list`
 
@@ -1074,12 +1295,14 @@ Returns one catalog document with defaults, auth policy, non-secret grant bindin
 
 Lists the universe catalog entries, optionally filtered by lifecycle/configuration status.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/mcp/servers`
+- Success: `200`
+- Transfer: `json`
+- Query: `status`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `mcp`
 - Role: `viewer`
-- Target: `none`
-- Params: `McpServerListParams`
-- Result: `AgentApiOutcome<McpServerListResponse>`
 
 ### `mcp/servers/delete`
 
@@ -1087,278 +1310,311 @@ Lists the universe catalog entries, optionally filtered by lifecycle/configurati
 
 Deletes the catalog document. Existing session configs that reference it are not silently rewritten and may need explicit reconfiguration.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/mcp/servers/{serverId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `serverId` → `serverId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
 - Group: `mcp`
 - Role: `operator`
-- Target: `none`
-- Params: `McpServerDeleteParams`
-- Result: `AgentApiOutcome<McpServerDeleteResponse>`
 
-### `auth/grants/import`
+### `credentials/grants/import`
 
 **Import a token credential**
 
 Accepts a plaintext token, encrypts it immediately, and returns only grant metadata/token-presence flags. Brokered is the default; exposure is immutable, and only a retrievable credential can be leased to a service or bound into an environment.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `POST /api/v1/universes/{universe}/credentials/grants/actions/import`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `audience`, `displayName`, `expiresAtMs`, `exposure`, `grantId`, `metadata`, `providerId`, `scopes`, `subjectHint`, `token`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthGrantImportParams`
-- Result: `AgentApiOutcome<AuthGrantImportResponse>`
 
+### `credentials/grants/read`
 
-## Service methods
-
-### `auth/grants/lease`
-
-**Lease a retrievable authentication grant**
-
-Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
-
-- Access: `{"kind":"service"}`
-- Group: `auth/lease`
-- Role: `none`
-- Target: `none`
-- Params: `AuthGrantLeaseParams`
-- Result: `AgentApiOutcome<AuthGrantLeaseResponse>`
-
-
-## Universe methods
-
-### `auth/grants/read`
-
-**Read authentication grant metadata**
+**Read credential grant metadata**
 
 Returns creator attribution, provider binding, scopes, audience, expiry, status, and token-presence flags; access and refresh token values are never returned.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/grants/{grantId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `grantId` → `grantId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
+- Group: `credentials`
 - Role: `viewer`
-- Target: `none`
-- Params: `AuthGrantReadParams`
-- Result: `AgentApiOutcome<AuthGrantReadResponse>`
 
-### `auth/grants/list`
+### `credentials/grants/list`
 
-**List authentication grants**
+**List credential grants**
 
 Lists non-secret grant metadata for the universe, optionally filtered by status.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/grants`
+- Success: `200`
+- Transfer: `json`
+- Query: `status`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
+- Group: `credentials`
 - Role: `viewer`
-- Target: `none`
-- Params: `AuthGrantListParams`
-- Result: `AgentApiOutcome<AuthGrantListResponse>`
 
-### `auth/grants/put`
+### `credentials/grants/put`
 
 **Declare a token credential**
 
 Makes the token credential of this id exist with these settings and hold exactly the supplied token, encrypted on receipt. Repeating it changes nothing. A missing credential is created; a different token replaces the stored one for everything referencing the id. Conflict: another kind of grant, a revoked one, or changed exposure.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `PUT /api/v1/universes/{universe}/credentials/grants/{grantId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `grantId` → `grantId`
+- Request body: JSON object: `audience`, `displayName`, `dryRun`, `expiresAtMs`, `exposure`, `metadata`, `providerId`, `scopes`, `subjectHint`, `token`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthGrantPutParams`
-- Result: `AgentApiOutcome<AuthGrantPutResponse>`
 
-### `auth/grants/revoke`
+### `credentials/grants/revoke`
 
-**Revoke an authentication grant**
+**Revoke a credential grant**
 
 Marks the grant unusable by token consumers while retaining non-secret audit metadata.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `POST /api/v1/universes/{universe}/credentials/grants/{grantId}/revoke`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `grantId` → `grantId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthGrantRevokeParams`
-- Result: `AgentApiOutcome<AuthGrantRevokeResponse>`
 
-### `auth/clients/create`
+### `credentials/clients/create`
 
 **Register an OAuth client**
 
 Stores provider endpoints and client identity; an optional plaintext client secret is encrypted and represented thereafter only by hasClientSecret.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `POST /api/v1/universes/{universe}/credentials/clients`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `audience`, `authorizationEndpoint`, `authorizationResponseIssParameterSupported`, `authorizationServerIssuer`, `authorizationServerScopesSupported`, `clientId`, `clientSecret`, `displayName`, `providerId`, `providerKind`, `remoteClientId`, `scopesDefault`, `tokenEndpoint`, `tokenEndpointAuthMethod`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthClientCreateParams`
-- Result: `AgentApiOutcome<AuthClientCreateResponse>`
 
-### `auth/clients/read`
+### `credentials/clients/read`
 
 **Read OAuth client metadata**
 
 Returns endpoints, public client identity, defaults, and secret-presence state; the client secret is never returned.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/clients/{clientId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `clientId` → `clientId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
+- Group: `credentials`
 - Role: `viewer`
-- Target: `none`
-- Params: `AuthClientReadParams`
-- Result: `AgentApiOutcome<AuthClientReadResponse>`
 
-### `auth/clients/list`
+### `credentials/clients/list`
 
 **List OAuth clients**
 
 Lists non-secret OAuth client registrations in the universe.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/clients`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
+- Group: `credentials`
 - Role: `viewer`
-- Target: `none`
-- Params: `AuthClientListParams`
-- Result: `AgentApiOutcome<AuthClientListResponse>`
 
-### `auth/clients/delete`
+### `credentials/clients/delete`
 
 **Delete an OAuth client**
 
 Deletes the client registration and its stored client secret; grants already created from it remain separate records.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `DELETE /api/v1/universes/{universe}/credentials/clients/{clientId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `clientId` → `clientId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthClientDeleteParams`
-- Result: `AgentApiOutcome<AuthClientDeleteResponse>`
 
-### `auth/flows/start`
+### `credentials/flows/start`
 
 **Start an OAuth authorization flow**
 
-Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll auth/flows/read for completion.
+Creates a short-lived PKCE flow carrying the immutable grant exposure choice and returns a browser authorization URL containing one-time state. Treat the URL as sensitive and poll credentials/flows/read for completion.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `POST /api/v1/universes/{universe}/credentials/flows`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `audience`, `clientId`, `exposure`, `scopes`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthFlowStartParams`
-- Result: `AgentApiOutcome<AuthFlowStartResponse>`
 
-### `auth/flows/read`
+### `credentials/flows/read`
 
 **Read OAuth flow status**
 
 Polls a flow's pending/completed/failed/expired state and returns the resulting grant id when authorization succeeds; no token value is exposed.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/flows/{flowId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `flowId` → `flowId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthFlowStatusParams`
-- Result: `AgentApiOutcome<AuthFlowStatusResponse>`
 
-### `auth/providers/create`
+### `credentials/providers/create`
 
-**Register an authentication provider**
+**Register a credential provider**
 
 Creates a model or GitHub credential source. Plaintext API keys/private keys are encrypted on receipt and later represented only by configuration plus hasCredential.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `POST /api/v1/universes/{universe}/credentials/providers`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `config`, `credential`, `displayName`, `providerId`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthProviderCreateParams`
-- Result: `AgentApiOutcome<AuthProviderCreateResponse>`
 
-### `auth/providers/put`
+### `credentials/providers/put`
 
-**Declare an authentication provider**
+**Declare a credential provider**
 
 Makes the provider of this id exist with this configuration and credential. Repeating it changes nothing. A missing provider is created; one that differs is rewritten in place after the new settings validate, atomically, and its old credential deleted. Sessions and environment variables referencing the id keep working.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `PUT /api/v1/universes/{universe}/credentials/providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: JSON object: `config`, `credential`, `displayName`, `dryRun`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthProviderPutParams`
-- Result: `AgentApiOutcome<AuthProviderPutResponse>`
 
-### `auth/providers/read`
+### `credentials/providers/read`
 
-**Read authentication provider metadata**
+**Read credential provider metadata**
 
 Returns provider kind, non-secret configuration, credential-presence state, and status; stored credentials are never returned.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
+- Group: `credentials`
 - Role: `viewer`
-- Target: `none`
-- Params: `AuthProviderReadParams`
-- Result: `AgentApiOutcome<AuthProviderReadResponse>`
 
-### `auth/providers/list`
+### `credentials/providers/list`
 
-**List authentication providers**
+**List credential providers**
 
 Lists non-secret model/GitHub provider registrations for the universe.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/providers`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
+- Group: `credentials`
 - Role: `viewer`
-- Target: `none`
-- Params: `AuthProviderListParams`
-- Result: `AgentApiOutcome<AuthProviderListResponse>`
 
-### `auth/providers/delete`
+### `credentials/providers/delete`
 
-**Delete an authentication provider**
+**Delete a credential provider**
 
 Deletes the provider registration and its directly stored credential; separately stored grants remain independent records.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `DELETE /api/v1/universes/{universe}/credentials/providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthProviderDeleteParams`
-- Result: `AgentApiOutcome<AuthProviderDeleteResponse>`
 
-### `auth/github/installations/list`
+### `credentials/github/installations/list`
 
 **List GitHub App installations**
 
 Uses the registered GitHub App provider credential to query accessible installations and returns account/permission metadata without tokens.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `GET /api/v1/universes/{universe}/credentials/providers/{providerId}/github/installations`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthGitHubInstallationListParams`
-- Result: `AgentApiOutcome<AuthGitHubInstallationListResponse>`
 
-### `auth/github/installations/grant`
+### `credentials/github/installations/grant`
 
 **Grant access to a GitHub App installation**
 
-Creates or refreshes a universe auth grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
+Creates or refreshes a universe credential grant for one accessible installation. This method never returns a token: the broker mints short-lived installation tokens when the grant is used. Brokered is the default; only a grant created retrievable can be bound into an environment or leased to a service.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `auth`
+- HTTP: `POST /api/v1/universes/{universe}/credentials/providers/{providerId}/github/installations/{installationId}/grant`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`, `installationId` → `installationId`
+- Request body: JSON object: `displayName`, `exposure`, `grantId`
+- Access: `{"action":"configureResource","kind":"universe"}`
+- Group: `credentials`
 - Role: `operator`
-- Target: `none`
-- Params: `AuthGitHubInstallationGrantParams`
-- Result: `AgentApiOutcome<AuthGitHubInstallationGrantResponse>`
 
 ### `bots/create`
 
 **Create a bot**
 
-Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created triggers' ingest paths and pairing codes by trigger id.
+Creates the bot record, optionally with its triggers, and starts its controller. Fails if the bot id exists; a trigger failure rolls the bot back. Returns the created webhook triggers' ingest paths by trigger id.
 
-- Access: `{"kind":"universe","action":"createBot"}`
+- HTTP: `POST /api/v1/universes/{universe}/bots`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `bot`, `triggers`
+- Access: `{"action":"createBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotCreateParams`
-- Result: `AgentApiOutcome<BotCreateResponse>`
 
 ### `bots/put`
 
@@ -1366,12 +1622,15 @@ Creates the bot record, optionally with its triggers, and starts its controller.
 
 Replaces the mutable configuration whole and signals the controller, which applies it at its next idle boundary. Pass expectedRevision when replacing; a closed bot accepts label-only edits.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `PUT /api/v1/universes/{universe}/bots/{botId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `bot.botId`
+- Request body: JSON object: `bot`, `expectedRevision`
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotPutParams`
-- Result: `AgentApiOutcome<BotPutResponse>`
 
 ### `bots/read`
 
@@ -1379,12 +1638,15 @@ Replaces the mutable configuration whole and signals the controller, which appli
 
 Returns the bot record, its current revision, and lifecycle columns.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotReadParams`
-- Result: `AgentApiOutcome<BotReadResponse>`
 
 ### `bots/list`
 
@@ -1392,12 +1654,14 @@ Returns the bot record, its current revision, and lifecycle columns.
 
 Returns the roster: every bot with its trigger count, pending event count, and latest event, optionally narrowed by createdBy.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots`
+- Success: `200`
+- Transfer: `json`
+- Query: `createdBy`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotListParams`
-- Result: `AgentApiOutcome<BotListResponse>`
 
 ### `bots/close`
 
@@ -1405,12 +1669,15 @@ Returns the roster: every bot with its trigger count, pending event count, and l
 
 Terminal and idempotent: disables every trigger, drops schedules, and tells the controller to archive pending events and force-close its sessions. Returns once signalled; follow bots/state/read for closing to closed.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `POST /api/v1/universes/{universe}/bots/{botId}/close`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: empty JSON object or no body
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotCloseParams`
-- Result: `AgentApiOutcome<BotCloseResponse>`
 
 ### `bots/delete`
 
@@ -1418,12 +1685,15 @@ Terminal and idempotent: disables every trigger, drops schedules, and tells the 
 
 Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/bots/{botId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: none
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotDeleteParams`
-- Result: `AgentApiOutcome<BotDeleteResponse>`
 
 ### `bots/state/read`
 
@@ -1431,12 +1701,15 @@ Closes the bot if needed, waits for its controller to complete, retains its sess
 
 Queries the controller workflow for its live snapshot (sessions, buffers, active and recent deliveries, budget) and lists sub-agent descendants. The controller is absent until the bot's first event.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/state`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotStateReadParams`
-- Result: `AgentApiOutcome<BotStateReadResponse>`
 
 ### `bots/sessions/rotate`
 
@@ -1444,77 +1717,95 @@ Queries the controller workflow for its live snapshot (sessions, buffers, active
 
 Asks the controller to close one of the bot's sessions at its next idle boundary and continue on a fresh generation; queued deliveries follow.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `POST /api/v1/universes/{universe}/bots/{botId}/sessions/rotate`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: JSON object: `sessionId`
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotSessionRotateParams`
-- Result: `AgentApiOutcome<BotSessionRotateResponse>`
 
 ### `bots/triggers/put`
 
 **Create or replace a trigger**
 
-Validates the trigger document (CEL parses, grants exist, one inbox per bot, chat routes per conversation), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns the trigger's ingest path or pairing code beside the view.
+Validates the trigger document (CEL parses, grants exist, one inbox per bot), reconciles its Temporal Schedule, and stores it. A poll spec edit resets the cursor; a webhook keeps its URL token. Returns a webhook's ingest path beside the view.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `PUT /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`, `triggerId` → `trigger.triggerId`
+- Request body: JSON object: `expectedRevision`, `trigger`
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotTriggerPutParams`
-- Result: `AgentApiOutcome<BotTriggerPutResponse>`
 
 ### `bots/triggers/read`
 
 **Read a trigger**
 
-Returns one trigger with its incidents and cursor. The ingest path and pairing code are never part of it; bots/triggers/secrets/read returns them.
+Returns one trigger with its incidents and cursor. Read a webhook's ingest path through bots/triggers/secrets/read.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`, `triggerId` → `triggerId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotTriggerReadParams`
-- Result: `AgentApiOutcome<BotTriggerReadResponse>`
 
 ### `bots/triggers/list`
 
 **List a bot's triggers**
 
-Returns every trigger of the bot ordered by id, without ingest paths or pairing codes.
+Returns every trigger of the bot ordered by id, without ingest paths.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/triggers`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotTriggerListParams`
-- Result: `AgentApiOutcome<BotTriggerListResponse>`
 
 ### `bots/triggers/secrets/read`
 
 **Read a trigger's secrets**
 
-Returns a webhook trigger's ingest path, whose token lets the holder post events to the bot, or a chat trigger's pairing code, which connects a conversation to it. Both are absent for other triggers. Needs bot management, unlike reading the trigger.
+Returns the webhook ingest path. Its token lets the holder post events to the bot. Requires bot-management permission.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}/secrets`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`, `triggerId` → `triggerId`
+- Request body: none
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotTriggerSecretsReadParams`
-- Result: `AgentApiOutcome<BotTriggerSecretsReadResponse>`
 
 ### `bots/triggers/delete`
 
 **Delete a trigger**
 
-Drops the trigger's Temporal Schedule and pairings, then the record; stored events keep their history.
+Drops the trigger's Temporal Schedule, then the record; stored events keep their history.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `DELETE /api/v1/universes/{universe}/bots/{botId}/triggers/{triggerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`, `triggerId` → `triggerId`
+- Request body: none
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotTriggerDeleteParams`
-- Result: `AgentApiOutcome<BotTriggerDeleteResponse>`
 
 ### `bots/events/admit`
 
@@ -1522,12 +1813,15 @@ Drops the trigger's Temporal Schedule and pairings, then the record; stored even
 
 Stores an operator-authored event for the bot's main session and wakes the controller. eventId is the dedupe identity; a duplicate returns the stored row.
 
-- Access: `{"kind":"universe","action":"invokeBot"}`
+- HTTP: `POST /api/v1/universes/{universe}/bots/{botId}/events`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: JSON object: `event`
+- Access: `{"action":"invokeBot","kind":"universe"}`
 - Group: `bots`
 - Role: `contributor`
-- Target: `none`
-- Params: `BotEventAdmitParams`
-- Result: `AgentApiOutcome<BotEventAdmitResponse>`
 
 ### `bots/events/replay`
 
@@ -1535,12 +1829,15 @@ Stores an operator-authored event for the bot's main session and wakes the contr
 
 Re-admits the stored envelope as a fresh event with the original routing; the replay never coalesces.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `POST /api/v1/universes/{universe}/bots/{botId}/events/{seq}/replay`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`, `seq` → `seq`
+- Request body: empty JSON object or no body
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotEventReplayParams`
-- Result: `AgentApiOutcome<BotEventReplayResponse>`
 
 ### `bots/events/list`
 
@@ -1548,12 +1845,15 @@ Re-admits the stored envelope as a fresh event with the original routing; the re
 
 Cursor-paginated event log, newest first, with outcomes; payload documents stay in the CAS.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/events`
+- Success: `200`
+- Transfer: `json`
+- Query: `cursor`, `limit`
+- Path input fields: `botId` → `botId`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotEventListParams`
-- Result: `AgentApiOutcome<BotEventListResponse>`
 
 ### `bots/events/read`
 
@@ -1561,12 +1861,15 @@ Cursor-paginated event log, newest first, with outcomes; payload documents stay 
 
 Returns the event row and its full stored envelope document.
 
-- Access: `{"kind":"universe","action":"read"}`
+- HTTP: `GET /api/v1/universes/{universe}/bots/{botId}/events/{seq}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`, `seq` → `seq`
+- Request body: none
+- Access: `{"action":"read","kind":"universe"}`
 - Group: `bots`
 - Role: `viewer`
-- Target: `none`
-- Params: `BotEventReadParams`
-- Result: `AgentApiOutcome<BotEventReadResponse>`
 
 ### `bots/filters/test`
 
@@ -1574,138 +1877,68 @@ Returns the event row and its full stored envelope document.
 
 Evaluates a filter against one payload or a sample of recent stored events, reporting matches and evaluation errors without changing anything.
 
-- Access: `{"kind":"universe","action":"manageBot"}`
+- HTTP: `POST /api/v1/universes/{universe}/bots/{botId}/filters/test`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `botId` → `botId`
+- Request body: JSON object: `filter`, `limit`, `payload`
+- Access: `{"action":"manageBot","kind":"universe"}`
 - Group: `bots`
 - Role: `operator`
-- Target: `none`
-- Params: `BotFilterTestParams`
-- Result: `AgentApiOutcome<BotFilterTestResponse>`
 
-### `channels/accounts/create`
+### `blobs/upload`
 
-**Create a channel account**
+**Upload a content-addressed blob**
 
-Registers a provider account (Telegram, WhatsApp) for this universe. The credential is a retrievable grant reference; no token is accepted here.
+Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.
 
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `channels`
-- Role: `operator`
-- Target: `none`
-- Params: `ChannelAccountCreateParams`
-- Result: `AgentApiOutcome<ChannelAccountCreateResponse>`
-
-### `channels/accounts/put`
-
-**Create or replace a channel account**
-
-Replaces the account document whole; pass expectedRevision when replacing. The connector host picks the change up on its next discovery pass.
-
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `channels`
-- Role: `operator`
-- Target: `none`
-- Params: `ChannelAccountPutParams`
-- Result: `AgentApiOutcome<ChannelAccountPutResponse>`
-
-### `channels/accounts/read`
-
-**Read a channel account**
-
-Returns the account document and revision.
-
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `channels`
-- Role: `viewer`
-- Target: `none`
-- Params: `ChannelAccountReadParams`
-- Result: `AgentApiOutcome<ChannelAccountReadResponse>`
-
-### `channels/accounts/list`
-
-**List channel accounts**
-
-Lists this universe's provider accounts, optionally by provider.
-
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `channels`
-- Role: `viewer`
-- Target: `none`
-- Params: `ChannelAccountListParams`
-- Result: `AgentApiOutcome<ChannelAccountListResponse>`
-
-### `channels/accounts/delete`
-
-**Delete a channel account**
-
-Removes the account and its pairings; chat triggers that reference it stop serving conversations.
-
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `channels`
-- Role: `operator`
-- Target: `none`
-- Params: `ChannelAccountDeleteParams`
-- Result: `AgentApiOutcome<ChannelAccountDeleteResponse>`
+- HTTP: `PUT /api/v1/universes/{universe}/blobs/{blobRef}/content`
+- Success: `200`
+- Transfer: `binaryUpload`
+- Query: none
+- Path input fields: `blobRef` → `blobRef`
+- Request body: `application/octet-stream`; `Content-Length` required
+- Access: `{"action":"useResource","kind":"universe"}`
+- Group: `blobs/put`
+- Role: `contributor`
 
 
-## Service methods
+## Service operations
 
-### `channels/inbound/admit`
+### `credentials/grants/lease`
 
-**Admit a provider message**
+**Lease a retrievable credential grant**
 
-Service callers only. Resolves the chat trigger for the conversation, applies pairing, and signals the conversation workflow. Returns the decision so the connector can send pairing prompts itself; acknowledge the provider only after this returns.
+Service callers only. Resolves the current access token through the broker, records the lease, and returns it once. Cache only in memory until expiry minus margin (or at most five minutes without expiry), re-lease after target 401/403, and never persist or place the token in workflow payloads.
 
+- HTTP: `POST /api/v1/universes/{universe}/credentials/grants/{grantId}/lease`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `grantId` → `grantId`
+- Request body: JSON object: `audience`
 - Access: `{"kind":"service"}`
-- Group: `channels/inbound`
+- Group: `credentials/lease`
 - Role: `none`
-- Target: `none`
-- Params: `ChannelInboundAdmitParams`
-- Result: `AgentApiOutcome<ChannelInboundAdmitResponse>`
 
 
-## Universe methods
+## Deployment operations
 
-### `channels/pairings/list`
+### `deployment/universes/deleted/list`
 
-**List chat pairings**
+**List deleted universes**
 
-Lists conversations paired to chat triggers, optionally by account or bot.
+Permanent deletion records, newest first, with resource counts and unconfirmed provider targets.
 
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `channels`
-- Role: `viewer`
-- Target: `none`
-- Params: `ChannelPairingListParams`
-- Result: `AgentApiOutcome<ChannelPairingListResponse>`
-
-### `channels/pairings/delete`
-
-**Unpair a conversation**
-
-Removes one pairing; the conversation must present the pairing code again to reconnect.
-
-- Access: `{"kind":"universe","action":"configureResource"}`
-- Group: `channels`
-- Role: `operator`
-- Target: `none`
-- Params: `ChannelPairingDeleteParams`
-- Result: `AgentApiOutcome<ChannelPairingDeleteResponse>`
-
-### `channels/conversations/read`
-
-**Read a conversation snapshot**
-
-Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.
-
-- Access: `{"kind":"universe","action":"read"}`
-- Group: `channels`
-- Role: `viewer`
-- Target: `none`
-- Params: `ChannelConversationReadParams`
-- Result: `AgentApiOutcome<ChannelConversationReadResponse>`
-
-
-## Deployment methods
+- HTTP: `GET /api/v1/deleted-universes`
+- Success: `200`
+- Transfer: `json`
+- Query: `after`
+- Request body: none
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
 
 ### `deployment/sessions/deleted/list`
 
@@ -1713,12 +1946,15 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 
 Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
 
+- HTTP: `GET /api/v1/universes/{universe}/deleted-sessions`
+- Success: `200`
+- Transfer: `json`
+- Query: `after`
+- Path input fields: `universe` → `universe`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/sessions`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentDeletedSessionsListParams`
-- Result: `AgentApiOutcome<DeploymentDeletedSessionsListResponse>`
 
 ### `deployment/sessions/purge`
 
@@ -1726,12 +1962,15 @@ Administrative metadata for soft-deleted sessions, ordered by session ID. Unavai
 
 Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.
 
+- HTTP: `DELETE /api/v1/universes/{universe}/deleted-sessions/{sessionId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`, `sessionId` → `sessionId`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/sessions`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentSessionPurgeParams`
-- Result: `AgentApiOutcome<DeploymentSessionPurgeResponse>`
 
 ### `deployment/environment-provider-bindings/list`
 
@@ -1739,64 +1978,93 @@ Removes a soft-deleted session and its soft-deleted history subtree. Rejects any
 
 Deployment configuration inventory of one universe's provider bindings.
 
+- HTTP: `GET /api/v1/universes/{universe}/deployment-provider-bindings`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseReadParams`
-- Result: `AgentApiOutcome<EnvironmentProviderBindingListResponse>`
 
 ### `deployment/universes/create`
 
 **Create a universe**
 
-Creates the deployment tenant boundary for an explicit UUID, under the given handle or one derived from the UUID. The operation is idempotent and reports whether a new universe was created; an existing universe keeps its handle. A handle another universe holds is a conflict.
+Creates a universe for an explicit UUID with optional handle, metadata, protection and future expiry. Protection and expiry are mutually exclusive. Idempotent: existing universes retain all settings. A claimed handle or deleting/deleted UUID returns conflict.
 
+- HTTP: `POST /api/v1/universes`
+- Success: `200`, `201` (`created: true` selects 201; false selects 200)
+- Transfer: `json`
+- Query: none
+- Request body: JSON object: `expiresAtMs`, `handle`, `metadata`, `protected`, `universeId`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseCreateParams`
-- Result: `AgentApiOutcome<DeploymentUniverseCreateResponse>`
 
 ### `deployment/universes/list`
 
 **List universes**
 
-Returns deployment-wide universe summaries with approximate live aggregate counts and last session activity.
+Returns deployment-wide summaries, including metadata, protection, expiry and deleting universes. The metadata filter requires every supplied key/value pair. Aggregate counts and last session activity are approximate.
 
+- HTTP: `GET /api/v1/universes`
+- Success: `200`
+- Transfer: `json`
+- Query: `metadata`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseListParams`
-- Result: `AgentApiOutcome<DeploymentUniverseListResponse>`
 
 ### `deployment/universes/read`
 
 **Read a universe**
 
-Returns one deployment tenant summary, addressed by UUID or handle, with aggregate session, workspace, profile, and blob usage.
+Returns one deployment tenant summary, addressed by UUID or active handle, with aggregate session, workspace, profile, and blob usage. Deleting universes remain readable by UUID. A permanently deleted UUID returns gone with its deletion record; an unknown UUID returns notFound.
 
+- HTTP: `GET /api/v1/universes/{universe}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseReadParams`
-- Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
 ### `deployment/universes/configuration/put`
 
-**Declare universe presentation and access**
+**Update universe configuration**
 
-Updates supplied displayName, members and directoryGroupMappings. Omitted fields remain unchanged; empty lists clear declared grants. Platform automatically adopts named universes and enforces declared access independently of manual memberships. Runtime API key authority is unchanged.
+Updates supplied displayName, metadata and protected. Omitted fields retain their values; metadata replaces the complete map. Protection refuses deletion and cannot coexist with an expiry. Clearing protection is explicit and never implied by deletion.
 
+- HTTP: `PUT /api/v1/universes/{universe}/configuration`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: JSON object: `displayName`, `metadata`, `protected`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseConfigurationPutParams`
-- Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
+
+### `deployment/universes/expiry/put`
+
+**Set or clear universe expiry**
+
+Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.
+
+- HTTP: `PUT /api/v1/universes/{universe}/expiry`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: JSON object: `expiresAtMs`
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/universes`
+- Role: `none`
 
 ### `deployment/universes/handle/put`
 
@@ -1804,103 +2072,47 @@ Updates supplied displayName, members and directoryGroupMappings. Omitted fields
 
 Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.
 
+- HTTP: `PUT /api/v1/universes/{universe}/handle`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: JSON object: `handle`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseHandlePutParams`
-- Result: `AgentApiOutcome<DeploymentUniverseReadResponse>`
 
 ### `deployment/universes/delete`
 
-**Purge a universe**
+**Request universe deletion**
 
-Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure.
+Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.
 
+- HTTP: `DELETE /api/v1/universes/{universe}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/universes`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentUniverseDeleteParams`
-- Result: `AgentApiOutcome<DeploymentUniverseDeleteResponse>`
-
-### `deployment/api-keys/create`
-
-**Create a scoped API key**
-
-Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors, under the given key id or an allocated one. The plaintext secret is returned exactly once and cannot be recovered. A key id already used in the scope is a conflict.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/api-keys`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentApiKeyCreateParams`
-- Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
-
-### `deployment/api-keys/put`
-
-**Declare a scoped API key**
-
-Makes the key of this id and scope exist, answer to exactly the supplied secret, and hold these groups and name. Repeating it changes nothing. A missing key is created; a different secret replaces the previous one at once. Conflict: a changed actor flag, a revoked key, or a secret belonging to another key.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/api-keys`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentApiKeyPutParams`
-- Result: `AgentApiOutcome<DeploymentApiKeyPutResponse>`
-
-### `deployment/api-keys/list`
-
-**List scoped API keys**
-
-Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/api-keys`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentApiKeyListParams`
-- Result: `AgentApiOutcome<DeploymentApiKeyListResponse>`
-
-### `deployment/api-keys/rotate`
-
-**Rotate a scoped API key**
-
-Atomically replaces an active key's secret with a generated one, immediately rejecting the old secret on subsequent requests. Preserves the key id, scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. An unknown or revoked key is not found. Already admitted work continues.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/api-keys`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentApiKeyRotateParams`
-- Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
-
-### `deployment/api-keys/revoke`
-
-**Revoke a scoped API key**
-
-Revokes the key of this id and scope; revoking a revoked key keeps its first revocation time. An unknown key is not found. A revoked key keeps its key id.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/api-keys`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentApiKeyRevokeParams`
-- Result: `AgentApiOutcome<DeploymentApiKeyRevokeResponse>`
 
 ### `deployment/environment-providers/put`
 
 **Put an environment provider**
 
-Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+Sets the controller endpoint, optional data route base and optional write-only bearer credential (kept when omitted, removed by clearCredential). Availability defaults to all universes on creation and is preserved when omitted on update. The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.
 
+- HTTP: `PUT /api/v1/environment-providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: JSON object: `availableToAllUniverses`, `clearCredential`, `controllerEndpoint`, `credential`, `dataRouteBase`, `displayName`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentEnvironmentProviderPutParams`
-- Result: `AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>`
 
 ### `deployment/environment-providers/list`
 
@@ -1908,12 +2120,14 @@ Registers or replaces a deployment provider: controller endpoint, optional data 
 
 Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
 
+- HTTP: `GET /api/v1/environment-providers`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentEnvironmentProviderListParams`
-- Result: `AgentApiOutcome<DeploymentEnvironmentProviderListResponse>`
 
 ### `deployment/environment-providers/read`
 
@@ -1921,12 +2135,15 @@ Returns every deployment-registered provider with its controller endpoint, data 
 
 Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
 
+- HTTP: `GET /api/v1/environment-providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentEnvironmentProviderReadParams`
-- Result: `AgentApiOutcome<DeploymentEnvironmentProviderReadResponse>`
 
 ### `deployment/environment-providers/delete`
 
@@ -1934,49 +2151,45 @@ Returns one deployment-registered provider with its controller endpoint, data ro
 
 Deletes a deployment provider only when no universe binding and no non-closed environment references it.
 
+- HTTP: `DELETE /api/v1/environment-providers/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `providerId` → `providerId`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentEnvironmentProviderDeleteParams`
-- Result: `AgentApiOutcome<DeploymentEnvironmentProviderDeleteResponse>`
 
 ### `deployment/environment-providers/bindings/put`
 
 **Put an environment provider binding**
 
-Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
+Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.
 
+- HTTP: `PUT /api/v1/universes/{universe}/deployment-provider-bindings/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`, `providerId` → `providerId`
+- Request body: empty JSON object or no body
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentProviderBindingPutParams`
-- Result: `AgentApiOutcome<DeploymentProviderBindingPutResponse>`
 
 ### `deployment/environment-providers/bindings/delete`
 
 **Delete an environment provider binding**
 
-Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
+Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.
 
+- HTTP: `DELETE /api/v1/universes/{universe}/deployment-provider-bindings/{providerId}`
+- Success: `200`
+- Transfer: `json`
+- Query: none
+- Path input fields: `universe` → `universe`, `providerId` → `providerId`
+- Request body: none
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
-- Target: `none`
-- Params: `DeploymentProviderBindingDeleteParams`
-- Result: `AgentApiOutcome<DeploymentProviderBindingDeleteResponse>`
-
-### `deployment/channels/accounts/list`
-
-**List channel accounts across universes**
-
-The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/channels`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentChannelAccountListParams`
-- Result: `AgentApiOutcome<DeploymentChannelAccountListResponse>`
 

@@ -1,11 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
-use auth::{
-    AuthFlowId, AuthFlowStore, AuthGrantId, AuthGrantStatus, AuthGrantStore, AuthGrantTokenRefresh,
-    AuthProviderKind, AuthRegistryError, CreateAuthFlowRecord, CreateAuthGrantRecord,
-    CreateOAuthClientRecord, FinishAuthFlow, GrantRefreshLock, ListAuthGrants, OAuthClientId,
-    OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_TOKEN, SecretId, SecretStore,
-    SecretValue, TokenEndpointAuthMethod, state_hash,
+use credentials::{
+    CreateCredentialFlowRecord, CreateCredentialGrantRecord, CreateOAuthClientRecord,
+    CredentialFlowId, CredentialFlowStore, CredentialGrantId, CredentialGrantStatus,
+    CredentialGrantStore, CredentialGrantTokenRefresh, CredentialProviderKind,
+    CredentialRegistryError, FinishCredentialFlow, GrantRefreshLock, ListCredentialGrants,
+    OAuthClientId, OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_TOKEN, SecretId,
+    SecretStore, SecretValue, TokenEndpointAuthMethod, state_hash,
 };
 use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
 use environments::{
@@ -1559,7 +1560,6 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
     let workspace_base = put("vfs workspace base manifest").await;
     let bot_document = put("bot event document").await;
     let bot_prompt = put("bot event prompt rendering").await;
-    let bot_media = put("bot event media attachment").await;
     let parent = put("nested parent that embeds a child ref").await;
     let child = put("nested child referenced by an edge only").await;
     let unreferenced_object = put("unreferenced object-backed payload").await;
@@ -1654,15 +1654,14 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         r#"
         INSERT INTO bot_events (
             universe_id, bot_id, event_id, seq, kind, summary, occurred_at_ms, received_at_ms,
-            document_ref, prompt_ref, media_json
+            document_ref, prompt_ref
         )
-        VALUES ($1, 'sweep-bot', 'evt-1', 1, 'test.event', 'holds blobs', 1, 1, $2, $3, $4)
+        VALUES ($1, 'sweep-bot', 'evt-1', 1, 'test.event', 'holds blobs', 1, 1, $2, $3)
         "#,
     )
     .bind(universe_id)
     .bind(bot_document.as_str())
     .bind(bot_prompt.as_str())
-    .bind(serde_json::json!([{ "blobRef": bot_media.as_str(), "kind": "image", "mime": "image/png" }]))
     .execute(store.pool())
     .await
     .expect("insert bot event");
@@ -1670,7 +1669,7 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
     // roots in the same transaction (covered by the bot-store live tests).
     sqlx::query("INSERT INTO cas_bot_event_roots (universe_id, bot_id, event_id, digest) SELECT $1, 'sweep-bot', 'evt-1', unnest($2::text[])")
         .bind(universe_id)
-        .bind([&bot_document, &bot_prompt, &bot_media].map(digest))
+        .bind([&bot_document, &bot_prompt].map(digest))
         .execute(store.pool()).await.expect("fixture bot roots");
     store
         .record_blob_edges(vec![BlobEdge::contains(parent.clone(), child.clone())])
@@ -1785,7 +1784,6 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         &workspace_base,
         &bot_document,
         &bot_prompt,
-        &bot_media,
         &child,
         &fresh,
     ]
@@ -2336,11 +2334,11 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     })
     .await
     .expect("store MCP bearer secret");
-    left.create_grant(CreateAuthGrantRecord {
-        grant_id: AuthGrantId::new("authgrant_mcp_crm"),
+    left.create_grant(CreateCredentialGrantRecord {
+        grant_id: CredentialGrantId::new("authgrant_mcp_crm"),
         provider_id: "static".to_owned(),
-        provider_kind: AuthProviderKind::StaticToken,
-        exposure: auth::AuthGrantExposure::Brokered,
+        provider_kind: CredentialProviderKind::StaticToken,
+        exposure: credentials::CredentialGrantExposure::Brokered,
         created_by: api::Attribution::Local,
         display_name: Some("CRM MCP".to_owned()),
         subject_hint: None,
@@ -2350,7 +2348,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
         refresh_token_secret: None,
         oauth_client: None,
         expires_at_ms: None,
-        status: AuthGrantStatus::Active,
+        status: CredentialGrantStatus::Active,
         metadata: serde_json::Value::Object(Default::default()),
         created_at_ms: 10,
     })
@@ -2363,7 +2361,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     replacement.description = None;
     replacement.approval = McpApprovalPolicy::Always;
     replacement.auth_policy = McpServerAuthPolicy::OptionalBearer;
-    replacement.auth_grant_id = Some(AuthGrantId::new("authgrant_mcp_crm"));
+    replacement.auth_grant_id = Some(CredentialGrantId::new("authgrant_mcp_crm"));
     replacement.now_ms = created.updated_at_ms + 5;
     let replaced = left
         .put_server(replacement, Some(created.revision))
@@ -2375,7 +2373,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     assert_eq!(replaced.approval, McpApprovalPolicy::Always);
     assert_eq!(
         replaced.auth_grant_id,
-        Some(AuthGrantId::new("authgrant_mcp_crm"))
+        Some(CredentialGrantId::new("authgrant_mcp_crm"))
     );
     assert_eq!(replaced.status, McpServerStatus::Disabled);
     assert_eq!(replaced.display_name, created.display_name);
@@ -2401,7 +2399,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
     // grant even when the grant id is otherwise valid.
     let mut cross_universe = put_mcp_server("foreign", McpServerStatus::Active);
     cross_universe.auth_policy = McpServerAuthPolicy::OptionalBearer;
-    cross_universe.auth_grant_id = Some(AuthGrantId::new("authgrant_mcp_crm"));
+    cross_universe.auth_grant_id = Some(CredentialGrantId::new("authgrant_mcp_crm"));
     assert!(
         right.put_server(cross_universe, None).await.is_err(),
         "MCP grant bindings must remain in the server's universe"
@@ -2435,7 +2433,7 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
     // Migration 15 relabels v0.7 token grants to static_token but leaves their
     // secrets under the kind they were sealed with, which is part of the AAD.
-    use auth::{AuthTokenBroker as _, RegistryTokenBroker, TokenAudience};
+    use credentials::{CredentialTokenBroker as _, RegistryTokenBroker, TokenAudience};
 
     let store = Arc::new(live_store("legacy-token-kind", 1024).await);
     store
@@ -2448,11 +2446,11 @@ async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
         .await
         .expect("store a secret under the pre-rename kind");
     store
-        .create_grant(CreateAuthGrantRecord {
-            grant_id: AuthGrantId::new("authgrant_legacy"),
+        .create_grant(CreateCredentialGrantRecord {
+            grant_id: CredentialGrantId::new("authgrant_legacy"),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -2462,7 +2460,7 @@ async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
@@ -2471,7 +2469,7 @@ async fn pg_live_token_sealed_under_the_pre_rename_kind_still_resolves() {
     let broker = RegistryTokenBroker::new(store.clone(), store.clone(), store.clone());
     let token = broker
         .bearer_token(
-            &AuthGrantId::new("authgrant_legacy"),
+            &CredentialGrantId::new("authgrant_legacy"),
             &TokenAudience::McpResource("https://mcp.example.com/mcp".to_owned()),
         )
         .await
@@ -2498,13 +2496,13 @@ async fn pg_live_token_credential_update_writes_only_over_the_expected_value() {
             .await
             .expect("store secret");
     }
-    let grant_id = AuthGrantId::new("authgrant_replace");
+    let grant_id = CredentialGrantId::new("authgrant_replace");
     store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("Replaced".to_owned()),
             subject_hint: None,
@@ -2514,13 +2512,13 @@ async fn pg_live_token_credential_update_writes_only_over_the_expected_value() {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
         .await
         .expect("create grant");
-    let replacement = |secret: &str| auth::TokenCredentialUpdate {
+    let replacement = |secret: &str| credentials::TokenCredentialUpdate {
         access_token_secret: SecretId::new(secret),
         display_name: Some("Replaced".to_owned()),
         subject_hint: Some("ops".to_owned()),
@@ -2607,12 +2605,12 @@ async fn pg_live_token_credential_update_writes_only_over_the_expected_value() {
     assert!(matches!(
         store
             .update_token_credential(
-                &AuthGrantId::new("authgrant_replace_missing"),
+                &CredentialGrantId::new("authgrant_replace_missing"),
                 &SecretId::new("authsec_replace_new"),
                 replacement("authsec_replace_late"),
             )
             .await,
-        Err(AuthRegistryError::GrantNotFound { .. })
+        Err(CredentialRegistryError::GrantNotFound { .. })
     ));
 }
 
@@ -2631,13 +2629,13 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
         })
         .await
         .expect("store header secret");
-    let grant_id = AuthGrantId::new("authgrant_upstream");
+    let grant_id = CredentialGrantId::new("authgrant_upstream");
     store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("Upstream".to_owned()),
             subject_hint: None,
@@ -2647,7 +2645,7 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
@@ -2658,13 +2656,13 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
     input.execution = mcp::McpExecution::Runtime;
     input.headers.insert(
         "x-upstream-url".to_owned(),
-        auth::RequestHeaderValue::Literal {
+        credentials::RequestHeaderValue::Literal {
             value: "https://tracker.example.com".to_owned(),
         },
     );
     input.headers.insert(
         "x-upstream-token".to_owned(),
-        auth::RequestHeaderValue::Credential {
+        credentials::RequestHeaderValue::Credential {
             grant_id: grant_id.clone(),
         },
     );
@@ -2690,8 +2688,8 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
     let mut unknown = input.clone();
     unknown.headers.insert(
         "x-other-token".to_owned(),
-        auth::RequestHeaderValue::Credential {
-            grant_id: AuthGrantId::new("authgrant_missing"),
+        credentials::RequestHeaderValue::Credential {
+            grant_id: CredentialGrantId::new("authgrant_missing"),
         },
     );
     assert!(matches!(
@@ -2745,7 +2743,7 @@ async fn pg_live_mcp_server_headers_round_trip_and_hold_their_credentials() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
+async fn pg_live_credentials_secrets_are_encrypted_and_universe_scoped() {
     let left = live_store("auth-left", 1024).await;
     let right = live_store("auth-right", 1024).await;
     let secret_id = SecretId::new("authsec_crm");
@@ -2768,7 +2766,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
             created_at_ms: 11,
         })
         .await,
-        Err(AuthRegistryError::SecretAlreadyExists { .. })
+        Err(CredentialRegistryError::SecretAlreadyExists { .. })
     ));
 
     let (meta, value) = left.read_secret(&secret_id).await.expect("read secret");
@@ -2776,7 +2774,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     assert_eq!(value.expose(), token);
 
     let row = sqlx::query(
-        "SELECT ciphertext FROM auth_secrets WHERE universe_id = $1 AND secret_id = $2",
+        "SELECT ciphertext FROM credentials_secrets WHERE universe_id = $1 AND secret_id = $2",
     )
     .bind(left.config().universe_id)
     .bind(secret_id.as_str())
@@ -2793,7 +2791,7 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
 
     assert!(matches!(
         right.read_secret(&secret_id).await,
-        Err(AuthRegistryError::SecretNotFound { .. })
+        Err(CredentialRegistryError::SecretNotFound { .. })
     ));
 
     let wrong_key_store = PgStore::with_object_store(
@@ -2805,28 +2803,28 @@ async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     );
     assert!(matches!(
         wrong_key_store.read_secret(&secret_id).await,
-        Err(AuthRegistryError::Store { .. })
+        Err(CredentialRegistryError::Store { .. })
     ));
 
     left.delete_secret(&secret_id).await.expect("delete secret");
     assert!(matches!(
         left.read_secret(&secret_id).await,
-        Err(AuthRegistryError::SecretNotFound { .. })
+        Err(CredentialRegistryError::SecretNotFound { .. })
     ));
 }
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_auth_grants_crud_and_status_updates() {
+async fn pg_live_credentials_grants_crud_and_status_updates() {
     let store = live_store("auth-grants", 1024).await;
-    let grant_id = AuthGrantId::new("authgrant_crm");
+    let grant_id = CredentialGrantId::new("authgrant_crm");
 
     let created = store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("CRM token".to_owned()),
             subject_hint: None,
@@ -2836,7 +2834,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
@@ -2846,13 +2844,13 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
 
     assert!(matches!(
         store
-            .create_grant(CreateAuthGrantRecord {
+            .create_grant(CreateCredentialGrantRecord {
                 created_at_ms: 11,
-                ..CreateAuthGrantRecord {
+                ..CreateCredentialGrantRecord {
                     grant_id: grant_id.clone(),
                     provider_id: "static".to_owned(),
-                    provider_kind: AuthProviderKind::StaticToken,
-                    exposure: auth::AuthGrantExposure::Brokered,
+                    provider_kind: CredentialProviderKind::StaticToken,
+                    exposure: credentials::CredentialGrantExposure::Brokered,
                     created_by: api::Attribution::Local,
                     display_name: None,
                     subject_hint: None,
@@ -2862,13 +2860,13 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
                     refresh_token_secret: None,
                     oauth_client: None,
                     expires_at_ms: None,
-                    status: AuthGrantStatus::Active,
+                    status: CredentialGrantStatus::Active,
                     metadata: serde_json::Value::Object(Default::default()),
                     created_at_ms: 11,
                 }
             })
             .await,
-        Err(AuthRegistryError::GrantAlreadyExists { .. })
+        Err(CredentialRegistryError::GrantAlreadyExists { .. })
     ));
 
     assert_eq!(
@@ -2877,8 +2875,8 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
     );
     assert_eq!(
         store
-            .list_grants(ListAuthGrants {
-                status: Some(AuthGrantStatus::Active),
+            .list_grants(ListCredentialGrants {
+                status: Some(CredentialGrantStatus::Active),
             })
             .await
             .expect("list active grants"),
@@ -2886,15 +2884,15 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
     );
 
     let revoked = store
-        .update_grant_status(&grant_id, AuthGrantStatus::Revoked, 20)
+        .update_grant_status(&grant_id, CredentialGrantStatus::Revoked, 20)
         .await
         .expect("revoke grant");
-    assert_eq!(revoked.status, AuthGrantStatus::Revoked);
+    assert_eq!(revoked.status, CredentialGrantStatus::Revoked);
     assert_eq!(revoked.updated_at_ms, 20);
     assert!(
         store
-            .list_grants(ListAuthGrants {
-                status: Some(AuthGrantStatus::Active),
+            .list_grants(ListCredentialGrants {
+                status: Some(CredentialGrantStatus::Active),
             })
             .await
             .expect("list active grants after revoke")
@@ -2905,7 +2903,7 @@ async fn pg_live_auth_grants_crud_and_status_updates() {
     assert_eq!(deleted.grant_id, grant_id);
     assert!(matches!(
         store.read_grant(&grant_id).await,
-        Err(AuthRegistryError::GrantNotFound { .. })
+        Err(CredentialRegistryError::GrantNotFound { .. })
     ));
 }
 
@@ -2929,7 +2927,7 @@ async fn pg_live_oauth_clients_crud() {
         store
             .create_oauth_client(create_oauth_client_record(&client_id))
             .await,
-        Err(AuthRegistryError::ClientAlreadyExists { .. })
+        Err(CredentialRegistryError::ClientAlreadyExists { .. })
     ));
 
     assert_eq!(
@@ -2954,28 +2952,28 @@ async fn pg_live_oauth_clients_crud() {
     assert_eq!(deleted.client_id, client_id);
     assert!(matches!(
         store.read_oauth_client(&client_id).await,
-        Err(AuthRegistryError::ClientNotFound { .. })
+        Err(CredentialRegistryError::ClientNotFound { .. })
     ));
 }
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_auth_flows_are_one_time_use() {
+async fn pg_live_credentials_flows_are_one_time_use() {
     let store = live_store("auth-flows", 1024).await;
-    let flow_id = AuthFlowId::new("authflow_live");
+    let flow_id = CredentialFlowId::new("authflow_live");
     let state = "state-live-1";
 
     let created = store
-        .create_flow(CreateAuthFlowRecord {
+        .create_flow(CreateCredentialFlowRecord {
             flow_id: flow_id.clone(),
             client_id: OAuthClientId::new("crm"),
             provider_id: "crm".to_owned(),
-            provider_kind: AuthProviderKind::McpOAuth,
-            grant_exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::McpOAuth,
+            grant_exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             state_hash: state_hash(state),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live"),
-            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/ingress/credentials/callback".to_owned(),
             scopes: vec!["contacts.read".to_owned()],
             audience: Some("https://crm.example.com/mcp".to_owned()),
             expected_issuer: Some("https://as.example.com".to_owned()),
@@ -3005,14 +3003,14 @@ async fn pg_live_auth_flows_are_one_time_use() {
     assert_eq!(consumed.consumed_at_ms, Some(100));
     assert!(matches!(
         store.consume_flow(&flow_id, 101).await,
-        Err(AuthRegistryError::FlowAlreadyConsumed { .. })
+        Err(CredentialRegistryError::FlowAlreadyConsumed { .. })
     ));
 
     let finished = store
         .finish_flow(
             &flow_id,
-            FinishAuthFlow {
-                grant_id: Some(AuthGrantId::new("authgrant_flow_live")),
+            FinishCredentialFlow {
+                grant_id: Some(CredentialGrantId::new("authgrant_flow_live")),
                 error: None,
                 completed_at_ms: 150,
             },
@@ -3021,35 +3019,35 @@ async fn pg_live_auth_flows_are_one_time_use() {
         .expect("finish flow");
     assert_eq!(
         finished.grant_id,
-        Some(AuthGrantId::new("authgrant_flow_live"))
+        Some(CredentialGrantId::new("authgrant_flow_live"))
     );
     assert!(matches!(
         store
             .finish_flow(
                 &flow_id,
-                FinishAuthFlow {
+                FinishCredentialFlow {
                     grant_id: None,
                     error: Some("late".to_owned()),
                     completed_at_ms: 160,
                 }
             )
             .await,
-        Err(AuthRegistryError::FlowAlreadyCompleted { .. })
+        Err(CredentialRegistryError::FlowAlreadyCompleted { .. })
     ));
 
     // A separate expired flow cannot be consumed.
-    let expired_id = AuthFlowId::new("authflow_live_expired");
+    let expired_id = CredentialFlowId::new("authflow_live_expired");
     store
-        .create_flow(CreateAuthFlowRecord {
+        .create_flow(CreateCredentialFlowRecord {
             flow_id: expired_id.clone(),
             client_id: OAuthClientId::new("crm"),
             provider_id: "crm".to_owned(),
-            provider_kind: AuthProviderKind::McpOAuth,
-            grant_exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::McpOAuth,
+            grant_exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             state_hash: state_hash("state-live-2"),
             pkce_verifier_secret: SecretId::new("authsec_pkce_live2"),
-            redirect_uri: "https://lightspeed.example.com/auth/callback".to_owned(),
+            redirect_uri: "https://lightspeed.example.com/ingress/credentials/callback".to_owned(),
             scopes: Vec::new(),
             audience: Some("https://crm.example.com/mcp".to_owned()),
             expected_issuer: None,
@@ -3061,7 +3059,7 @@ async fn pg_live_auth_flows_are_one_time_use() {
         .expect("create expired flow");
     assert!(matches!(
         store.consume_flow(&expired_id, 1_000).await,
-        Err(AuthRegistryError::FlowExpired { .. })
+        Err(CredentialRegistryError::FlowExpired { .. })
     ));
 }
 
@@ -3069,13 +3067,13 @@ async fn pg_live_auth_flows_are_one_time_use() {
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
     let store = Arc::new(live_store("grant-refresh", 1024).await);
-    let grant_id = AuthGrantId::new("authgrant_refresh_live");
+    let grant_id = CredentialGrantId::new("authgrant_refresh_live");
     store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "crm".to_owned(),
-            provider_kind: AuthProviderKind::McpOAuth,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::McpOAuth,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -3085,17 +3083,17 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
             refresh_token_secret: Some(SecretId::new("authsec_old_refresh")),
             oauth_client: Some(OAuthClientId::new("crm")),
             expires_at_ms: Some(1_000),
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
         .await
-        .expect("create oauth grant");
+        .expect("create ocredential grant");
 
     let refreshed = store
         .record_grant_refresh(
             &grant_id,
-            AuthGrantTokenRefresh {
+            CredentialGrantTokenRefresh {
                 access_token_secret: SecretId::new("authsec_new_access"),
                 refresh_token_secret: None,
                 expires_at_ms: Some(5_000),
@@ -3118,7 +3116,7 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
     let rotated = store
         .record_grant_refresh(
             &grant_id,
-            AuthGrantTokenRefresh {
+            CredentialGrantTokenRefresh {
                 access_token_secret: SecretId::new("authsec_newer_access"),
                 refresh_token_secret: Some(SecretId::new("authsec_new_refresh")),
                 expires_at_ms: Some(9_000),
@@ -3153,14 +3151,15 @@ async fn pg_live_grant_refresh_updates_token_refs_and_lock_serializes() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_auth_providers_crud_and_credential_fk() {
-    use auth::{
-        AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
-        CreateAuthProviderRecord, GitHubAppConfig, SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
+async fn pg_live_credentials_providers_crud_and_credential_fk() {
+    use credentials::{
+        CreateCredentialProviderRecord, CredentialProviderConfig, CredentialProviderId,
+        CredentialProviderStatus, CredentialProviderStore, GitHubAppConfig,
+        SECRET_KIND_GITHUB_APP_PRIVATE_KEY,
     };
 
     let store = live_store("auth-providers", 1024).await;
-    let provider_id = AuthProviderId::new("lightspeed-github");
+    let provider_id = CredentialProviderId::new("lightspeed-github");
     let key_secret = SecretId::new("authsec_github_key_live");
     store
         .put_secret(PutSecretRecord {
@@ -3175,47 +3174,50 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
         .expect("put app key secret");
 
     let created = store
-        .create_auth_provider(CreateAuthProviderRecord {
+        .create_credential_provider(CreateCredentialProviderRecord {
             provider_id: provider_id.clone(),
             display_name: Some("Lightspeed GitHub App".to_owned()),
-            config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+            config: CredentialProviderConfig::GitHubApp(GitHubAppConfig {
                 app_id: "12345".to_owned(),
                 api_base_url: "https://api.github.com".to_owned(),
             }),
             credential_secret: Some(key_secret.clone()),
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         })
         .await
         .expect("create provider");
-    assert_eq!(created.provider_kind, AuthProviderKind::GitHubApp);
+    assert_eq!(created.provider_kind, CredentialProviderKind::GitHubApp);
 
     assert!(matches!(
         store
-            .create_auth_provider(CreateAuthProviderRecord {
+            .create_credential_provider(CreateCredentialProviderRecord {
                 provider_id: provider_id.clone(),
                 display_name: None,
-                config: AuthProviderConfig::GitHubApp(GitHubAppConfig {
+                config: CredentialProviderConfig::GitHubApp(GitHubAppConfig {
                     app_id: "12345".to_owned(),
                     api_base_url: "https://api.github.com".to_owned(),
                 }),
                 credential_secret: Some(key_secret.clone()),
-                status: AuthProviderStatus::Active,
+                status: CredentialProviderStatus::Active,
                 created_at_ms: 11,
             })
             .await,
-        Err(AuthRegistryError::ProviderAlreadyExists { .. })
+        Err(CredentialRegistryError::ProviderAlreadyExists { .. })
     ));
 
     assert_eq!(
         store
-            .read_auth_provider(&provider_id)
+            .read_credential_provider(&provider_id)
             .await
             .expect("read provider"),
         created
     );
     assert_eq!(
-        store.list_auth_providers().await.expect("list providers"),
+        store
+            .list_credential_providers()
+            .await
+            .expect("list providers"),
         vec![created.clone()]
     );
 
@@ -3223,11 +3225,11 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
     // the provider references it.
     assert!(matches!(
         store.delete_secret(&key_secret).await,
-        Err(AuthRegistryError::Store { .. })
+        Err(CredentialRegistryError::Store { .. })
     ));
 
     let deleted = store
-        .delete_auth_provider(&provider_id)
+        .delete_credential_provider(&provider_id)
         .await
         .expect("delete provider");
     assert_eq!(deleted.provider_id, provider_id);
@@ -3237,21 +3239,22 @@ async fn pg_live_auth_providers_crud_and_credential_fk() {
         .await
         .expect("delete app key secret after provider");
     assert!(matches!(
-        store.read_auth_provider(&provider_id).await,
-        Err(AuthRegistryError::ProviderNotFound { .. })
+        store.read_credential_provider(&provider_id).await,
+        Err(CredentialRegistryError::ProviderNotFound { .. })
     ));
 }
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
-    use auth::{
-        AuthProviderConfig, AuthProviderId, AuthProviderStatus, AuthProviderStore,
-        CreateAuthProviderRecord, ModelEndpointConfig, ModelEndpointOnlyConfig, RequestHeaderValue,
+async fn pg_live_credentials_provider_headers_round_trip_and_hold_their_credentials() {
+    use credentials::{
+        CreateCredentialProviderRecord, CredentialProviderConfig, CredentialProviderId,
+        CredentialProviderStatus, CredentialProviderStore, ModelEndpointConfig,
+        ModelEndpointOnlyConfig, RequestHeaderValue,
     };
 
     let store = live_store("auth-provider-headers", 1024).await;
-    let provider_id = AuthProviderId::new("model:router");
+    let provider_id = CredentialProviderId::new("model:router");
 
     store
         .put_secret(PutSecretRecord {
@@ -3262,13 +3265,13 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
         })
         .await
         .expect("store header secret");
-    let grant_id = AuthGrantId::new("authgrant_router");
+    let grant_id = CredentialGrantId::new("authgrant_router");
     store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: Some("Router".to_owned()),
             subject_hint: None,
@@ -3278,7 +3281,7 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::Value::Object(Default::default()),
             created_at_ms: 10,
         })
@@ -3286,7 +3289,7 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
         .expect("create header grant");
 
     let endpoint = |headers| {
-        AuthProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
+        CredentialProviderConfig::ModelEndpoint(ModelEndpointOnlyConfig {
             endpoint: ModelEndpointConfig {
                 base_url: "https://router.example/v1".to_owned(),
                 headers,
@@ -3308,30 +3311,33 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
     );
     let config = endpoint([literal.clone(), credential.clone()].into());
     let created = store
-        .create_auth_provider(CreateAuthProviderRecord {
+        .create_credential_provider(CreateCredentialProviderRecord {
             provider_id: provider_id.clone(),
             display_name: Some("Router".to_owned()),
             config: config.clone(),
             credential_secret: None,
-            status: AuthProviderStatus::Active,
+            status: CredentialProviderStatus::Active,
             created_at_ms: 10,
         })
         .await
         .expect("create provider with headers");
     assert_eq!(created.config, config);
     assert_eq!(
-        store.read_auth_provider(&provider_id).await.expect("read"),
+        store
+            .read_credential_provider(&provider_id)
+            .await
+            .expect("read"),
         created
     );
     assert_eq!(
-        store.list_auth_providers().await.expect("list"),
+        store.list_credential_providers().await.expect("list"),
         vec![created.clone()]
     );
 
     // Headers are rows; the stored document carries none, so a credential
     // reference is always held by the foreign key.
     let document: serde_json::Value = sqlx::query_scalar(
-        "SELECT config_json FROM auth_providers WHERE universe_id = $1 AND provider_id = $2",
+        "SELECT config_json FROM credentials_providers WHERE universe_id = $1 AND provider_id = $2",
     )
     .bind(store.config().universe_id)
     .bind(provider_id.as_str())
@@ -3355,7 +3361,7 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
             (
                 "x-other-token".to_owned(),
                 RequestHeaderValue::Credential {
-                    grant_id: AuthGrantId::new("authgrant_missing"),
+                    grant_id: CredentialGrantId::new("authgrant_missing"),
                 },
             ),
         ]
@@ -3363,12 +3369,12 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
     );
     unknown.updated_at_ms = 15;
     assert!(matches!(
-        store.replace_auth_provider(unknown, None).await,
-        Err(AuthRegistryError::InvalidInput { .. })
+        store.replace_credential_provider(unknown, None).await,
+        Err(CredentialRegistryError::InvalidInput { .. })
     ));
     assert_eq!(
         store
-            .read_auth_provider(&provider_id)
+            .read_credential_provider(&provider_id)
             .await
             .expect("unchanged"),
         created
@@ -3377,7 +3383,7 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
     // The table itself refuses a plain value under a name that carries a
     // secret, whatever wrote the row.
     let plain_secret = sqlx::query(
-        "INSERT INTO auth_provider_headers (universe_id, provider_id, name, literal_value)
+        "INSERT INTO credentials_provider_headers (universe_id, provider_id, name, literal_value)
          VALUES ($1, $2, 'api-key', 'sk-plain')",
     )
     .bind(store.config().universe_id)
@@ -3391,7 +3397,7 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
     replacement.config = endpoint([literal].into());
     replacement.updated_at_ms = 20;
     let replaced = store
-        .replace_auth_provider(replacement, None)
+        .replace_credential_provider(replacement, None)
         .await
         .expect("replace headers")
         .expect("guard matches");
@@ -3410,16 +3416,17 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
     // removes its headers.
     store.delete_grant(&grant_id).await.expect("delete grant");
     let deleted = store
-        .delete_auth_provider(&provider_id)
+        .delete_credential_provider(&provider_id)
         .await
         .expect("delete");
     assert_eq!(deleted, replaced);
-    let remaining: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM auth_provider_headers WHERE universe_id = $1")
-            .bind(store.config().universe_id)
-            .fetch_one(store.pool())
-            .await
-            .expect("count header rows");
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credentials_provider_headers WHERE universe_id = $1",
+    )
+    .bind(store.config().universe_id)
+    .fetch_one(store.pool())
+    .await
+    .expect("count header rows");
     assert_eq!(remaining, 0);
 }
 
@@ -3427,14 +3434,14 @@ async fn pg_live_auth_provider_headers_round_trip_and_hold_their_credentials() {
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_grant_metadata_round_trips() {
     let store = live_store("grant-metadata", 1024).await;
-    let grant_id = AuthGrantId::new("authgrant_install_live");
+    let grant_id = CredentialGrantId::new("authgrant_install_live");
 
     let created = store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "lightspeed-github".to_owned(),
-            provider_kind: AuthProviderKind::GitHubApp,
-            exposure: auth::AuthGrantExposure::Brokered,
+            provider_kind: CredentialProviderKind::GitHubApp,
+            exposure: credentials::CredentialGrantExposure::Brokered,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: Some("acme".to_owned()),
@@ -3444,7 +3451,7 @@ async fn pg_live_grant_metadata_round_trips() {
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::json!({
                 "installation_id": 678,
                 "account_login": "acme",
@@ -3464,7 +3471,7 @@ fn create_oauth_client_record(client_id: &OAuthClientId) -> CreateOAuthClientRec
     CreateOAuthClientRecord {
         client_id: client_id.clone(),
         provider_id: "crm".to_owned(),
-        provider_kind: AuthProviderKind::McpOAuth,
+        provider_kind: CredentialProviderKind::McpOAuth,
         display_name: Some("CRM".to_owned()),
         authorization_endpoint: "https://as.example.com/authorize".to_owned(),
         token_endpoint: "https://as.example.com/token".to_owned(),
@@ -3505,19 +3512,23 @@ async fn pg_live_environment_credentials_round_trip() {
     // metadata, so exercise two stored-secret grants. They are retrievable,
     // as every grant bound into an environment is.
     for (grant_id, kind, provider) in [
-        ("authgrant_codex", AuthProviderKind::StaticToken, "openai"),
+        (
+            "authgrant_codex",
+            CredentialProviderKind::StaticToken,
+            "openai",
+        ),
         (
             "authgrant_claude",
-            AuthProviderKind::StaticToken,
+            CredentialProviderKind::StaticToken,
             "anthropic",
         ),
     ] {
         store
-            .create_grant(CreateAuthGrantRecord {
-                grant_id: AuthGrantId::new(grant_id),
+            .create_grant(CreateCredentialGrantRecord {
+                grant_id: CredentialGrantId::new(grant_id),
                 provider_id: provider.to_owned(),
                 provider_kind: kind,
-                exposure: auth::AuthGrantExposure::Retrievable,
+                exposure: credentials::CredentialGrantExposure::Retrievable,
                 created_by: api::Attribution::Local,
                 display_name: None,
                 subject_hint: None,
@@ -3527,7 +3538,7 @@ async fn pg_live_environment_credentials_round_trip() {
                 refresh_token_secret: None,
                 oauth_client: None,
                 expires_at_ms: None,
-                status: AuthGrantStatus::Active,
+                status: CredentialGrantStatus::Active,
                 metadata: serde_json::json!({ "subscription": "codex" }),
                 created_at_ms: 4,
             })
@@ -3539,8 +3550,8 @@ async fn pg_live_environment_credentials_round_trip() {
         .bind_credential(PutEnvironmentCredential {
             environment_id: environment_id.clone(),
             env_name: "CODEX_AUTH_JSON".to_owned(),
-            source: EnvironmentCredentialSource::AuthGrant {
-                grant_id: AuthGrantId::new("authgrant_codex"),
+            source: EnvironmentCredentialSource::CredentialGrant {
+                grant_id: CredentialGrantId::new("authgrant_codex"),
             },
             created_at_ms: 5,
         })
@@ -3548,16 +3559,16 @@ async fn pg_live_environment_credentials_round_trip() {
         .expect("bind codex credential");
     assert_eq!(
         bound.source,
-        EnvironmentCredentialSource::AuthGrant {
-            grant_id: AuthGrantId::new("authgrant_codex"),
+        EnvironmentCredentialSource::CredentialGrant {
+            grant_id: CredentialGrantId::new("authgrant_codex"),
         }
     );
     store
         .bind_credential(PutEnvironmentCredential {
             environment_id: environment_id.clone(),
             env_name: "CLAUDE_CODE_OAUTH_TOKEN".to_owned(),
-            source: EnvironmentCredentialSource::AuthGrant {
-                grant_id: AuthGrantId::new("authgrant_claude"),
+            source: EnvironmentCredentialSource::CredentialGrant {
+                grant_id: CredentialGrantId::new("authgrant_claude"),
             },
             created_at_ms: 6,
         })
@@ -3569,8 +3580,8 @@ async fn pg_live_environment_credentials_round_trip() {
         .bind_credential(PutEnvironmentCredential {
             environment_id: environment_id.clone(),
             env_name: "CODEX_AUTH_JSON".to_owned(),
-            source: EnvironmentCredentialSource::AuthGrant {
-                grant_id: AuthGrantId::new("authgrant_claude"),
+            source: EnvironmentCredentialSource::CredentialGrant {
+                grant_id: CredentialGrantId::new("authgrant_claude"),
             },
             created_at_ms: 7,
         })
@@ -3578,8 +3589,8 @@ async fn pg_live_environment_credentials_round_trip() {
         .expect("rebind to another grant");
     assert_eq!(
         replaced.source,
-        EnvironmentCredentialSource::AuthGrant {
-            grant_id: AuthGrantId::new("authgrant_claude"),
+        EnvironmentCredentialSource::CredentialGrant {
+            grant_id: CredentialGrantId::new("authgrant_claude"),
         }
     );
 
@@ -3668,13 +3679,13 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
         })
         .await
         .expect("put secret");
-    let grant_id = AuthGrantId::new("authgrant_pod_token");
+    let grant_id = CredentialGrantId::new("authgrant_pod_token");
     store
-        .create_grant(CreateAuthGrantRecord {
+        .create_grant(CreateCredentialGrantRecord {
             grant_id: grant_id.clone(),
             provider_id: "static".to_owned(),
-            provider_kind: AuthProviderKind::StaticToken,
-            exposure: auth::AuthGrantExposure::Retrievable,
+            provider_kind: CredentialProviderKind::StaticToken,
+            exposure: credentials::CredentialGrantExposure::Retrievable,
             created_by: api::Attribution::Local,
             display_name: None,
             subject_hint: None,
@@ -3684,7 +3695,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
             refresh_token_secret: None,
             oauth_client: None,
             expires_at_ms: None,
-            status: AuthGrantStatus::Active,
+            status: CredentialGrantStatus::Active,
             metadata: serde_json::json!({}),
             created_at_ms: 3,
         })
@@ -3694,7 +3705,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
         .bind_credential(PutEnvironmentCredential {
             environment_id: environment_id.clone(),
             env_name: "POD_TOKEN".to_owned(),
-            source: EnvironmentCredentialSource::AuthGrant {
+            source: EnvironmentCredentialSource::CredentialGrant {
                 grant_id: grant_id.clone(),
             },
             created_at_ms: 4,
@@ -3705,7 +3716,7 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
     // Outside a universe delete the references still hold.
     assert!(matches!(
         store.delete_grant(&grant_id).await,
-        Err(AuthRegistryError::Store { .. })
+        Err(CredentialRegistryError::Store { .. })
     ));
     assert_eq!(
         violated_constraint(
@@ -3730,8 +3741,8 @@ async fn pg_live_universe_delete_removes_registered_environments_and_credential_
         "environment_registration_keys",
         "environment_registration_key_secrets",
         "environment_credentials",
-        "auth_grants",
-        "auth_secrets",
+        "credentials_grants",
+        "credentials_secrets",
     ] {
         let remaining: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM {table} WHERE universe_id = $1"
@@ -3961,7 +3972,7 @@ fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecor
         allow_private_network: false,
         auth_policy: McpServerAuthPolicy::None,
         auth_grant_id: None,
-        headers: auth::RequestHeaders::new(),
+        headers: credentials::RequestHeaders::new(),
         status,
         now_ms: 10,
     }
@@ -4469,8 +4480,8 @@ async fn pg_live_concurrent_inline_puts_of_the_same_bytes_all_succeed() {
 // Environments
 // ---------------------------------------------------------------------------
 
-/// Register a provider with a unique id (providers are deployment-wide) and
-/// bind it, enabled, to the store's universe.
+/// Register a provider with a unique id (providers are deployment-wide),
+/// limited to bound universes, and bind it to the store's universe.
 async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProviderId {
     let provider_id = EnvironmentProviderId::new(format!("{name}-{}", Uuid::new_v4().simple()));
     store
@@ -4481,6 +4492,7 @@ async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProvider
                 .expect("endpoint"),
             data_route_base: None,
             credential: ProviderCredentialChange::Keep,
+            available_to_all_universes: Some(false),
             updated_at_ms: 1,
         })
         .await
@@ -4489,7 +4501,6 @@ async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProvider
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id: store.config().universe_id,
             provider_id: provider_id.clone(),
-            enabled: true,
             updated_at_ms: 2,
         })
         .await
@@ -4553,13 +4564,17 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         controller_endpoint: endpoint.clone(),
         data_route_base,
         credential,
+        available_to_all_universes: None,
         updated_at_ms,
     };
 
     // A new provider needs no credential, and its data route base derives
     // from the controller endpoint.
     let bare = store
-        .put_provider(put(None, None, ProviderCredentialChange::Keep, 1))
+        .put_provider(PutEnvironmentProvider {
+            available_to_all_universes: Some(false),
+            ..put(None, None, ProviderCredentialChange::Keep, 1)
+        })
         .await
         .expect("register provider without a credential");
     assert!(!bare.has_credential);
@@ -4589,6 +4604,7 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .await
         .expect("set credential");
     assert!(sealed.has_credential);
+    assert!(!sealed.available_to_all_universes);
     assert_eq!(sealed.data_route_base, Some(base.clone()));
     assert_eq!((sealed.created_at_ms, sealed.updated_at_ms), (1, 2));
     let ciphertext: Vec<u8> = sqlx::query_scalar(
@@ -4647,40 +4663,36 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
     );
 
     // Bindings are keyed by provider; a missing provider is NotFound.
-    let binding = store
+    store
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id,
             provider_id: provider_id.clone(),
-            enabled: true,
             updated_at_ms: 5,
         })
         .await
         .expect("bind provider");
-    assert!(binding.enabled);
-    let disabled = store
+    let rebound = store
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id,
             provider_id: provider_id.clone(),
-            enabled: false,
             updated_at_ms: 6,
         })
         .await
-        .expect("disable binding");
-    assert!(!disabled.enabled);
-    assert_eq!((disabled.created_at_ms, disabled.updated_at_ms), (5, 6));
+        .expect("bind again");
+    assert_eq!((rebound.created_at_ms, rebound.updated_at_ms), (5, 6));
     assert_eq!(
         store
             .read_provider_binding(universe_id, &provider_id)
             .await
             .expect("read binding"),
-        disabled
+        rebound
     );
     assert_eq!(
         store
             .list_provider_bindings(universe_id)
             .await
             .expect("list bindings"),
-        vec![disabled]
+        vec![rebound]
     );
     assert!(matches!(
         store
@@ -4690,7 +4702,6 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
                     "missing-{}",
                     Uuid::new_v4().simple()
                 )),
-                enabled: true,
                 updated_at_ms: 6,
             })
             .await,
@@ -4700,7 +4711,12 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         })
     ));
 
-    // Creates need an enabled binding; deletes are guarded.
+    // Without a binding a provider limited to bound universes refuses
+    // creates; deletes are guarded.
+    store
+        .delete_provider_binding(universe_id, &provider_id)
+        .await
+        .expect("unbind");
     assert!(matches!(
         store
             .create_environment(create_environment(
@@ -4716,11 +4732,10 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id,
             provider_id: provider_id.clone(),
-            enabled: true,
             updated_at_ms: 7,
         })
         .await
-        .expect("enable binding");
+        .expect("bind again");
     let environment = store
         .create_environment(create_environment(
             &provider_id,
@@ -4732,12 +4747,6 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .expect("create environment");
     assert!(matches!(
         store.delete_provider(&provider_id).await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    assert!(matches!(
-        store
-            .delete_provider_binding(universe_id, &provider_id)
-            .await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
     store
@@ -4764,6 +4773,21 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .delete_provider(&provider_id)
         .await
         .expect("closed environments do not hold a provider");
+
+    // A provider available to every universe needs no binding.
+    store
+        .put_provider(put(None, None, ProviderCredentialChange::Keep, 20))
+        .await
+        .expect("register for all universes");
+    store
+        .create_environment(create_environment(
+            &provider_id,
+            "open-request",
+            "open-env",
+            21,
+        ))
+        .await
+        .expect("create without a binding");
 
     // The all-or-none credential CHECK names its NULL case explicitly.
     let orphan_id = format!("check-{}", Uuid::new_v4().simple());
@@ -4843,14 +4867,14 @@ async fn pg_live_provisioned_environment_lifecycle_follows_the_domain_rules() {
     assert!(matches!(
         store
             .create_environment(create_environment(
-                &EnvironmentProviderId::new(format!("unbound-{}", Uuid::new_v4().simple())),
-                "lifecycle-unbound",
-                "lifecycle-unbound",
+                &EnvironmentProviderId::new(format!("missing-{}", Uuid::new_v4().simple())),
+                "lifecycle-missing",
+                "lifecycle-missing",
                 100,
             ))
             .await,
         Err(EnvironmentRegistryError::NotFound {
-            kind: "environment_provider_binding",
+            kind: "environment_provider",
             ..
         })
     ));
@@ -6570,18 +6594,13 @@ async fn pg_live_environment_deployment_queries_find_work_and_revoked_routes() {
         ]
     );
     store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id,
-            provider_id: provider_id.clone(),
-            enabled: false,
-            updated_at_ms: 103,
-        })
+        .delete_provider_binding(universe_id, &provider_id)
         .await
-        .expect("disable binding");
+        .expect("unbind with an open environment");
     assert!(
         store_pg::list_revoked_environment_routes(store.pool(), &routes)
             .await
-            .expect("revoked routes after disable")
+            .expect("revoked routes after unbinding")
             .contains(&(universe_id, opened.environment_id.as_str().to_owned()))
     );
 

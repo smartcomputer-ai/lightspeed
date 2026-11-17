@@ -16,13 +16,13 @@ use crate::{
 /// Gateway route an envd dials to register and hold its control connection.
 /// A gateway may be served under a path prefix (`wss://host/ls` plus this
 /// path); the daemon is configured with the full connect URL.
-pub const CONNECT_PATH: &str = "/environment-gateway/connect";
+pub const CONNECT_PATH: &str = "/environments/connect";
 
 /// Gateway route an envd dials, with a stream token as a bearer header, to
 /// serve one reverse-dialed stream. Always derived from the connect URL by
 /// replacing its [`CONNECT_PATH`] suffix ([`gateway_stream_url`]), so it
 /// shares the connect URL's origin and path prefix.
-pub const DATA_PATH: &str = "/environment-gateway/data";
+pub const DATA_PATH: &str = "/environments/data";
 
 /// Gateway route serving the envd discovery document.
 pub const DISCOVERY_PATH: &str = "/.well-known/lightspeed-envd";
@@ -499,13 +499,13 @@ mod tests {
     fn origins_are_canonical() {
         for (url, origin) in [
             (
-                "wss://GW.Example.com/environment-gateway/connect",
+                "wss://GW.Example.com/environments/connect",
                 "wss://gw.example.com",
             ),
             ("wss://gw.example.com:443/x?y#z", "wss://gw.example.com"),
             ("https://gw.example.com:8443", "wss://gw.example.com:8443"),
             (
-                "ws://127.0.0.1:18080/environment-gateway/connect",
+                "ws://127.0.0.1:18080/environments/connect",
                 "ws://127.0.0.1:18080",
             ),
             ("http://[::1]:80/", "ws://[::1]"),
@@ -527,12 +527,12 @@ mod tests {
     #[test]
     fn stream_urls_derive_from_the_connect_url() {
         assert_eq!(
-            gateway_stream_url("wss://gw.example.com/environment-gateway/connect").unwrap(),
-            "wss://gw.example.com/environment-gateway/data"
+            gateway_stream_url("wss://gw.example.com/environments/connect").unwrap(),
+            "wss://gw.example.com/environments/data"
         );
         assert_eq!(
-            gateway_stream_url("wss://GW.example.com:443/ls/environment-gateway/connect").unwrap(),
-            "wss://gw.example.com/ls/environment-gateway/data",
+            gateway_stream_url("wss://GW.example.com:443/ls/environments/connect").unwrap(),
+            "wss://gw.example.com/ls/environments/data",
             "a path prefix is kept"
         );
         assert!(matches!(
@@ -540,7 +540,11 @@ mod tests {
             Err(UrlError::NotConnectPath(_))
         ));
         assert!(matches!(
-            gateway_stream_url("wss://gw.example.com/environment-gateway/connect?x=1"),
+            gateway_stream_url("wss://gw.example.com/environment-gateway/connect"),
+            Err(UrlError::NotConnectPath(_))
+        ));
+        assert!(matches!(
+            gateway_stream_url("wss://gw.example.com/environments/connect?x=1"),
             Err(UrlError::QueryOrFragment(_))
         ));
     }

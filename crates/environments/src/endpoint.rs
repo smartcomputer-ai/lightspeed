@@ -222,8 +222,7 @@ mod tests {
         assert_eq!(tcp.host(), Some("incus.example.com"));
         assert!(!tcp.is_local());
         let local =
-            EnvironmentEndpoint::parse("ws://127.0.0.1:18080/environment-gateway/routes/u/e/i")
-                .unwrap();
+            EnvironmentEndpoint::parse("ws://127.0.0.1:18080/environments/routes/u/e/i").unwrap();
         assert!(local.is_local());
         let unix = EnvironmentEndpoint::parse("unix:///run/lightspeed/envd.sock").unwrap();
         assert_eq!(unix.scheme(), EndpointScheme::Unix);

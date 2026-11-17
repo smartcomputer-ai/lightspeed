@@ -1,3 +1,4 @@
+import { userSubject } from "../../test/subject-fixture.js";
 import { Hono } from "hono";
 import { expect, it } from "vitest";
 import { effectiveFeatures, featureOfMethod, mergeFeatureOverrides } from "@lightspeed-ai/platform-shared";
@@ -8,15 +9,15 @@ import { universeRoutes } from "./universes.js";
 /// universe (with what it stored), then the caller's membership, then
 /// whatever an update returns. Every `set` payload is recorded.
 function setup(role: string, stored: Record<string, boolean>) {
-  const universe = {
+  const universe = { handle: "test", status: "active", runtimeConfiguration: {}, accessPolicy: {},
     id: "platform-universe",
     organizationId: "org",
     lightspeedUniverseId: "33333333-3333-4333-8333-333333333333",
-    gatewayUrl: null,
+
     features: stored,
   };
   const sets: Record<string, unknown>[] = [];
-  const queue: unknown[][] = [[{ universe, handle: "test" }], [{ role }]];
+  const queue: unknown[][] = [[universe], [{ id: "org", enabled: true, membershipPolicy: {} }], [{ role: "member" }], [{ role }]];
   const next = async () => {
     const rows = queue.shift();
     if (!rows) throw new Error("unexpected database read");
@@ -40,6 +41,7 @@ function setup(role: string, stored: Record<string, boolean>) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
     c.set("session", { user: { id: "caller" } } as ApiVariables["session"]);
+    c.set("auth", userSubject(c.get("session").user.id, c.get("session").user.role === "owner"));
     await next();
   });
   app.route("/", universeRoutes({ db, env: {} } as unknown as AppContext));
@@ -49,50 +51,41 @@ function setup(role: string, stored: Record<string, boolean>) {
   return { request, sets };
 }
 
-it("works out what is on from defaults, switches and requirements", () => {
+it("works out what is on from defaults and switches", () => {
   // Nothing stored: every feature is off.
-  expect(effectiveFeatures({})).toEqual({ bots: false, channels: false });
-  expect(effectiveFeatures(null)).toEqual({ bots: false, channels: false });
-  expect(effectiveFeatures({ bots: true })).toEqual({ bots: true, channels: false });
-  expect(effectiveFeatures({ bots: true, channels: true })).toEqual({ bots: true, channels: true });
-  // Channels need bots; their own switch comes back with bots.
-  expect(effectiveFeatures({ channels: true })).toEqual({ bots: false, channels: false });
-  expect(effectiveFeatures({ bots: false, channels: true })).toEqual({ bots: false, channels: false });
+  expect(effectiveFeatures({})).toEqual({ bots: false });
+  expect(effectiveFeatures(null)).toEqual({ bots: false });
+  expect(effectiveFeatures({ bots: true })).toEqual({ bots: true });
 });
 
 it("skips a stored entry it cannot read without touching the others", () => {
-  expect(effectiveFeatures({ nonsense: true })).toEqual({ bots: false, channels: false });
-  expect(effectiveFeatures({ bots: true, nonsense: true })).toEqual({ bots: true, channels: false });
-  expect(effectiveFeatures({ bots: true, channels: "yes" })).toEqual({ bots: true, channels: false });
-  expect(effectiveFeatures("on")).toEqual({ bots: false, channels: false });
-  expect(mergeFeatureOverrides({ bots: true, nonsense: true }, { channels: true })).toEqual({ bots: true, channels: true });
+  expect(effectiveFeatures({ nonsense: true })).toEqual({ bots: false });
+  expect(effectiveFeatures({ bots: true, nonsense: true })).toEqual({ bots: true });
+  expect(effectiveFeatures("on")).toEqual({ bots: false });
+  expect(mergeFeatureOverrides({ nonsense: true }, { bots: true })).toEqual({ bots: true });
 });
 
 it("stores only switches away from their default", () => {
   expect(mergeFeatureOverrides({}, { bots: true })).toEqual({ bots: true });
   expect(mergeFeatureOverrides({ bots: true }, { bots: false })).toEqual({});
-  expect(mergeFeatureOverrides({ bots: true }, { channels: true })).toEqual({ bots: true, channels: true });
-  // Switching bots off leaves the channels switch stored, for when bots return.
-  expect(mergeFeatureOverrides({ bots: true, channels: true }, { bots: false })).toEqual({ channels: true });
 });
 
 it("names the feature a runtime method belongs to", () => {
   expect(featureOfMethod("bots/list")).toBe("bots");
   expect(featureOfMethod("bots/triggers/put")).toBe("bots");
-  expect(featureOfMethod("channels/accounts/list")).toBe("channels");
-  for (const method of ["session/start", "profiles/list", "deployment/channels/accounts/list", "bots", "robots/list"]) {
+  for (const method of ["session/start", "profiles/list", "bots", "robots/list"]) {
     expect(featureOfMethod(method), method).toBeNull();
   }
 });
 
 it("shows a universe that stored nothing with every feature off", async () => {
   const response = await setup("viewer", {}).request();
-  expect(await response.json()).toMatchObject({ features: { bots: false, channels: false } });
+  expect(await response.json()).toMatchObject({ features: { bots: false } });
 });
 
 it("shows every member what is on, not what is stored", async () => {
-  const response = await setup("viewer", { channels: true }).request();
-  expect(await response.json()).toMatchObject({ features: { bots: false, channels: false } });
+  const response = await setup("viewer", { bots: true }).request();
+  expect(await response.json()).toMatchObject({ features: { bots: true } });
 });
 
 it.each(["viewer", "contributor", "operator"])("keeps switching features with admins, refusing a %s", async (role) => {
@@ -102,23 +95,23 @@ it.each(["viewer", "contributor", "operator"])("keeps switching features with ad
 });
 
 it("lets an admin switch a feature on, merged into what was stored", async () => {
-  const { request, sets } = setup("admin", { bots: true });
-  const response = await request("PATCH", { features: { channels: true } });
+  const { request, sets } = setup("owner", {});
+  const response = await request("PATCH", { features: { bots: true } });
   expect(response.status).toBe(200);
-  expect(sets).toEqual([{ features: { bots: true, channels: true } }]);
-  expect(await response.json()).toMatchObject({ features: { bots: true, channels: true } });
+  expect(sets).toEqual([{ features: { bots: true } }]);
+  expect(await response.json()).toMatchObject({ features: { bots: true } });
 });
 
 it("stores nothing for a switch an admin turns back off", async () => {
-  const { request, sets } = setup("admin", { bots: true, channels: true });
+  const { request, sets } = setup("owner", { bots: true });
   const response = await request("PATCH", { features: { bots: false } });
   expect(response.status).toBe(200);
-  expect(sets).toEqual([{ features: { channels: true } }]);
-  expect(await response.json()).toMatchObject({ features: { bots: false, channels: false } });
+  expect(sets).toEqual([{ features: {} }]);
+  expect(await response.json()).toMatchObject({ features: { bots: false } });
 });
 
 it("refuses a feature it does not know", async () => {
-  const { request, sets } = setup("admin", {});
+  const { request, sets } = setup("owner", {});
   expect((await request("PATCH", { features: { telepathy: true } })).status).toBe(400);
   expect(sets).toEqual([]);
 });

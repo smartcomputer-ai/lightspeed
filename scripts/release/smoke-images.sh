@@ -4,15 +4,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 platform_image="${PLATFORM_IMAGE:?PLATFORM_IMAGE is required}"
 configurator_image="${CONFIGURATOR_IMAGE:?CONFIGURATOR_IMAGE is required}"
-platform_workers_image="${PLATFORM_WORKERS_IMAGE:?PLATFORM_WORKERS_IMAGE is required}"
 expected_sha="${EXPECTED_SHA:?EXPECTED_SHA is required}"
 
 docker pull "$platform_image"
 docker pull "$configurator_image"
-docker pull "$platform_workers_image"
 
 # Check both the image metadata used by Kubernetes and the effective runtime IDs.
-for image in "$platform_image" "$configurator_image" "$platform_workers_image"; do
+for image in "$platform_image" "$configurator_image"; do
   image_user="$(docker image inspect "$image" --format '{{.Config.User}}')"
   if [[ "$image_user" != '1000:1000' ]]; then
     echo "$image must declare numeric USER 1000:1000; found '$image_user'" >&2
@@ -74,21 +72,3 @@ test "$(docker image inspect "$configurator_image" \
   --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$expected_sha"
 docker run --rm --entrypoint node "$configurator_image" \
   --input-type=module -e 'await import("/app/dist/index.js")'
-
-test "$(docker image inspect "$platform_workers_image" \
-  --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$expected_sha"
-docker run --rm --entrypoint node "$platform_workers_image" -e \
-  'for (const file of ["/app/node_modules/baileys/package.json", "/app/platform/connectors/src/host/main.ts"]) require("node:fs").accessSync(file)'
-docker run --rm --entrypoint node "$platform_workers_image" \
-  --import tsx --input-type=module -e '
-    const { parseHostConfig } = await import("./platform/connectors/src/host/config.ts");
-    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/sdk/workflow");
-    const config = parseHostConfig({
-      LIGHTSPEED_API_URL: "http://runtime:18080/rpc",
-      LIGHTSPEED_CONNECTOR_API_KEY: "lsk_release_smoke_test",
-      LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram",
-    });
-    if (config.providers.join(",") !== "telegram") process.exit(1);
-    const vector = WORKFLOW_CONTRACT_VECTORS.channels;
-    if (connectorTaskQueue(vector.inputs.universeId, vector.inputs.provider, vector.inputs.accountId) !== vector.connectorTaskQueue) process.exit(1);
-  '

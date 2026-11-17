@@ -3,7 +3,7 @@
 A contribution should make the changed behavior understandable, keep its
 contracts and documentation aligned, and provide evidence that it works. A
 release carries those changes as one coherent set of runtime, client,
-connector, and documentation artifacts.
+and documentation artifacts.
 
 Start with [Local development](local-development.md) to work from a checkout.
 This page covers preparing the contribution and how the repository turns a
@@ -178,9 +178,7 @@ The outputs have distinct jobs:
 | `dist/release-manifest.json` and `dist/envd.json` | Release identity, compatibility and component references, plus daemon discovery metadata. |
 | `dist/checksums.txt` and `dist/sbom.spdx.json` | Artifact hashes and the dependency inventory. |
 
-The images are `runtime`, `configurator-mcp`, `platform`, and
-`platform-workers`. The last name is retained for compatibility; it contains
-the connector host. Bots and Channels core run in the Rust `runtime` image.
+The images are `runtime`, `configurator-mcp`, and `platform`.
 The demo and documentation site are separate static archives served under
 `/demo/` and `/docs/`.
 

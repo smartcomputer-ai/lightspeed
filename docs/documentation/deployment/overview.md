@@ -1,140 +1,99 @@
 # Deployment overview
 
-A Lightspeed deployment combines the agent runtime with durable infrastructure
-and, optionally, the Platform web app. The runtime executes sessions, bots, and
-channel workflows. Temporal coordinates that work, PostgreSQL stores the
-product's records, and the Platform handles login, team membership, access rules,
-and the browser interface.
+The Lightspeed runtime runs agents, bots, and environment connections.
+Temporal coordinates durable work and PostgreSQL stores the product's
+records. Add Platform for the web app, sign-in, and access control for
+people and service users.
 
-The first deployment can run all runtime roles in one process. Separate those
-roles when you need to scale or operate them independently.
+Start with one runtime process. Run roles separately when you need
+independent scaling or placement.
 
 ## The components
 
-| Component | Responsibility | Needed for |
-| --- | --- | --- |
-| `lightspeed-runtime` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
-| Temporal | Durable workflow execution and coordination | The hosted runtime |
-| Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
-| Platform backend and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
-| Platform PostgreSQL database | Accounts, memberships, roles, and universe display/routing records | The Platform |
-| S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
-| Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
-| Connector host | Telegram and WhatsApp transport connections | Those chat channels |
-| Environment daemon and providers | Filesystem/process access and, with a provider, machine lifecycle | Agent tasks requiring compute |
+| Component | Responsibility |
+| --- | --- |
+| Runtime | Serves the HTTP API and runs agent sessions and background workflows. |
+| Temporal | Coordinates durable workflow execution. |
+| Runtime PostgreSQL | Holds sessions, workspaces, credentials, and other runtime records. |
+| Object storage | Stores content larger than 64 KiB. Small blobs stay in PostgreSQL. |
+| Platform | Serves the web app and API, manages organizations, and authorizes requests. |
+| Platform PostgreSQL | Holds login accounts, organization membership, universe grants, API keys, and Platform settings. |
+| Environment daemons and providers | Give agents access to machines. Providers can provision machines and manage their lifecycle. |
+| Configurator MCP | Optional service for configuring Lightspeed with a restricted Platform service-user key. |
 
-The two Lightspeed databases can live on the same PostgreSQL server, but they
-have separate schemas and migration histories. Temporal has its own
-persistence requirements, managed as part of the Temporal deployment.
+Runtime and Platform can share a PostgreSQL server. Give each its own
+database. Temporal has its own persistence requirements.
 
 ```mermaid
 flowchart TD
-  Browser[Browser] --> Edge[HTTPS reverse proxy]
-  Edge --> Platform[Platform backend and web app]
+  Browser[Browser or API client] --> Edge[HTTPS reverse proxy]
+  Edge --> Platform[Platform]
   Platform --> PlatformDB[(Platform PostgreSQL)]
-  Platform --> Runtime[Private Lightspeed runtime]
-  Runtime <--> Temporal[Temporal service]
+  Platform --> Runtime[Private runtime]
+  Runtime <--> Temporal[Temporal]
   Runtime --> RuntimeDB[(Runtime PostgreSQL)]
-  Runtime --> Models[Model providers and MCP servers]
-  Runtime --> Objects[(Optional object storage)]
-  Daemon[Registered environment daemon] --> Edge
-  Edge -->|public daemon routes| Runtime
+  Runtime --> Objects[(Object storage)]
+  Daemon[Registered daemon] --> Edge
+  Edge -->|Daemon routes| Runtime
 ```
-
-The Platform sends authenticated, universe-scoped requests to the private
-runtime. Registered machines use separate public daemon routes. The reverse
-proxy must preserve that distinction.
 
 <a id="choose-the-client-and-authentication-boundary"></a>
 
 ## Choose how clients connect
 
-The full web product uses an authenticated runtime. Platform checks the signed-in
-person's membership, role, and session visibility before making a runtime call.
-It authenticates with `LIGHTSPEED_PLATFORM_API_KEY`, selects the universe, and
-names the person as the actor for attribution. The runtime checks the key's
-scope and allowed method groups; it does not look up the person's permissions.
+Point browsers, CLI users, and integrations at Platform when they should
+have the access of a person or service user. The CLI can use a browser
+sign-in or a Platform API key. Platform checks the caller’s organization
+and universe access and then forwards runtime operations over a private
+connection.
 
-| Mode | How requests are scoped | Use |
-| --- | --- | --- |
-| `authenticated` | Bearer key with a universe or deployment scope and allowed method groups | Platform, connectors, and direct clients |
-| `single` | No credential check; ordinary requests use one configured universe | Private local development |
+Set `LIGHTSPEED_AUTH_MODE=authenticated` for a hosted runtime. Platform
+authenticates to it with `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE`
+variant. Trusted components can call the runtime directly with a configured
+runtime token. Each runtime token has authority across the deployment,
+including private sessions. Keep the runtime application listener private
+and publish only the required callback and daemon routes. The
+[self-hosting guide](self-hosting.md#configure-the-public-edge) shows the
+routing. For access decisions and key types, see
+[Access and security](../access-and-security/overview.md).
 
-This makes a runtime key a separate access path. A key with the `session` group
-can read and control sessions in its scope, including work that the Platform
-keeps private to its creator and admins. Keep the Platform key on the server.
-See [Access and security](../access-and-security/overview.md) for the complete
-access model and [Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md)
-for shared infrastructure and isolation limits.
+Use `single` mode for private local development. It serves one configured
+universe without authenticating requests.
 
 ## Runtime roles and scaling
 
-One `lightspeed-runtime` executable supplies five roles:
-
 | Role | Work it owns |
 | --- | --- |
-| `gateway` | JSON-RPC, OAuth callbacks, and bot webhook ingestion |
-| `environment-gateway` | Worker routes to environments, outbound daemon connections, and environment lifecycle reconciliation |
-| `sessions` | Session workflows and activities, plus session and blob retention work |
-| `bots` | Bot controllers, trigger work, and bot activities |
-| `channels` | Chat conversation workflows and core channel activities |
+| `gateway` | HTTP API, OAuth callbacks, and bot webhook ingress. |
+| `environment-gateway` | Connections to environments and environment lifecycle reconciliation. |
+| `sessions` | Session workflows and activities, including session and blob retention. |
+| `code` | Code Mode script execution. |
+| `bots` | Bot controllers, triggers, and bot activities. |
 
-By default, all five run in one process. Each worker role runs its workflows
-and activities together on its own task queue. Select roles to deploy them
-separately and add replicas of the worker roles that need more capacity.
-Cross-component work reaches other workflows through starts and signals.
+All five roles run by default. Set `LIGHTSPEED_ROLES` to run a subset.
+For example, `gateway,environment-gateway,sessions,code` serves sessions
+and Code Mode without bot workers. Platform starts with **Bots** switched
+off for each universe. Owners can enable it under **Settings → General → Features**.
 
-Environment gateways can run as replicas behind one shared address. Each
-replica advertises its own direct peer URL and renews a PostgreSQL lease;
-replicas forward stream setup and dial-back connections to the process that
-holds the required socket. Workers keep one gateway URL. Configure the same
-gateway token on all replicas and allow private traffic between their peer
-listeners; see [networking and ingress](../environments/networking-and-ingress.md).
-If you share a Temporal namespace between deployments, assign distinct session,
-bot, and channel task queues to each deployment.
-
-A deployment that does not use bots should not run them. Start the runtime
-without the `bots` and `channels` roles and leave the **Bots** and
-**Channels** switches off in every universe, which is how a new universe
-starts. An unset `LIGHTSPEED_ROLES` runs every role, so set it to the roles
-the deployment keeps: its current list without `bots` and `channels`, for
-example `LIGHTSPEED_ROLES=gateway,environment-gateway,sessions,code`. Keep
-`code` in an explicit list when sessions use Code Mode; that worker role runs
-its scripts. The two measures cover different callers. The switches make the
-Platform refuse bot and channel requests from every member of a universe.
-Leaving the roles out means nothing in the deployment runs a bot controller,
-a trigger or a chat conversation, whoever asked for one, including a holder of
-a runtime API key. Add the roles, and switch the features on per universe,
-when a team starts using bots.
+Each worker role has a Temporal task queue. Give each deployment a distinct
+set of queues if you share a namespace. To run multiple environment gateways,
+give each replica a reachable private peer URL and the shared routing
+token. See [Operate Lightspeed](operations.md#scale-the-process-that-does-the-work)
+for scaling and [Networking and ingress](../environments/networking-and-ingress.md)
+for environment routes.
 
 ## Persistence determines what survives
 
-The runtime database holds Lightspeed's session history and resource records;
-Temporal persistence holds the workflow execution history. Back up both so
-recovery can resume work from a consistent point.
-
-Keep the runtime secrets master key stable and backed up with appropriate
-access controls. It encrypts stored credentials. The Platform has its own
-authentication secret and database. If object storage is enabled, include its
-objects in the recovery plan as well. Each execution environment's files and
-processes have a separate lifecycle from these stores.
+Keep coordinated backups of the runtime and Platform databases, Temporal,
+and object storage. Retain the runtime secrets master key and Platform
+authentication secret with the deployment's recovery material. Files on
+execution machines follow those machines' own lifecycle. See
+[Upgrades and recovery](upgrades-and-recovery.md#preserve-a-complete-recovery-set).
 
 ## The first self-hosted installation
 
-The [self-hosting guide](self-hosting.md) installs the full web product on one
-Linux x86_64 application host, using matching images and existing PostgreSQL
-and Temporal services. It uses PostgreSQL
-for blobs up to 64 KiB initially. Configure object storage before using larger
-payloads. External integrations and compute can be added as needed.
-
-That is a single application-host topology. High availability also requires
-planning the infrastructure, public edge, and the current singleton
-environment gateway. The local `dev.sh` stack has different defaults and is
-intended for development.
-
-Continue with [Configuration](configuration.md) for service settings,
-[Company sign-in (SSO)](../access-and-security/single-sign-on.md) for the Platform
-identity provider,
-[Operations](operations.md) for monitoring and scaling, and
-[Upgrades and recovery](upgrades-and-recovery.md) for maintenance. Use
-[Troubleshooting](troubleshooting.md) to follow failures across components.
+Follow [Self-host Lightspeed](self-hosting.md) to run matching release
+images on one Linux application host with existing PostgreSQL and Temporal.
+The walkthrough starts with small blobs in PostgreSQL, then links to
+storage, identity, and compute setup. For a local source checkout, use the
+[development launcher](../development/local-development.md).

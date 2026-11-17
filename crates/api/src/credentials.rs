@@ -1,0 +1,752 @@
+use super::*;
+
+/// On a grant, how its token is obtained; on a provider, what it configures.
+/// `staticToken` is a pasted secret, sent under whatever header its consumer
+/// uses. `mcpOAuth` and `customOAuth` are OAuth with discovered or configured
+/// endpoints. `gitHubApp` is a GitHub App, whose installation tokens are minted
+/// on demand. The `model*` kinds configure model providers; `modelEndpoint`
+/// is a provider without a credential and never appears on a grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialProviderKind {
+    StaticToken,
+    McpOAuth,
+    GitHubApp,
+    CustomOAuth,
+    ModelApiKey,
+    ModelOAuth,
+    ModelEndpoint,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialGrantStatus {
+    #[default]
+    Active,
+    NeedsReauth,
+    Revoked,
+    Failed,
+}
+
+/// Where a credential's plain value may go, fixed when it is created.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialGrantExposure {
+    /// The value stays inside the runtime, which attaches it to its own
+    /// outbound requests (an MCP server, a model endpoint header).
+    #[default]
+    Brokered,
+    /// The value may also be leased to a trusted service and bound into an
+    /// environment, where commands receive it.
+    Retrievable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantView {
+    pub grant_id: String,
+    pub provider_id: String,
+    pub provider_kind: CredentialProviderKind,
+    pub exposure: CredentialGrantExposure,
+    /// Who created the grant. Attribution only; it confers no access.
+    pub created_by: Attribution,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    pub has_access_token: bool,
+    pub has_refresh_token: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    pub status: CredentialGrantStatus,
+    /// Non-secret provider-specific metadata (for GitHub App installation
+    /// grants: installation id, account, permissions, repository selection).
+    #[serde(default, skip_serializing_if = "metadata_is_empty")]
+    pub metadata: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_leased_at_ms: Option<i64>,
+    pub lease_count: u64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+fn metadata_is_empty(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
+/// Import a new token credential as a credential grant, under the given id or an
+/// allocated one; an id already in use is a conflict. Together with
+/// [`CredentialGrantPutParams`] this is the deliberate inbound-plaintext path:
+/// `token` is encrypted on receipt and is never returned by any method. `Debug` output redacts the token; request
+/// logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantImportParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub exposure: CredentialGrantExposure,
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    /// Non-secret, caller-defined metadata stored on the grant and returned
+    /// by reads (for example which product a pasted subscription token
+    /// belongs to). Must be a JSON object; never put secret material here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl std::fmt::Debug for CredentialGrantImportParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialGrantImportParams")
+            .field("grant_id", &self.grant_id)
+            .field("provider_id", &self.provider_id)
+            .field("exposure", &self.exposure)
+            .field("token", &"<redacted>")
+            .field("display_name", &self.display_name)
+            .field("subject_hint", &self.subject_hint)
+            .field("scopes", &self.scopes)
+            .field("audience", &self.audience)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantImportResponse {
+    pub grant: CredentialGrantView,
+}
+
+/// Request a current access-token lease for a retrievable grant. Callers must
+/// cache only in memory until shortly before `expiresAtMs` (or for at most
+/// five minutes when it is absent), re-lease after target 401/403 responses,
+/// and never persist the token or place it in a workflow payload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantLeaseParams {
+    pub grant_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantLeaseResponse {
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    pub grant_id: String,
+    pub provider_kind: CredentialProviderKind,
+}
+
+impl std::fmt::Debug for CredentialGrantLeaseResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialGrantLeaseResponse")
+            .field("token", &"<redacted>")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .field("grant_id", &self.grant_id)
+            .field("provider_kind", &self.provider_kind)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<CredentialGrantStatus>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantListResponse {
+    #[serde(default)]
+    pub grants: Vec<CredentialGrantView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantReadParams {
+    pub grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantReadResponse {
+    pub grant: CredentialGrantView,
+}
+
+/// Declare a token credential (`staticToken`): its id, its settings and the
+/// token it holds. A credential that is missing is created. One that exists
+/// has its settings replaced by these (an absent field is unset) and, when it
+/// holds a different token, that token replaced, so MCP servers, headers,
+/// bot polls and environment variables referencing the id use the new value
+/// from their next request or process. Declaring it again changes nothing.
+///
+/// `token` is encrypted on receipt and never returned; `Debug` output redacts
+/// it and request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantPutParams {
+    pub grant_id: String,
+    /// Label recorded on the credential; `static` when absent. It cannot be
+    /// changed afterwards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    /// Whether the plain token may be leased to a service or bound into an
+    /// environment. It cannot be changed afterwards.
+    #[serde(default)]
+    pub exposure: CredentialGrantExposure,
+    pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    /// When the token expires. Absent means it does not expire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+    /// Non-secret, caller-defined metadata. Must be a JSON object; never put
+    /// secret material here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    /// Report what the declaration would do without doing it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dry_run: bool,
+}
+
+impl std::fmt::Debug for CredentialGrantPutParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialGrantPutParams")
+            .field("grant_id", &self.grant_id)
+            .field("provider_id", &self.provider_id)
+            .field("exposure", &self.exposure)
+            .field("token", &"<redacted>")
+            .field("display_name", &self.display_name)
+            .field("subject_hint", &self.subject_hint)
+            .field("scopes", &self.scopes)
+            .field("audience", &self.audience)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantPutResponse {
+    /// The credential as declared: as it is now, or as it would be for a
+    /// dry run.
+    pub grant: CredentialGrantView,
+    /// False when the credential already existed.
+    pub created: bool,
+    /// True when an existing credential held a different token.
+    pub token_replaced: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantRevokeParams {
+    pub grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGrantRevokeResponse {
+    pub grant: CredentialGrantView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenEndpointAuthMethod {
+    #[default]
+    ClientSecretBasic,
+    ClientSecretPost,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientView {
+    pub client_id: String,
+    pub provider_id: String,
+    pub provider_kind: CredentialProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub remote_client_id: String,
+    pub has_client_secret: bool,
+    pub token_endpoint_auth_method: TokenEndpointAuthMethod,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes_default: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_server_issuer: Option<String>,
+    #[serde(default)]
+    pub authorization_response_iss_parameter_supported: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authorization_server_scopes_supported: Vec<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Register an OAuth client configuration. `client_secret` is the second
+/// deliberate inbound-plaintext path after `credentials/grants/import`: it is
+/// encrypted on receipt and never returned by any method. `Debug` output
+/// redacts it; request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub provider_kind: CredentialProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub remote_client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint_auth_method: Option<TokenEndpointAuthMethod>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes_default: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_server_issuer: Option<String>,
+    #[serde(default)]
+    pub authorization_response_iss_parameter_supported: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authorization_server_scopes_supported: Vec<String>,
+}
+
+impl std::fmt::Debug for CredentialClientCreateParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialClientCreateParams")
+            .field("client_id", &self.client_id)
+            .field("provider_id", &self.provider_id)
+            .field("provider_kind", &self.provider_kind)
+            .field("display_name", &self.display_name)
+            .field("authorization_endpoint", &self.authorization_endpoint)
+            .field("token_endpoint", &self.token_endpoint)
+            .field("remote_client_id", &self.remote_client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "token_endpoint_auth_method",
+                &self.token_endpoint_auth_method,
+            )
+            .field("scopes_default", &self.scopes_default)
+            .field("audience", &self.audience)
+            .field(
+                "authorization_server_issuer",
+                &self.authorization_server_issuer,
+            )
+            .field(
+                "authorization_response_iss_parameter_supported",
+                &self.authorization_response_iss_parameter_supported,
+            )
+            .field(
+                "authorization_server_scopes_supported",
+                &self.authorization_server_scopes_supported,
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientCreateResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientListResponse {
+    #[serde(default)]
+    pub clients: Vec<OAuthClientView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientReadParams {
+    pub client_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientReadResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientDeleteParams {
+    pub client_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialClientDeleteResponse {
+    pub client: OAuthClientView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialFlowStatus {
+    Pending,
+    Completed,
+    Failed,
+    Expired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFlowStartParams {
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
+    #[serde(default)]
+    pub exposure: CredentialGrantExposure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFlowStartResponse {
+    pub flow_id: String,
+    /// Authorization URL the user must open. It embeds the one-time `state`;
+    /// treat it as sensitive and do not log it server-side.
+    pub authorize_url: String,
+    pub expires_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFlowStatusParams {
+    pub flow_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFlowView {
+    pub flow_id: String,
+    pub client_id: String,
+    pub provider_id: String,
+    pub status: CredentialFlowStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFlowStatusResponse {
+    pub flow: CredentialFlowView,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialProviderStatus {
+    #[default]
+    Active,
+    NeedsConfiguration,
+    Disabled,
+}
+
+/// Non-secret, provider-specific configuration. New providers add a
+/// variant, not a table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+pub enum CredentialProviderConfigView {
+    #[serde(rename = "githubApp", rename_all = "camelCase")]
+    GitHubApp {
+        app_id: String,
+        api_base_url: String,
+    },
+    /// Stored model provider API key (`model:<provider_id>` rows). The key itself
+    /// is the provider credential and never appears in views.
+    #[serde(rename = "modelApiKey", rename_all = "camelCase")]
+    ModelApiKey {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint: Option<ModelEndpointConfig>,
+    },
+    /// OAuth-grant-backed model provider credential: provider calls send the
+    /// bound grant's access token as an OAuth bearer token.
+    #[serde(rename = "modelOAuth", rename_all = "camelCase")]
+    ModelOAuth {
+        grant_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audience: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint: Option<ModelEndpointConfig>,
+    },
+    /// Credentialless OpenAI-compatible endpoint.
+    #[serde(rename = "modelEndpoint", rename_all = "camelCase")]
+    ModelEndpoint { endpoint: ModelEndpointConfig },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelEndpointConfig {
+    pub base_url: String,
+    /// Extra request headers sent on every request to the endpoint, alongside
+    /// the provider's own credential. Names are case-insensitive and stored
+    /// lowercased; transport headers and `authorization` are reserved.
+    /// `api-key`, `x-api-key` and `proxy-authorization` carry a secret and
+    /// accept only a `credential` value.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, RequestHeader>,
+    pub api_kinds: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+pub enum CredentialProviderConfigInput {
+    #[serde(rename = "githubApp", rename_all = "camelCase")]
+    GitHubApp {
+        app_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_base_url: Option<String>,
+    },
+    /// Stored model provider API key; the key arrives via `credential` and is
+    /// encrypted on receipt.
+    #[serde(rename = "modelApiKey", rename_all = "camelCase")]
+    ModelApiKey {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint: Option<ModelEndpointConfig>,
+    },
+    /// Bind an existing credential grant as a model provider credential. No
+    /// `credential` is accepted; the grant's tokens stay in the grant store.
+    #[serde(rename = "modelOAuth", rename_all = "camelCase")]
+    ModelOAuth {
+        grant_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audience: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint: Option<ModelEndpointConfig>,
+    },
+    /// Register an endpoint that requires no provider credential.
+    #[serde(rename = "modelEndpoint", rename_all = "camelCase")]
+    ModelEndpoint { endpoint: ModelEndpointConfig },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderView {
+    pub provider_id: String,
+    pub provider_kind: CredentialProviderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: CredentialProviderConfigView,
+    pub has_credential: bool,
+    pub status: CredentialProviderStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Register a credential provider. `credential` (for GitHub Apps: the private
+/// key PEM) is the third deliberate inbound-plaintext path: it is encrypted
+/// on receipt and never returned by any method. `Debug` output redacts it;
+/// request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderCreateParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: CredentialProviderConfigInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl std::fmt::Debug for CredentialProviderCreateParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialProviderCreateParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("config", &self.config)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderCreateResponse {
+    pub provider: CredentialProviderView,
+}
+
+/// Declare a provider: its id, its configuration and its credential. A
+/// provider that is missing is created. One that exists is rewritten in place
+/// as if it were created again under the same id, where it differs: the new
+/// settings are validated before anything changes, so a rejected declaration
+/// leaves the provider as it was, and sessions and environment variables
+/// referencing the id keep working throughout. Declaring it again changes
+/// nothing. `credential` is encrypted on receipt and never returned; `Debug`
+/// output redacts it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderPutParams {
+    pub provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub config: CredentialProviderConfigInput,
+    /// The provider's credential, for the kinds that take one. Absent leaves
+    /// the provider without a credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+    /// Report what the declaration would do without doing it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dry_run: bool,
+}
+
+impl std::fmt::Debug for CredentialProviderPutParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialProviderPutParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("config", &self.config)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderPutResponse {
+    /// The provider as declared: as it is now, or as it would be for a dry
+    /// run.
+    pub provider: CredentialProviderView,
+    /// False when the provider already existed.
+    pub created: bool,
+    /// True when an existing provider held a different credential, or gained
+    /// or lost one.
+    pub credential_replaced: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderListResponse {
+    #[serde(default)]
+    pub providers: Vec<CredentialProviderView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderReadParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderReadResponse {
+    pub provider: CredentialProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderDeleteParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialProviderDeleteResponse {
+    pub provider: CredentialProviderView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubInstallationView {
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_login: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_selection: Option<String>,
+    /// Fine-grained permission map as GitHub reports it.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub permissions: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGitHubInstallationListParams {
+    pub provider_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGitHubInstallationListResponse {
+    #[serde(default)]
+    pub installations: Vec<GitHubInstallationView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGitHubInstallationGrantParams {
+    pub provider_id: String,
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub exposure: CredentialGrantExposure,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialGitHubInstallationGrantResponse {
+    pub grant: CredentialGrantView,
+}

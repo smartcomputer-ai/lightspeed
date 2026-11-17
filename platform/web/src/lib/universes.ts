@@ -4,12 +4,13 @@ import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed-ai/pl
 import { api, type Universe } from "@/api";
 import { SETTINGS, settings } from "@/lib/settings";
 
-/// One list drives everything: memberships for the switcher, all universes
-/// for platform admins (role marks the ones they are actually members of).
+/// The server returns effective access, including inherited organization and
+/// platform administration. Working navigation filters this list to active universes.
 export function useUniverses() {
   return useQuery({
     queryKey: ["universes"],
-    queryFn: () => api<Universe[]>("GET", "/api/v1/universes"),
+    queryFn: () => api<Universe[]>("GET", "/api/ui/universes"),
+    refetchInterval: 30000,
   });
 }
 
@@ -17,17 +18,19 @@ export function memberships(universes: Universe[] | undefined): Universe[] {
   return (universes ?? []).filter((u) => u.role != null && u.status === "active");
 }
 
-/// Resolves the /u/:handle path segment against the loaded list, from a page
-/// or from the shell around it.
+/// Resolves the working or administrative universe route against the same
+/// authorized inventory.
 export function useActiveUniverse(): {
   universe: Universe | undefined;
   handle: string | undefined;
   isLoading: boolean;
 } {
-  const handle = useMatch("/u/:handle/*")?.params.handle;
+  const work = useMatch("/u/:handle/*");
+  const admin = useMatch("/admin/organizations/:organizationId/universes/:handle/*");
+  const handle = work?.params.handle ?? admin?.params.handle;
   const universes = useUniverses();
   return {
-    universe: handle ? universes.data?.find((u) => u.handle === handle) : undefined,
+    universe: handle ? universes.data?.find((u) => u.status !== "deleting" && u.handle === handle && (!admin || u.organizationId === admin.params.organizationId)) : undefined,
     handle,
     isLoading: universes.isLoading,
   };

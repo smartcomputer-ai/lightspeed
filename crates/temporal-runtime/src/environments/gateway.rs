@@ -7,7 +7,7 @@ use uuid::Uuid;
 /// Path prefix of the worker routes the environment gateway serves:
 /// `{prefix}/{universe}/{environment}`. Runtime-internal: only Lightspeed's
 /// own workers dial it, with the deployment token.
-pub const ROUTE_PATH_PREFIX: &str = "/environment-gateway/routes";
+pub const ROUTE_PATH_PREFIX: &str = "/environments/routes";
 
 /// Connect bound (TCP, TLS and upgrade) of a worker route. The gateway
 /// answers a registered environment's upgrade only once the reverse
@@ -35,6 +35,8 @@ pub struct RouteKey {
 pub struct EnvironmentGatewayClientConfig {
     base_url: String,
     deployment_token: Arc<String>,
+    /// Permit universe-supplied daemon endpoints on this deployment.
+    pub allow_external_environments: bool,
 }
 
 impl EnvironmentGatewayClientConfig {
@@ -42,6 +44,7 @@ impl EnvironmentGatewayClientConfig {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             deployment_token: Arc::new(deployment_token.into()),
+            allow_external_environments: false,
         }
     }
 
@@ -60,7 +63,26 @@ impl EnvironmentGatewayClientConfig {
             .filter(|value| !value.is_empty())
             .or_else(|| default_base_url.map(|_| format!("local-{}", Uuid::new_v4())))
             .ok_or_else(|| anyhow::anyhow!("LIGHTSPEED_ENVIRONMENT_GATEWAY_TOKEN is required for a separate worker deployment"))?;
-        Ok(Self::new(base_url, token))
+        let mut config = Self::new(base_url, token);
+        if let Some(value) = std::env::var_os("LIGHTSPEED_ALLOW_EXTERNAL_ENVIRONMENTS") {
+            config.allow_external_environments = match value.to_str() {
+                Some("true") => true,
+                Some("false") => false,
+                _ => anyhow::bail!("LIGHTSPEED_ALLOW_EXTERNAL_ENVIRONMENTS must be true or false"),
+            };
+        }
+        Ok(config)
+    }
+
+    pub(crate) fn require_external_environments(&self) -> Result<(), api::AgentApiError> {
+        if self.allow_external_environments {
+            Ok(())
+        } else {
+            Err(api::AgentApiError::new(
+                api::AgentApiErrorKind::Forbidden,
+                "Direct attachment of external daemons is disabled on this deployment",
+            ))
+        }
     }
 
     pub fn deployment_token(&self) -> &str {
@@ -186,17 +208,28 @@ mod tests {
     }
 
     #[test]
+    fn external_daemons_require_deployment_opt_in() {
+        let mut config = EnvironmentGatewayClientConfig::new("https://gateway.test", "secret");
+        assert_eq!(
+            config.require_external_environments().unwrap_err().kind,
+            api::AgentApiErrorKind::Forbidden
+        );
+        config.allow_external_environments = true;
+        config.require_external_environments().unwrap();
+    }
+
+    #[test]
     fn worker_routes_are_stable_websocket_urls() {
         let config = EnvironmentGatewayClientConfig::new("https://gateway.test/", "secret");
         assert_eq!(
             config.endpoint(&key()),
-            "wss://gateway.test/environment-gateway/routes/00000000-0000-0000-0000-000000000000/environment-a"
+            "wss://gateway.test/environments/routes/00000000-0000-0000-0000-000000000000/environment-a"
         );
         let local = EnvironmentGatewayClientConfig::new("http://127.0.0.1:18080", "secret");
         assert!(
             local
                 .endpoint(&key())
-                .starts_with("ws://127.0.0.1:18080/environment-gateway/routes/")
+                .starts_with("ws://127.0.0.1:18080/environments/routes/")
         );
     }
 

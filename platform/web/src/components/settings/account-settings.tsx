@@ -1,0 +1,221 @@
+import { ApiKeysSection } from "@/components/api-keys/api-keys-section";
+import { useState, type FormEvent } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { authClient, useLoginConfig, type SessionUser } from "@/auth";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { CopiedIcon, CopyIcon } from "@/icons";
+
+/// Settings kept with the account: who you are, how you sign in, and the
+/// API keys that act as you.
+export function AccountSettings({ user }: { user: SessionUser }) {
+  const config = useLoginConfig();
+  return (
+    <>
+      <div className="grid gap-6">
+        <ProfileCard user={user} />
+        {user.identitySource !== "company" && config.data && config.data.password !== "off" && (!config.data.sso || user.emergencyAdmin) ? <PasswordCard /> : (
+          <Card id="security" className="scroll-mt-6">
+            <CardHeader>
+              <CardTitle>Sign-in</CardTitle>
+              <CardDescription>
+                {user.identitySource === "company"
+                  ? "Your name, email and sign-in are managed by your company. Change your password with your identity provider."
+                  : config.error
+                    ? "Sign-in settings could not be loaded. Reload this page to try again."
+                    : !config.data
+                      ? "Loading sign-in settings…"
+                      : "Password changes are not available for your sign-in method on this deployment."}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+        <div id="api-keys" className="scroll-mt-6">
+          <ApiKeysSection owner={{ kind: "personal" }} title="API keys"
+            description="Keys act as you, with your current roles. Restrictions only narrow that access." />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ProfileCard({ user }: { user: SessionUser }) {
+  const [name, setName] = useState(user.name);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const result = await authClient.updateUser({ name: name.trim() });
+      if (result.error) {
+        throw new Error(result.error.message ?? "failed to update profile");
+      }
+    },
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    save.mutate();
+  };
+
+  return (
+    <Card id="profile" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>Profile</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="grid max-w-md gap-4">
+          <Field>
+            <FieldLabel htmlFor="account-email">Email</FieldLabel>
+            <Input id="account-email" value={user.email} disabled />
+            <FieldDescription>
+              {user.identitySource === "company" ? "Managed by your company." : "A platform admin can change your verified sign-in address."}
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="account-name">Name</FieldLabel>
+            <Input
+              id="account-name"
+              value={name}
+              disabled={user.identitySource === "company"}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="account-user-id">User ID</FieldLabel>
+            <CopyableId id="account-user-id" value={user.id} label="user ID" />
+            <FieldDescription>Share this ID with an organization admin when they add you to an organization.</FieldDescription>
+          </Field>
+          {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
+          {save.isSuccess && <p className="text-sm text-muted-foreground">Saved.</p>}
+          <div>
+            <Button
+              type="submit"
+              disabled={user.identitySource === "company" || save.isPending || name.trim() === user.name || !name.trim()}
+            >
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PasswordCard() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const change = useMutation({
+    mutationFn: async () => {
+      const result = await authClient.changePassword({
+        currentPassword,
+        newPassword,
+        revokeOtherSessions: true,
+      });
+      if (result.error) {
+        throw new Error(result.error.message ?? "failed to change password");
+      }
+    },
+    onSuccess: () => {
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirm("");
+      setError(null);
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    if (newPassword !== confirm) {
+      setError("New passwords do not match.");
+      return;
+    }
+    change.mutate();
+  };
+
+  return (
+    <Card id="security" className="scroll-mt-6">
+      <CardHeader>
+        <CardTitle>Sign-in</CardTitle>
+        <CardDescription>Change your password. Other sessions are signed out after a change.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="grid max-w-md gap-4">
+          <Field>
+            <FieldLabel htmlFor="current-password">Current password</FieldLabel>
+            <Input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="new-password">New password</FieldLabel>
+            <Input
+              id="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+            <FieldDescription>At least 8 characters.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="confirm-password">Repeat new password</FieldLabel>
+            <Input
+              id="confirm-password"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              required
+            />
+          </Field>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {change.isSuccess && !error && (
+            <p className="text-sm text-muted-foreground">Password changed.</p>
+          )}
+          <div>
+            <Button type="submit" disabled={change.isPending}>
+              {change.isPending ? "Changing…" : "Change password"}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+/// A read-only identifier with a button that copies it.
+function CopyableId({ id, value, label }: { id: string; value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <InputGroup>
+      <InputGroupInput id={id} value={value} readOnly className="font-mono" onFocus={(event) => event.currentTarget.select()} />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton size="icon-xs" aria-label={copied ? `Copied ${label}` : `Copy ${label}`} title={copied ? "Copied" : "Copy"}
+          onClick={() => void navigator.clipboard.writeText(value).then(() => setCopied(true)).catch(() => undefined)}>
+          {copied ? <CopiedIcon /> : <CopyIcon />}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
+  );
+}

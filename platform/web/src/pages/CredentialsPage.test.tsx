@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SecretGrant } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { CredentialsPage, isReplaceable, isReusableCredential } from "./CredentialsPage";
+import { CredentialsPage, isReplaceable } from "./CredentialsPage";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", actions: [...universeActions(["operator"])], handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 
 function grant(grantId: string, providerKind: string, extra: Partial<SecretGrant> = {}): SecretGrant {
   return {
@@ -26,7 +28,6 @@ const reusable = [
 ];
 const hidden = [
   grant("claude", "staticToken", { providerId: "anthropic", metadata: { subscription: "claudeCode" } }),
-  grant("telegram-bot", "staticToken", { providerId: "telegram" }),
   grant("mcp-login", "mcpOAuth"),
   grant("model-login", "modelOAuth"),
   grant("model-key", "modelApiKey"),
@@ -61,18 +62,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("lists pasted tokens, GitHub App installations and custom OAuth, not credentials made for one thing", () => {
-  expect(reusable.every(isReusableCredential)).toBe(true);
-  expect(hidden.some(isReusableCredential)).toBe(false);
-});
-
 it("lists reusable credentials only and points model and MCP logins at their pages", async () => {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>
-      <CredentialsPage admin={false} />
+      <CredentialsPage />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 
   const table = container.querySelector("table")!;
   expect(table.querySelectorAll("tbody tr")).toHaveLength(reusable.length);
@@ -105,10 +101,10 @@ it("replaces an environment secret's value exactly, under the same credential", 
   });
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter>
-      <CredentialsPage admin={false} />
+      <CredentialsPage />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 
   // GitHub App installations and OAuth have no such action.
   expect(container.querySelector('[aria-label="Replace value of installation credential"]')).toBeNull();
@@ -128,10 +124,10 @@ it("replaces an environment secret's value exactly, under the same credential", 
   });
   const submit = [...dialog.querySelectorAll<HTMLButtonElement>('button[type="submit"]')].at(-1)!;
   await act(async () => submit.click());
-  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  await settleQueries(client);
 
   const call = mocks.api.mock.calls.find(([method, path]) => method === "POST" && (path as string).endsWith("/replace"));
-  expect(call?.[1]).toBe("/api/v1/universes/universe/secrets/grants/environment/replace");
+  expect(call?.[1]).toBe("/api/ui/universes/universe/secrets/grants/environment/replace");
   expect(call?.[2]).toEqual({ value });
 });
 

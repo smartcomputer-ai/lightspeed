@@ -1,6 +1,6 @@
-import { relations } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { organization, user } from "./auth.js";
+import { relations, sql } from "drizzle-orm";
+import { boolean, check, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { apikey, organization, user } from "./auth.js";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () =>
@@ -8,6 +8,15 @@ const updatedAt = () =>
     .defaultNow()
     .$onUpdate(() => new Date())
     .notNull();
+
+/// Deployment-wide settings changed by a Platform Admin. Only values set here
+/// are stored; a setting without a row uses its environment value or default.
+export const platformSettings = pgTable("platform_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: updatedAt(),
+});
 
 // Attribution must survive deletion of the referenced identity or resource.
 export const identityAudit = pgTable("identity_audit", {
@@ -21,24 +30,25 @@ export const identityAudit = pgTable("identity_audit", {
   details: jsonb("details").$type<Record<string, string | boolean | null>>().default({}).notNull(),
 }, (table) => [index("identity_audit_created_idx").on(table.createdAt)]);
 
-/// A platform universe: one better-auth organization plus its Lightspeed
-/// linkage. `lightspeedUniverseId` is the id stamped as
-/// `x-lightspeed-universe`; the app creates the engine universe explicitly.
+/// A runtime universe belongs to one organization; creator identity is attribution only.
 export const universes = pgTable("universes", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: text("organization_id")
     .notNull()
-    .unique()
     .references(() => organization.id, { onDelete: "cascade" }),
   lightspeedUniverseId: uuid("lightspeed_universe_id").notNull().unique(),
   name: text("name").notNull(),
+  handle: text("handle").notNull().unique(),
+  createdBy: text("created_by"),
+  accessPolicy: jsonb("access_policy").$type<{
+    members?: { email?: string; issuer?: string; subject?: string; role: "owner" | "operator" | "contributor" | "viewer" }[];
+    directoryGroupMappings?: { issuer: string; group: string; role: "owner" | "operator" | "contributor" | "viewer" }[];
+  }>().default({}).notNull(),
   /// Last successful Runtime projection; declarations never replace manual members.
   runtimeConfiguration: jsonb("runtime_configuration").$type<Record<string, unknown>>().default({}).notNull(),
   icon: text("icon").default("orbit").notNull(),
   iconColor: text("icon_color").default("default").notNull(),
-  /// Gateway RPC endpoint; null = the deployment default from env.
-  gatewayUrl: text("gateway_url"),
-  status: text("status", { enum: ["active", "archived"] })
+  status: text("status", { enum: ["provisioning", "active", "archived", "deleting"] })
     .default("active")
     .notNull(),
   /// Feature switches set away from their default (see the shared feature
@@ -48,68 +58,64 @@ export const universes = pgTable("universes", {
   updatedAt: updatedAt(),
 });
 
-export type UniverseSetupState = {
-  keyPrefix?: string;
-  /// What the setup's key may call, shown on the template.
-  keyGroups?: string[];
-  /// `minted` keys belong to the setup and are revoked when replaced;
-  /// `existing` keys were brought by an admin and never are. Absent means
-  /// minted, as every installation before this choice was.
-  keySource?: "minted" | "existing";
-  grantId?: string;
-  serverId?: string;
-  profileId?: string;
-};
+/** Independently enabled automation, owned by an organization rather than a human profile. */
+export const serviceUsers = pgTable("service_users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  role: text("role", { enum: ["admin", "creator", "member"] }).default("member").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  index("service_users_organization_idx").on(table.organizationId),
+  // Documents name service users, so a name is unique in its organization.
+  uniqueIndex("service_users_organization_name_idx").on(table.organizationId, table.name),
+]);
 
-/// Provenance for platform-managed, multi-resource universe setups. Engine
-/// registries remain authoritative; this row only records which resources an
-/// installation owns so retries can repair safely without persisting secrets.
-export const universeSetupInstallations = pgTable(
-  "universe_setup_installations",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    universeId: uuid("universe_id")
-      .notNull()
-      .references(() => universes.id, { onDelete: "cascade" }),
-    setupId: text("setup_id").notNull(),
-    installedVersion: integer("installed_version").default(0).notNull(),
-    status: text("status", { enum: ["installing", "ready", "failed"] })
-      .default("installing")
-      .notNull(),
-    state: jsonb("state").$type<UniverseSetupState>().default({}).notNull(),
-    error: text("error"),
-    installedByUserId: text("installed_by_user_id").references(() => user.id, {
-      onDelete: "set null",
-    }),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => [
-    uniqueIndex("universe_setup_installations_universe_setup_idx").on(
-      t.universeId,
-      t.setupId,
-    ),
-  ],
-);
+/** Membership in the containing organization remains mandatory for every grant. */
+export const universeGrants = pgTable("universe_grants", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  universeId: uuid("universe_id").notNull().references(() => universes.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  serviceUserId: uuid("service_user_id").references(() => serviceUsers.id, { onDelete: "cascade" }),
+  role: text("role", { enum: ["owner", "operator", "contributor", "viewer"] }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => [
+  check("universe_grants_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.serviceUserId} IS NOT NULL)`),
+  uniqueIndex("universe_grants_user_idx").on(table.universeId, table.userId),
+  uniqueIndex("universe_grants_service_user_idx").on(table.universeId, table.serviceUserId),
+]);
 
-export const universesRelations = relations(universes, ({ one, many }) => ({
+export interface CredentialRestrictions {
+  organizationIds?: string[];
+  universeIds?: string[];
+  operations?: string[];
+  readOnly?: boolean;
+  allowUniverseCreation?: boolean;
+  /** Declare service-user keys with supplied secrets; only a human creates keys otherwise. */
+  allowServiceUserKeys?: boolean;
+}
+
+/** Protected association; caller-controlled Better Auth metadata never selects identity. */
+export const credentialBindings = pgTable("credential_bindings", {
+  keyId: text("key_id").primaryKey().references(() => apikey.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  serviceUserId: uuid("service_user_id").references(() => serviceUsers.id, { onDelete: "cascade" }),
+  restrictions: jsonb("restrictions").$type<CredentialRestrictions>().default({}).notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+}, (table) => [
+  check("credential_bindings_one_principal", sql`(${table.userId} IS NOT NULL) <> (${table.serviceUserId} IS NOT NULL)`),
+  index("credential_bindings_user_idx").on(table.userId),
+  index("credential_bindings_service_user_idx").on(table.serviceUserId),
+]);
+
+export const universesRelations = relations(universes, ({ one }) => ({
   organization: one(organization, {
     fields: [universes.organizationId],
     references: [organization.id],
   }),
-  setupInstallations: many(universeSetupInstallations),
 }));
 
-export const universeSetupInstallationsRelations = relations(
-  universeSetupInstallations,
-  ({ one }) => ({
-    universe: one(universes, {
-      fields: [universeSetupInstallations.universeId],
-      references: [universes.id],
-    }),
-    installedBy: one(user, {
-      fields: [universeSetupInstallations.installedByUserId],
-      references: [user.id],
-    }),
-  }),
-);

@@ -1,5 +1,5 @@
 //! Connection presentation captured once for a chat, without polling on redraw.
-use crate::connection::{ResolvedConnection, UniverseStatus};
+use crate::connection::{CredentialKind, ResolvedConnection, UniverseStatus};
 
 #[derive(Default)]
 pub(super) struct ConnectionDisplay {
@@ -44,7 +44,7 @@ impl ConnectionDisplay {
             |url| {
                 format!(
                     "{}{}",
-                    url.host_str().unwrap_or("runtime"),
+                    url.host_str().unwrap_or("deployment"),
                     url.port()
                         .map(|port| format!(":{port}"))
                         .unwrap_or_default()
@@ -78,15 +78,16 @@ impl ConnectionDisplay {
             .unwrap_or("none selected")
             .to_owned();
         if let Some(caller) = &connection.caller {
-            header_universe.push_str(match (caller.single, caller.scope) {
-                (true, _) => " · single mode",
-                (false, api::AccessScope::Deployment) => " · deployment key",
-                (false, api::AccessScope::Universe { .. }) => " · universe key",
+            header_universe.push_str(match connection.credential_kind {
+                CredentialKind::PlatformSession => " · CLI session",
+                CredentialKind::PlatformApiKey => " · Platform API key",
+                _ if caller.single => " · single mode",
+                _ => " · runtime token",
             });
         }
         let header_context = vec![
             ("Universe".into(), header_universe),
-            ("Runtime".into(), runtime),
+            ("Deployment".into(), runtime),
         ];
 
         let mut details = format!(
@@ -94,18 +95,30 @@ impl ConnectionDisplay {
             connection.name.as_deref().unwrap_or("environment"),
             connection.endpoint,
         );
-        if let Some(caller) = &connection.caller {
-            let scope = match caller.scope {
-                api::AccessScope::Deployment => "deployment".to_owned(),
-                api::AccessScope::Universe { universe_id } => format!("universe ({universe_id})"),
-            };
+        if connection.is_platform() {
             details.push_str(&format!(
-                "  Mode: {}\n  Scope: {scope}\n",
+                "  Server: Platform\n  Authentication: {:?}\n  Organization: {}\n",
+                connection.credential_kind,
+                connection
+                    .organization_id
+                    .as_deref()
+                    .unwrap_or("none selected")
+            ));
+            if let Some(principal) = &connection.principal {
+                details.push_str(&format!(
+                    "  Principal: {} ({}, {})\n",
+                    principal.name, principal.kind, principal.id
+                ));
+            }
+        } else if let Some(caller) = &connection.caller {
+            details.push_str(&format!(
+                "  Mode: {}\n  Token: {}\n  Authority: full runtime access\n",
                 if caller.single {
-                    "single (no API key)"
+                    "single (no token)"
                 } else {
                     "authenticated"
-                }
+                },
+                caller.token_name.as_deref().unwrap_or("none"),
             ));
         }
         details.push_str(&format!(
@@ -139,15 +152,13 @@ mod tests {
         ResolvedConnection {
             name: name.map(str::to_owned),
             endpoint: endpoint.into(),
-            secret: Some("lsk_do_not_display".into()),
+            secret: Some("lsr_do_not_display".into()),
             universe: None,
             caller: Some(api::CallerAccess {
-                scope: api::AccessScope::Deployment,
                 single: false,
-                key_id: None,
-                key_prefix: None,
-                groups: vec![],
+                token_name: Some("operator".into()),
             }),
+            ..Default::default()
         }
     }
 
@@ -166,14 +177,14 @@ mod tests {
             uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"checkout")
         );
         for endpoint in [
-            "http://localhost:18080/rpc",
-            "http://127.0.0.1/rpc",
-            "http://[::1]/rpc",
+            "http://localhost:18080/api/v1",
+            "http://127.0.0.1/api/v1",
+            "http://[::1]/api/v1",
         ] {
             let display = ConnectionDisplay::new(&connection(Some(&name), endpoint), &universe());
             assert!(display.footer.is_none());
             assert!(display.details.contains(&name));
-            assert!(!display.details.contains("lsk_do_not_display"));
+            assert!(!display.details.contains("lsr_do_not_display"));
             assert!(
                 display.header_context[1]
                     .1
@@ -182,12 +193,12 @@ mod tests {
             assert!(
                 display.header_context[0]
                     .1
-                    .contains("customer-a · deployment key")
+                    .contains("customer-a · runtime token")
             );
-            assert!(!display.header_context.iter().any(|(_, value)| value.contains("lsk_do_not_display") || value.contains(&name)));
+            assert!(!display.header_context.iter().any(|(_, value)| value.contains("lsr_do_not_display") || value.contains(&name)));
         }
         let remote = ConnectionDisplay::new(
-            &connection(Some(&name), "https://runtime.example/rpc"),
+            &connection(Some(&name), "https://runtime.example/api/v1"),
             &universe(),
         );
         assert_eq!(
@@ -195,56 +206,66 @@ mod tests {
             Some("runtime.example / customer-a")
         );
         let named = ConnectionDisplay::new(
-            &connection(Some("production"), "http://localhost:18080/rpc"),
+            &connection(Some("production"), "http://localhost:18080/api/v1"),
             &universe(),
         );
         assert_eq!(named.footer.as_deref(), Some("production / customer-a"));
-        assert!(named.details.contains("Scope: deployment"));
+        assert!(named.details.contains("Token: operator"));
     }
 
     #[test]
     fn a_selection_by_handle_shows_the_handle_when_the_uuid_cannot_be_read() {
         let mut universe = universe();
         universe.universe_id = None;
-        universe.unavailable_reason = Some("requires deployment/universes permission".into());
+        universe.unavailable_reason = Some("runtime unavailable".into());
         let display = ConnectionDisplay::new(
-            &connection(Some("production"), "https://runtime.example:8443/rpc"),
+            &connection(Some("production"), "https://runtime.example:8443/api/v1"),
             &universe,
         );
         assert_eq!(display.footer.as_deref(), Some("production / customer-a"));
         assert!(display.details.contains("Handle: customer-a"));
         assert!(display.details.contains("UUID: unavailable"));
-        assert!(
-            display
-                .details
-                .contains("requires deployment/universes permission")
-        );
+        assert!(display.details.contains("runtime unavailable"));
     }
 
     #[test]
     fn unavailable_handles_keep_identity_and_explain_the_fallback() {
         let mut universe = universe();
         universe.handle = None;
-        universe.unavailable_reason = Some("requires deployment/universes permission".into());
-        let mut connection = connection(None, "https://runtime.example:8443/rpc");
-        connection.caller.as_mut().unwrap().scope = api::AccessScope::Universe {
-            universe_id: uuid::Uuid::nil(),
-        };
+        universe.unavailable_reason = Some("runtime unavailable".into());
+        let connection = connection(None, "https://runtime.example:8443/api/v1");
         let display = ConnectionDisplay::new(&connection, &universe);
         assert_eq!(
             display.footer.as_deref(),
             Some("runtime.example:8443 / 00000000")
         );
         assert!(display.details.contains("Handle: unavailable"));
+        assert!(display.details.contains("runtime unavailable"));
+        assert!(display.details.contains("Authority: full runtime access"));
+    }
+
+    #[test]
+    fn platform_identity_does_not_claim_runtime_authority_or_display_a_secret() {
+        let mut connection = connection(Some("team"), "https://platform.example/api/v1");
+        connection.server_kind = Some(crate::connection::ServerKind::Platform);
+        connection.credential_kind = CredentialKind::PlatformSession;
+        connection.organization_id = Some("team-organization".into());
+        connection.principal = Some(crate::connection::PlatformPrincipal {
+            kind: "user".into(),
+            id: "person".into(),
+            name: "Ada".into(),
+            platform_admin: false,
+        });
+        let display = ConnectionDisplay::new(&connection, &universe());
+        assert!(display.details.contains("Principal: Ada"));
+        assert!(display.details.contains("Organization: team-organization"));
+        assert!(!display.details.contains("full runtime access"));
+        assert!(!display.details.contains("lsr_do_not_display"));
         assert!(
             display
-                .details
-                .contains("requires deployment/universes permission")
-        );
-        assert!(
-            display
-                .details
-                .contains("Scope: universe (00000000-0000-0000-0000-000000000000)")
+                .header_context
+                .iter()
+                .any(|(_, text)| text.contains("CLI session"))
         );
     }
 }

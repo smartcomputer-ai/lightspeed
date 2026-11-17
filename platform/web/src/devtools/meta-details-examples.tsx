@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import {
-  ChannelIcon,
   CodeModeIcon,
   ConfigureIcon,
   CopiedIcon,
@@ -283,24 +282,6 @@ function FileContentDetails({ unsaved = false }: { unsaved?: boolean }) {
   );
 }
 
-// A bot's channels (the meta toolbar examples).
-
-function ChannelsDetails({ act }: { act: (what: string) => void }) {
-  return (
-    <MetaDetails>
-      <MetaDetailsHeading title="Channels" description="Where this bot hears and answers." />
-      <MetaDetailsList label="Channels">
-        <MetaDetailsRow primary="Telegram" secondary={["@release_planner_bot", "connected"]} tone="ready" />
-        <MetaDetailsRow primary="WhatsApp" secondary={["+41 44 000 00 00", "reconnecting"]} tone="waiting" />
-      </MetaDetailsList>
-      <MetaDetailsFooter>
-        <MetaDetailsAction icon={ConfigureIcon} onSelect={() => act("Change in bot settings")}>Change in bot settings</MetaDetailsAction>
-        <MetaDetailsAction icon={GoToIcon} href={link("Channels")}>Channels</MetaDetailsAction>
-      </MetaDetailsFooter>
-    </MetaDetails>
-  );
-}
-
 // A bot's conversations, as its page's conversation switcher lists them:
 // Main and its threads (components/bot/conversations).
 
@@ -332,7 +313,6 @@ export function MetaDetailsUsagesExample() {
         <Panel label="Code mode · heading and note only"><CodeModeDetails act={act} /></Panel>
         <Panel label="Timers · heading and footer only"><TimersDetails act={act} /></Panel>
         <Panel label="Workspace file content · code row, copy, footer action"><FileContentDetails /></Panel>
-        <Panel label="Bot channels · steady and reconnecting"><ChannelsDetails act={act} /></Panel>
         <Panel label="Bot conversations · the open one marked"><ConversationsDetails /></Panel>
       </Panels>
     </div>
@@ -447,7 +427,6 @@ export function MetaDetailsInToolbarExample() {
     { key: "web", label: "Web search", icon: WebIcon, text: "Web search", priority: 3, details: <WebDetails act={act} /> },
     { key: "timers", label: "Timers", icon: TimerIcon, text: "Timers", priority: 2, details: <TimersDetails act={act} /> },
     { key: "content", label: "Content hash", value: <span className="font-mono">9f2c41a7</span>, text: <span className="font-mono">9f2c41a7</span>, priority: 1, details: <FileContentDetails /> },
-    { key: "channels", label: "2 channels", icon: ChannelIcon, value: 2, text: "2 channels", tone: "warning", priority: 0, details: <ChannelsDetails act={act} /> },
   ];
   return (
     <div className="grid w-full gap-3">

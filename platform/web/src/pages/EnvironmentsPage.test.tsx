@@ -3,14 +3,16 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { ApiError, type Environment, type EnvironmentRegistrationKey, type EnvironmentTemplate } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { EnvironmentsPage } from "./EnvironmentsPage";
+import { settleQueries } from "@/test/settle-queries";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])] }, handle: "test", isLoading: false }),
 }));
 
 function environment(
@@ -78,7 +80,7 @@ beforeEach(() => {
     if (path.endsWith("/environment-templates")) return [template];
     if (path.endsWith("/secrets")) return { grants: [], providers: [] };
     if (path.endsWith("/hints")) return { devEnvdEndpoint: null };
-    if (path.endsWith("/environment-provider-bindings") || path.endsWith("/credentials")) return [];
+    if (path.endsWith("/environment-providers") || path.endsWith("/credentials")) return [];
     throw new Error(`Unexpected request: ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -93,16 +95,16 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-async function settle() {
-  for (let i = 0; i < 5; i++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+async function settle(options?: { pending?: boolean }) {
+  await settleQueries(client, options);
 }
-async function show() {
+async function show(options?: { pending?: boolean }) {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
-      <EnvironmentsPage admin={false} />
+      <EnvironmentsPage />
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
-  await settle();
+  await settle(options);
 }
 async function details(name: string) {
   const button = container.querySelector<HTMLButtonElement>(`button[aria-label="Details for ${name}"]`)!;
@@ -153,7 +155,7 @@ it("shows one sorted semantic inventory with source-specific signals and lazy mo
   expect(table.textContent).toContain("Last seen");
   expect(table.textContent).toContain("key-id");
   expect(table.textContent).toContain("ws://example.test/");
-  expect(listReads()).toEqual(["/api/v1/universes/universe/environments"]);
+  expect(listReads()).toEqual(["/api/ui/universes/universe/environments"]);
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/credentials"))).toBe(false);
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/environment-registration-keys"))).toBe(false);
   expect(dialog()).toBeNull();
@@ -166,7 +168,7 @@ it("shows one sorted semantic inventory with source-specific signals and lazy mo
   expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
   expect(table.textContent).not.toContain("Secret environment variables");
   expect(mocks.api.mock.calls.filter(([, path]) => path.endsWith("/credentials")).map(([, path]) => path)).toEqual([
-    "/api/v1/universes/universe/environments/Runner/credentials",
+    "/api/ui/universes/universe/environments/Runner/credentials",
   ]);
   expect(dialog().textContent).not.toContain("Close environment");
   await closeDetails();
@@ -262,7 +264,7 @@ it("hides closed environments until asked and then shows why they closed", async
   expect(container.querySelector("table")).toBeNull();
   await act(async () => container.querySelector<HTMLButtonElement>('[role="switch"]')!.click());
   await settle();
-  expect(listReads()).toContain("/api/v1/universes/universe/environments?includeClosed=true");
+  expect(listReads()).toContain("/api/ui/universes/universe/environments?includeClosed=true");
   const table = container.querySelector("table")!;
   expect(table.textContent).toContain("Runner");
   expect(table.textContent).toContain("Closed when its registration key was revoked");
@@ -291,12 +293,12 @@ it("shows empty inventory independently of provider metadata failures", async ()
   rows = [];
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path) => {
-    if (path.endsWith("/environment-provider-bindings")) throw new Error("Provider offline");
+    if (path.endsWith("/environment-providers")) throw new Error("Provider offline");
     return implementation(method, path);
   });
   await show();
   expect(container.textContent).toContain("No open environments");
-  expect(container.textContent).toContain("Provider bindings unavailable");
+  expect(container.textContent).toContain("Environment providers unavailable");
 });
 
 it("retains usable inventory when enrollment metadata fails", async () => {
@@ -317,7 +319,7 @@ it("shows loading and inventory failure without a false empty state", async () =
   let reject!: (error: Error) => void;
   mocks.api.mockImplementation((method, path) => isEnvironmentList(path)
     ? new Promise((_, fail) => { reject = fail; }) : implementation(method, path));
-  await show();
+  await show({ pending: true });
   expect(container.textContent).toContain("Loading…");
   expect(container.textContent).not.toContain("No open environments");
   await act(async () => reject(new Error("Inventory unavailable")));
@@ -372,13 +374,13 @@ it("releases the daemon of a declared environment after confirmation", async () 
   expect(confirm.textContent).toContain("disconnected");
   rows = [declared, registered];
   await click(buttonIn(confirm, "Release daemon"));
-  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environments/Declared%20box/release"]]);
+  expect(writes()).toEqual([["POST", "/api/ui/universes/universe/environments/Declared%20box/release"]]);
   expect(dialogTitled("Release the daemon of Declared box?")).toBeUndefined();
   expect(dialog().textContent).toContain("None bound");
   expect(buttonLabels()).not.toContain("Release daemon");
 });
 
-it("keeps releasing a daemon with operators", async () => {
+it("does not offer releasing a daemon to a viewer", async () => {
   rows = [declaredWithDaemon];
   await show();
   await details("Declared box");
@@ -399,7 +401,7 @@ it("keeps a key's declared-only policy when another field is edited", async () =
   expect(dialogTitled("Edit “Build machines”").textContent).toContain("Only admit declared environments");
   await type("registration-key-name", "Build fleet");
   await click(buttonIn(dialogTitled("Edit “Build machines”"), "Save"));
-  expect(writes()).toEqual([["PUT", "/api/v1/universes/universe/environment-registration-keys/key-id", {
+  expect(writes()).toEqual([["PUT", "/api/ui/universes/universe/environment-registration-keys/key-id", {
     displayName: "Build fleet", offlineCloseAfterMs: 600_000, declaredOnly: true,
   }]]);
 
@@ -408,7 +410,7 @@ it("keeps a key's declared-only policy when another field is edited", async () =
   await click(declaredOnly());
   expect(declaredOnly().getAttribute("aria-checked")).toBe("false");
   await click(buttonIn(dialogTitled("Edit “Build machines”"), "Save"));
-  expect(writes()).toEqual([["PUT", "/api/v1/universes/universe/environment-registration-keys/key-id", {
+  expect(writes()).toEqual([["PUT", "/api/ui/universes/universe/environment-registration-keys/key-id", {
     displayName: "Build machines", offlineCloseAfterMs: 600_000,
   }]]);
 });
@@ -431,7 +433,7 @@ it("mints a registration key under a chosen id, and reopens the id field when th
   const taken = 'key ID "ci" belongs to a revoked key and cannot be reused; leave it blank to generate a new ID or choose another';
   mocks.api.mockRejectedValueOnce(new ApiError(409, { error: taken }));
   await click(buttonIn(mint(), "Mint key"));
-  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environment-registration-keys", {
+  expect(writes()).toEqual([["POST", "/api/ui/universes/universe/environment-registration-keys", {
     identityMode: "persistent", displayName: "CI runners", registrationKeyId: "ci",
   }]]);
   expect(mint().textContent).toContain(taken);
@@ -442,7 +444,7 @@ it("mints a registration key under a chosen id, and reopens the id field when th
   expect(mint().textContent).not.toContain(taken);
   mocks.api.mockResolvedValueOnce({ registrationKey: { ...registrationKey, displayName: "CI runners" }, secret: "lsrk_secret" });
   await click(buttonIn(mint(), "Mint key"));
-  expect(writes().at(-1)).toEqual(["POST", "/api/v1/universes/universe/environment-registration-keys", {
+  expect(writes().at(-1)).toEqual(["POST", "/api/ui/universes/universe/environment-registration-keys", {
     identityMode: "persistent", displayName: "CI runners",
   }]);
   expect((document.getElementById("registration-key-secret") as HTMLInputElement).value).toBe("lsrk_secret");
@@ -467,9 +469,28 @@ it("declares an environment under a persistent key", async () => {
   await type("declared-environment-name", " build-02 ");
   expect(buttonIn(declare, "Declare").disabled).toBe(false);
   await click(buttonIn(declare, "Declare"));
-  expect(writes()).toEqual([["POST", "/api/v1/universes/universe/environments/registered", {
+  expect(writes()).toEqual([["POST", "/api/ui/universes/universe/environments/registered", {
     environmentId: "build-box-02", registrationKeyId: "key-id", name: "build-02",
   }]]);
   expect(dialogTitled("Declare an environment under “Build machines”")).toBeUndefined();
   expect(listReads().length).toBeGreaterThan(1);
+});
+
+it("lists the providers this universe may use, and how", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path) => path.endsWith("/environment-providers")
+    ? [
+      { providerId: "incus-eu", displayName: "Incus EU", availableToAllUniverses: true },
+      { providerId: "gpu", availableToAllUniverses: false },
+    ]
+    : implementation(method, path));
+  await show();
+  await settle();
+  expect(container.textContent).toContain("2 available");
+  const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Providers"))!;
+  await act(async () => trigger.click());
+  const table = container.querySelector('table[aria-label="Providers"]')!;
+  expect(table.textContent).toContain("Incus EU");
+  expect(table.textContent).toContain("All universes");
+  expect(table.textContent).toContain("This universe");
 });

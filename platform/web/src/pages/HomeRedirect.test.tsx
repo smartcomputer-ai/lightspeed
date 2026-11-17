@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -7,12 +8,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { HomeRedirect } from "./HomeRedirect";
 import { waitForUi } from "@/test/wait-for-ui";
 
+vi.mock("@/components/universe-switcher", () => ({ NewUniverseDialog: ({ open }: { open: boolean }) => open ? <div role="dialog">New universe</div> : null }));
+
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (handle: string, overrides: Record<string, unknown> = {}) => ({
-  id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, gatewayUrl: null, status: "active",
-  createdAt: "2026-01-01T00:00:00Z", role: "viewer", features: { bots: true, channels: true }, ...overrides,
+  id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, status: "active",
+  createdAt: "2026-01-01T00:00:00Z", role: "viewer", actions: [...universeActions(["viewer"])], features: { bots: true }, ...overrides,
 });
 
 let root: Root;
@@ -23,6 +26,8 @@ beforeEach(() => {
   localStorage.clear();
   mocks.api.mockReset();
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  client.setQueryData(["organizations"], { organizations: [] });
+  client.setQueryDefaults(["organizations"], { staleTime: Infinity });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -42,7 +47,7 @@ async function show(admin: boolean) {
   await act(async () => root.render(
     <QueryClientProvider client={client}><MemoryRouter initialEntries={["/"]}>
       <Routes>
-        <Route path="/" element={<HomeRedirect admin={admin} />} />
+        <Route path="/" element={<HomeRedirect />} />
         <Route path="*" element={<Landed />} />
       </Routes>
     </MemoryRouter></QueryClientProvider>,
@@ -61,7 +66,7 @@ it("falls back to the first active membership when the last universe is gone or 
   mocks.api.mockResolvedValue([
     universe("archived", { status: "archived" }),
     universe("browsed", { role: null }),
-    universe("member", { features: { bots: false, channels: false } }),
+    universe("member", { features: { bots: false } }),
   ]);
   localStorage.setItem("lightspeed:last-universe", "browsed");
   await show(true);
@@ -71,6 +76,7 @@ it("falls back to the first active membership when the last universe is gone or 
 
 it("offers an admin a first universe when there is none", async () => {
   mocks.api.mockResolvedValue([universe("browsed", { role: null })]);
+  client.setQueryData(["organizations"], { organizations: [{ id: "team", name: "Team", role: "admin", actions: [...organizationActions(["admin"])], canCreateUniverse: true }] });
   await show(true);
   await waitForUi(() => expect(container.textContent).toContain("No universes yet"));
   expect(container.textContent).toContain("Create your first universe");
@@ -80,10 +86,18 @@ it("offers an admin a first universe when there is none", async () => {
   await waitForUi(() => expect(document.querySelector('[role="dialog"]')?.textContent).toContain("New universe"));
 });
 
+it("tells a creator whose organizations are full why there is no create action", async () => {
+  mocks.api.mockResolvedValue([]);
+  client.setQueryData(["organizations"], { organizations: [{ id: "team", name: "Team", role: "creator", actions: [...organizationActions(["creator"])], canCreateUniverse: false }] });
+  await show(true);
+  await waitForUi(() => expect(container.textContent).toContain("reached their universe limit"));
+  expect([...container.querySelectorAll("button")].some((node) => node.textContent?.includes("New universe"))).toBe(false);
+});
+
 it("tells a member who to ask, without a create action", async () => {
   mocks.api.mockResolvedValue([]);
   await show(false);
-  await waitForUi(() => expect(container.textContent).toContain("Ask a platform or universe admin"));
+  await waitForUi(() => expect(container.textContent).toContain("Ask an organization admin or universe owner"));
   expect([...container.querySelectorAll("button")].some((node) => node.textContent?.includes("New universe"))).toBe(false);
 });
 

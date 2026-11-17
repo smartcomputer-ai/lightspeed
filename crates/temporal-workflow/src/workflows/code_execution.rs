@@ -295,7 +295,8 @@ fn validate_start(
     workflow_id: &str,
     start: &WorkflowToolStartArgs,
 ) -> Result<harness::PromiseId, &'static str> {
-    if workflow_id != start.execution_id
+    if workflow_id
+        != crate::compose_workflow_tool_execution_id(start.universe_id, &start.execution_id)
         || start.universe_id != start.invocation.session_universe_id
         || start.holder_workflow_id
             != crate::compose_workflow_id(start.universe_id, &start.invocation.session_id)
@@ -471,20 +472,54 @@ mod tests {
     fn start_requires_exact_workflow_universe_holder_and_one_reply() {
         let valid = start();
         assert_eq!(
-            validate_start(&valid.execution_id, &valid),
+            validate_start(
+                &crate::compose_workflow_tool_execution_id(valid.universe_id, &valid.execution_id),
+                &valid
+            ),
             Ok(PromiseId::from_number(1))
         );
         assert!(validate_start("other-workflow", &valid).is_err());
+        assert!(
+            validate_start(&valid.execution_id, &valid).is_err(),
+            "a bare execution id is not a Temporal identity"
+        );
         let mut invalid = valid.clone();
         invalid.universe_id = uuid::Uuid::from_u128(13);
-        assert!(validate_start(&invalid.execution_id, &invalid).is_err());
+        assert!(
+            validate_start(
+                &crate::compose_workflow_tool_execution_id(
+                    invalid.universe_id,
+                    &invalid.execution_id
+                ),
+                &invalid
+            )
+            .is_err()
+        );
         let mut invalid = valid.clone();
         invalid.holder_workflow_id =
             crate::compose_workflow_id(valid.universe_id, &harness::SessionId::new("other"));
-        assert!(validate_start(&invalid.execution_id, &invalid).is_err());
+        assert!(
+            validate_start(
+                &crate::compose_workflow_tool_execution_id(
+                    invalid.universe_id,
+                    &invalid.execution_id
+                ),
+                &invalid
+            )
+            .is_err()
+        );
         let mut invalid = valid.clone();
         invalid.invocation.completion_promises = None;
-        assert!(validate_start(&invalid.execution_id, &invalid).is_err());
+        assert!(
+            validate_start(
+                &crate::compose_workflow_tool_execution_id(
+                    invalid.universe_id,
+                    &invalid.execution_id
+                ),
+                &invalid
+            )
+            .is_err()
+        );
         let mut invalid = valid.clone();
         invalid
             .invocation
@@ -492,7 +527,16 @@ mod tests {
             .as_mut()
             .unwrap()
             .insert("another-key".to_owned(), PromiseId::from_number(2));
-        assert!(validate_start(&invalid.execution_id, &invalid).is_err());
+        assert!(
+            validate_start(
+                &crate::compose_workflow_tool_execution_id(
+                    invalid.universe_id,
+                    &invalid.execution_id
+                ),
+                &invalid
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub struct DaemonArgs {
     pub listen: Option<ListenAddr>,
 
     /// Environment-gateway connect URL to dial outbound
-    /// (`wss://host[/prefix]/environment-gateway/connect`). Stream sockets
+    /// (`wss://host[/prefix]/environments/connect`). Stream sockets
     /// are dialed on the same origin and prefix.
     #[arg(long, env = "LIGHTSPEED_ENVD_GATEWAY_URL", global = true)]
     pub gateway_url: Option<String>,
@@ -395,27 +395,33 @@ pub fn gateway_urls(url: &str, allow_insecure: bool) -> Result<GatewayUrls> {
     })
 }
 
-/// Names of every daemon configuration variable present in the process
+/// Daemon configuration and runtime RPC credentials present in the process
 /// environment, captured before any child can inherit them.
 pub fn scrubbed_env_names() -> Vec<String> {
     let mut names: Vec<String> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
-        .filter(|name| is_daemon_env_name(name))
+        .filter(|name| is_scrubbed_env_name(name))
         .collect();
     names.sort();
     names
 }
 
-fn is_daemon_env_name(name: &str) -> bool {
+fn is_scrubbed_env_name(name: &str) -> bool {
+    // Windows environment names are case-insensitive. Match only the token
+    // variables themselves and their named/file forms, not similar names.
     #[cfg(windows)]
-    {
-        name.get(..ENV_PREFIX.len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(ENV_PREFIX))
-    }
-    #[cfg(not(windows))]
-    {
-        name.starts_with(ENV_PREFIX)
-    }
+    let name = name.to_ascii_uppercase();
+    #[cfg(windows)]
+    let name = name.as_str();
+    name.starts_with(ENV_PREFIX)
+        || ["LIGHTSPEED_API_TOKEN", "LIGHTSPEED_PLATFORM_API_TOKEN"]
+            .iter()
+            .any(|prefix| {
+                name == *prefix
+                    || name
+                        .strip_prefix(*prefix)
+                        .is_some_and(|suffix| suffix.starts_with('_'))
+            })
 }
 
 impl DaemonArgs {
@@ -860,7 +866,7 @@ mod tests {
         let key_file = temp.path().join("key");
         std::fs::write(&key_file, "lsrk_secret\n").expect("write key");
         let config = DaemonArgs {
-            gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
+            gateway_url: Some("wss://gateway.example/environments/connect".to_owned()),
             registration_key_file: Some(key_file.clone()),
             registration_name: Some("worker-1".to_owned()),
             registration_metadata: Some(r#"{"harbor.trialId":"t-1"}"#.to_owned()),
@@ -890,7 +896,7 @@ mod tests {
         );
 
         let both = DaemonArgs {
-            gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
+            gateway_url: Some("wss://gateway.example/environments/connect".to_owned()),
             registration_key: Some("lsrk_a".to_owned()),
             registration_key_file: Some(temp.path().join("missing")),
             ..args(&temp)
@@ -906,7 +912,7 @@ mod tests {
         assert!(key_without_gateway.is_err());
 
         let reserved = DaemonArgs {
-            gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
+            gateway_url: Some("wss://gateway.example/environments/connect".to_owned()),
             registration_metadata: Some(r#"{"lightspeed.x":"y"}"#.to_owned()),
             ..args(&temp)
         }
@@ -941,30 +947,23 @@ mod tests {
 
     #[test]
     fn gateway_urls_are_loopback_only_in_the_clear_and_end_with_the_connect_path() {
-        let urls = gateway_urls(
-            "wss://Gateway.example/ls/environment-gateway/connect",
-            false,
-        )
-        .unwrap();
+        let urls = gateway_urls("wss://Gateway.example/ls/environments/connect", false).unwrap();
         assert_eq!(urls.origin.as_str(), "wss://gateway.example");
-        assert_eq!(
-            urls.stream,
-            "wss://gateway.example/ls/environment-gateway/data"
-        );
+        assert_eq!(urls.stream, "wss://gateway.example/ls/environments/data");
         for good in [
-            "ws://127.0.0.1:18080/environment-gateway/connect",
-            "ws://localhost:18080/environment-gateway/connect",
-            "ws://[::1]:18080/environment-gateway/connect",
+            "ws://127.0.0.1:18080/environments/connect",
+            "ws://localhost:18080/environments/connect",
+            "ws://[::1]:18080/environments/connect",
         ] {
             assert!(gateway_urls(good, false).is_ok(), "{good}");
         }
         for bad in [
-            "ws://gateway.example/environment-gateway/connect",
-            "http://gateway.example/environment-gateway/connect",
-            "wss:///environment-gateway/connect",
+            "ws://gateway.example/environments/connect",
+            "http://gateway.example/environments/connect",
+            "wss:///environments/connect",
             "wss://gateway.example/x",
-            "wss://gateway.example/environment-gateway/connect?x=1",
-            "wss://user@gateway.example/environment-gateway/connect",
+            "wss://gateway.example/environments/connect?x=1",
+            "wss://user@gateway.example/environments/connect",
         ] {
             assert!(gateway_urls(bad, false).is_err(), "{bad}");
             if !bad.starts_with("ws://") {
@@ -975,7 +974,7 @@ mod tests {
 
     #[test]
     fn an_opt_in_accepts_a_cluster_internal_gateway_in_the_clear() {
-        let url = "ws://lightspeed-gateway.lightspeed.svc:8080/environment-gateway/connect";
+        let url = "ws://lightspeed-gateway.lightspeed.svc:8080/environments/connect";
         let urls = gateway_urls(url, true).expect("opted in");
         assert_eq!(
             urls.origin.as_str(),
@@ -983,7 +982,7 @@ mod tests {
         );
         assert_eq!(
             urls.stream,
-            "ws://lightspeed-gateway.lightspeed.svc:8080/environment-gateway/data"
+            "ws://lightspeed-gateway.lightspeed.svc:8080/environments/data"
         );
 
         let temp = temp();
@@ -1048,7 +1047,7 @@ mod tests {
         let parsed = DaemonArgs::try_parse_from([
             "lightspeed-envd",
             "--gateway-url",
-            "wss://gateway.example/environment-gateway/connect",
+            "wss://gateway.example/environments/connect",
         ])
         .expect("args");
         assert_eq!(parsed.on_closed, OnClosed::Exit);
@@ -1056,7 +1055,7 @@ mod tests {
         let parked = DaemonArgs::try_parse_from([
             "lightspeed-envd",
             "--gateway-url",
-            "wss://gateway.example/environment-gateway/connect",
+            "wss://gateway.example/environments/connect",
             "--on-closed",
             "park",
             "--allow-insecure-gateway",
@@ -1068,7 +1067,7 @@ mod tests {
 
         let temp = temp();
         let config = DaemonArgs {
-            gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
+            gateway_url: Some("wss://gateway.example/environments/connect".to_owned()),
             on_closed: OnClosed::Park,
             ..args(&temp)
         }
@@ -1142,7 +1141,7 @@ mod tests {
             "lightspeed-envd",
             "upgrade",
             "--gateway-url",
-            "wss://gateway.example/environment-gateway/connect",
+            "wss://gateway.example/environments/connect",
             "--discovery-url",
             "https://downloads.example/envd.json",
         ])
@@ -1150,7 +1149,7 @@ mod tests {
         assert_eq!(parsed.command, Some(DaemonCommand::Upgrade));
         assert_eq!(
             parsed.gateway_url.as_deref(),
-            Some("wss://gateway.example/environment-gateway/connect")
+            Some("wss://gateway.example/environments/connect")
         );
         assert_eq!(
             parsed.discovery_url.as_deref(),
@@ -1185,21 +1184,43 @@ mod tests {
     }
 
     #[test]
-    fn daemon_environment_namespace_follows_native_name_comparison() {
-        assert!(is_daemon_env_name("LIGHTSPEED_ENVD_REGISTRATION_KEY"));
-        assert!(!is_daemon_env_name("PATH"));
-        assert!(!is_daemon_env_name("LIGHTSPEED_ENVD"));
+    fn scrubbed_environment_names_follow_native_name_comparison() {
+        assert!(is_scrubbed_env_name("LIGHTSPEED_ENVD_REGISTRATION_KEY"));
+        assert!(!is_scrubbed_env_name("PATH"));
+        assert!(!is_scrubbed_env_name("LIGHTSPEED_ENVD"));
         assert_eq!(
-            is_daemon_env_name("Lightspeed_Envd_Registration_Key"),
+            is_scrubbed_env_name("Lightspeed_Envd_Registration_Key"),
             cfg!(windows)
         );
+        for name in [
+            "LIGHTSPEED_API_TOKEN",
+            "LIGHTSPEED_API_TOKEN_FILE",
+            "LIGHTSPEED_API_TOKEN_PLATFORM",
+            "LIGHTSPEED_API_TOKEN_OPERATOR_FILE",
+            "LIGHTSPEED_PLATFORM_API_TOKEN",
+            "LIGHTSPEED_PLATFORM_API_TOKEN_FILE",
+        ] {
+            assert!(is_scrubbed_env_name(name), "{name}");
+            assert_eq!(
+                is_scrubbed_env_name(&name.to_ascii_lowercase()),
+                cfg!(windows)
+            );
+        }
+        for name in [
+            "LIGHTSPEED_API_TOKENS",
+            "LIGHTSPEED_API_TOKENIZER",
+            "LIGHTSPEED_PLATFORM_API_TOKENIZER",
+            "OTHER_LIGHTSPEED_API_TOKEN",
+        ] {
+            assert!(!is_scrubbed_env_name(name), "{name}");
+        }
     }
 
     #[test]
     fn outbound_upgrade_configuration_derives_discovery_and_captures_restart() {
         let temp = temp();
         let config = DaemonArgs {
-            gateway_url: Some("wss://gateway.example/ls/environment-gateway/connect".to_owned()),
+            gateway_url: Some("wss://gateway.example/ls/environments/connect".to_owned()),
             auto_upgrade: true,
             ..args(&temp)
         }
@@ -1216,7 +1237,7 @@ mod tests {
         let parsed = DaemonArgs::try_parse_from([
             "lightspeed-envd",
             "--gateway-url",
-            "wss://gateway.example/environment-gateway/connect",
+            "wss://gateway.example/environments/connect",
             "--auto-upgrade",
         ])
         .expect("automatic upgrade args");

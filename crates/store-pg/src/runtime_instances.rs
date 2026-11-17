@@ -384,6 +384,7 @@ pub async fn sweep_expired_registered_connections(pool: &PgPool) -> Result<u64, 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeLoop {
+    UniverseDeletion,
     EnvironmentLifecycle,
     RegisteredSweep,
     EnvironmentDisplaySweep,
@@ -392,6 +393,7 @@ pub enum RuntimeLoop {
 impl RuntimeLoop {
     fn lock_id(self) -> i64 {
         match self {
+            Self::UniverseDeletion => 0x4c53_554e_4956_444c,
             Self::EnvironmentLifecycle => 0x4c53_454e_565f_4c43,
             Self::RegisteredSweep => 0x4c53_454e_565f_5253,
             Self::EnvironmentDisplaySweep => 0x4c53_454e_565f_4453,

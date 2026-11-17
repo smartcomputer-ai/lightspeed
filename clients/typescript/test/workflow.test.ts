@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CHANNEL_CONNECTOR_ACTIVITIES,
   DELIVER_EMISSION_SIGNAL,
   REPLY_COMPLETION_KEY,
   WORKFLOW_CONTRACT_VECTORS,
   WORKFLOW_TOOL_RECOVERY_QUERY,
-  connectorTaskQueue,
   emissionId,
   environmentJobWorkflowId,
   parseEmissionEnvelope,
@@ -64,25 +62,6 @@ describe("generated workflow contract", () => {
     expect(
       splitWorkflowId(WORKFLOW_CONTRACT_VECTORS.workflowIds.session),
     ).toEqual(WORKFLOW_CONTRACT_VECTORS.workflowIds.split);
-  });
-
-  it("derives the connector task queue of a channel account", () => {
-    const channel = WORKFLOW_CONTRACT_VECTORS.channels.inputs;
-    expect(
-      connectorTaskQueue(channel.universeId, channel.provider, channel.accountId),
-    ).toBe(WORKFLOW_CONTRACT_VECTORS.channels.connectorTaskQueue);
-    expect(
-      connectorTaskQueue(channel.universeId.toUpperCase(), channel.provider, channel.accountId),
-    ).toBe(WORKFLOW_CONTRACT_VECTORS.channels.connectorTaskQueue);
-    expect(connectorTaskQueue(channel.universeId, "whatsapp", channel.accountId)).not.toBe(
-      WORKFLOW_CONTRACT_VECTORS.channels.connectorTaskQueue,
-    );
-    expect(() => connectorTaskQueue("not-a-uuid", "telegram", "tg-main")).toThrow(/UUID/);
-    expect(CHANNEL_CONNECTOR_ACTIVITIES).toEqual({
-      deliverChannelMessage: "deliverChannelMessage",
-      prepareChannelMedia: "prepareChannelMedia",
-      maintainChannelTyping: "maintainChannelTyping",
-    });
   });
 
   it("exports manifest-owned names and the reply convention", () => {
