@@ -1,20 +1,31 @@
 # P209 — Platform organizations, authentication and authorization
 
-**Status:** First-release organization, grant and credential model implemented,
-2026-11-17. CLI consolidation and browser-approved device sign-in are implemented;
-unit, integration and live authentication checks pass, including real SDK model
-calls through Platform. The earlier test hold has been lifted.
-Existing-installation migration and authoritative background company refresh
-remain follow-ups. Platform uses Better Auth organization records, each
-containing multiple universes, and shares one authorization gate across browser
-sessions, CLI sessions, and personal/service-user API keys.
+**Status:** Implemented and validated, 2026-11-17: organizations, grants,
+personal and service-user API keys, browser-approved CLI sign-in, action-based
+authorization ([P210](p210-action-based-authorization.md)), declarative
+organizations and access, and deployment settings. Unit, integration and live
+authentication checks pass, including real SDK model calls through Platform.
+What is left is listed under [Remaining work](#remaining-work).
 
-Revised 2026-11-17: authorization decides on actions, with roles as bundles,
-and organizations give members a default universe access, as specified in
-[action-based authorization](p210-action-based-authorization.md). Organization
-kinds and organization suspension are removed; personal organizations admit
-only their owner; universe quotas and organization creation are Platform Admin
-decisions.
+Platform uses Better Auth organization records, each containing multiple
+universes, and shares one authorization gate across browser sessions, CLI
+sessions, and personal and service-user API keys.
+
+Revised 2026-11-17, in order:
+
+- Authorization decides on actions, with roles as bundles, and organizations
+  give members a default universe access (P210).
+- Organization kinds and organization suspension are removed. Personal
+  organizations admit only their owner. Universe limits and organization
+  creation are Platform Admin decisions.
+- Organizations and universe access are declared in configuration documents;
+  service users and their keys can be declared with supplied secrets; any key
+  can be given a new secret in place.
+- Deployment-wide settings are configurable by Platform Admins, with the
+  environment winning; organizations follow the deployment's universe limit
+  unless given their own.
+- Environment providers are available to every universe unless limited to
+  bound universes.
 
 [Runtime access simplification](p208-runtime-access-simplification.md) leaves
 trusted component authentication in the runtime and puts caller authorization
@@ -33,7 +44,9 @@ Platform gate serves browser, CLI, SDK and integration requests.
   home; deleting or disabling its creator does not orphan it.
 - Organizations are personal or shared. A personal organization belongs to one
   user: it has no other members, membership policy or rename, so its universes
-  cannot be shared. A shared organization is everything else.
+  cannot be shared with other people. A shared organization is everything else.
+  Every organization has a deployment-unique **handle** (Better Auth's `slug`
+  column; the API, documents and UI call it handle, like a universe's).
 - Every check asks for an action; roles are fixed bundles of actions and a
   principal's authority is the union of the roles it holds (P210).
 - Platform Admin is rare, deployment-wide authority. Ordinary universe
@@ -72,8 +85,15 @@ Deployment policy controls these independently:
   Platform Admins.
 - Organization membership and organization-role assignment, including company-group
   mappings.
-- Universe-creation quotas and defaults or requirements for deletion
-  protection.
+- Universe limits, and defaults or requirements for deletion protection.
+
+Deployment-wide policy that is not infrastructure is a **Platform setting**,
+changed by Platform Admins under Admin → Platform → Settings: personal
+organizations on or off, and the universe limits of personal and shared
+organizations. Each setting has an environment variable. A set variable wins
+and locks the setting; otherwise a value set in the UI applies, and otherwise
+the built-in default. An organization follows the deployment limit for its
+kind until a Platform Admin gives it its own, and can be returned to it.
 
 A local development deployment can provision one shared organization with Creator
 access for its developers. A corporate deployment may give ordinary users
@@ -125,8 +145,12 @@ Existing session visibility, Contributor restrictions, transcription access
 and other resource rules remain explicit policy. The role rename does not
 turn an Operator or Viewer into a reader of all private sessions.
 
-Universe grants require membership in the containing organization. Removing that
-membership disables access through any universe grants there. Universe Owners
+Universe grants require membership in the containing organization. Removing a
+person from an organization deletes the universe roles they were given in its
+universes. When a person leaves through a membership-policy change instead,
+which has no removal to hook, their roles stay but give nothing: they are shown
+as no longer a member, never count as an Owner, and apply again if the person
+returns. A disabled service user's roles behave the same way. Universe Owners
 manage universe grants within the organization; that does not itself grant them
 organization-membership administration or access to a deployment-wide directory.
 Company-group assignments must resolve to the same scoped role model.
@@ -141,7 +165,7 @@ Platform Admin provisioning on behalf of someone else must establish an
 explicit initial Owner too.
 
 At least one explicit Owner is required on creation. Ordinary grant edits
-cannot remove or demote the last Owner. Suspension or organization-membership
+cannot remove or demote the last Owner who is still an organization member. Suspension or organization-membership
 revocation still takes effect immediately even if it disables the last
 Owner; Organization Admins and Platform Admins can recover administration.
 
@@ -198,10 +222,15 @@ between key ID and service user ID. It is not a fake human user or an OAuth
 client registered solely to obtain a long-lived secret.
 
 A service user can be Operator in one universe, Viewer in several universes,
-or Creator in its organization and Owner of universes it creates. Service-user
-suspension removes its access, but its resources remain in the organization.
-Service-user administration and role assignment cannot be inferred merely
-from being the human who generated a credential.
+or Creator in its organization and Owner of universes it creates. Disabling a
+service user removes its access, but its resources and grants remain in the
+organization. Service-user administration and role assignment cannot be
+inferred merely from being the human who generated a credential.
+
+Decided 2026-11-17: a service user belongs to exactly one organization, and
+its name is unique there. Deployment-wide service users are on hold;
+organization service users cover automation for now, and a pipeline's first
+key is created by an administrator. See P210 for the outline kept for later.
 
 ### Better Auth reuse
 
@@ -274,7 +303,22 @@ Restriction semantics are part of the first release:
   way to escape their restrictions.
 
 Tokens have expiry, independent revocation and a recognizable identifier or
-prefix for listings. Secrets are not returned in ordinary listings. Reuse
+prefix for listings. Secrets are not returned in ordinary listings. A key
+that should never expire must ask for it explicitly; a deployment maximum
+refuses it.
+
+Any personal or service-user key can be given a **new secret in place**: it
+keeps its ID, name, restrictions and expiry, the new secret is shown once, and
+the old one stops working at once. This serves a lost or leaked secret
+without renaming anything that refers to the key. A gapless rotation still
+uses a second key.
+
+A service user's keys can also be **declared with a supplied secret**
+(`platform/service-users/credentials/put`, by key name), so the secret flows
+in from a secret store and never out of Lightspeed. Platform hashes the
+supplied secret as Better Auth does and compares it server-side, so a dry run
+reports whether it would change without revealing either side. A supplied
+secret is `lsa_` and at least 64 characters; two keys cannot share one. Reuse
 library storage and lifecycle capabilities; validate integration details for
 the API Key plugin. The initial lifetimes and company-access freshness policy
 are recorded below. Expiry of a browser session does not by itself invalidate
@@ -310,10 +354,11 @@ sessions renew through Better Auth within the 30-day inactivity and 90-day
 absolute limits; company sessions retain their configured absolute limit.
 `connect logout` revokes only the current CLI session and removes its private file.
 
-Connection login and logout live under `lightspeed connect`. Organization/member,
-service user, and API-key administration live under `lightspeed platform`.
-Universe grants and declared policy live under `lightspeed universe access`;
-universe creation and archive/restore stay under `lightspeed universe`.
+Connection login and logout live under `lightspeed connect`. Organization,
+member, service user and API-key administration (create, revoke, replace,
+generate a declared secret) live under `lightspeed platform`. Universe grants
+live under `lightspeed universe access`; declared access policy is set with
+documents. Universe creation and lifecycle stay under `lightspeed universe`.
 The generic `lightspeed api` command remains at the root. `--organization`
 overrides the selected organization; saving a different organization clears the previous
 universe. The generic `api` command uses generated operation catalogs, with
@@ -385,10 +430,8 @@ Runtime universe paths continue to identify a universe; Platform verifies its
 containing organization. SDK helpers and CLI commands share the same HTTP contract.
 The separate `lightspeed-platform` CLI is consolidated into `lightspeed`.
 
-Declared members and company-group mappings belong in Platform. Remove the
-runtime's temporary storage of that access policy as declarations move to
-Platform-native services. Preserve existing enterprise admission and group
-mapping behavior during that migration.
+Declared members and company-group mappings belong in Platform, and the
+runtime no longer stores access policy.
 
 Configuration application runs as the authenticated user or service user,
 with normal role and token checks. Organization selection, initial Owner grants,
@@ -396,21 +439,32 @@ quotas and protection policy apply to declared universe creation too.
 Creator authority permits creating universes and grants the creator initial
 Owner access; it does not grant access to other existing universes. A key
 limited to existing universe UUIDs cannot create universes, regardless of its
-principal's organization role. Organization membership, grants and access policies stay
-in their native Platform APIs rather than becoming universe document sections.
+principal's organization role.
 
-Environment-provider bindings are deployment infrastructure allocations.
-Their mutation remains Platform Admin-only: organization and universe roles do not
-entitle a principal to arbitrary deployment providers, and this design does
-not yet include organization-level provider entitlements. Ordinary organization
-automation consumes providers allocated by a deployment administrator and
-omits `environmentProviders` from its documents. A deployment administrator
-can reconcile allocation in a separate universe document. Provider
-registration itself remains outside declarative universe configuration.
+Platform configuration is declared in the same documents, through Platform
+only (implemented 2026-11-17):
 
-Supplied-secret key declarations are deferred until their fit with the API
-Key plugin is established; they are not a reason to maintain an independent
-legacy key implementation. Generated API keys cover the first release.
+- `kind: organization`, found by handle: name, default universe access,
+  protection policy, universe limit (Platform Admin), `membershipPolicy`, and
+  service users by name with their declared keys.
+- A universe document's `organization` (the handle of the organization that
+  holds it; universes never move) and `access`: the universe's declared policy
+  plus service-user grants by name.
+- `apply` runs organization documents first and resolves organizations and
+  service users by handle and name when each step runs, so one run creates an
+  organization, its service users, a universe in it and their grants.
+  Nothing is deleted. `config export --kind organization` writes the document;
+  keys are never exported.
+
+People are given roles one at a time in the web app; documents declare groups
+and service users, whose names are the same in every deployment.
+
+Environment providers are deployment infrastructure. A provider is available
+to every universe unless a Platform Admin limits it to bound universes; only
+Platform Admins register providers, change availability and bind universes.
+Ordinary organization documents need no `environmentProviders` section. A
+binding has no on/off state: unbinding cuts a universe off, including its
+open environments on that provider, until it is bound again.
 
 The Configurator's intended access is a service user with Operator rights in
 its target universe and credentials limited to configuration operations. It
@@ -501,12 +555,12 @@ hard-coded role distinctions.
 | Default universe access | Viewer on every universe of a shared organization; organizations may set any universe role or none. |
 | New shared-organization members | Member; Creator and Organization Admin require explicit grants or configured company-group mappings. |
 | Local development | One shared development organization; admitted developers are Creators. |
-| Service-user management | Organization Admins create/manage service users and their keys and grant their scoped roles. Personal-organization users can do this as their own Organization Admin. |
-| Universe quota | 25 active universes per personal organization; 100 per shared organization, with deployment overrides and per-organization changes by Platform Admins. |
+| Service-user management | Organization Admins create/manage service users and their keys and grant their scoped roles. A personal organization's owner is its Admin, but its administration pages are hidden from them (see below); its service users are reached through the API, the CLI or a Platform Admin. |
+| Universe limit | 25 universes per personal organization and 100 per shared organization, as Platform settings. An organization follows these unless a Platform Admin gives it its own limit. |
 | Interactive/API-created protection | Off for personal organizations; on by default for shared organizations. The seeded local development organization is off. Organizations may change the default or require protection. |
 | Document-created protection | On when omitted; existing universes retain their current value when omitted, as specified in P207. |
 | Personal and service-user API-key expiry | 365 days by default. No expiry is an explicit choice, refused when a deployment sets a maximum lifetime; there is no maximum by default. Keys are revocable at any time. |
-| API-key rotation | Issue another key for the same principal, move consumers, then revoke the old key. Overlap is explicit; do not silently invalidate a working key on new-key creation. |
+| API-key rotation | For no gap, issue another key, move consumers, then revoke the old one. A new secret in place serves a lost or leaked secret and invalidates the old one at once. Creating a key never invalidates another. |
 | Browser and CLI login | A 30-day inactivity window with a 90-day absolute login lifetime and renewal during use. Provider/deployment policy may require earlier authentication; company sessions retain their bounded absolute lifetime. |
 | Local access changes | Check local revocation, suspension and effective grants on admission; no artificial delay is required. |
 | Company access refresh | Target a background refresh at least hourly, independent of API-key or login lifetime. See the integration requirement below. |
@@ -541,24 +595,37 @@ the freshness integration is ready. A successful routine refresh must not
 require another interactive login. Disabling a service user is local Platform
 state and does not depend on company identity refresh.
 
-## Remaining follow-ups
+## Remaining work
 
-The first release uses separate Better Auth API Key configurations for user
-and organization ownership, with a protected key-to-service-user association.
-Generic plugin management endpoints are hidden. Native organization selection is
-explicit, universe handles remain globally unique, and resource paths resolve
-to UUIDs before credential restrictions are applied. Keys support exact
-operation IDs, organization/universe lists, read-only restrictions, and a universe
-creation ceiling. Capability bundles can be added without changing this model.
+Open, in rough order of value:
 
-CLI browser login and organization-aware command consolidation are implemented.
-The command hierarchy separates `connect` login/session management, `platform`
-organization/service user/key administration, and `universe access` grants/policy.
-Existing-installation data mapping is separate and will be performed with an agent. Background company identity refresh still
-needs an authoritative source; the implementation retains the existing bounded
-company admission window and does not promise hourly provider polling.
-External application-user attribution, supplied-secret key declarations and
-broader request auditing remain follow-up work.
+- **Organization templates.** Agreed outline, not built: a new universe starts
+  as a *copy* of a template universe its organization names (a deployment-wide
+  template serves personal organizations). Copies never link, so the runtime
+  gains no hierarchy. Secrets move by a runtime copy operation that never
+  returns them; an explicit "update from template" re-applies entries with
+  `apply` semantics. Templates should refuse or loudly flag retrievable
+  credentials, which any new universe's Owner could bind into an environment.
+  Settle the copy operation's scope before building.
+- **More Platform settings.** API key default and maximum expiry, browser
+  session lifetimes and workspace upload limits follow the same
+  environment-wins pattern as the universe limits.
+- **Existing-installation data migration,** performed separately with an
+  agent, as directed.
+- **Authoritative company identity refresh.** The implementation keeps the
+  bounded company admission window and does not promise hourly provider
+  polling; it needs an actual freshness source.
+- **Deployment-wide service users,** on hold (P210). Until then a pipeline's
+  first key is created by a Platform Admin.
+- **Request auditing** beyond the identity audit, and external
+  application-user attribution for service users.
+- **Personal organizations' service users** have no UI for their owner, since
+  personal organizations are hidden from their owner's Admin. Add a place only
+  if people need it.
+
+Not planned without a new decision: deleting entries through `apply`
+(no prune), bots in documents (on hold), a per-universe deny for providers
+available to all universes.
 
 ## Outside the first version
 
@@ -578,28 +645,55 @@ Product terminology is **Organization** and **Service user** throughout UI,
 native API, CLI, SDKs and database identity records. Better Auth OAuth account
 records and runtime provider/channel accounts remain distinct concepts.
 
-The work switcher groups all accessible active universes by organization with
-search and direct cross-organization selection. Personal organizations display
-as **Personal**. The closed selector retains the universe-only header; organization
-context appears in the open menu's group labels, preserving the tuned header layout.
+**Universe switcher.** All accessible active universes, grouped by
+organization; group headings appear only when universes span several
+organizations, and search only past ten universes. **New universe** shows
+while the caller can create somewhere and is enabled only while one of those
+organizations is under its limit. The New universe dialog asks for a name; the
+organization is a choice only when there are several, the handle follows the
+name (changeable), and the creator becomes the Owner. A Platform Admin outside
+the organization names a member as Owner.
 
-Admin uses explicit `/admin/organizations/:organizationId/...` context with
-Universes, People, Service users, API keys and Settings. Organization Admins
-manage the full organization; universe Owners only get their owned universe
-pages. Universe Access and lifecycle Settings remain inside Admin. Creation
-from organization Admin fixes the destination organization.
+**A universe's own settings.** Universe administration lives in the universe:
+Settings → General (name, handle, features, appearance, protection, and a
+Danger zone with archive, delete and, for Platform Admins, deleted sessions)
+and Settings → Members (a summary of who gets in through the organization,
+plus roles given here). The former Admin universe pages redirect there.
 
-Platform-only pages form a separately labeled sidebar section and display
-**Platform administration**. Organization inventory, users, infrastructure,
-connectors, audit, and unclaimed runtime universes do not inherit the
-selected organization's scope. URLs define page context independently per tab.
+**Admin** uses `/admin/organizations/:organizationId/...` with Universes (an
+inventory: icon, handle, role, status; rows open details with Open, Settings
+and Members), Members (people and service users; a service user's details hold
+its role and keys), API keys (every key that can reach the organization,
+read-only except service-user revocation) and Settings (name, universe limit,
+default universe access, protection). A personal organization is not listed
+for its owner; Platform Admins still see it. Admin appears in the account
+menu only for people with something to administer.
 
-Human keys remain under **Your profile → Your API keys**, defaulting to a single
-organization with an explicit **All my accessible organizations** choice.
-Service-user keys remain limited to the service user's one organization.
-Restrictions always intersect current principal permissions.
+**Platform** pages form a separately labeled section: All Organizations,
+Users, Channels, Audit log, Environment providers, Unclaimed Universes and
+Settings. They do not inherit the selected organization's scope.
+
+**Settings** (account menu) is one page: Account (profile, sign-in, API
+keys, kept on the server) and Appearance (kept in this browser). Personal keys
+default to a single organization, with an explicit broader choice.
+Service-user keys stay limited to their one organization. Restrictions always
+intersect current principal permissions.
 
 ## Validation and progress
+
+- 2026-11-17 (later): the follow-through recorded in the status above.
+  Organization documents, universe `organization`/`access`, declared
+  service-user keys and in-place secret replacement; service-user names unique
+  per organization (Platform migration 0013); organization handle; Platform
+  settings with environment precedence and organization limit inheritance
+  (migration 0012); universe roles removed with organization membership and
+  inactive roles marked; `canCreateUniverse` on organization views; universe
+  administration moved into the universe; Members, API keys and Settings
+  pages; one Settings page for the account; environment provider availability
+  (runtime migration 029). Full backend, web, CLI, runtime, store and API
+  suites, Clippy, migration upgrade checks and documentation checks passed;
+  the PostgreSQL live checks for providers passed. Temporal and Incus live
+  suites were not rerun.
 
 - 2026-11-17: replaced the Platform-wide universe inventory with **Unclaimed
   Universes**, for adoption of runtime-only universes. Adoption suggests the
