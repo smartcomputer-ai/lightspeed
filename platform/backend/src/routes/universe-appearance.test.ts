@@ -14,8 +14,10 @@ const migrations = new URL("../../../db/migrations/", import.meta.url);
 
 beforeAll(async () => {
   const journal = JSON.parse(await readFile(new URL("meta/_journal.json", migrations), "utf8")) as { entries: { tag: string }[] };
-  await database.exec(await readFile(new URL(`${journal.entries[0]!.tag}.sql`, migrations), "utf8"));
-  // A retained universe must receive the same defaults as a fresh one.
+  for (const entry of journal.entries) {
+    await database.exec(await readFile(new URL(`${entry.tag}.sql`, migrations), "utf8"));
+  }
+  // Existing and newly created universes have the same appearance defaults.
   await database.exec(`
     INSERT INTO "user" (id, name, email) VALUES
       ('admin', 'Admin', 'admin@example.test'), ('viewer', 'Viewer', 'viewer@example.test'),
@@ -27,9 +29,6 @@ beforeAll(async () => {
       VALUES ('${id}', 'org', '${id}', 'Test', 'test');
     INSERT INTO universe_grants (universe_id,user_id,role) SELECT '${id}',id,CASE WHEN id='admin' THEN 'owner' ELSE id END FROM "user";
   `);
-  for (const entry of journal.entries.slice(1)) {
-    await database.exec(await readFile(new URL(`${entry.tag}.sql`, migrations), "utf8"));
-  }
 });
 afterAll(async () => database.close());
 
@@ -46,7 +45,7 @@ function request(userId: string, method = "GET", body?: unknown, platformAdmin =
   });
 }
 
-it("gives retained and newly created universes the default appearance", async () => {
+it("gives existing and newly created universes the default appearance", async () => {
   expect(await (await request("viewer")).json()).toMatchObject({ icon: "orbit", iconColor: "default" });
   await database.exec(`
     INSERT INTO organization (id, name, slug, created_at) VALUES ('new-org', 'New', 'new', now());

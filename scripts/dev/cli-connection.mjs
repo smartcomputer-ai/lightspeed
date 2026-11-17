@@ -122,9 +122,10 @@ export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: 
     if (!single) {
       headers.authorization = `Bearer ${secret}`;
     }
-    const endpoint = `${env.LIGHTSPEED_API_URL.replace(/\/$/, "")}/universes/${encodeURIComponent(universe)}/models/defaults`;
+    const endpoint = `${env.LIGHTSPEED_API_URL.replace(/\/$/, "")}/universes/${encodeURIComponent(universe)}/model-defaults`;
     async function call(method, params) {
-      const response = await request(endpoint, {
+      const url = method === "PUT" ? `${endpoint}/agentRun` : endpoint;
+      const response = await request(url, {
         method, headers, redirect: "error", signal: AbortSignal.timeout(10_000),
         ...(params ? { body: JSON.stringify(params) } : {}),
       });
@@ -136,7 +137,7 @@ export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: 
     const { defaults } = await call("GET");
     if (defaults.revision !== 0) continue;
     await call("PUT", {
-      slot: "agentRun", expectedRevision: 0,
+      expectedRevision: 0,
       model: { providerId: "openai", apiKind: "openai:responses", model: "gpt-6-sol" },
     });
   }

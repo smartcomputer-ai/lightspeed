@@ -64,12 +64,18 @@ Operation restrictions must allow discovery, universe reads, the resource
 reads used by `diff`, and the writes needed by `apply`; creation also needs
 `platform/universes/create`. A read-only key cannot apply changes.
 
-For example, using a saved Platform connection:
+For example, save a Platform application key from a mounted secret and select
+the account used for provisioning:
 
 ```bash
-lightspeed --connection automation --account ACCOUNT_ID config diff -f config/
-lightspeed --connection automation --account ACCOUNT_ID config apply -f config/
+lightspeed connect add automation --url https://lightspeed.example --token-file /run/secrets/lightspeed-platform-key
+lightspeed --connection automation platform account use ACCOUNT_ID
+lightspeed --connection automation config diff -f config/
+lightspeed --connection automation config apply -f config/
 ```
+
+Use `--account ACCOUNT_ID` on an individual command to override that saved
+selection.
 
 The account selection and initial Owner are connection/command context, so the
 same universe document can be promoted across accounts and deployments.

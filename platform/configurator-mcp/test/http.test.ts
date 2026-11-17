@@ -20,6 +20,31 @@ afterEach(async () => {
 });
 
 describe("Streamable HTTP configurator", () => {
+  it.each([
+    ["lightspeed_blobs_read", "blobs/read", { blobRef: "blob-fixture" }],
+    ["lightspeed_vfs_workspaces_files_read", "vfs/workspaces/files/read", { workspaceId: "workspace-fixture", path: "nested/file.bin" }],
+  ])("encodes binary download tool %s without losing bytes", async (name, operation, args) => {
+    const upstream: UpstreamRequest[] = [];
+    const bytes = new Uint8Array([0, 255, 128, 10, 13, 65]);
+    const fallback = fakeUpstream(upstream);
+    const server = await start("authenticated", async (input, init) => {
+      const decoded = decodeHttpRequest(input, init);
+      if (decoded.method !== operation) return fallback(input, init);
+      expect(decoded.params).toEqual(args);
+      expect(decoded.universe).toBe(universeA);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer binary-reader");
+      return new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+    });
+    const { client, transport } = mcpClient(server, { authorization: "Bearer binary-reader" });
+    try {
+      await client.connect(transport as Parameters<typeof client.connect>[0]);
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent).toBeUndefined();
+      expect(result.content).toEqual([{ type: "text", text: JSON.stringify({ encoding: "base64", data: Buffer.from(bytes).toString("base64"), bytes: bytes.byteLength }) }]);
+    } finally { await client.close(); }
+  });
+
   it("initializes, lists all tools, and forwards a universe call in authenticated mode", async () => {
     const upstream: UpstreamRequest[] = [];
     const server = await start("authenticated", fakeUpstream(upstream));

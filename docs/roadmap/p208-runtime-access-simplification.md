@@ -14,8 +14,8 @@ builds the replacement, in one place.
 
 The companion [resource HTTP API design](p208b-resource-http-api.md) specifies
 the agreed replacement of the client JSON-RPC transport before the general
-Platform API is built. Its runtime, client and Platform HTTP cutover is implemented, with final
-integration validation on hold at the user’s request. It also implements the `/ingress`
+Platform API is built. Its runtime, client and Platform HTTP cutover is implemented,
+with integrated live validation now passed. It also implements the `/ingress`
 grouping and `/environments` machine-route prefix. The paths described below
 record the implementation before that cutover. The successor
 Platform design now groups universes into Better Auth organization-backed
@@ -390,6 +390,33 @@ Decided, 2026-11-16:
   classification stays as published information.
 
 ## Validation and progress
+
+- 2026-11-17: resumed full behavioral validation with the user's authorization,
+  including live services and paid model calls. The workspace suite passed
+  3,383 tests (370 opt-in tests ignored), and exact workspace/all-target Clippy
+  passed with warnings denied. All 145 selected runtime live tests passed
+  against PostgreSQL, object storage and Temporal, including OpenAI/Anthropic
+  calls, authentication, HTTP/binary/watch transports, deletion and worker
+  restart. A new live workflow deliberately bypasses workflow admission to
+  verify activity-level rejection of foreign or malformed universe identities,
+  including rejection before lookup of an absent universe; a valid long
+  environment-job identity succeeds and writes only to its originating store.
+  All 84 selected PostgreSQL live tests also passed. Full-stack Platform,
+  CLI authentication and cross-SDK checks passed; details are recorded in
+  the companion HTTP and Platform-authentication roadmaps. The deliberately
+  slow production-budget run suite and unrelated external-cloud/platform
+  suites were not run.
+
+- 2026-11-17: strengthened internal activity isolation. Environment-job,
+  subagent and channel activity adapters now reject a payload universe that
+  differs from the invoking Temporal workflow, before resolving a service or
+  store. Missing or malformed workflow identities fail closed. Existing
+  session, bot and code-execution identity checks remain in place; Platform
+  still owns user permissions and infrastructure credentials remain
+  deployment-wide. Added focused regression coverage, including long valid
+  environment-job identities. `cargo check -p temporal-runtime --all-targets
+  --locked` passed. Test execution was initially held; the subsequent validation
+  entry above supersedes that hold.
 
 - 2026-11-16: completed the previously interrupted baseline with
   `cargo test --workspace --locked`: 3,378 tests passed, 366 ignored, no

@@ -158,7 +158,7 @@ it("demotes existing sessions and revokes all of them when company admission dis
   expect((await fixture.request("/api/ui/me", undefined, first.cookie)).status).toBe(401);
 });
 
-it("bounds sessions, does not slide with activity, and rejects stale bearer and cookie sessions", async () => {
+it("bounds company sessions without sliding and rejects browser bearer tokens and expired cookies", async () => {
   const { cookie } = await login();
   const user = await companyUser();
   const [session] = await fixture.db.select().from(schema.session).where(eq(schema.session.userId, user.id));
@@ -167,7 +167,7 @@ it("bounds sessions, does not slide with activity, and rejects stale bearer and 
   const [again] = await fixture.db.select().from(schema.session).where(eq(schema.session.id, session!.id));
   expect(again!.expiresAt).toEqual(session!.expiresAt);
   const bearer = await fixture.app.request(`${identityEnv.baseUrl}/api/ui/me`, { headers: { authorization: `Bearer ${session!.token}` } });
-  expect(bearer.status).toBe(200);
+  expect(bearer.status).toBe(401);
   await fixture.db.update(schema.session).set({ expiresAt: new Date(0) }).where(eq(schema.session.id, session!.id));
   expect((await fixture.request("/api/ui/me", undefined, cookie)).status).toBe(401);
   expect((await fixture.app.request(`${identityEnv.baseUrl}/api/ui/me`, { headers: { authorization: `Bearer ${session!.token}` } })).status).toBe(401);

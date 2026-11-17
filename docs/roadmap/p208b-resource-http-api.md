@@ -1,10 +1,10 @@
 # P208b — A resource-oriented HTTP API
 
-**Status:** HTTP cutover implemented; final integration validation on hold,
-2026-11-16, at the user’s request. Runtime, SDKs, CLI and Platform now use the resource contract.
+**Status:** HTTP cutover implemented and integrated live validation passed,
+2026-11-17. Runtime, SDKs, CLI and Platform now use the resource contract.
 Application JSON-RPC transport and generated artifacts are removed. Platform
 account hierarchy and personal/application credentials are implemented in P209;
-its behavioral validation remains on hold.
+its behavioral and live authentication validation is recorded there.
 
 This accompanies [runtime access simplification](p208-runtime-access-simplification.md)
 and changes the transport assumed by
@@ -735,6 +735,24 @@ lifetimes, Creator entitlements or the remaining P209 policy questions.
   [problem details, RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).
 
 ## Progress
+
+- 2026-11-17: completed the authorized broad validation pass. The Rust
+  workspace passed 3,383 tests and exact all-target Clippy; all 145 selected
+  runtime live tests and 84 PostgreSQL live tests passed. TypeScript/Python
+  suites, generated-contract checks, OpenAPI lint, typechecks and packaging
+  passed. A real direct single-universe runtime accepted credential-free CLI
+  profile CRUD and refused a foreign universe. Full Platform checks exercised
+  browser-approved CLI login, API-key connections, declarative reconciliation,
+  and Configurator binary reads through Platform to runtime. All three direct
+  CLI configuration live tests passed, covering drift correction, conflict
+  atomicity, export/promotion and protection defaults. Both SDKs used
+  actual saved CLI credentials for JSON/native operations, 1 MiB binary
+  transfers, SSE, session renewal, scope denial and revocation. A paid model
+  run submitted by TypeScript was resumed idempotently by Python through
+  Platform and completed. Startup exposed an obsolete launcher model-default
+  URL; corrected its resource path and path/body split and verified both
+  single-mode and authenticated full-stack startup. Updated stale test
+  fixtures for the removed runtime key model and asynchronous run admission.
 
 - 2026-11-16: implemented all 146 existing operations as catalog-generated
   typed runtime HTTP bindings, plus `blobs/upload` for binary PUT. Added

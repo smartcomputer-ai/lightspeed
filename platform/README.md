@@ -371,6 +371,30 @@ is separate work. The release manifest records one digest for each image.
 
 ### Testing & Visual Tests
 
+With `./dev.sh full` running and the Rust CLI built, exercise real Platform
+authentication, runtime forwarding, key restrictions, account/application
+authority, CLI browser approval, and declarative universe creation:
+
+```bash
+source scripts/dev/env.sh
+live_connections=$(mktemp -d)
+LIGHTSPEED_PLATFORM_LIVE_URL=http://localhost:5173 \
+LIGHTSPEED_LIVE_CONNECTIONS_DIR="$live_connections" \
+LIGHTSPEED_PLATFORM_LIVE_RENEWAL_DATABASE_URL="$LIGHTSPEED_PLATFORM_DATABASE_URL" \
+  npm run test:runtime --workspace @lightspeed-ai/platform-backend
+(cd clients/python && LIGHTSPEED_TEST_CONNECTION_CONFIG="$live_connections" \
+  uv run pytest tests/live_platform_connections.py -v)
+```
+
+These opt-in checks use the seeded admin and operator logins and create
+`live-*` accounts and universes in the development database. Set
+`LIGHTSPEED_PLATFORM_LIVE_PASSWORD` when the seed password differs from the
+development default. The first check saves dedicated CLI/API-key connections
+in the private directory; the second exercises both SDKs and revokes those
+credentials. Test accounts and universes remain available for inspection.
+The renewal database option ages only the dedicated CLI session so the SDK
+check can prove real session renewal and credential-file persistence.
+
 The web UI's tests run in Vitest and are part of `npm test` and `npm run check`.
 Logic tests call page helpers with plain data; component tests mount pages in
 jsdom with the API mocked, click through them, and assert the resulting DOM and

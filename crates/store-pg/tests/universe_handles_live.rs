@@ -51,8 +51,19 @@ async fn universes_are_named_at_creation_and_renamed_only_explicitly() {
 }
 
 async fn exercise(pool: &sqlx::PgPool) {
-    PgStore::migrate(pool).await.expect("apply migrations");
+    for migration in store_pg::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version < 16)
+    {
+        apply_migration(pool, migration.version).await;
+    }
     upgrade_keeps_fitting_names_and_derives_the_rest(pool).await;
+    for migration in store_pg::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version > 16)
+    {
+        apply_migration(pool, migration.version).await;
+    }
 
     // A universe created without a handle takes the one derived from its id.
     let id = Uuid::new_v4();
@@ -209,21 +220,9 @@ async fn exercise(pool: &sqlx::PgPool) {
     }
 }
 
-/// Rebuild the universe table as the previous revision left it, then apply
-/// the handle migration over rows of every kind it has to carry.
+/// Apply the handle migration to the actual preceding schema, with rows of
+/// every kind it has to carry. Later migrations run only after these checks.
 async fn upgrade_keeps_fitting_names_and_derives_the_rest(pool: &sqlx::PgPool) {
-    pool.execute(sqlx::raw_sql(
-        r#"
-        ALTER TABLE universes DROP CONSTRAINT universes_handle_format;
-        ALTER TABLE universes ALTER COLUMN handle DROP NOT NULL;
-        ALTER TABLE universes RENAME CONSTRAINT universes_handle_key TO universes_slug_key;
-        ALTER TABLE universes RENAME COLUMN handle TO slug;
-        ALTER TABLE universes ADD CONSTRAINT universes_slug_format
-            CHECK (slug IS NULL OR slug ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$');
-        "#,
-    ))
-    .await
-    .expect("restore the previous universe table");
     let kept = Uuid::new_v4();
     let unnamed = Uuid::new_v4();
     let mixed_case = Uuid::new_v4();
@@ -244,12 +243,19 @@ async fn upgrade_keeps_fitting_names_and_derives_the_rest(pool: &sqlx::PgPool) {
 
     apply_migration(pool, 16).await;
 
-    assert_eq!(handle(pool, kept).await, "kept-name");
-    for id in [unnamed, mixed_case, uuid_shaped] {
-        assert_eq!(
-            handle(pool, id).await,
+    for id in [kept, unnamed, mixed_case, uuid_shaped] {
+        let actual: String =
+            sqlx::query_scalar("SELECT handle FROM universes WHERE universe_id = $1")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let expected = if id == kept {
+            "kept-name".to_owned()
+        } else {
             store_pg::default_universe_handle(id)
-        );
+        };
+        assert_eq!(actual, expected);
     }
 }
 
@@ -271,8 +277,7 @@ async fn handle(pool: &sqlx::PgPool, id: Uuid) -> String {
         .handle
 }
 
-/// Run one embedded migration's statements over the schema as it stands. The
-/// ledger is left alone, so migrations added later do not affect this.
+/// Run one embedded migration over the isolated historical fixture.
 async fn apply_migration(pool: &sqlx::PgPool, version: i64) {
     let migration = store_pg::MIGRATIONS
         .iter()

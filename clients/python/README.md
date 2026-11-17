@@ -408,8 +408,9 @@ class ReleaseReviewWorkflow:
     @workflow.run
     async def run(self, args: WorkflowToolStartArgs) -> WorkflowToolRecoveryResult:
         invocation = args["invocation"]
+        workflow_id = f"{args['universe_id']}/{args['execution_id']}"
         if (
-            workflow.info().workflow_id != args["execution_id"]
+            workflow.info().workflow_id != workflow_id
             or args["universe_id"] != invocation["session_universe_id"]
             or invocation["workflow_tool_id"] != "request-review"
             or invocation["semantic_type"] != "release.review.v1"
@@ -432,7 +433,7 @@ class ReleaseReviewWorkflow:
 
         reply = source_resolution_envelope(
             universe_id=args["universe_id"],
-            producer_workflow_id=args["execution_id"],
+            producer_workflow_id=workflow_id,
             holder_workflow_id=args["holder_workflow_id"],
             promise_id=promise_id,
             resolution=resolution,
@@ -473,6 +474,38 @@ uv run pytest
 `tests/test_gateway_live.py` starts a run with the TypeScript SDK and finishes it from
 Python. It is skipped unless `LIGHTSPEED_TEST_GATEWAY=1` is set, and it needs a built
 TypeScript SDK and `LIGHTSPEED_API_URL` pointing at a running gateway.
+Alternatively, set `LIGHTSPEED_TEST_CONNECTION_CONFIG` and
+`LIGHTSPEED_TEST_MODEL_CONNECTION` to use a saved CLI connection from both SDKs.
+Its selected universe needs an agent model default and provider credentials;
+this test makes a paid model call.
+
+For a real Platform → runtime test using both SDKs and the Rust CLI, start the
+local full stack and build the CLI and TypeScript SDK. From the repository root,
+create dedicated fixtures with the seeded development users:
+
+```bash
+source scripts/dev/env.sh
+LIGHTSPEED_PLATFORM_LIVE_URL=http://localhost:5173 \
+LIGHTSPEED_LIVE_CONNECTIONS_DIR=/tmp/lightspeed-live-sdk-connections \
+LIGHTSPEED_PLATFORM_LIVE_RENEWAL_DATABASE_URL="$LIGHTSPEED_PLATFORM_DATABASE_URL" \
+  npx tsx platform/backend/scripts/check-platform-runtime.ts
+cd clients/python
+LIGHTSPEED_TEST_CONNECTION_CONFIG=/tmp/lightspeed-live-sdk-connections \
+  uv run pytest tests/live_platform_connections.py -v
+```
+
+Use the configured browser origin if it differs; the default development UI
+proxies API requests to Platform and uses this origin for authentication. The fixture script accepts
+`LIGHTSPEED_PLATFORM_LIVE_PASSWORD` for a nondefault development password and
+`LIGHTSPEED_LIVE_CLI` for a different CLI binary. It creates an account and
+universes in the development database, then saves dedicated `sdk-session` and
+`sdk-key` connections. The renewal-database option ages only the dedicated CLI
+session so the first SDK request must renew it. The explicit suite checks
+session renewal, JSON, binary and SSE transports,
+credential restrictions, cross-universe isolation, and immediate revocation in
+both SDKs. **It revokes both fixture credentials**, so create fresh fixtures for
+each run; never point it at credentials used by other work. Missing prerequisites
+fail rather than skipping. It makes no model calls.
 
 ## License
 

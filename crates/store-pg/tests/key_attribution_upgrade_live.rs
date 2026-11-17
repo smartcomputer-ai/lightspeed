@@ -72,7 +72,13 @@ async fn exercise(pool: &sqlx::PgPool) {
     }
     let here = Uuid::new_v4();
     let sessions = PgStore::new(pool.clone(), PgStoreConfig::new(here));
-    sessions.ensure_universe().await.unwrap();
+    // Seed the historical schema directly; current provisioning writes newer columns.
+    sqlx::query("INSERT INTO universes (universe_id, handle) VALUES ($1, $2)")
+        .bind(here)
+        .bind(store_pg::default_universe_handle(here))
+        .execute(pool)
+        .await
+        .unwrap();
     let log = SessionId::new("migration-log");
     sessions
         .create_session(CreateSession {

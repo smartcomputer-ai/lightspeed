@@ -301,7 +301,7 @@ it.each(["viewer", "contributor"])(
   },
 );
 
-it.each(["operator", "admin"])(
+it.each(["operator", "owner"])(
   "deletes a workspace as %s without deleting its snapshots or blobs",
   async (role) => {
     await upload();
@@ -341,7 +341,7 @@ async function renameWorkspace(name: string, expectedRevision = revision) {
     body: JSON.stringify({ displayName: name, expectedRevision }),
   });
 }
-it.each(["operator", "admin"])(
+it.each(["operator", "owner"])(
   "renames a workspace as %s without changing its ID or snapshot",
   async (role) => {
     await upload();

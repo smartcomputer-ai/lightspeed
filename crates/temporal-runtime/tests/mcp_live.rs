@@ -2745,10 +2745,14 @@ fn expected_configurator_tool_names() -> anyhow::Result<BTreeSet<String>> {
         .ok_or_else(|| anyhow::anyhow!("HTTP catalog has no operations array"))?
         .iter()
         .filter(|entry| entry["scope"].as_str() == Some("universe"))
-        .filter(|entry| entry["transfer"].as_str() == Some("json"))
         .filter_map(|entry| entry["operationId"].as_str())
         .filter(|method| !excluded.contains(*method))
         .map(|method| {
+            let method = method.replacen(
+                "credentials/github/installations/",
+                "credentials/github/installs/",
+                1,
+            );
             let suffix: String = method
                 .chars()
                 .map(|character| {

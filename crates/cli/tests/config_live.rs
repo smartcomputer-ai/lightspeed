@@ -1,7 +1,7 @@
 //! Live coverage for `config export`, `config diff` and `config apply`
 //! against a real runtime.
 //!
-//! The suite needs an authenticated runtime and a deployment key that may
+//! The suite needs an authenticated runtime and a runtime token that may
 //! create universes and write every resource a document holds:
 //!
 //! ```bash
@@ -170,7 +170,7 @@ profiles:
     )
 }
 
-fn generate(live: &Live, _kind: &str) -> String {
+fn generate_registration_secret(live: &Live) -> String {
     let command: &[&str] = &["environment", "registration-key", "generate-secret"];
     live.ok(command, &[]).trim().to_owned()
 }
@@ -190,7 +190,7 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
     )
     .unwrap();
     std::fs::write(live.path("model-key"), "model-secret-1\n").unwrap();
-    let runners_key = generate(&live, "registration-key");
+    let runners_key = generate_registration_secret(&live);
     let secrets = [
         ("LIVE_TRACKER_TOKEN", "tracker-secret-1"),
         ("LIVE_RUNNERS_KEY", runners_key.as_str()),
@@ -206,7 +206,7 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
         "{plan}"
     );
     let applied = live.ok(&["config", "apply", "-f", file_arg], &secrets);
-    for resource in [
+    let resources = [
         "credentials/tracker-token",
         "providers/model:primary",
         "modelDefaults/agentRun",
@@ -217,7 +217,8 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
         "environments.credentials/build-box/TRACKER_TOKEN",
         "profiles/reviewer",
         "profiles/triage",
-    ] {
+    ];
+    for resource in resources {
         assert!(
             applied.contains(&format!("created     {resource}")),
             "{resource} was not created:\n{applied}"
@@ -231,7 +232,12 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
     let (status, plan) = live.diff_status(&file, &secrets);
     assert_eq!(status, Some(0), "{plan}");
     let again = live.ok(&["config", "apply", "-f", file_arg], &secrets);
-    assert!(again.contains("11 unchanged"), "{again}");
+    assert!(
+        again
+            .lines()
+            .any(|line| line.trim() == format!("{} unchanged", resources.len())),
+        "{again}"
+    );
 
     // The declared environment waits for its machine under its chosen id,
     // and the profile already points at it.
@@ -324,7 +330,7 @@ async fn a_universe_is_declared_converged_and_promoted_to_another_universe() {
         serde_json::to_string_pretty(&promoted_document).unwrap(),
     )
     .unwrap();
-    let promoted_runners_key = generate(&live, "registration-key");
+    let promoted_runners_key = generate_registration_secret(&live);
     let bound = [
         ("TRACKER_TOKEN", "tracker-secret-2"),
         ("MODEL_PRIMARY_CREDENTIAL", "model-secret-1"),

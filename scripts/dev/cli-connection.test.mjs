@@ -88,6 +88,7 @@ test("model seeding selects universes explicitly and preserves changed or cleare
   const env = { LIGHTSPEED_AUTH_MODE: "authenticated", LIGHTSPEED_PLATFORM_API_TOKEN: "lsr_fixture_01234567890123456789012", LIGHTSPEED_API_URL: "http://localhost/api/v1", LIGHTSPEED_PG_UNIVERSE_ID: "development", LIGHTSPEED_PLATFORM_DEV_SEED: "true" };
   await seedDevelopmentModelDefaults({ env, full: true, fetch: async (url, init) => {
     const universe = new URL(url).pathname.split("/")[4];
+    assert.equal(new URL(url).pathname, `/api/v1/universes/${universe}/model-defaults${init.method === "PUT" ? "/agentRun" : ""}`);
     calls.push({ universe, method: init.method, params: init.body ? JSON.parse(init.body) : {} });
     assert.equal(init.headers["x-lightspeed-universe"], undefined);
     assert.equal(init.headers.authorization, "Bearer lsr_fixture_01234567890123456789012");
@@ -101,7 +102,7 @@ test("model seeding selects universes explicitly and preserves changed or cleare
     ["6c696768-7473-4065-8064-000000000010", "PUT"],
   ]);
   assert.equal(calls[2].params.expectedRevision, 0);
-  assert.equal(calls[2].params.slot, "agentRun");
+  assert.equal(calls[2].params.slot, undefined, "the slot belongs in the resource URL");
 });
 
 test("single-mode model seeding sends no authority headers and tolerates a concurrent update", async () => {
@@ -113,7 +114,7 @@ test("single-mode model seeding sends no authority headers and tolerates a concu
     fetch: async (url, init) => {
       assert.equal(init.headers.authorization, undefined);
       assert.equal(init.headers["x-lightspeed-universe"], undefined);
-      assert.match(url, /\/universes\/development\/models\/defaults$/);
+      assert.equal(url, `http://localhost/api/v1/universes/development/model-defaults${init.method === "PUT" ? "/agentRun" : ""}`);
       methods.push(init.method);
       return init.method === "GET" ? Response.json({ defaults: { revision: 0 } })
         : Response.json({ kind: "conflict" }, { status: 409 });

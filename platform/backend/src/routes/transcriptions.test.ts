@@ -70,7 +70,7 @@ it("preserves the missing speech default error", async () => {
   expect(await response.json()).toMatchObject({ kind: "modelDefaultUnset", modelDefaultSlot: "speechToText" });
 });
 
-it.each(["contributor", "operator", "admin"])("never returns another actor's transcription or cancels it as %s", async role => {
+it.each(["contributor", "operator", "owner"])("never returns another actor's transcription or cancels it as %s", async role => {
   auth.role = role;
   const f = fixture();
   const calls: string[] = [];

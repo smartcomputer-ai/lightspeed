@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::universes::WorkerUniverses;
+use super::universes::{WorkerUniverses, require_activity_universe};
 
 use temporal_workflow::channels::*;
 use temporalio_macros::activities;
@@ -34,9 +34,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_TRANSCRIBE_MEDIA)]
     pub async fn transcribe_media(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatTranscribeMediaRequest,
     ) -> Result<api::TranscriptionView, ActivityError> {
+        require_activity_universe(&ctx, request.active.universe_id)?;
         let api = self.universes.api_for(request.active.universe_id).await?;
         let active =
             crate::channels::activities::assert_trigger_active(&api, request.active.clone())
@@ -79,9 +80,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_TOOL_DECLARATIONS)]
     pub async fn chat_tool_declarations(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatToolDeclarationsRequest,
     ) -> Result<ChatToolDeclarationsResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::chat_tool_declarations(&api, request).await
     }
@@ -89,9 +91,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_READ_JSON_BLOB)]
     pub async fn read_json_blob(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatReadJsonBlobRequest,
     ) -> Result<serde_json::Value, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::read_json_blob(&api, request).await
     }
@@ -99,9 +102,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_PUT_JSON_BLOB)]
     pub async fn put_json_blob(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatPutJsonBlobRequest,
     ) -> Result<ChatPutJsonBlobResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::put_json_blob(&api, request).await
     }
@@ -109,11 +113,12 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_RECONCILE_DELIVERY)]
     pub async fn reconcile_delivery(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatReconcileDeliveryRequest,
     ) -> Result<ChatReconcileDeliveryResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
-        let workflow_id = _ctx.info().workflow_id.as_deref().ok_or_else(|| {
+        let workflow_id = ctx.info().workflow_id.as_deref().ok_or_else(|| {
             ActivityError::application(temporalio_common::error::ApplicationFailure::non_retryable(
                 anyhow::anyhow!("missing conversation workflow identity"),
             ))
@@ -124,9 +129,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_EMIT_EVENT)]
     pub async fn emit_chat_event(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatEmitEventRequest,
     ) -> Result<ChatEmitEventResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::emit_chat_event(&api, request).await
     }
@@ -134,9 +140,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_STORE_SENT)]
     pub async fn store_chat_sent(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatStoreSentRequest,
     ) -> Result<ChatStoreSentResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::store_chat_sent(&api, request).await
     }
@@ -144,9 +151,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_RESOLVE_HANDLE)]
     pub async fn resolve_chat_handle(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatResolveHandleRequest,
     ) -> Result<ChatResolveHandleResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::resolve_chat_handle(&api, request).await
     }
@@ -154,9 +162,10 @@ impl ChannelWorkerActivities {
     #[activity(name = ACTIVITY_CHAT_ASSERT_TRIGGER_ACTIVE)]
     pub async fn assert_trigger_active(
         self: Arc<Self>,
-        _ctx: ActivityContext,
+        ctx: ActivityContext,
         request: ChatAssertTriggerActiveRequest,
     ) -> Result<ChatTriggerActiveResult, ActivityError> {
+        require_activity_universe(&ctx, request.universe_id)?;
         let api = self.universes.api_for(request.universe_id).await?;
         crate::channels::activities::assert_trigger_active(&api, request).await
     }

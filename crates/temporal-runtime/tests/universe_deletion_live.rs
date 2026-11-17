@@ -533,7 +533,7 @@ async fn deletion_fences_then_resumes_every_step_and_removes_all_resource_kinds(
     assert_eq!(record.summary["contained"]["sessions"], 3);
     assert_eq!(record.summary["contained"]["bots"], 1);
     assert_eq!(record.summary["contained"]["channelAccounts"], 1);
-    assert_eq!(record.summary["contained"]["apiKeys"], 1);
+    assert!(record.summary["contained"].get("apiKeys").is_none());
     assert_eq!(record.summary["contained"]["workspaces"], 1);
     assert_eq!(record.summary["contained"]["profiles"], 1);
     assert_eq!(record.summary["contained"]["mcpServers"], 1);

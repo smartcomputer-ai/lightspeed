@@ -41,6 +41,7 @@ impl Platform {
                     }
                     Err(error) => panic!("{error}"),
                 };
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(10)))
                     .unwrap();
@@ -177,7 +178,10 @@ impl Platform {
 impl Drop for Platform {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.worker.take().unwrap().join().unwrap();
+        let result = self.worker.take().unwrap().join();
+        if !thread::panicking() {
+            result.expect("HTTP fixture worker failed");
+        }
     }
 }
 

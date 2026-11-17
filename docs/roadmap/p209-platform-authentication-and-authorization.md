@@ -1,8 +1,9 @@
 # P209 — Platform accounts, authentication and authorization
 
 **Status:** First-release account, grant and credential model implemented,
-2026-11-16. CLI consolidation and browser-approved device sign-in are implemented;
-compilation and build verification pass. Test execution remains on hold.
+2026-11-17. CLI consolidation and browser-approved device sign-in are implemented;
+unit, integration and live authentication checks pass, including real SDK model
+calls through Platform. The earlier test hold has been lifted.
 Existing-installation migration and authoritative background company refresh
 remain follow-ups. Platform uses Better Auth organizations as accounts, each
 containing multiple universes, and shares one authorization gate across browser
@@ -443,8 +444,9 @@ Implement in these slices:
 
 ## Validation requirements
 
-These are required future checks, not results. Tests remain on hold until
-requested to resume.
+These are the acceptance requirements. Executed checks and their scope are
+recorded under Validation and progress; the previous test hold was lifted
+on 2026-11-17.
 
 - Account membership never implies access to every universe. Creator sees
   assigned universes and can create; Member cannot create without that role.
@@ -556,6 +558,26 @@ broader request auditing remain follow-up work.
   implementation; operational migration is handled separately.
 
 ## Validation and progress
+
+- 2026-11-17: completed broad and live authentication validation with the
+  user's authorization. Backend 495, web 1,510, database 15, Configurator 25
+  and connector 74 tests passed, alongside SDK suites and production builds.
+  Real PostgreSQL fresh/upgrade migrations and the Keycloak code-exchange
+  suite passed, including admission, renewal, demotion, entitlement removal,
+  disabled users, expiry and emergency access. Added the reproducible
+  `test:runtime` backend script and ran it against the full development stack:
+  browser users, scoped personal and Platform-admin keys, account-bound
+  Creator applications, disable/revocation, grant and membership changes,
+  invalid-bearer precedence, CLI device login/API-key setup and declarative
+  Creator reconciliation all passed. Configurator's binary adapter was
+  exercised through both real HTTP hops. New cross-SDK live coverage verifies
+  saved CLI credential renewal and persistence, native/runtime operations,
+  binary streaming, SSE, read-only/key-management restrictions, cross-universe
+  storage isolation even for an Owner of both universes, and revoked-key/session
+  rejection. A separate real model run through Platform verified TypeScript
+  submission and Python idempotent resumption. These checks supersede the
+  historical validation holds below; existing-installation data migration and
+  authoritative background company refresh remain follow-ups.
 
 - 2026-11-16: initial proposal followed runtime access simplification. Its
   deployment-scoped Creator, unique universe owner and custom token-table

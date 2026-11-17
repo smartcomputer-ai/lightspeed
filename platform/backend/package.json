@@ -6,7 +6,8 @@
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "test": "vitest run --passWithNoTests",
-    "test:sso": "tsx scripts/check-sso.ts"
+    "test:sso": "tsx scripts/check-sso.ts",
+    "test:runtime": "tsx scripts/check-platform-runtime.ts"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.7",

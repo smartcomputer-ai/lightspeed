@@ -8,8 +8,8 @@ import { gatewayRoutes } from "./gateway.js";
 vi.mock("./universes.js", () => ({
   universeForSession: vi.fn(async () => ({
     universe: { lightspeedUniverseId: "universe", gatewayUrl: "https://engine.example/api/v1" },
-    role: "admin",
-    member: { userId: "user", role: "admin" },
+    role: "owner",
+    member: { userId: "user", role: "owner" },
   })),
 }));
 

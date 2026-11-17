@@ -7,10 +7,10 @@ afterEach(() => vi.unstubAllGlobals());
 function fixture(cached: string[], actual: string[]) {
   const updates: string[] = [];
   const rows = cached.map((handle, index) => ({ handle, universe: {
-    organizationId: `org-${index}`, lightspeedUniverseId: `uuid-${index}`, gatewayUrl: null,
+    id: `universe-${index}`, organizationId: `org-${index}`, lightspeedUniverseId: `uuid-${index}`, gatewayUrl: null,
   } }));
   const chain = { from: () => chain, innerJoin: async () => rows };
-  const tx = { update: () => ({ set: ({ slug }: { slug: string }) => ({ where: async () => { updates.push(slug); } }) }) };
+  const tx = { update: () => ({ set: ({ handle }: { handle: string }) => ({ where: async () => { updates.push(handle); } }) }) };
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const request = decodeHttpRequest(_url as string | Request | URL, init);
     expect(request.method).toBe("deployment/universes/list");

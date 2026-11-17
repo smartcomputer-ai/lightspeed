@@ -52,6 +52,9 @@ impl Platform {
                     }
                     Err(error) => panic!("{error}"),
                 };
+                // Accepted sockets inherit nonblocking mode on some platforms.
+                // Read the request under the timeout rather than racing its arrival.
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(10)))
                     .unwrap();
@@ -176,7 +179,10 @@ impl Platform {
 impl Drop for Platform {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Relaxed);
-        self.worker.take().unwrap().join().unwrap();
+        let result = self.worker.take().unwrap().join();
+        if !thread::panicking() {
+            result.expect("HTTP fixture worker failed");
+        }
     }
 }
 fn token() -> (u16, Value) {

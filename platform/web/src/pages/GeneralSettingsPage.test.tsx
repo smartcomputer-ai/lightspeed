@@ -148,7 +148,10 @@ it("requires an account administrator to clear protection", async () => {
   universe.protected = true;
   universe.accountRole = "member";
   await show();
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Deletion protection"]')?.disabled).toBe(true);
+  const protection = container.querySelector<HTMLElement>('[aria-label="Deletion protection"]')!;
+  expect(protection.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => protection.click());
+  expect(writes()).toHaveLength(0);
   expect(button("Delete universe")?.disabled).toBe(true);
 });
 
@@ -158,7 +161,7 @@ it("allows an Account Admin to clear protection as a separate lifecycle update",
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path, body) => path === "/api/v1/platform/universes/core-id" ? { universe: { ...universe, ...body } } : implementation(method, path, body));
   await show();
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Deletion protection"]')!.click());
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="Deletion protection"]')!.click());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/platform/universes/core-id", { protected: false }));
   expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
 });
@@ -166,6 +169,9 @@ it("allows an Account Admin to clear protection as a separate lifecycle update",
 it("requires an existing expiry to be cleared before protection can be enabled", async () => {
   universe.expiresAtMs = Date.now() + 60_000;
   await show();
-  expect(container.querySelector<HTMLButtonElement>('[aria-label="Deletion protection"]')?.disabled).toBe(true);
+  const protection = container.querySelector<HTMLElement>('[aria-label="Deletion protection"]')!;
+  expect(protection.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => protection.click());
+  expect(writes()).toHaveLength(0);
   expect(container.textContent).toContain("Clear the expiry before enabling protection");
 });

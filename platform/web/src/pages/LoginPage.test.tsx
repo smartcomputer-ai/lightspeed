@@ -20,7 +20,7 @@ beforeEach(() => {
   mocks.email.mockReset();
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 async function render() { await act(async () => root.render(<LoginPage />)); }
 function button(text: string) { return [...container.querySelectorAll("button")].find((button) => button.textContent?.includes(text))!; }
 it("offers company sign-in first and a separate explicit emergency form", async () => {
@@ -118,6 +118,7 @@ it.each(["auto=1", "expired=1"])("waits for a click when automatic sign-in is di
 });
 
 it("preserves the device code through company success and error callbacks", async () => {
+  vi.stubEnv("BASE_URL", "/app/");
   const returnTo = "/device?user_code=ABCD-EFGH";
   window.history.replaceState({}, "", `/app/login?${new URLSearchParams({ returnTo })}`);
   await render();

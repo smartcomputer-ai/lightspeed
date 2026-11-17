@@ -48,19 +48,20 @@ to configure it.
 ## Development logins
 
 The default authenticated `./dev.sh` (full profile) ensures a **Test** universe
-and these accounts on every startup:
+in a shared **Development** account and these users on every startup:
 
 | Role in Test | Login |
 | --- | --- |
-| Admin | `admin@lightspeed.dev` (or `LIGHTSPEED_PLATFORM_ADMIN_EMAIL`) |
+| Owner | `admin@lightspeed.dev` (or `LIGHTSPEED_PLATFORM_ADMIN_EMAIL`) |
 | Operator | `operator@lightspeed.dev` |
 | Contributor | `contributor@lightspeed.dev` |
 | Viewer | `viewer@lightspeed.dev` |
 
 New accounts share `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`, defaulting to
-`lightspeed-dev-password`. Admin keeps its Platform administrator role; the
-other accounts receive only their listed universe role. Startup reuses existing
-accounts and the Test universe, restores the listed universe roles, and preserves
+`lightspeed-dev-password`. Admin keeps its Platform administrator role and is
+the Development account admin. The other users are account Creators, so they can
+create their own universes, and receive the listed role in Test. Startup reuses
+existing users and the Test universe, restores these roles, and preserves
 existing passwords and content. Changing the password variable does not reset
 existing logins.
 

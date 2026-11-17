@@ -24,6 +24,12 @@ const FILE_SAVE_DELAY_MS = 600;
 export function workspaceRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
+  app.get("/:id/blobs/:blobRef", (c) => {
+    if (!universeFor(store, c)) return notFound(c);
+    const blob = store.blobs.get(c.req.param("blobRef"));
+    return blob ? c.json(blob) : notFound(c);
+  });
+
   app.get("/:id/workspaces", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);

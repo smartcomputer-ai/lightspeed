@@ -401,6 +401,11 @@ npm run check --workspace @lightspeed-ai/sdk
 `npm run check:generated` regenerates the types and packaged schemas, and fails if the
 committed output is stale.
 
+The [cross-SDK live validation](../python/README.md#develop-this-package) uses the
+real Platform, runtime and CLI to verify saved sessions/API keys, JSON and binary
+requests, scope restrictions and revocation. It requires dedicated fixtures and
+revokes their credentials after the check.
+
 ## License
 
 Apache-2.0

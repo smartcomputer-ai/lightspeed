@@ -372,14 +372,13 @@ async fn put_workspace_attachment(
     vfs.workspaces
         .retain(|existing| existing.path != attachment.path);
     vfs.workspaces.push(attachment);
-    Ok(api
-        .put_session_config(api::SessionConfigPutParams {
-            session_id,
-            expected_config_revision: Some(session.config_revision),
-            config,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?)
+    api.put_session_config(api::SessionConfigPutParams {
+        session_id,
+        expected_config_revision: Some(session.config_revision),
+        config,
+    })
+    .await
+    .map_err(crate::api_client::api_error)
 }
 
 async fn materialize(args: MaterializeArgs) -> Result<()> {

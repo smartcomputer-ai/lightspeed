@@ -45,7 +45,7 @@ export function authenticateHeaders(
   }
 }
 
-export function upstreamHeaders(auth: RequestAuthContext): HeadersInit | undefined {
+export function upstreamHeaders(auth: RequestAuthContext): Record<string, string> | undefined {
   switch (auth.mode) {
     case "single":
       return undefined;

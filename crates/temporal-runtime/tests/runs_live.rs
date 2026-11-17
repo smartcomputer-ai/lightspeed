@@ -314,7 +314,11 @@ async fn run_cancel_mid_generation_live_client(
     let api = run_control_api(&client, task_queue, &session_id, false).await?;
 
     let run = start_text_run(&api, &session_id, "take your time").await?;
-    assert_eq!(run.status, api::RunStatus::Running);
+    // Start acknowledges admission; promotion to running is asynchronous.
+    assert!(matches!(
+        run.status,
+        api::RunStatus::Queued | api::RunStatus::Running
+    ));
     wait_until(
         "the provider call to start",
         Duration::from_secs(10),
@@ -805,7 +809,12 @@ async fn run_queue_live_client(
     let api = run_control_api(&client, task_queue, &session_id, false).await?;
 
     let first = start_text_run(&api, &session_id, "first").await?;
-    assert_eq!(first.status, api::RunStatus::Running);
+    wait_until(
+        "the first queued run to begin generation",
+        Duration::from_secs(10),
+        async || Ok(counters.generations_started() >= 1),
+    )
+    .await?;
 
     let queued_at = std::time::Instant::now();
     let second = start_text_run(&api, &session_id, "second").await?;
@@ -885,9 +894,12 @@ async fn run_queue_live_client(
         )))
     );
 
-    // Another queued run on an idle session starts immediately.
+    // An idle session admits another run and promotes it asynchronously.
     let fourth = start_text_run(&api, &session_id, "fourth").await?;
-    assert_eq!(fourth.status, api::RunStatus::Running);
+    assert!(matches!(
+        fourth.status,
+        api::RunStatus::Queued | api::RunStatus::Running
+    ));
     let fourth_terminal =
         wait_for_terminal_run_with_timeout(&api, &session_id, &fourth.id, 40).await?;
     assert_eq!(fourth_terminal.status, api::RunStatus::Completed);

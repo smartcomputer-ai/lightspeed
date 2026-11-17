@@ -17,7 +17,9 @@ pub(super) async fn download_operation(
 ) -> Result<Response, Failure> {
     let blob_ref = match operation {
         api::METHOD_BLOBS_READ => {
-            service.authorize_method(operation, None).await?;
+            service
+                .authorize_method(api::METHOD_BLOBS_READ, None)
+                .await?;
             let params: api::BlobReadParams =
                 serde_json::from_value(params).map_err(invalid_json)?;
             BlobRef::parse(&params.blob_ref)

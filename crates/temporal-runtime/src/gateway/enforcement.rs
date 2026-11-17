@@ -1,7 +1,6 @@
-//! Every public method authorizes by name. The manifest declares each
-//! method's requirement; a handler that never passes its method name to the
-//! authorizer would be dispatched with no check at all, so this reads the
-//! gateway sources and demands one call per method.
+//! Every resource method checks its target by name. Connection discovery is
+//! authenticated by the HTTP transport and does not enter a resource service.
+//! This audit demands an admission call for each remaining manifest operation.
 
 #[cfg(test)]
 mod tests {
@@ -27,6 +26,12 @@ mod tests {
         api::method_manifest()
             .into_iter()
             .chain(api::deployment_method_manifest())
+            .filter(|spec| {
+                api::method_access(spec.method)
+                    .expect("manifest operation has access metadata")
+                    .scope()
+                    != api::MethodScope::Connection
+            })
             .map(|spec| {
                 let needle = format!("\"{}\"", spec.method);
                 let constant = sources

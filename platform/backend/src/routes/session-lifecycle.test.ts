@@ -6,12 +6,12 @@ import type { ApiVariables, AppContext } from "../context.js";
 import { gatewayRoutes } from "./gateway.js";
 import { sessionAdminRoutes } from "./session-admin.js";
 
-const auth = vi.hoisted(() => ({ role: "admin", platformAdmin: false }));
+const auth = vi.hoisted(() => ({ role: "owner", platformAdmin: false }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async () => ({
   universe: { id: "universe", lightspeedUniverseId: "runtime-universe", gatewayUrl: null },
   handle: "test", role: auth.role, member: { userId: "member", role: auth.role },
 })) }));
-beforeEach(() => { auth.role = "admin"; auth.platformAdmin = false; });
+beforeEach(() => { auth.role = "owner"; auth.platformAdmin = false; });
 afterEach(() => vi.unstubAllGlobals());
 
 function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMutation?: boolean; purgedIds?: string[] } = {}) {
@@ -52,7 +52,7 @@ it.each([false, true])("closes with force=%s without writing an audit record", a
   expect(f.operationCalls).toContain("session/close");
   expect(f.audits).not.toHaveBeenCalled();
 });
-it.each(["operator", "admin"])("%s restarts a stopped session through the runtime", async (role) => {
+it.each(["operator", "owner"])("%s restarts a stopped session through the runtime", async (role) => {
   auth.role = role;
   const f = fixture();
   expect((await f.call("/universes/universe/sessions/s1/restart")).status).toBe(200);
@@ -64,7 +64,7 @@ it("does not let a contributor restart a session", async () => {
   expect((await f.call("/universes/universe/sessions/s1/restart")).status).toBe(403);
   expect(f.operationCalls).not.toContain("session/restart");
 });
-it.each(["operator", "admin"])("%s always soft deletes even if the URL requests permanent deletion", async (role) => {
+it.each(["operator", "owner"])("%s always soft deletes even if the URL requests permanent deletion", async (role) => {
   auth.role = role;
   const f = fixture();
   expect((await f.call("/universes/universe/sessions/s1?cascade=true&softDelete=false", "DELETE")).status).toBe(200);
@@ -78,7 +78,7 @@ it("does not record successful purge when the runtime rejects it", async () => {
   expect((await f.call("/admin/universes/universe/sessions/s1/purge")).status).not.toBe(200);
   expect(f.audits).not.toHaveBeenCalled();
 });
-it("denies universe admins access to permanent deletion and deleted-session lists", async () => {
+it("denies universe Owners access to permanent deletion and deleted-session lists", async () => {
   const f = fixture();
   expect((await f.call("/admin/universes/universe/sessions/s1/purge")).status).toBe(403);
   expect((await f.call("/admin/universes/universe/deleted-sessions", "GET")).status).toBe(403);
