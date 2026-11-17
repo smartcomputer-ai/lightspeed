@@ -198,10 +198,10 @@ function UniverseAccess({
               or{" "}
               <Link
                 className="underline"
-                to={`/admin/organizations/${encodeURIComponent(organizationId)}/people`}
+                to={`/admin/organizations/${encodeURIComponent(organizationId)}/members`}
               >
-                organization members
-              </Link>{" and "}<Link className="underline" to={`/admin/organizations/${encodeURIComponent(organizationId)}/api-keys`}>service user keys</Link>
+                organization members and service users
+              </Link>
             </>
           ) : (
             "; ask an Organization Admin to add people or manage service user keys"

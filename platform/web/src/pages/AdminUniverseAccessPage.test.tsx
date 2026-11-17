@@ -140,16 +140,16 @@ it("explains personal versus service user keys without organization admin contro
   expect(container.querySelector("h1")?.textContent).toBe("Test universe");
   expect(document.querySelector('[role="dialog"]')?.className).toContain("overflow-y-auto");
   expect(container.querySelector('a[href="/account#api-keys"]')).not.toBeNull();
-  expect(container.querySelector('a[href="/admin/organizations/team/people"]')).toBeNull();
+  expect(container.querySelector('a[href="/admin/organizations/team/members"]')).toBeNull();
   expect(container.textContent).toContain("ask an Organization Admin");
   expect(container.textContent).not.toContain("Principal");
 });
 
-it("links Organization Admins to this organization's members and service user keys", async () => {
+it("links Organization Admins to this organization's members and service users", async () => {
   mocks.organizationRole = "admin";
   await show();
-  expect(container.querySelector('a[href="/admin/organizations/team/people"]')?.textContent).toBe(
-    "organization members",
+  expect(container.querySelector('a[href="/admin/organizations/team/members"]')?.textContent).toBe(
+    "organization members and service users",
   );
 });
 

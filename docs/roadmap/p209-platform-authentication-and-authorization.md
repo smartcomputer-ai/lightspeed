@@ -505,7 +505,7 @@ hard-coded role distinctions.
 | Universe quota | 25 active universes per personal organization; 100 per shared organization, with deployment overrides and per-organization changes by Platform Admins. |
 | Interactive/API-created protection | Off for personal organizations; on by default for shared organizations. The seeded local development organization is off. Organizations may change the default or require protection. |
 | Document-created protection | On when omitted; existing universes retain their current value when omitted, as specified in P207. |
-| Personal and service-user API-key expiry | 365 days by default and as the default maximum; deployments can choose a different maximum. Shorter expiry is selectable; keys are revocable at any time. |
+| Personal and service-user API-key expiry | 365 days by default. No expiry is an explicit choice, refused when a deployment sets a maximum lifetime; there is no maximum by default. Keys are revocable at any time. |
 | API-key rotation | Issue another key for the same principal, move consumers, then revoke the old key. Overlap is explicit; do not silently invalidate a working key on new-key creation. |
 | Browser and CLI login | A 30-day inactivity window with a 90-day absolute login lifetime and renewal during use. Provider/deployment policy may require earlier authentication; company sessions retain their bounded absolute lifetime. |
 | Local access changes | Check local revocation, suspension and effective grants on admission; no artificial delay is required. |

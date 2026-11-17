@@ -49,7 +49,8 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
       const retryMs = details && typeof details === "object" && "tryAgainIn" in details ? details.tryAgainIn : undefined;
       throw new CredentialRateLimit(typeof retryMs === "number" && Number.isFinite(retryMs) ? Math.max(1, Math.ceil(retryMs / 1000)) : undefined);
     }
-    if (!verified.valid || !verified.key || verified.key.configId !== configId || !verified.key.expiresAt) return null;
+    // The plugin refuses expired keys; a key without expiry was created as such on purpose.
+    if (!verified.valid || !verified.key || verified.key.configId !== configId) return null;
     const key = verified.key;
     const [binding] = await ctx.db.select().from(schema.credentialBindings).where(eq(schema.credentialBindings.keyId, key.id));
     if (!binding) return null;

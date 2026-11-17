@@ -93,7 +93,7 @@ export function setupRoutes(ctx: AppContext) {
         keyId = issued.credential.id;
         const client = universeClient(ctx.env, access.universe, access.caller);
         await client.call("credentials/grants/import", { grantId: installation.state.grantId!, displayName: "Configurator Platform credential",
-          token: issued.secret, exposure: "brokered", expiresAtMs: new Date(issued.credential.expiresAt).getTime() }, { signal: AbortSignal.timeout(20_000) });
+          token: issued.secret, exposure: "brokered", ...(issued.credential.expiresAt ? { expiresAtMs: new Date(issued.credential.expiresAt).getTime() } : {}) }, { signal: AbortSignal.timeout(20_000) });
         await ctx.db.transaction(async tx => {
           const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
           const [current] = await tx.select().from(schema.universeSetupInstallations).where(eq(schema.universeSetupInstallations.id, installation.id)).for("update");

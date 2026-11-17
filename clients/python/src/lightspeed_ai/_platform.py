@@ -20,6 +20,9 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/credentials/revoke': {'method': 'DELETE',
                                  'path': '/api/v1/platform/credentials/{keyId}',
                                  'helper': {'name': 'revokePersonalApiKey'}},
+ 'platform/organizations/credentials/list': {'method': 'GET',
+                                             'path': '/api/v1/platform/organizations/{organizationId}/credentials',
+                                             'helper': {'name': 'listOrganizationApiKeys'}},
  'platform/service-users/credentials/list': {'method': 'GET',
                                              'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials',
                                              'helper': {'name': 'listServiceUserApiKeys'}},
@@ -106,6 +109,9 @@ class PlatformApi:
 
     async def revoke_personal_api_key(self, params: Api.PlatformCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformCredentialsRevokeResult:
         return cast(Api.PlatformCredentialsRevokeResult, await self._invoke('platform/credentials/revoke', dict(params or {}), headers))
+
+    async def list_organization_api_keys(self, params: Api.PlatformOrganizationsCredentialsListParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsCredentialsListResult:
+        return cast(Api.PlatformOrganizationsCredentialsListResult, await self._invoke('platform/organizations/credentials/list', dict(params or {}), headers))
 
     async def list_service_user_api_keys(self, params: Api.PlatformServiceUsersCredentialsListParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsListResult:
         return cast(Api.PlatformServiceUsersCredentialsListResult, await self._invoke('platform/service-users/credentials/list', dict(params or {}), headers))

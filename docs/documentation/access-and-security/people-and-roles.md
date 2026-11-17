@@ -98,14 +98,16 @@ users under **Admin → Users**. The first administrator comes from
 [the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
 Users manage their profile, sign-in settings, and personal keys under **Your profile**.
 The read-only **User ID** there can be shared with an organization admin when joining
-an organization. Platform Admins can also copy it from **Admin → Users → Edit user**.
+an organization. Platform Admins can also copy it from the user under **Platform → Users**.
 Company-managed users change their identity and password with their
 company identity provider.
 
 In **Admin**, choose an organization in the sidebar. Organization Admins manage
-**Universes**, **People**, **Service users**, **API keys**, and **Settings** there.
-People lists existing users: add them by user ID and assign Member, Creator, or
-Admin. New shared members default to Member. Only Platform Admins create shared
+**Universes**, **Members**, **API keys**, and **Settings** there. **Members** lists the
+organization's people and service users; open one to change its role or remove
+it. **Add person** adds an existing user by user ID as Member, Creator, or Admin.
+A person's details show how they joined: added by an admin, or through the
+membership policy. Only a membership an admin added can be removed there. New shared members default to Member. Only Platform Admins create shared
 organizations. There is no email invitation or SCIM workflow yet.
 
 **New universe** selects an organization where the caller is a Creator or Admin.
@@ -149,13 +151,14 @@ and universe access checks still run on the server.
 Service users are nonhuman identities belonging to one organization, with their
 own organization role and universe grants. Unlike people, they do not receive
 the organization's default universe access. They have no fake email address or human
-session. Organization Admins manage them under **Admin → organization →
-Service users** and their credentials under **API keys**. Disabling a service
-user blocks its keys without deleting its universes.
+session. Organization Admins create them with **New service user** under
+**Admin → organization → Members**; a service user's details hold its role, its
+API keys, **Disable**, and **Delete**. Disabling a service user blocks its keys
+without deleting its universes.
 
 A user key represents the signed-in person; a service-user key represents the
 service user. User keys live under **Your profile → Your API keys**. The web form for a new user
-key defaults to one organization; selecting **All my accessible organizations**
+key defaults to one organization; selecting **All my organizations**
 explicitly permits broader use. That choice still grants only the user's
 current permissions. Service-user keys always belong to their identity's one
 organization and may be narrowed further.

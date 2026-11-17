@@ -232,13 +232,13 @@ it("shows only universe administration to a universe Owner", async () => {
   expect(container.querySelector('[data-sidebar="separator"]')).toBeNull();
 });
 
-it("leaves People out of a personal organization's administration", async () => {
+it("shows a personal organization the same administration sections", async () => {
   personalOrganization = true;
-  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "Service users", "API keys", "Settings"] });
+  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "Members", "API keys", "Settings"] });
 });
 
 it("shows organization administration without deployment controls to an Organization Admin", async () => {
-  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "People", "Service users", "API keys", "Settings"] });
+  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "Members", "API keys", "Settings"] });
   expect(container.querySelector('[data-sidebar="separator"]')).toBeNull();
 });
 

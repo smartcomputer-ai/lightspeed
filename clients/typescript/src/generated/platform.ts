@@ -6,6 +6,7 @@ export interface PlatformOperationMap {
   "platform/credentials/list": { params: T.PlatformCredentialsListParams; result: T.PlatformCredentialsListResult };
   "platform/credentials/create": { params: T.PlatformCredentialsCreateParams; result: T.PlatformCredentialsCreateResult };
   "platform/credentials/revoke": { params: T.PlatformCredentialsRevokeParams; result: T.PlatformCredentialsRevokeResult };
+  "platform/organizations/credentials/list": { params: T.PlatformOrganizationsCredentialsListParams; result: T.PlatformOrganizationsCredentialsListResult };
   "platform/service-users/credentials/list": { params: T.PlatformServiceUsersCredentialsListParams; result: T.PlatformServiceUsersCredentialsListResult };
   "platform/service-users/credentials/create": { params: T.PlatformServiceUsersCredentialsCreateParams; result: T.PlatformServiceUsersCredentialsCreateResult };
   "platform/service-users/credentials/revoke": { params: T.PlatformServiceUsersCredentialsRevokeParams; result: T.PlatformServiceUsersCredentialsRevokeResult };
@@ -51,6 +52,10 @@ export const PLATFORM_OPERATIONS = {
   "platform/credentials/revoke": {
     "method": "DELETE",
     "path": "/api/v1/platform/credentials/{keyId}"
+  },
+  "platform/organizations/credentials/list": {
+    "method": "GET",
+    "path": "/api/v1/platform/organizations/{organizationId}/credentials"
   },
   "platform/service-users/credentials/list": {
     "method": "GET",

@@ -95,7 +95,10 @@ export interface PlatformCredentialsListResult {
     prefix: string | null;
     start: string | null;
     createdAt: string;
-    expiresAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
     enabled: boolean;
     lastUsedAt: string | null;
     restrictions: {
@@ -122,7 +125,10 @@ export interface PlatformCredentialsListResult {
  */
 export interface PlatformCredentialsCreateParams {
   name: string;
-  expiresInDays?: number;
+  /**
+   * Days until the key expires. Omitted uses the deployment default; null creates a key that never expires, which a deployment maximum refuses.
+   */
+  expiresInDays?: number | null;
   restrictions?: {
     /**
      * @maxItems 1000
@@ -151,7 +157,10 @@ export interface PlatformCredentialsCreateResult {
     prefix: string | null;
     start: string | null;
     createdAt: string;
-    expiresAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
     enabled: boolean;
     lastUsedAt: string | null;
     restrictions: {
@@ -189,6 +198,64 @@ export interface PlatformCredentialsRevokeResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsCredentialsListParams".
+ */
+export interface PlatformOrganizationsCredentialsListParams {
+  organizationId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsCredentialsListResult".
+ */
+export interface PlatformOrganizationsCredentialsListResult {
+  /**
+   * Keys that can reach the organization: its service users' keys, and personal keys of people with a role in it whose restrictions allow it.
+   */
+  credentials: {
+    id: string;
+    name: string;
+    prefix: string | null;
+    start: string | null;
+    createdAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
+    enabled: boolean;
+    lastUsedAt: string | null;
+    restrictions: {
+      /**
+       * @maxItems 1000
+       */
+      organizationIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      universeIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      operations?: string[];
+      readOnly?: boolean;
+      allowUniverseCreation?: boolean;
+    };
+    owner:
+      | {
+          kind: "user";
+          id: string;
+          name: string;
+          email: string;
+        }
+      | {
+          kind: "serviceUser";
+          id: string;
+          name: string;
+          enabled: boolean;
+        };
+  }[];
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformServiceUsersCredentialsListParams".
  */
 export interface PlatformServiceUsersCredentialsListParams {
@@ -206,7 +273,10 @@ export interface PlatformServiceUsersCredentialsListResult {
     prefix: string | null;
     start: string | null;
     createdAt: string;
-    expiresAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
     enabled: boolean;
     lastUsedAt: string | null;
     restrictions: {
@@ -233,7 +303,10 @@ export interface PlatformServiceUsersCredentialsListResult {
  */
 export interface PlatformServiceUsersCredentialsCreateParams {
   name: string;
-  expiresInDays?: number;
+  /**
+   * Days until the key expires. Omitted uses the deployment default; null creates a key that never expires, which a deployment maximum refuses.
+   */
+  expiresInDays?: number | null;
   restrictions?: {
     /**
      * @maxItems 1000
@@ -264,7 +337,10 @@ export interface PlatformServiceUsersCredentialsCreateResult {
     prefix: string | null;
     start: string | null;
     createdAt: string;
-    expiresAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
     enabled: boolean;
     lastUsedAt: string | null;
     restrictions: {
@@ -594,6 +670,14 @@ export interface PlatformOrganizationsMembersListResult {
     name: string;
     email: string;
     role: "member" | "creator" | "admin";
+    /**
+     * Holds an explicit membership that an admin added; removing the member removes it.
+     */
+    added: boolean;
+    /**
+     * The organization's membership policy or a directory group grants membership; only changing that policy removes it.
+     */
+    declared: boolean;
     createdAt: string;
   }[];
 }
@@ -617,6 +701,14 @@ export interface PlatformOrganizationsMembersPutResult {
     name: string;
     email: string;
     role: "member" | "creator" | "admin";
+    /**
+     * Holds an explicit membership that an admin added; removing the member removes it.
+     */
+    added: boolean;
+    /**
+     * The organization's membership policy or a directory group grants membership; only changing that policy removes it.
+     */
+    declared: boolean;
     createdAt: string;
   };
 }

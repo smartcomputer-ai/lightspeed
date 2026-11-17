@@ -51,6 +51,16 @@
       "result": "PlatformCredentialsRevokeResult"
     },
     {
+      "operationId": "platform/organizations/credentials/list",
+      "helper": {
+        "name": "listOrganizationApiKeys"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/credentials",
+      "params": "PlatformOrganizationsCredentialsListParams",
+      "result": "PlatformOrganizationsCredentialsListResult"
+    },
+    {
       "operationId": "platform/service-users/credentials/list",
       "helper": {
         "name": "listServiceUserApiKeys"

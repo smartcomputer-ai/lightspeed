@@ -8,6 +8,7 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listPersonalApiKeys": "platform/credentials/list",
   "createPersonalApiKey": "platform/credentials/create",
   "revokePersonalApiKey": "platform/credentials/revoke",
+  "listOrganizationApiKeys": "platform/organizations/credentials/list",
   "listServiceUserApiKeys": "platform/service-users/credentials/list",
   "createServiceUserApiKey": "platform/service-users/credentials/create",
   "revokeServiceUserApiKey": "platform/service-users/credentials/revoke",
@@ -46,6 +47,9 @@ export class PlatformHelpers {
   }
   revokePersonalApiKey(params: PlatformOperationParams<"platform/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/credentials/revoke">> {
     return this.client.call("platform/credentials/revoke", params, options);
+  }
+  listOrganizationApiKeys(params: PlatformOperationParams<"platform/organizations/credentials/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/credentials/list">> {
+    return this.client.call("platform/organizations/credentials/list", params, options);
   }
   listServiceUserApiKeys(params: PlatformOperationParams<"platform/service-users/credentials/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/list">> {
     return this.client.call("platform/service-users/credentials/list", params, options);

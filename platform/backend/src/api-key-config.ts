@@ -6,15 +6,15 @@ export const SERVICE_USER_KEY_CONFIG = "serviceUser";
 export const PERSONAL_KEY_PREFIX = "lsp_";
 export const SERVICE_USER_KEY_PREFIX = "lsa_";
 
-export function apiKeyConfigurations(env: Pick<ServerEnv, "apiKeyDefaultExpiryDays" | "apiKeyMaxExpiryDays">): ApiKeyConfigurationOptions[] {
-  const maximum = env.apiKeyMaxExpiryDays ?? 365;
-  const lifetime = Math.min(env.apiKeyDefaultExpiryDays ?? 365, maximum);
+/// Expiry policy lives in the credential routes: the plugin gets no default
+/// (a null expiry would otherwise silently become it) and only bounds an
+/// explicit expiry by the deployment maximum.
+export function apiKeyConfigurations(env: Pick<ServerEnv, "apiKeyMaxExpiryDays">): ApiKeyConfigurationOptions[] {
   const common = {
     requireName: true, maximumNameLength: 120,
     enableSessionForAPIKeys: false, enableMetadata: false,
     startingCharactersConfig: { shouldStore: true, charactersLength: 12 },
-    // This plugin version consumes seconds in createApiKey for both explicit and default expiry.
-    keyExpiration: { defaultExpiresIn: lifetime * 86400, minExpiresIn: 1, maxExpiresIn: maximum },
+    keyExpiration: { defaultExpiresIn: null, minExpiresIn: 1, maxExpiresIn: env.apiKeyMaxExpiryDays ?? 3650 },
     rateLimit: { enabled: true, timeWindow: 60_000, maxRequests: 1000 },
   };
   return [

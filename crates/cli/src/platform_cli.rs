@@ -219,8 +219,12 @@ enum ApiKeyCommand {
     List,
     Create {
         name: String,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "no_expiry")]
         expires_in_days: Option<u32>,
+        /// Create a key that never expires. It works until revoked; a
+        /// deployment with a maximum key lifetime refuses it.
+        #[arg(long)]
+        no_expiry: bool,
         #[arg(long = "scope-organization")]
         organizations: Vec<String>,
         #[arg(long = "scope-universe")]
@@ -507,6 +511,7 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
         ApiKeyCommand::Create {
             name,
             expires_in_days,
+            no_expiry,
             organizations,
             universes,
             operations,
@@ -532,7 +537,9 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
             }
             params["name"] = json!(name);
             params["restrictions"] = restrictions;
-            if let Some(value) = expires_in_days {
+            if no_expiry {
+                params["expiresInDays"] = serde_json::Value::Null;
+            } else if let Some(value) = expires_in_days {
                 params["expiresInDays"] = json!(value);
             }
             let file = output.prepare(true)?;

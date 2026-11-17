@@ -7,15 +7,24 @@ standalone runtime needs its own trusted gateway or a trusted network.
 
 ## Platform API keys
 
-Create user keys under **Your profile → Your API keys** and service-user keys
-under **Admin → organization → API keys**, selecting the service user.
-**Service users** links to the same key management view. Better Auth stores hashed keys,
+Create user keys under **Your profile → Your API keys**. Create service-user
+keys from the service user itself: **Admin → organization → Members**, open the
+service user, then **New key**. Each key opens to show what it may reach, when
+it was last used, and **Revoke key**. Organization Admins see every key that can
+reach their organization under **Admin → organization → API keys**: its service
+users' keys and the personal keys of its members whose restrictions allow it,
+each with its owner. They can revoke service-user keys there; only a person can
+revoke their own personal key. Better Auth stores hashed keys,
 checks expiry and revocation, and maintains usage counters. The Platform
 binds each key to its user or service user and applies current permissions.
 Service-user keys use Better Auth organization ownership, but the service-user
 association is server-controlled: an organization key alone grants no access.
 
-Keys expire after 365 days by default, with a deployment-configurable maximum.
+Keys expire after 365 days by default. Choosing **No expiry** (`--no-expiry` in
+the CLI) creates a key that works until it is revoked, for automation that must
+not stop unexpectedly. A deployment that sets a maximum key lifetime refuses
+keys without expiry. Key lists show **Never expires** and when each key was last
+used, so forgotten keys are easy to find and revoke.
 Copy a new secret when it is shown; it is never returned again. For rotation,
 create a replacement, move consumers, and explicitly revoke the previous key.
 Keys cannot mint other keys. Human browser and CLI sessions manage credentials.

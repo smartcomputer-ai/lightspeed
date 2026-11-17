@@ -147,3 +147,42 @@ it("returns retryable rate exhaustion without treating a verified credential as 
   expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(60);
   expect(await limited.json()).toMatchObject({ status: 429, kind: "rejected" });
 });
+
+it("creates a key without expiry only when asked explicitly and the deployment sets no maximum", async () => {
+  const defaulted = await (await fixture.request("/api/v1/platform/credentials", { name: "Default expiry", restrictions: {} }, cookie)).json() as { credential: { expiresAt: string | null } };
+  expect(defaulted.credential.expiresAt).not.toBeNull();
+  const response = await fixture.request("/api/v1/platform/credentials", { name: "Forever", expiresInDays: null, restrictions: {} }, cookie);
+  expect(response.status).toBe(201);
+  const created = await response.json() as { credential: { id: string; expiresAt: string | null }; secret: string };
+  expect(created.credential.expiresAt).toBeNull();
+  expect((await admission(created.secret))?.auth.credential.id).toBe(created.credential.id);
+  const listed = await (await fixture.request("/api/v1/platform/credentials", undefined, cookie)).json() as { credentials: Array<{ id: string; expiresAt: string | null }> };
+  expect(listed.credentials.find(credential => credential.id === created.credential.id)?.expiresAt).toBeNull();
+  fixture.env.apiKeyMaxExpiryDays = 30;
+  try {
+    const refused = await fixture.request("/api/v1/platform/credentials", { name: "Forever again", expiresInDays: null, restrictions: {} }, cookie);
+    expect(refused.status).toBe(400);
+    expect((await fixture.request("/api/v1/platform/credentials", { name: "Too long", expiresInDays: 31, restrictions: {} }, cookie)).status).toBe(400);
+  } finally {
+    delete fixture.env.apiKeyMaxExpiryDays;
+  }
+});
+
+it("lists every key that can reach an organization, with whose key it is", async () => {
+  const organizationId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Audit", slug: organizationId, createdAt: new Date() });
+  const [serviceUser] = await fixture.db.insert(schema.serviceUsers).values({ organizationId, name: "Deployer", role: "member" }).returning();
+  expect((await fixture.request(`/api/v1/platform/organizations/${organizationId}/service-users/${serviceUser!.id}/credentials`, { name: "Deployer key" }, cookie)).status).toBe(201);
+  const create = (name: string, restrictions: Record<string, unknown>) => fixture.request("/api/v1/platform/credentials", { name, restrictions }, cookie);
+  expect((await create("Here", { organizationIds: [organizationId] })).status).toBe(201);
+  expect((await create("Elsewhere", { organizationIds: ["some-other-organization"] })).status).toBe(201);
+  const response = await fixture.request(`/api/v1/platform/organizations/${organizationId}/credentials`, undefined, cookie);
+  expect(response.status).toBe(200);
+  const { credentials } = await response.json() as { credentials: Array<{ name: string; owner: { kind: string; name: string } }> };
+  const names = credentials.map(credential => credential.name);
+  expect(names).toContain("Deployer key");
+  expect(names).toContain("Here");
+  expect(names).not.toContain("Elsewhere");
+  expect(credentials.find(credential => credential.name === "Deployer key")?.owner).toMatchObject({ kind: "serviceUser", name: "Deployer" });
+  expect(credentials.find(credential => credential.name === "Here")?.owner).toMatchObject({ kind: "user" });
+});

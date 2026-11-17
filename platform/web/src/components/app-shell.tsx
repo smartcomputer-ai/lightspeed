@@ -5,7 +5,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import { AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, SecurityIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
+import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, MemberIcon, SecurityIcon, SettingsIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -67,15 +67,13 @@ const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string; acti
   { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", action: "configureDeployment" },
   { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes", action: "manageUnclaimedUniverses" },
 ];
-/// `shared` sections do not apply to a personal organization, whose owner
-/// is its only member. Universes has no action of its own: it opens for the
-/// organization's administrators and for Owners of any of its universes.
-const ORGANIZATION_NAV: Array<{ path: string; icon: ComponentType; label: string; action?: OrganizationAction; shared?: boolean }> = [
+/// Universes has no action of its own: it opens for the organization's
+/// administrators and for Owners of any of its universes.
+const ORGANIZATION_NAV: Array<{ path: string; icon: ComponentType; label: string; action?: OrganizationAction }> = [
   { path: "universes", icon: UniversesIcon, label: "Universes" },
-  { path: "people", icon: UserIcon, label: "People", action: "manageMembers", shared: true },
-  { path: "service-users", icon: UserAdminIcon, label: "Service users", action: "manageServiceUsers" },
-  { path: "api-keys", icon: SecurityIcon, label: "API keys", action: "manageServiceUsers" },
-  { path: "settings", icon: SecurityIcon, label: "Settings", action: "managePolicy" },
+  { path: "members", icon: MemberIcon, label: "Members", action: "manageMembers" },
+  { path: "api-keys", icon: ApiKeyIcon, label: "API keys", action: "manageMembers" },
+  { path: "settings", icon: SettingsIcon, label: "Settings", action: "managePolicy" },
 ];
 
 /// The part of the page title the route alone determines, most specific
@@ -154,7 +152,7 @@ const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label
   account: [
     { id: "profile", label: "Profile", icon: UserIcon },
     { id: "security", label: "Sign-in", icon: SecurityIcon },
-    { id: "api-keys", label: "Your API keys", icon: SecurityIcon },
+    { id: "api-keys", label: "Your API keys", icon: ApiKeyIcon },
   ],
   preferences: [
     { id: "appearance", label: "Appearance", icon: AppearanceIcon },
@@ -266,7 +264,7 @@ export function AppShell({ user }: { user: SessionUser }) {
           })}
           {mode === "admin" && <>
             {adminAccess.selected && <SidebarGroup><SidebarGroupContent><SidebarMenu>
-              {ORGANIZATION_NAV.filter(item => (item.action ? adminAccess.organization(item.action) : adminAccess.universes) && !(item.shared && adminAccess.selected?.personal)).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
+              {ORGANIZATION_NAV.filter(item => item.action ? adminAccess.organization(item.action) : adminAccess.universes).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
             </SidebarMenu></SidebarGroupContent></SidebarGroup>}
             {platformNav.length > 0 && <><SidebarSeparator /><SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
               {platformNav.map(({ action: _action, ...item }) => <NavItem key={item.to} {...item} />)}

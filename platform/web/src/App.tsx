@@ -1,6 +1,7 @@
 import { AdminGate, AdminIndexRedirect } from "@/components/admin/admin-gate";
-import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
-import { OrganizationsPage } from "@/pages/OrganizationsPage";
+import { OrganizationMembersPage } from "@/pages/OrganizationMembersPage";
+import { OrganizationApiKeysPage } from "@/pages/OrganizationApiKeysPage";
+import { OrganizationSettingsPage } from "@/pages/OrganizationSettingsPage";
 import { PlatformOrganizationsPage } from "@/pages/PlatformOrganizationsPage";
 import { UniverseWatchProvider } from "@/lib/universe-watch";
 import { PermissionIdentityProvider } from "@/lib/permissions";
@@ -176,14 +177,14 @@ export function App() {
             <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<AdminUniverseSettingsPage />} />
           </Route>
           <Route element={<AdminGate organizationAction="manageMembers" />}>
-            <Route path="admin/organizations/:organizationId/people" element={<OrganizationsPage section="people" />} />
-          </Route>
-          <Route element={<AdminGate organizationAction="manageServiceUsers" />}>
-            <Route path="admin/organizations/:organizationId/service-users" element={<OrganizationsPage section="service-users" />} />
-            <Route path="admin/organizations/:organizationId/api-keys" element={<AdminApiKeysPage />} />
+            <Route path="admin/organizations/:organizationId/members" element={<OrganizationMembersPage />} />
+            <Route path="admin/organizations/:organizationId/api-keys" element={<OrganizationApiKeysPage />} />
+            {["people", "service-users"].map((path) => (
+              <Route key={path} path={`admin/organizations/:organizationId/${path}`} element={<Navigate to="../members" relative="path" replace />} />
+            ))}
           </Route>
           <Route element={<AdminGate organizationAction="managePolicy" />}>
-            <Route path="admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} />
+            <Route path="admin/organizations/:organizationId/settings" element={<OrganizationSettingsPage />} />
           </Route>
           <Route element={<AdminGate deploymentAction="administerOrganizations" />}>
             <Route path="admin/platform/organizations" element={<PlatformOrganizationsPage />} />

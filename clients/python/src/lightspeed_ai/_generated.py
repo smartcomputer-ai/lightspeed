@@ -951,6 +951,9 @@ class GeneratedClient:
     async def call(self, method: Literal['platform/credentials/revoke'], params: Platform.PlatformCredentialsRevokeParams,
                    *, headers: HeadersInput | None = None) -> Platform.PlatformCredentialsRevokeResult: ...
     @overload
+    async def call(self, method: Literal['platform/organizations/credentials/list'], params: Platform.PlatformOrganizationsCredentialsListParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformOrganizationsCredentialsListResult: ...
+    @overload
     async def call(self, method: Literal['platform/service-users/credentials/list'], params: Platform.PlatformServiceUsersCredentialsListParams,
                    *, headers: HeadersInput | None = None) -> Platform.PlatformServiceUsersCredentialsListResult: ...
     @overload

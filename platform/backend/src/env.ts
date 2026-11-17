@@ -43,6 +43,7 @@ export interface ServerEnv {
   personalOrganizationUniverseQuota?: number;
   sharedOrganizationUniverseQuota?: number;
   apiKeyDefaultExpiryDays?: number;
+  /** Unset: no maximum, and keys may be created without expiry. */
   apiKeyMaxExpiryDays?: number;
   github: { clientId: string; clientSecret: string } | null;
   oidc?: OidcConfig | null;
@@ -120,7 +121,7 @@ export function loadEnv(): ServerEnv {
     personalOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 25, 0, 1000000),
     sharedOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 100, 0, 1000000),
     apiKeyDefaultExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS", 365, 1, 3650),
-    apiKeyMaxExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 365, 1, 3650),
+    apiKeyMaxExpiryDays: optionalIntegerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 1, 3650),
     github,
     oidc,
     passwordSignIn: passwordSignIn as ServerEnv["passwordSignIn"],
@@ -148,6 +149,10 @@ export function loadEnv(): ServerEnv {
       ),
     },
   };
+}
+
+function optionalIntegerEnv(name: string, min: number, max: number): number | undefined {
+  return process.env[name]?.trim() ? integerEnv(name, min, min, max) : undefined;
 }
 
 function integerEnv(name: string, fallback: number, min: number, max: number): number {

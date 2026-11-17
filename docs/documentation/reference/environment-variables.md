@@ -383,7 +383,7 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | `25` | Default personal-organization universe quota; a Platform Admin can override it per organization. |
 | `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | `100` | Default shared-organization universe quota. |
 | `LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS` | `365` | Default user/service-user key lifetime, capped by the maximum. |
-| `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | `365` | Maximum key lifetime. Both expiry settings accept 1–3650 days. |
+| `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | Unset | Maximum key lifetime. Unset means no maximum, and keys may be created without expiry when chosen explicitly; set, it also refuses keys without expiry. Both expiry settings accept 1–3650 days. |
 | `LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS` | `30` | Local browser session inactivity lifetime. Company sign-in retains its separate bounded admission window. |
 | `LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS` | `90` | Absolute local browser session lifetime; activity cannot extend it. |
 | `LIGHTSPEED_PLATFORM_OIDC_ISSUER` | Unset | Exact OIDC issuer. Setting any OIDC variable enables configuration validation; incomplete configuration fails startup. HTTPS is required except loopback HTTP for development. |

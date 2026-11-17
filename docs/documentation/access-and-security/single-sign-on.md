@@ -203,5 +203,5 @@ without an application entitlement is still refused. An email already used by
 a local account must be resolved explicitly; email-based linking is disabled.
 
 If login succeeds but the expected universe does not appear, confirm the person
-belongs to its organization under **Admin → organization → People**, then grant a role under **Admin → organization → Universes → Access**. Sign-in admission alone does not grant access to shared universes. A local suspension must
+belongs to its organization under **Admin → organization → Members**, then grant a role under **Admin → organization → Universes → Access**. Sign-in admission alone does not grant access to shared universes. A local suspension must
 be lifted by a Platform admin even after the provider restores access.

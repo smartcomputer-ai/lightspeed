@@ -1,4 +1,4 @@
-import { ApiKeysCard } from "@/components/api-keys-card";
+import { ApiKeysSection } from "@/components/api-keys/api-keys-section";
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
@@ -37,7 +37,10 @@ export function AccountPage({ user }: { user: SessionUser }) {
             </CardHeader>
           </Card>
         )}
-        <ApiKeysCard />
+        <div id="api-keys" className="scroll-mt-6">
+          <ApiKeysSection owner={{ kind: "personal" }} title="Your API keys"
+            description="Keys act as you, with your current roles. Restrictions only narrow that access." />
+        </div>
       </div>
     </>
   );

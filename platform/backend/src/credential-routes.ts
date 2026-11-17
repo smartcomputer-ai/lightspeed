@@ -1,13 +1,14 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono, type Handler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { schema } from "@lightspeed-ai/platform-db";
-import { CREDENTIAL_OPERATIONS, credentialCreateSchema, credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
+import { CREDENTIAL_OPERATIONS, ORGANIZATION_ROLES, credentialCreateSchema, credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
 import { z } from "zod";
 import type { ApiVariables, AppContext } from "./context.js";
 import { getAuth, requireCredentialManagement, type AuthContext } from "./auth-context.js";
-import { requireOrganizationAction } from "./organization-access.js";
+import { declaredPrincipalRole, requireOrganizationAction } from "./organization-access.js";
+import { hasPlatformAdminRole } from "./context.js";
 import { PERSONAL_KEY_CONFIG, SERVICE_USER_KEY_CONFIG } from "./api-key-config.js";
 import { auditIdentity } from "./identity-audit.js";
 
@@ -23,9 +24,8 @@ function metadata(row: {
   id: string; name: string | null; prefix: string | null; start: string | null; createdAt: Date;
   expiresAt: Date | null; enabled: boolean; lastUsedAt: Date | null; restrictions: unknown;
 }) {
-  if (!row.expiresAt) throw new Error("Managed credentials must expire");
   return { id: row.id, name: row.name ?? "API key", prefix: row.prefix, start: row.start, enabled: row.enabled,
-    createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt.toISOString(),
+    createdAt: row.createdAt.toISOString(), expiresAt: row.expiresAt?.toISOString() ?? null,
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null, restrictions: credentialRestrictionsSchema.parse(row.restrictions) };
 }
 
@@ -43,12 +43,15 @@ async function listCredentials(ctx: AppContext, owner: Owner) {
 }
 
 async function createCredential(ctx: AppContext, auth: AuthContext, owner: Owner, input: Create) {
-  const expiresInDays = input.expiresInDays ?? Math.min(ctx.env.apiKeyDefaultExpiryDays ?? 365, ctx.env.apiKeyMaxExpiryDays ?? 365);
-  if (expiresInDays > (ctx.env.apiKeyMaxExpiryDays ?? 365)) throw new HTTPException(400, { message: "Credential expiry exceeds deployment policy" });
+  // A key never expires only when asked explicitly (null), and only where the deployment sets no maximum.
+  const maximum = ctx.env.apiKeyMaxExpiryDays;
+  const expiresInDays = input.expiresInDays === undefined ? Math.min(ctx.env.apiKeyDefaultExpiryDays ?? 365, maximum ?? Infinity) : input.expiresInDays;
+  if (expiresInDays === null && maximum !== undefined) throw new HTTPException(400, { message: `This deployment requires keys to expire within ${maximum} days` });
+  if (expiresInDays !== null && maximum !== undefined && expiresInDays > maximum) throw new HTTPException(400, { message: "Credential expiry exceeds deployment policy" });
   const configId = owner.serviceUserId ? SERVICE_USER_KEY_CONFIG : PERSONAL_KEY_CONFIG;
   const create = async () => {
     const key = await ctx.auth.api.createApiKey({ body: {
-      configId, userId: auth.principal.id, name: input.name, expiresIn: expiresInDays * 86400,
+      configId, userId: auth.principal.id, name: input.name, expiresIn: expiresInDays === null ? null : expiresInDays * 86400,
       ...(owner.serviceUserId ? { organizationId: owner.organizationId } : {}),
     } });
     try {
@@ -102,6 +105,47 @@ async function serviceUserOwner(ctx: AppContext, auth: AuthContext, organization
   return { serviceUserId, organizationId };
 }
 
+/** Every key that can reach an organization, for its administrators to audit:
+ * its service users' keys, and the personal keys of people who hold a role in it
+ * (members, by membership or policy, and Platform Admins) whose restrictions allow
+ * it. Creating and revoking stay with each key's owner. */
+async function listOrganizationCredentials(ctx: AppContext, auth: AuthContext, organizationId: string) {
+  requireCredentialManagement(auth);
+  const access = await requireOrganizationAction(ctx, auth, organizationId, "manageMembers");
+  const organization = access.organization;
+  const users = await ctx.db.select({ user: schema.user, membership: schema.member }).from(schema.user)
+    .leftJoin(schema.member, and(eq(schema.member.userId, schema.user.id), eq(schema.member.organizationId, organizationId)));
+  const holders = new Map(users.flatMap(({ user, membership }) => {
+    const manual = ORGANIZATION_ROLES.find(role => role === membership?.role);
+    const role = declaredPrincipalRole(organization.membershipPolicy, user, ORGANIZATION_ROLES, manual);
+    return role || hasPlatformAdminRole(user) ? [[user.id, user] as const] : [];
+  }));
+  const universes = new Set((await ctx.db.select({ id: schema.universes.lightspeedUniverseId }).from(schema.universes)
+    .where(eq(schema.universes.organizationId, organizationId))).map(universe => universe.id));
+  const personal = holders.size ? await ctx.db.select({ ...publicKeyColumns, userId: schema.credentialBindings.userId }).from(schema.credentialBindings)
+    .innerJoin(schema.apikey, eq(schema.apikey.id, schema.credentialBindings.keyId))
+    .where(and(eq(schema.apikey.configId, PERSONAL_KEY_CONFIG), inArray(schema.credentialBindings.userId, [...holders.keys()]))) : [];
+  const reaches = (restrictions: unknown) => {
+    const limits = credentialRestrictionsSchema.parse(restrictions);
+    if (limits.organizationIds && !limits.organizationIds.includes(organizationId)) return false;
+    return !limits.universeIds || limits.universeIds.some(id => universes.has(id));
+  };
+  type KeyOwner = { kind: "user"; id: string; name: string; email: string } | { kind: "serviceUser"; id: string; name: string; enabled: boolean };
+  const credentials: Array<ReturnType<typeof metadata> & { owner: KeyOwner; sortKey: Date }> = personal.filter(row => reaches(row.restrictions)).map(row => {
+    const user = holders.get(row.userId!)!;
+    return { ...metadata(row), owner: { kind: "user", id: user.id, name: user.name, email: user.email }, sortKey: row.createdAt };
+  });
+  if (access.actions.has("manageServiceUsers")) {
+    const service = await ctx.db.select({ ...publicKeyColumns, serviceUserId: schema.serviceUsers.id, serviceUserName: schema.serviceUsers.name, serviceUserEnabled: schema.serviceUsers.enabled }).from(schema.credentialBindings)
+      .innerJoin(schema.apikey, eq(schema.apikey.id, schema.credentialBindings.keyId))
+      .innerJoin(schema.serviceUsers, eq(schema.serviceUsers.id, schema.credentialBindings.serviceUserId))
+      .where(and(eq(schema.apikey.configId, SERVICE_USER_KEY_CONFIG), eq(schema.serviceUsers.organizationId, organizationId)));
+    for (const row of service) credentials.push({ ...metadata(row), owner: { kind: "serviceUser", id: row.serviceUserId, name: row.serviceUserName, enabled: row.serviceUserEnabled }, sortKey: row.createdAt });
+  }
+  credentials.sort((left, right) => right.sortKey.getTime() - left.sortKey.getTime());
+  return { credentials: credentials.map(({ sortKey: _, ...credential }) => credential) };
+}
+
 /** Mount at /api/v1/platform. Raw plugin management endpoints are never public. */
 export function credentialRoutes(ctx: AppContext) {
   const routes = new Hono<{ Variables: ApiVariables }>();
@@ -126,6 +170,7 @@ export function credentialRoutes(ctx: AppContext) {
   "platform/credentials/revoke": async c => {
     const auth = getAuth(c); return c.json(await revokeCredential(ctx, auth, personal(auth), c.req.param("keyId")!));
   },
+  "platform/organizations/credentials/list": async c => c.json(await listOrganizationCredentials(ctx, getAuth(c), c.req.param("organizationId")!)),
   "platform/service-users/credentials/list": async c => c.json(await listCredentials(ctx, await serviceUserOwner(ctx, getAuth(c), c.req.param("organizationId")!, c.req.param("serviceUserId")!))),
   "platform/service-users/credentials/create": async c => {
     const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);

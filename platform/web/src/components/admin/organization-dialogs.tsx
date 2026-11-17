@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import type { OrganizationRole, PlatformOperationResult } from "@lightspeed-ai/platform-shared";
+import type { OrganizationRole } from "@lightspeed-ai/platform-shared";
 import { platformApi } from "@/lib/platform-api";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,9 +15,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
-type Member = PlatformOperationResult<"platform/organizations/members/list">["members"][number];
-type ServiceUser = PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number];
 const roles: OrganizationRole[] = ["member", "creator", "admin"];
 const roleLabels: Record<OrganizationRole, string> = { member: "Member", creator: "Creator", admin: "Admin" };
 
@@ -152,26 +149,21 @@ export function CreateOrganizationDialog({
   );
 }
 
-export function MemberDialog({
+/// Adds an existing user, by user ID, with an organization role.
+export function AddPersonDialog({
   organizationId,
-  member,
   close,
   saved,
 }: {
   organizationId: string;
-  member?: Member;
   close: () => void;
   saved: () => Promise<void>;
 }) {
-  const [userId, setUserId] = useState(member?.userId ?? "");
-  const [role, setRole] = useState<OrganizationRole>(member?.role ?? "member");
+  const [userId, setUserId] = useState("");
+  const [role, setRole] = useState<OrganizationRole>("member");
   const save = useMutation({
     mutationFn: () =>
-      platformApi("platform/organizations/members/put", {
-        organizationId,
-        userId: userId.trim(),
-        role,
-      }),
+      platformApi("platform/organizations/members/put", { organizationId, userId: userId.trim(), role }),
     onSuccess: async () => {
       await saved();
       close();
@@ -179,80 +171,8 @@ export function MemberDialog({
   });
   return (
     <OrganizationDialog
-      title={member ? `Edit ${member.name}'s organization role` : "Add organization member"}
-      description="Add existing users to this organization. Universe roles are managed separately in Admin → organization → Universes."
-      close={close}
-    >
-      <form
-        className="grid gap-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          save.mutate();
-        }}
-      >
-        {!member && (
-          <Field>
-            <FieldLabel htmlFor="organization-member-id">User ID</FieldLabel>
-            <Input
-              id="organization-member-id"
-              value={userId}
-              onChange={(event) => setUserId(event.target.value)}
-              required
-              autoFocus
-            />
-            <FieldDescription>
-              Find the person's ID under Your profile, or Admin → Users → Edit user.
-            </FieldDescription>
-          </Field>
-        )}
-        <RoleSelect value={role} onChange={setRole} />
-        {save.error && (
-          <p role="alert" className="text-destructive">
-            {save.error.message}
-          </p>
-        )}
-        <FormActions close={close} pending={save.isPending} label={member ? "Save changes" : "Add member"} />
-      </form>
-    </OrganizationDialog>
-  );
-}
-
-export function ServiceUserDialog({
-  organizationId,
-  serviceUser,
-  close,
-  saved,
-}: {
-  organizationId: string;
-  serviceUser?: ServiceUser;
-  close: () => void;
-  saved: () => Promise<void>;
-}) {
-  const [name, setName] = useState(serviceUser?.name ?? "");
-  const [role, setRole] = useState<OrganizationRole>(serviceUser?.role ?? "member");
-  const save = useMutation({
-    mutationFn: () =>
-      serviceUser
-        ? platformApi("platform/organizations/service-users/update", {
-            organizationId,
-            serviceUserId: serviceUser.id,
-            name: name.trim(),
-            role,
-          })
-        : platformApi("platform/organizations/service-users/create", {
-            organizationId,
-            name: name.trim(),
-            role,
-          }),
-    onSuccess: async () => {
-      await saved();
-      close();
-    },
-  });
-  return (
-    <OrganizationDialog
-      title={serviceUser ? "Edit service user" : "New service user"}
-      description="A service user authenticates independently of its creator. Start with Member and grant access to the universes it needs."
+      title="Add person"
+      description="Add an existing user to this organization. Grant universe roles under a universe's Access."
       close={close}
     >
       <form
@@ -263,14 +183,9 @@ export function ServiceUserDialog({
         }}
       >
         <Field>
-          <FieldLabel htmlFor="serviceUser-name">Service user name</FieldLabel>
-          <Input
-            id="serviceUser-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            required
-            autoFocus
-          />
+          <FieldLabel htmlFor="organization-member-id">User ID</FieldLabel>
+          <Input id="organization-member-id" value={userId} onChange={(event) => setUserId(event.target.value)} required autoFocus />
+          <FieldDescription>They find it under Your profile; Platform Admins see it under Platform → Users.</FieldDescription>
         </Field>
         <RoleSelect value={role} onChange={setRole} />
         {save.error && (
@@ -278,45 +193,56 @@ export function ServiceUserDialog({
             {save.error.message}
           </p>
         )}
-        <FormActions
-          close={close}
-          pending={save.isPending}
-          label={serviceUser ? "Save changes" : "Create service user"}
-        />
+        <FormActions close={close} pending={save.isPending} label="Add person" />
       </form>
     </OrganizationDialog>
   );
 }
 
-export function ConfirmDialog({
-  title,
-  description,
-  label,
+/// Creates a service user with an organization role; its keys are created from its details.
+export function NewServiceUserDialog({
+  organizationId,
   close,
-  action,
+  saved,
 }: {
-  title: string;
-  description: string;
-  label: string;
+  organizationId: string;
   close: () => void;
-  action: () => Promise<void>;
+  saved: () => Promise<void>;
 }) {
-  const save = useMutation({ mutationFn: action, onSuccess: close });
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<OrganizationRole>("member");
+  const save = useMutation({
+    mutationFn: () =>
+      platformApi("platform/organizations/service-users/create", { organizationId, name: name.trim(), role }),
+    onSuccess: async () => {
+      await saved();
+      close();
+    },
+  });
   return (
-    <OrganizationDialog title={title} description={description} close={close}>
+    <OrganizationDialog
+      title="New service user"
+      description="An identity for an integration, independent of who creates it. Start with Member, grant it the universes it needs, then create its API keys from its details."
+      close={close}
+    >
       <form
+        className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           save.mutate();
         }}
-        className="grid gap-4"
       >
+        <Field>
+          <FieldLabel htmlFor="serviceUser-name">Name</FieldLabel>
+          <Input id="serviceUser-name" value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+        </Field>
+        <RoleSelect value={role} onChange={setRole} />
         {save.error && (
           <p role="alert" className="text-destructive">
             {save.error.message}
           </p>
         )}
-        <FormActions close={close} pending={save.isPending} label={label} />
+        <FormActions close={close} pending={save.isPending} label="Create service user" />
       </form>
     </OrganizationDialog>
   );

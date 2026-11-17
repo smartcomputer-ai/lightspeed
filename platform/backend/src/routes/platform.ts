@@ -124,13 +124,14 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const rows = await ctx.db.select({ user: schema.user, membership: schema.member }).from(schema.user).leftJoin(schema.member, and(eq(schema.member.userId, schema.user.id), eq(schema.member.organizationId, organizationId)));
       const members = rows.flatMap(({ user, membership }) => {
         const manual = ["member", "creator", "admin"].includes(membership?.role ?? "") ? membership!.role as OrganizationRole : undefined;
+        const declared = declaredPrincipalRole(organization.organization.membershipPolicy, user, ["member", "creator", "admin"] as const);
         const role = declaredPrincipalRole(organization.organization.membershipPolicy, user, ["member", "creator", "admin"] as const, manual);
-        return role ? [{ id: membership?.id ?? `declared:${user.id}`, userId: user.id, name: user.name, email: user.email, role, createdAt: membership?.createdAt ?? user.createdAt }] : [];
+        return role ? [{ id: membership?.id ?? `declared:${user.id}`, userId: user.id, name: user.name, email: user.email, role, added: manual !== undefined, declared: declared !== undefined, createdAt: membership?.createdAt ?? user.createdAt }] : [];
       });
       return { members };
     }
     case "platform/organizations/members/put": {
-      await requireOrganizationAction(ctx, auth, organizationId, "manageMembers");
+      const access = await requireOrganizationAction(ctx, auth, organizationId, "manageMembers");
       await refusePersonalOrganization(ctx.db, organizationId, "members");
       const input = params as PlatformOperationParams<"platform/organizations/members/put">;
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, input.userId)).limit(1);
@@ -147,7 +148,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
         await auditAsSubject(tx, auth, { action: "organization.member.put", targetId: input.userId, details: { organizationId, role: input.role ?? "member" } });
         return updated!;
       });
-      return { member: { id: member.id, userId: member.userId, role: member.role, createdAt: member.createdAt, name: user.name, email: user.email } };
+      return { member: { id: member.id, userId: member.userId, role: member.role, added: true, declared: declaredPrincipalRole(access.organization.membershipPolicy, user, ["member", "creator", "admin"] as const) !== undefined, createdAt: member.createdAt, name: user.name, email: user.email } };
     }
     case "platform/organizations/members/delete": {
       await requireOrganizationAction(ctx, auth, organizationId, "manageMembers");
