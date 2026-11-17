@@ -294,7 +294,8 @@ pub struct PutEnvironmentProvider {
     pub controller_endpoint: EnvironmentEndpoint,
     pub data_route_base: Option<DataRouteBase>,
     pub credential: ProviderCredentialChange,
-    pub available_to_all_universes: bool,
+    /// Omit to keep the current setting. New providers default to all universes.
+    pub available_to_all_universes: Option<bool>,
     pub updated_at_ms: i64,
 }
 
@@ -322,7 +323,10 @@ impl PutEnvironmentProvider {
             controller_endpoint: self.controller_endpoint,
             data_route_base: self.data_route_base,
             has_credential,
-            available_to_all_universes: self.available_to_all_universes,
+            available_to_all_universes: self
+                .available_to_all_universes
+                .or_else(|| existing.map(|record| record.available_to_all_universes))
+                .unwrap_or(true),
             created_at_ms,
             updated_at_ms: self.updated_at_ms.max(created_at_ms),
         };

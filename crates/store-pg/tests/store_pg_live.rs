@@ -4495,7 +4495,7 @@ async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProvider
                 .expect("endpoint"),
             data_route_base: None,
             credential: ProviderCredentialChange::Keep,
-            available_to_all_universes: false,
+            available_to_all_universes: Some(false),
             updated_at_ms: 1,
         })
         .await
@@ -4567,15 +4567,17 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         controller_endpoint: endpoint.clone(),
         data_route_base,
         credential,
-        // Bindings decide, so the test exercises them.
-        available_to_all_universes: false,
+        available_to_all_universes: None,
         updated_at_ms,
     };
 
     // A new provider needs no credential, and its data route base derives
     // from the controller endpoint.
     let bare = store
-        .put_provider(put(None, None, ProviderCredentialChange::Keep, 1))
+        .put_provider(PutEnvironmentProvider {
+            available_to_all_universes: Some(false),
+            ..put(None, None, ProviderCredentialChange::Keep, 1)
+        })
         .await
         .expect("register provider without a credential");
     assert!(!bare.has_credential);
@@ -4605,6 +4607,7 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .await
         .expect("set credential");
     assert!(sealed.has_credential);
+    assert!(!sealed.available_to_all_universes);
     assert_eq!(sealed.data_route_base, Some(base.clone()));
     assert_eq!((sealed.created_at_ms, sealed.updated_at_ms), (1, 2));
     let ciphertext: Vec<u8> = sqlx::query_scalar(
@@ -4776,10 +4779,7 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
 
     // A provider available to every universe needs no binding.
     store
-        .put_provider(PutEnvironmentProvider {
-            available_to_all_universes: true,
-            ..put(None, None, ProviderCredentialChange::Keep, 20)
-        })
+        .put_provider(put(None, None, ProviderCredentialChange::Keep, 20))
         .await
         .expect("register for all universes");
     store

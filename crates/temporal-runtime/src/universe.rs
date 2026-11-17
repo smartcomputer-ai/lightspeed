@@ -228,6 +228,11 @@ impl UniverseRuntime {
         &self.environment_gateway
     }
 
+    pub fn with_external_environments(mut self, allowed: bool) -> Self {
+        self.environment_gateway.allow_external_environments = allowed;
+        self
+    }
+
     /// This process's environment signals, shared by every universe's API.
     pub fn environment_signals(&self) -> &Arc<EnvironmentSignals> {
         &self.environment_signals

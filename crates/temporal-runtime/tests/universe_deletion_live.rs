@@ -192,7 +192,7 @@ async fn provision(
             data_route_base: None,
             credential: controller.credential().map(str::to_owned),
             clear_credential: false,
-            available_to_all_universes: false,
+            available_to_all_universes: Some(false),
         }),
     )
     .await?;

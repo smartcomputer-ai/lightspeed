@@ -11,7 +11,7 @@ import { effectiveUniverseQuota, listPlatformSettings, platformSettings, putPlat
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import { policyBody, problem } from "../runtime-http.js";
-import { activeGrantIds, universeView, adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
+import { activeGrantIds, universeView, adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess, type UniverseReference } from "./universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 /** Usage and policy are administration details: only a caller who may manage the organization's policy sees them. */
@@ -246,7 +246,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const grant = await ctx.db.transaction(async tx => {
         await tx.execute(sql`SELECT id FROM organization WHERE id = ${access.organization.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM universes WHERE id = ${access.universe.id} FOR UPDATE`);
-        await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, operation);
+        await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, { platformId: access.universe.id }, operation);
         await requireOrganizationPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, access.organization.id, input.principal);
         const where = and(eq(schema.universeGrants.universeId, access.universe.id), input.principal.kind === "user" ? eq(schema.universeGrants.userId, input.principal.id) : eq(schema.universeGrants.serviceUserId, input.principal.id));
         const [current] = await tx.select().from(schema.universeGrants).where(where).limit(1);
@@ -262,7 +262,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       await ctx.db.transaction(async tx => {
         await tx.execute(sql`SELECT id FROM organization WHERE id = ${access.organization.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM universes WHERE id = ${access.universe.id} FOR UPDATE`);
-        await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, operation);
+        await ownerAccess({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, { platformId: access.universe.id }, operation);
         const [grant] = await tx.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, access.universe.id), eq(schema.universeGrants.id, params.grantId as string))).limit(1);
         if (grant?.role === "owner") await requireOtherOwner(tx, access, grant.id);
         if (grant) await tx.delete(schema.universeGrants).where(eq(schema.universeGrants.id, grant.id));
@@ -281,7 +281,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
   }
 }
 
-async function ownerAccess(ctx: AppContext, auth: AuthContext, reference: string, operation: string) {
+async function ownerAccess(ctx: AppContext, auth: AuthContext, reference: UniverseReference, operation: string) {
   const access = await universeForPrincipal(ctx, auth, reference);
   if (!access) throw new GateRefusal(404, "universe not found");
   enforceRestrictions(auth, { operation, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: !/\/(list|read)$/.test(operation) });

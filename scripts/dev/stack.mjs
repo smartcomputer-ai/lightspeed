@@ -251,7 +251,10 @@ function createPlan(profile, sourceEnv) {
       (profile === "full" && runtimeAuthMode === "authenticated" ? "true" : "false"),
     TEMPORAL_ADDRESS: temporalAddress,
     ...(envdEnabled
-      ? { LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT: envdEndpoint }
+      ? {
+          LIGHTSPEED_ALLOW_EXTERNAL_ENVIRONMENTS: sourceEnv.LIGHTSPEED_ALLOW_EXTERNAL_ENVIRONMENTS ?? "true",
+          LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT: envdEndpoint,
+        }
       : {}),
 
   };

@@ -41,12 +41,22 @@ export function universeView(access: UniverseAccess) {
   };
 }
 
-export async function universeForPrincipal(ctx: AppContext, auth: AuthContext, reference: string, allowDeleting = false): Promise<UniverseAccess | null> {
-  const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(reference);
-  const [universe] = await ctx.db.select().from(schema.universes).where(uuid
-    ? or(eq(schema.universes.id, reference), eq(schema.universes.lightspeedUniverseId, reference))
-    : eq(schema.universes.handle, reference)).limit(1);
-  if (!universe || (universe.status !== "active" && universe.status !== "archived" && !allowDeleting)
+/** Requests accept either UUID or a handle. Internal rechecks name the exact Platform row. */
+export type UniverseReference = string | { platformId: string };
+
+function eitherUniverseId(id: string) {
+  return or(eq(schema.universes.id, id), eq(schema.universes.lightspeedUniverseId, id));
+}
+
+function universeLookup(reference: UniverseReference) {
+  if (typeof reference !== "string") return eq(schema.universes.id, reference.platformId);
+  if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(reference)) return eitherUniverseId(reference);
+  return eq(schema.universes.handle, reference);
+}
+
+export async function universeForPrincipal(ctx: AppContext, auth: AuthContext, reference: UniverseReference, allowDeleting = false): Promise<UniverseAccess | null> {
+  const [universe, ambiguous] = await ctx.db.select().from(schema.universes).where(universeLookup(reference)).limit(2);
+  if (!universe || ambiguous || (universe.status !== "active" && universe.status !== "archived" && !allowDeleting)
     || !resourceScopeAllowed(auth, universe.organizationId, universe.lightspeedUniverseId)) return null;
   const organization = await organizationForPrincipal(ctx, auth, universe.organizationId);
   if (!organization) return null;
@@ -149,7 +159,8 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
   if (protectedValue && input.expiresAtMs != null) throw new GateRefusal(409, "protected universes cannot expire");
   const runtimeId = input.universeId ?? crypto.randomUUID();
   const client = deploymentClient(ctx.env);
-  const [prior] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, runtimeId)).limit(1);
+  const [prior, ambiguous] = await ctx.db.select().from(schema.universes).where(eitherUniverseId(runtimeId)).limit(2);
+  if (ambiguous || (prior && prior.lightspeedUniverseId !== runtimeId.toLowerCase())) throw new GateRefusal(409, "universe identifier is already in use");
   if (prior && (prior.organizationId !== organizationId || prior.createdBy !== auth.actorId)) throw new GateRefusal(409, "universe creation identifier already belongs to another request");
   if (!prior) {
     try { await client.call("deployment/universes/read", { universe: runtimeId }); throw new GateRefusal(409, "runtime universe already exists; use administrative adoption"); }
@@ -197,7 +208,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
       const configured = await client.call("deployment/universes/configuration/put", { universe: runtimeId, displayName: reservation.name, ...(organization.requireProtected ? { protected: true } : {}) }, options);
       await tx.update(schema.universes).set({ status: "active", handle: created.universe.handle, runtimeConfiguration: { ...configured.universe } }).where(eq(schema.universes.id, row.id));
     }
-    const linked = await universeForPrincipal(scopedContext, auth, row.id, true);
+    const linked = await universeForPrincipal(scopedContext, auth, { platformId: row.id }, true);
     if (!linked) throw new GateRefusal(403, "created universe is outside this credential's scope");
     return universeView(linked);
   });
@@ -212,7 +223,7 @@ export async function adoptManagedUniverse(ctx: AppContext, auth: AuthContext, o
   const client = deploymentClient(ctx.env);
   const { universe: runtime } = await client.call("deployment/universes/read", { universe: input.lightspeedUniverseId });
   if (runtime.deletion) throw new GateRefusal(409, "universe is being deleted");
-  const [linked] = await ctx.db.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, runtime.universeId)).limit(1);
+  const [linked] = await ctx.db.select().from(schema.universes).where(eitherUniverseId(runtime.universeId)).limit(1);
   if (linked) throw new GateRefusal(409, "runtime universe already belongs to an organization");
   await requireAvailableCachedHandle(ctx, runtime.handle);
     const row = await ctx.db.transaction(async tx => {
@@ -228,7 +239,7 @@ export async function adoptManagedUniverse(ctx: AppContext, auth: AuthContext, o
     await auditAsSubject(tx, auth, { action: "universe.adopt", targetId: runtime.universeId, universeId: created!.id, details: { organizationId } });
     return created!;
   });
-  return universeView((await universeForPrincipal(ctx, auth, row.id))!);
+  return universeView((await universeForPrincipal(ctx, auth, { platformId: row.id }))!);
 }
 
 export async function updateUniverseLifecycle(ctx: AppContext, access: UniverseAccess, input: { name?: string; status?: "active" | "archived"; metadata?: Record<string, string>; protected?: boolean; expiresAtMs?: number | null }, operation = "platform/universes/update") {
@@ -237,7 +248,7 @@ export async function updateUniverseLifecycle(ctx: AppContext, access: UniverseA
     const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
     await tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.id, access.universe.id)).for("update");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
-    const currentAccess = await universeForPrincipal(scopedContext, access.auth, access.universe.id);
+    const currentAccess = await universeForPrincipal(scopedContext, access.auth, { platformId: access.universe.id });
     if (!organization || !currentAccess) throw new GateRefusal(404, "universe not found");
     if (!currentAccess.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
     if (input.protected === false && (!currentAccess.organizationActions.has("administerUniverses") || organization.requireProtected)) throw new GateRefusal(403, organization.requireProtected ? "organization policy requires deletion protection" : "only an organization admin can clear deletion protection");
@@ -262,7 +273,7 @@ export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAcc
     const [organization] = await tx.select().from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
     await tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.id, access.universe.id)).for("update");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
-    const current = await universeForPrincipal(scopedContext, access.auth, access.universe.id, true);
+    const current = await universeForPrincipal(scopedContext, access.auth, { platformId: access.universe.id }, true);
     if (!current || !organization) throw new GateRefusal(404, "universe not found");
     if (!current.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
     const client = deploymentClient(ctx.env);
@@ -324,7 +335,7 @@ export function universeRoutes(ctx: AppContext) {
     return ctx.db.transaction(async tx => {
       await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
       await tx.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.id, access.universe.id)).for("update");
-      const current = await universeForPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, access.universe.id, true);
+      const current = await universeForPrincipal({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, { platformId: access.universe.id }, true);
       if (!current) throw new GateRefusal(404, "universe not found");
       const client = deploymentClient(ctx.env);
       const configuration = current.universe.runtimeConfiguration;

@@ -91,6 +91,7 @@ impl Config {
 #[derive(Clone, Debug)]
 pub struct Client {
     http: HttpClient,
+    base_url: Url,
     responses_url: Url,
     compact_url: Url,
     input_tokens_url: Url,
@@ -119,6 +120,7 @@ impl Client {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         Ok(Self {
+            base_url,
             http: HttpClient::with_headers(config.http, headers)?,
             responses_url,
             compact_url,
@@ -134,6 +136,7 @@ impl Client {
     fn auth_header(
         &self,
         auth: Option<crate::RequestAuth<'_>>,
+        endpoint: Option<&EndpointOverride>,
     ) -> Result<HeaderValue, LlmApiError> {
         match auth {
             Some(crate::RequestAuth::None) => Err(ConfigurationError::new(
@@ -142,6 +145,10 @@ impl Client {
             .into()),
             Some(crate::RequestAuth::ApiKey(value)) | Some(crate::RequestAuth::Bearer(value)) => {
                 bearer_auth_value(value)
+            }
+            Some(crate::RequestAuth::ScopedBearer(bearer)) => {
+                let target = endpoint.map_or(&self.base_url, EndpointOverride::base_url);
+                bearer_auth_value(bearer.token_for(target)?)
             }
             None => self.auth.clone().ok_or_else(|| {
                 ConfigurationError::new(
@@ -163,7 +170,7 @@ impl Client {
                 "anonymous auth requires an explicit endpoint override",
             )
             .into()),
-            other => self.auth_header(other).map(Some),
+            other => self.auth_header(other, endpoint).map(Some),
         }
     }
 
@@ -264,7 +271,7 @@ impl Client {
         let response = self
             .http
             .request(Method::GET, self.response_url(response_id)?)
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .query(&request)
             .send()
             .await
@@ -288,7 +295,7 @@ impl Client {
         let response = self
             .http
             .request(Method::GET, self.response_url(response_id)?)
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .query(&request)
             .send()
             .await
@@ -314,7 +321,7 @@ impl Client {
         let response = self
             .http
             .request(Method::DELETE, self.response_url(response_id)?)
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .send()
             .await
             .map_err(|err| self.http.transport_error(err))?;
@@ -335,7 +342,7 @@ impl Client {
                 Method::POST,
                 self.response_subresource_url(response_id, "cancel")?,
             )
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .send()
             .await
             .map_err(|err| self.http.transport_error(err))?;
@@ -406,7 +413,7 @@ impl Client {
                 Method::GET,
                 self.response_subresource_url(response_id, "input_items")?,
             )
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .query(&request)
             .send()
             .await
@@ -428,7 +435,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.input_tokens_url.clone())
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .json(&request)
             .send()
             .await
@@ -451,7 +458,7 @@ impl Client {
         let response = self
             .http
             .request(Method::POST, self.responses_url.clone())
-            .header(AUTHORIZATION, self.auth_header(None)?)
+            .header(AUTHORIZATION, self.auth_header(None, None)?)
             .json(&request)
             .send()
             .await

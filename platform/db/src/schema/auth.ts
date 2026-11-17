@@ -25,6 +25,7 @@ export const user = pgTable("user", {
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires", { withTimezone: true }),
+  // Lightspeed's columns, declared to Better Auth in auth-fields.ts.
   identitySource: text("identity_source").default("local").notNull(),
   oidcIssuer: text("oidc_issuer"),
   oidcSubject: text("oidc_subject"),
@@ -52,6 +53,7 @@ export const session = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     activeOrganizationId: text("active_organization_id"),
     impersonatedBy: text("impersonated_by"),
+    // Lightspeed's columns, declared to Better Auth in auth-fields.ts.
     accessVersion: integer("access_version").default(0).notNull(),
     sessionKind: text("session_kind", { enum: ["browser", "cli"] }).default("browser").notNull(),
   },
@@ -70,6 +72,7 @@ export const deviceCode = pgTable("device_code", {
   pollingInterval: integer("polling_interval"),
   clientId: text("client_id"),
   scope: text("scope"),
+  // Lightspeed's column, declared to Better Auth in auth-fields.ts.
   approvalAccessVersion: integer("approval_access_version"),
 }, table => [uniqueIndex("device_code_device_code_idx").on(table.deviceCode), uniqueIndex("device_code_user_code_idx").on(table.userCode)]);
 
@@ -122,6 +125,7 @@ export const organization = pgTable(
     logo: text("logo"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     metadata: text("metadata"),
+    // Lightspeed's columns, declared to Better Auth in auth-fields.ts.
     personalUserId: text("personal_user_id").unique().references(() => user.id, { onDelete: "set null" }),
     /// The organization's own universe limit; null follows the deployment
     /// default for its kind (personal or shared).

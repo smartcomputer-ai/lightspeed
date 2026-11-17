@@ -27,7 +27,7 @@ const providerPutSchema = z.object({
   // Write-only and optional: omitted keeps the stored credential.
   credential: z.string().min(1).max(4096).optional(),
   clearCredential: z.boolean().optional(),
-  // Omitted: every universe may use the provider.
+  // Omission keeps the current setting. New providers default to every universe.
   availableToAllUniverses: z.boolean().optional(),
 }).refine(
   (value) => !(value.credential && value.clearCredential),

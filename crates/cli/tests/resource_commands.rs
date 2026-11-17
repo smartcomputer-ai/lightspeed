@@ -435,6 +435,45 @@ fn github_commands_filter_providers_and_refuse_to_delete_model_connections() {
 }
 
 #[test]
+fn environment_provider_put_only_changes_availability_when_requested() {
+    let runtime = Runtime::start(|method, params| {
+        assert_eq!(method, "deployment/environment-providers/put");
+        json!({"provider": {
+            "providerId": params["providerId"],
+            "controllerEndpoint": params["controllerEndpoint"],
+            "hasCredential": false,
+            "availableToAllUniverses": false,
+            "createdAtMs": 1,
+            "updatedAtMs": 2
+        }})
+    });
+    let base = [
+        "environment",
+        "provider",
+        "put",
+        "incus",
+        "--controller-endpoint",
+        "wss://provider.example/control",
+        "--json",
+    ];
+    for (flag, expected) in [
+        (None, None),
+        (Some("--selected-universes"), Some(json!(false))),
+        (Some("--all-universes"), Some(json!(true))),
+    ] {
+        let mut args = base.to_vec();
+        args.extend(flag);
+        runtime.success(&args);
+        let requests = runtime.requests.lock().unwrap();
+        let params = &requests.last().unwrap()["params"];
+        assert_eq!(params.get("availableToAllUniverses"), expected.as_ref());
+    }
+    let mut conflicting = base.to_vec();
+    conflicting.extend(["--selected-universes", "--all-universes"]);
+    assert!(!runtime.run(&conflicting).status.success());
+}
+
+#[test]
 fn model_provider_put_sends_each_header_with_its_value_source() {
     let runtime = Runtime::start(|method, params| {
         assert_eq!(method, "credentials/providers/put");

@@ -106,12 +106,15 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     // A second name for the same listener: accepted only because it is a
     // configured registration URL.
     let alias_connect_url = format!("ws://localhost:{}/environments/connect", address.port());
-    let runtime = Arc::new(UniverseRuntime::new(
-        client,
-        format!("environment-registration-live-{suffix}"),
-        Some(base_url.clone()),
-        stores,
-    )?);
+    let runtime = Arc::new(
+        UniverseRuntime::new(
+            client,
+            format!("environment-registration-live-{suffix}"),
+            Some(base_url.clone()),
+            stores,
+        )?
+        .with_external_environments(true),
+    );
     let operator = GatewayDeploymentApi::new(runtime.clone());
     // Direct service calls carry an explicit local request context.
     calling(

@@ -357,7 +357,7 @@ async fn register_fake_provider(
                 None => ProviderCredentialChange::Keep,
             },
             updated_at_ms: 1,
-            available_to_all_universes: false,
+            available_to_all_universes: Some(false),
         })
         .await?;
     store

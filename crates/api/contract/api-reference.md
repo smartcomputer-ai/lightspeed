@@ -2243,7 +2243,7 @@ Refuses protected universes. Immediately fences an unprotected universe and rele
 
 **Put an environment provider**
 
-Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.
+Sets the controller endpoint, optional data route base and optional write-only bearer credential (kept when omitted, removed by clearCredential). Availability defaults to all universes on creation and is preserved when omitted on update. The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.
 
 - HTTP: `PUT /api/v1/environment-providers/{providerId}`
 - Success: `200`

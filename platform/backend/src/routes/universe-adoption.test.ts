@@ -48,6 +48,35 @@ it("does not let an Owner who is only an organization Member create another univ
   expect((await fixture.request("/organizations/organization-a/universes", "POST", { universeId: newId, name: "No" })).status).toBe(403);
   expect(requests).toHaveLength(0);
 });
+it("reserves existing Platform IDs during creation and adoption", async () => {
+  const id = fixture.universe.id;
+  await fixture.asUser("creator");
+  expect((await fixture.request("/organizations/organization-a/universes", "POST", { universeId: id, name: "New" })).status).toBe(409);
+  expect(requests).toHaveLength(0);
+
+  await fixture.asUser("owner", true);
+  inventory.set(id, runtimeView(id, "orphan"));
+  expect((await fixture.request("/organizations/organization-a/universes/adopt", "POST", {
+    lightspeedUniverseId: id, name: "Orphan", initialOwner: { kind: "user", id: "creator" },
+  })).status).toBe(409);
+});
+it("resolves handles and checks the selected row when stored UUIDs overlap", async () => {
+  await fixture.db.insert(schema.member).values({
+    id: "other-admin", organizationId: "organization-b", userId: "viewer", role: "admin", createdAt: new Date(),
+  });
+  await fixture.db.insert(schema.universes).values({
+    organizationId: "organization-b", lightspeedUniverseId: fixture.universe.id, name: "Other", handle: "other",
+  });
+  expect((await fixture.request(`/universes/${fixture.universe.id}`)).status).toBe(404);
+  const path = "/api/v1/universes/work/configuration";
+  await fixture.asUser("viewer");
+  expect((await fixture.request(path, "PUT", { displayName: "New name" })).status).toBe(403);
+  expect(requests.some(request => request.operation === "deployment/universes/configuration/put")).toBe(false);
+
+  await fixture.asUser("owner");
+  expect((await fixture.request(path, "PUT", { displayName: "New name" })).status).toBe(200);
+  expect(requests.find(request => request.operation === "deployment/universes/configuration/put")?.params.universe).toBe(fixture.universe.lightspeedUniverseId);
+});
 it("uses atomic runtime lifecycle settings and keeps a durable reservation on interruption", async () => {
   await fixture.asUser("creator");
   await fixture.db.update(schema.organization).set({ defaultProtected: true }).where(eq(schema.organization.id, "organization-a"));

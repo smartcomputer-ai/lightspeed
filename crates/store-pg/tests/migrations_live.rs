@@ -291,6 +291,22 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         ));
     }
 
+    // The universe cascade must clear checkpoint references before deleting
+    // the blobs they hold. Creating cas_blobs before sessions reverses that order.
+    pool.execute(
+        "INSERT INTO universes (universe_id, handle)
+         VALUES ('00000000-0000-4000-8000-000000000001', 'checkpoint-cascade');
+         INSERT INTO sessions (universe_id, session_id, retention_root_session_id, created_at_ms, updated_at_ms)
+         SELECT universe_id, 'session', 'session', 1, 1 FROM universes;
+         INSERT INTO cas_blobs (universe_id, digest, byte_len, storage_kind, inline_bytes, created_at_ms, touched_at_ms)
+         SELECT universe_id, repeat('a', 64), 0, 'inline', ''::bytea, 1, 1 FROM universes;
+         INSERT INTO session_checkpoints (universe_id, session_id, through_seq, format_version, state_digest, byte_len, created_at_ms)
+         SELECT universe_id, 'session', 1, 1, digest, 0, 1 FROM cas_blobs;
+         DELETE FROM universes WHERE handle = 'checkpoint-cascade';",
+    )
+    .await
+    .map_err(|error| format!("delete universe with a session checkpoint: {error}"))?;
+
     let rows: Vec<(i64, String, String)> =
         sqlx::query_as("SELECT version, name, checksum FROM schema_migrations ORDER BY version")
             .fetch_all(pool)

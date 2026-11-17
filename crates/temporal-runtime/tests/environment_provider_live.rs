@@ -47,12 +47,15 @@ async fn live_runtime(name: &str) -> anyhow::Result<(Arc<UniverseRuntime>, sqlx:
     let client = connect_temporal(&TemporalConnectionConfig::from_env()?).await?;
     let stores = DeploymentStores::from_env().await?;
     let pool = stores.pool().clone();
-    let runtime = Arc::new(UniverseRuntime::new(
-        client,
-        format!("{name}-{}", Uuid::new_v4().simple()),
-        Some("http://127.0.0.1:18080".to_owned()),
-        stores,
-    )?);
+    let runtime = Arc::new(
+        UniverseRuntime::new(
+            client,
+            format!("{name}-{}", Uuid::new_v4().simple()),
+            Some("http://127.0.0.1:18080".to_owned()),
+            stores,
+        )?
+        .with_external_environments(false),
+    );
     Ok((runtime, pool))
 }
 
@@ -91,7 +94,7 @@ async fn provider_universe(
             data_route_base: None,
             credential: controller.credential().map(str::to_owned),
             clear_credential: false,
-            available_to_all_universes: false,
+            available_to_all_universes: Some(false),
         }),
     )
     .await?;
@@ -252,7 +255,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                     data_route_base: None,
                     credential,
                     clear_credential: false,
-                    available_to_all_universes: false,
+                    available_to_all_universes: Some(false),
                 }),
             )
             .await
@@ -268,7 +271,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                 data_route_base: None,
                 credential: Some("token".to_owned()),
                 clear_credential: true,
-                available_to_all_universes: false,
+                available_to_all_universes: Some(false),
             }),
         )
         .await
@@ -452,8 +455,9 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
         .environment;
         assert_eq!(public_endpoint(&removed), None);
 
-        // External environments have no provider to pass through to.
-        let external = calling(
+        // Disabling direct attachment forbids new registrations. Previously
+        // stored external environments can still be closed.
+        let external_create = calling(
             caller_a.clone(),
             api_a.create_external_environment(api::EnvironmentExternalCreateParams {
                 environment_id: None,
@@ -463,12 +467,26 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                 metadata: BTreeMap::new(),
             }),
         )
-        .await?
-        .environment;
+        .await
+        .expect_err("direct attachment is disabled");
+        assert_eq!(external_create.kind, api::AgentApiErrorKind::Forbidden);
+        let external = state_a
+            .store
+            .create_external_environment(environments::CreateExternalEnvironment {
+                request_id: environments::EnvironmentProvisionRequestId::new(format!(
+                    "external-{suffix}"
+                )),
+                environment_id: environments::EnvironmentId::new(format!("ext-{suffix}")),
+                endpoint: "ws://127.0.0.1:1/".parse()?,
+                display_name: None,
+                metadata: BTreeMap::new(),
+                created_at_ms: 1,
+            })
+            .await?;
         let external_power = calling(
             caller_a.clone(),
             api_a.put_environment_power(EnvironmentPowerPutParams {
-                environment_id: external.environment_id.clone(),
+                environment_id: external.environment_id.to_string(),
                 power: EnvironmentPowerStateView::Paused,
             }),
         )
@@ -478,7 +496,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
         let closed_external = calling(
             caller_a.clone(),
             api_a.close_environment(EnvironmentCloseParams {
-                environment_id: external.environment_id.clone(),
+                environment_id: external.environment_id.to_string(),
             }),
         )
         .await?
@@ -501,7 +519,37 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
             Some(EnvironmentCloseReasonView::ProviderEnded)
         );
 
-        // Close until gone.
+        // Unbinding cuts off tenant controller calls even on an open target.
+        calling(
+            deployment_caller(),
+            operator.delete_environment_provider_binding(DeploymentProviderBindingDeleteParams {
+                universe: universe_a.to_string(),
+                provider_id: guarded_id.clone(),
+            }),
+        )
+        .await?;
+        let power = calling(
+            caller_a.clone(),
+            api_a.put_environment_power(EnvironmentPowerPutParams {
+                environment_id: environment_id.clone(),
+                power: EnvironmentPowerStateView::Paused,
+            }),
+        )
+        .await
+        .expect_err("the universe lost access to the target's provider");
+        assert_eq!(power.kind, api::AgentApiErrorKind::NotFound);
+        let ingress = calling(
+            caller_a.clone(),
+            api_a.put_environment_ingress(EnvironmentIngressPutParams {
+                environment_id: environment_id.clone(),
+                enabled: true,
+            }),
+        )
+        .await
+        .expect_err("the universe cannot enable public ingress after unbinding");
+        assert_eq!(ingress.kind, api::AgentApiErrorKind::NotFound);
+
+        // Close until gone, including the target whose binding was removed.
         for (api, caller, environment_id) in [
             (api_a, &caller_a, environment_id.as_str()),
             (api_b, &caller_b, open_created.environment_id.as_str()),

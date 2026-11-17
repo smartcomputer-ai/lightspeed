@@ -26,7 +26,7 @@ fn provider() -> PutEnvironmentProvider {
         data_route_base: None,
         credential: ProviderCredentialChange::Set(SecretValue::new("provider-secret")),
         // Bindings decide, so the tests exercise them.
-        available_to_all_universes: false,
+        available_to_all_universes: Some(false),
         updated_at_ms: 1_000,
     }
 }
@@ -195,6 +195,27 @@ async fn provider_credentials_are_optional_and_follow_the_change() {
     ));
     let debug = format!("{:?}", provider());
     assert!(!debug.contains("provider-secret"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_put_preserves_availability_unless_explicitly_changed() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    for (availability, expected) in [
+        (None, true),
+        (Some(false), false),
+        (None, false),
+        (Some(true), true),
+        (None, true),
+    ] {
+        let record = store
+            .put_provider(PutEnvironmentProvider {
+                available_to_all_universes: availability,
+                ..provider()
+            })
+            .await
+            .expect("put provider");
+        assert_eq!(record.available_to_all_universes, expected);
+    }
 }
 
 #[test]
@@ -2725,7 +2746,7 @@ async fn a_provider_available_to_all_universes_needs_no_binding() {
     let store = InMemoryEnvironmentRegistryStore::for_universe(universe_id);
     store
         .put_provider(PutEnvironmentProvider {
-            available_to_all_universes: true,
+            available_to_all_universes: Some(true),
             ..provider()
         })
         .await

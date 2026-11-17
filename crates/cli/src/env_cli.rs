@@ -984,10 +984,13 @@ struct ProviderPutArgs {
     /// Remove the stored credential.
     #[arg(long)]
     clear_credential: bool,
-    /// Only universes bound to the provider (`environment binding put`)
-    /// may use it. Without this flag every universe may.
-    #[arg(long)]
+    /// Limit use to universes bound to the provider (`environment binding put`).
+    #[arg(long, group = "availability")]
     selected_universes: bool,
+    /// Allow every universe. Omitting both availability flags keeps the current
+    /// setting and defaults new providers to every universe.
+    #[arg(long, group = "availability")]
+    all_universes: bool,
     #[arg(long)]
     json: bool,
 }
@@ -1133,7 +1136,8 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                         data_route_base: args.data_route_base,
                         credential,
                         clear_credential: args.clear_credential,
-                        available_to_all_universes: !args.selected_universes,
+                        available_to_all_universes: (args.all_universes || args.selected_universes)
+                            .then_some(args.all_universes),
                     },
                 )
                 .await?;

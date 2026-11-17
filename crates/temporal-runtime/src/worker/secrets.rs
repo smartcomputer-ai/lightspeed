@@ -292,8 +292,12 @@ impl ModelProviderResolver for StoredModelProviderResolver {
                             message: other.to_string(),
                         },
                     })?;
+                let auth = ResolvedProviderAuth::bearer_for_audience(
+                    token.expose(),
+                    config.audience.clone(),
+                );
                 Ok(Some(ResolvedModelProvider {
-                    auth: Some(ResolvedProviderAuth::bearer(token.expose())),
+                    auth: Some(auth),
                     endpoint: self
                         .resolve_endpoint(provider_id, config.endpoint.as_ref())
                         .await?,
@@ -346,7 +350,7 @@ impl StoredModelProviderResolver {
                 .map_err(invalid)?;
         // The token is sent to the endpoint, so a credential bound to an
         // audience must cover the endpoint's base URL.
-        let audience = TokenAudience::ModelProvider(endpoint.base_url.clone());
+        let audience = TokenAudience::ModelProvider(resolved.transport.base_url().to_string());
         for (name, value) in &endpoint.headers {
             let RequestHeaderValue::Credential { grant_id } = value else {
                 continue;
@@ -1006,6 +1010,7 @@ mod tests {
     /// A credentialless endpoint whose `x-api-key` header names a static
     /// token, with the stores the test needs to change the token afterwards.
     async fn endpoint_header_resolver(
+        base_url: &str,
         grant_audience: Option<&str>,
     ) -> (
         StoredProviderKeyResolver,
@@ -1052,7 +1057,7 @@ mod tests {
                 config: CredentialProviderConfig::ModelEndpoint(
                     credentials::ModelEndpointOnlyConfig {
                         endpoint: credentials::ModelEndpointConfig {
-                            base_url: "https://router.example/v1".to_owned(),
+                            base_url: base_url.to_owned(),
                             headers: std::collections::BTreeMap::from([
                                 (
                                     "x-title".to_owned(),
@@ -1092,7 +1097,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn endpoint_credential_headers_resolve_beside_plain_ones() {
         for grant_audience in [None, Some("https://router.example")] {
-            let (resolver, _grants, _secrets) = endpoint_header_resolver(grant_audience).await;
+            let (resolver, _grants, _secrets) =
+                endpoint_header_resolver("https://router.example/v1", grant_audience).await;
 
             let provider = resolver
                 .resolve_model_provider("router")
@@ -1111,7 +1117,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn endpoint_credential_headers_fail_the_request_when_the_credential_cannot_be_used() {
         // Revoked after the provider was configured.
-        let (resolver, grants, _secrets) = endpoint_header_resolver(None).await;
+        let (resolver, grants, _secrets) =
+            endpoint_header_resolver("https://router.example/v1", None).await;
         grants
             .update_grant_status(
                 &CredentialGrantId::new("authgrant_router"),
@@ -1127,14 +1134,26 @@ mod tests {
 
         // Bound to another host than the endpoint.
         let (resolver, _grants, _secrets) =
-            endpoint_header_resolver(Some("https://other.example")).await;
+            endpoint_header_resolver("https://router.example/v1", Some("https://other.example"))
+                .await;
+        assert!(matches!(
+            resolver.resolve_model_provider("router").await,
+            Err(ProviderKeyError::NotUsable { .. })
+        ));
+
+        let (resolver, _, _) = endpoint_header_resolver(
+            "https://router.example/v1/../another-api",
+            Some("https://router.example/v1"),
+        )
+        .await;
         assert!(matches!(
             resolver.resolve_model_provider("router").await,
             Err(ProviderKeyError::NotUsable { .. })
         ));
 
         // A token that is not a header value is refused without being echoed.
-        let (resolver, _grants, secrets) = endpoint_header_resolver(None).await;
+        let (resolver, _grants, secrets) =
+            endpoint_header_resolver("https://router.example/v1", None).await;
         secrets
             .delete_secret(&SecretId::new("authsec_router"))
             .await
@@ -1282,6 +1301,10 @@ mod tests {
             .expect("auth present");
 
         let auth = auth.auth.expect("provider auth");
+        assert!(matches!(
+            auth.as_request_auth(),
+            llm_clients::RequestAuth::ScopedBearer(_)
+        ));
         assert_eq!(auth.value.expose(), "oauth-access-token");
         assert_eq!(
             auth.scheme,

@@ -333,14 +333,10 @@ pub struct DeploymentEnvironmentProviderPutParams {
     /// Remove the stored credential. Excludes `credential`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clear_credential: bool,
-    /// Every universe may use the provider (the default). `false` limits it
-    /// to the universes it is bound to.
-    #[serde(default = "available_to_all_universes_default")]
-    pub available_to_all_universes: bool,
-}
-
-fn available_to_all_universes_default() -> bool {
-    true
+    /// Allow every universe to use the provider. Set to `false` to require a binding.
+    /// Omit to keep the current setting. New providers default to `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_to_all_universes: Option<bool>,
 }
 
 impl fmt::Debug for DeploymentEnvironmentProviderPutParams {
@@ -675,7 +671,7 @@ macro_rules! for_each_deployment_operation {
         ["Request universe deletion", "Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound."], access: $crate::MethodAccess::Deployment,
         http: (DELETE, "/api/v1/universes/{universe}", [("universe", "universe")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider($crate::DeploymentEnvironmentProviderPutParams) -> $crate::DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted."], access: $crate::MethodAccess::Deployment,
+        ["Put an environment provider", "Sets the controller endpoint, optional data route base and optional write-only bearer credential (kept when omitted, removed by clearCredential). Availability defaults to all universes on creation and is preserved when omitted on update. The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted."], access: $crate::MethodAccess::Deployment,
         http: (PUT, "/api/v1/environment-providers/{providerId}", [("providerId", "providerId")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers($crate::DeploymentEnvironmentProviderListParams) -> $crate::DeploymentEnvironmentProviderListResponse =>
         ["List environment providers", "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: $crate::MethodAccess::Deployment,

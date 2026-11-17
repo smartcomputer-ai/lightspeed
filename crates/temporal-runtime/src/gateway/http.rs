@@ -363,18 +363,6 @@ impl GatewayState {
         }
     }
 
-    async fn environment_provider(
-        &self,
-        provider_id: &environments::EnvironmentProviderId,
-    ) -> Result<environments::EnvironmentProviderRecord, environments::EnvironmentRegistryError>
-    {
-        environments::EnvironmentProviderStore::read_provider(
-            self.deployment_store().as_ref(),
-            provider_id,
-        )
-        .await
-    }
-
     async fn environment_provider_credential(
         &self,
         provider_id: &environments::EnvironmentProviderId,
@@ -667,11 +655,13 @@ async fn environment_route_upgrade(
         .max_frame_size(MAX_MESSAGE_BYTES as usize);
     match &environment.source {
         environments::EnvironmentSource::External { endpoint } => {
-            let upstream =
-                match dial_upstream(endpoint.as_str(), external_target(endpoint), None).await {
-                    Ok(upstream) => upstream,
-                    Err(failure) => return failure.respond(endpoint.as_str()),
-                };
+            let Ok(target) = external_target(endpoint, &api.environment_gateway) else {
+                return StatusCode::FORBIDDEN.into_response();
+            };
+            let upstream = match dial_upstream(endpoint.as_str(), target, None).await {
+                Ok(upstream) => upstream,
+                Err(failure) => return failure.respond(endpoint.as_str()),
+            };
             let guard = state.registrations().track_proxy();
             upgrade
                 .on_upgrade(move |socket| async move {
@@ -835,26 +825,17 @@ async fn provider_route(
         }
     };
     let forbidden = || Box::new(StatusCode::FORBIDDEN.into_response());
-    let provider = match state.environment_provider(provider_id).await {
+    let provider = match crate::environments::providers::read_available_provider(
+        api.store().as_ref(),
+        key.universe_id,
+        provider_id,
+    )
+    .await
+    {
         Ok(provider) => provider,
         Err(environments::EnvironmentRegistryError::NotFound { .. }) => return Err(forbidden()),
         Err(error) => return Err(unavailable(error)),
     };
-    let allowed = provider.available_to_all_universes
-        || match environments::EnvironmentProviderBindingStore::read_provider_binding(
-            api.store().as_ref(),
-            key.universe_id,
-            provider_id,
-        )
-        .await
-        {
-            Ok(_) => true,
-            Err(environments::EnvironmentRegistryError::NotFound { .. }) => false,
-            Err(error) => return Err(unavailable(error)),
-        };
-    if !allowed {
-        return Err(forbidden());
-    }
     let Some(target_id) = source.provider_target_id.as_ref() else {
         return Err(Box::new(refusal_response(
             &DataRouteRefusal::Provisioning {},
@@ -944,11 +925,15 @@ enum UpstreamTarget<'a> {
     Unix(&'a str),
 }
 
-fn external_target(endpoint: &EnvironmentEndpoint) -> UpstreamTarget<'_> {
-    match (endpoint.scheme(), endpoint.unix_socket_path()) {
+fn external_target<'a>(
+    endpoint: &'a EnvironmentEndpoint,
+    config: &crate::environments::gateway::EnvironmentGatewayClientConfig,
+) -> Result<UpstreamTarget<'a>, AgentApiError> {
+    config.require_external_environments()?;
+    Ok(match (endpoint.scheme(), endpoint.unix_socket_path()) {
         (EndpointScheme::Unix, Some(path)) => UpstreamTarget::Unix(path),
         _ => UpstreamTarget::Url,
-    }
+    })
 }
 
 enum Upstream {
@@ -1353,6 +1338,31 @@ mod tests {
         assert!(response_budget_exempt(api::METHOD_SESSION_RUNS_READ));
         assert!(!response_budget_exempt(api::METHOD_SESSION_LIST));
         assert!(!response_budget_exempt(api::METHOD_SESSION_RUNS_LIST));
+    }
+
+    #[test]
+    fn stored_external_endpoints_require_deployment_opt_in_before_dialing() {
+        let mut config = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
+            "http://gateway",
+            "test",
+        );
+        let ws = EnvironmentEndpoint::parse("ws://127.0.0.1:19091/").unwrap();
+        let unix = EnvironmentEndpoint::parse("unix:///tmp/lightspeed-envd.sock").unwrap();
+        for endpoint in [&ws, &unix] {
+            assert!(matches!(
+                external_target(endpoint, &config),
+                Err(error) if error.kind == AgentApiErrorKind::Forbidden
+            ));
+        }
+        config.allow_external_environments = true;
+        assert!(matches!(
+            external_target(&ws, &config),
+            Ok(UpstreamTarget::Url)
+        ));
+        assert!(matches!(
+            external_target(&unix, &config),
+            Ok(UpstreamTarget::Unix(_))
+        ));
     }
 
     #[test]

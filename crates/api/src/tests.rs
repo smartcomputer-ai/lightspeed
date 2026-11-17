@@ -1114,6 +1114,7 @@ fn environment_provider_put_params_redact_credential_and_view_omits_it() {
     }))
     .expect("put params");
     assert!(!params.clear_credential);
+    assert!(params.available_to_all_universes.is_none());
     assert!(params.data_route_base.is_none());
     assert!(!format!("{params:?}").contains("provider-bearer-secret"));
     let view = serde_json::to_value(test_deployment_environment_provider("incus-local"))

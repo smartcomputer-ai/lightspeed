@@ -18457,7 +18457,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.",
+    "description": "Sets the controller endpoint, optional data route base and optional write-only bearer credential (kept when omitted, removed by clearCredential). Availability defaults to all universes on creation and is preserved when omitted on update. The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.",
     "events": null,
     "group": "deployment/environment-providers",
     "method": "PUT",

@@ -97,6 +97,7 @@ impl EnvironmentProviderStore for PgStore {
             .await
             .map_err(|error| sql_error("lock environment provider", error))?
             .and_then(|row| decoded_or_logged(provider_from_row(&row), "environment provider"));
+        let availability = request.available_to_all_universes;
         let credential = request.credential.clone();
         let record = request.into_record(existing.as_ref())?;
         let (keep, key_id, nonce, ciphertext) = match credential {
@@ -114,10 +115,10 @@ impl EnvironmentProviderStore for PgStore {
                 provider_id, display_name, controller_endpoint, data_route_base,
                 credential_key_id, credential_nonce, credential_ciphertext,
                 created_at_ms, updated_at_ms, available_to_all_universes
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$11)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($11, true))
             ON CONFLICT (provider_id) DO UPDATE SET
                 display_name = EXCLUDED.display_name,
-                available_to_all_universes = EXCLUDED.available_to_all_universes,
+                available_to_all_universes = COALESCE($11, environment_providers.available_to_all_universes),
                 controller_endpoint = EXCLUDED.controller_endpoint,
                 data_route_base = EXCLUDED.data_route_base,
                 credential_key_id = CASE WHEN $10::boolean
@@ -143,7 +144,7 @@ impl EnvironmentProviderStore for PgStore {
             .bind(record.created_at_ms)
             .bind(record.updated_at_ms)
             .bind(keep)
-            .bind(record.available_to_all_universes)
+            .bind(availability)
             .fetch_one(&mut *tx)
             .await
             .map_err(|error| sql_error("put environment provider", error))?;

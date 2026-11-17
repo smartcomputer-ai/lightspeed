@@ -3,14 +3,30 @@ use super::*;
 
 use ::environments::{
     DaemonBuild, EnvironmentCloseReason, EnvironmentDisplayStatus,
-    EnvironmentProviderBindingRecord, EnvironmentProviderId, EnvironmentProviderRecord,
-    EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentState, IdlePolicy,
-    ObservedTarget, PowerState, TargetPhase,
+    EnvironmentProviderBindingRecord, EnvironmentProviderBindingStore, EnvironmentProviderId,
+    EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentRecord,
+    EnvironmentRegistryError, EnvironmentSource, EnvironmentState, IdlePolicy, ObservedTarget,
+    PowerState, TargetPhase,
 };
 use environment_protocol::{
     control::template::{EnvironmentTemplate, ListTemplatesParams},
     ids::UniverseId,
 };
+
+/// Resolve the provider the caller may dial for this universe.
+pub(crate) async fn read_available_provider(
+    store: &(impl EnvironmentProviderStore + EnvironmentProviderBindingStore),
+    universe_id: uuid::Uuid,
+    provider_id: &EnvironmentProviderId,
+) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+    let provider = store.read_provider(provider_id).await?;
+    if !provider.available_to_all_universes {
+        store
+            .read_provider_binding(universe_id, provider_id)
+            .await?;
+    }
+    Ok(provider)
+}
 
 impl EnvironmentService {
     /// The providers this universe may use, as its members see them.
@@ -535,7 +551,7 @@ mod tests {
                 data_route_base: None,
                 credential: ::environments::ProviderCredentialChange::Keep,
                 updated_at_ms: 1,
-                available_to_all_universes: false,
+                available_to_all_universes: Some(false),
             })
             .await
             .unwrap();

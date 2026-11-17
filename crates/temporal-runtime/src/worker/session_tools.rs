@@ -4349,7 +4349,7 @@ mod tests {
                     "provider-credential",
                 )),
                 updated_at_ms: 10,
-                available_to_all_universes: false,
+                available_to_all_universes: Some(false),
             })
             .await
             .expect("register provider");

@@ -146,7 +146,6 @@ it("registers a provider with only the fields that were filled in", async () => 
   expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/admin/environment-providers/incus-c", {
     controllerEndpoint: "wss://incus-c.internal:19090/control",
     credential: "secret",
-    availableToAllUniverses: true,
   });
 });
 
@@ -167,7 +166,6 @@ it("edits a provider under its fixed id and can drop the stored credential", asy
     controllerEndpoint: "wss://incus-b.internal/control",
     dataRouteBase: "wss://routes.internal",
     clearCredential: true,
-    availableToAllUniverses: true,
   });
 });
 

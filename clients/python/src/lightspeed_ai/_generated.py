@@ -313,7 +313,7 @@ OPERATION_INFO = {
     'deployment/universes/expiry/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Set or clear universe expiry', 'description': 'Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.', 'streaming': False, 'notifications': []},
     'deployment/universes/handle/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Rename a universe', 'description': "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.", 'streaming': False, 'notifications': []},
     'deployment/universes/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Request universe deletion', 'description': 'Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.', 'streaming': False, 'notifications': []},
-    'deployment/environment-providers/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider', 'description': 'Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.', 'streaming': False, 'notifications': []},
+    'deployment/environment-providers/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider', 'description': 'Sets the controller endpoint, optional data route base and optional write-only bearer credential (kept when omitted, removed by clearCredential). Availability defaults to all universes on creation and is preserved when omitted on update. The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List environment providers', 'description': 'Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/read': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Read an environment provider', 'description': 'Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider', 'description': 'Deletes a deployment provider only when no universe binding and no non-closed environment references it.', 'streaming': False, 'notifications': []},
@@ -3075,17 +3075,18 @@ class GeneratedClient:
         params['universe'] = universe
         return cast(Api.DeploymentUniverseDeleteResponse, await self._invoke('deployment/universes/delete', params, headers))
 
-    async def put_environment_provider(self, provider_id: str, *, available_to_all_universes: bool | Unset = UNSET, clear_credential: bool | Unset = UNSET, controller_endpoint: str, credential: str | None | Unset = UNSET, data_route_base: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderPutResponse:
+    async def put_environment_provider(self, provider_id: str, *, available_to_all_universes: bool | None | Unset = UNSET, clear_credential: bool | Unset = UNSET, controller_endpoint: str, credential: str | None | Unset = UNSET, data_route_base: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderPutResponse:
         """Put an environment provider
 
-        Registers or replaces a provider: who may use it (every universe unless limited to bound
-        ones), controller endpoint, optional data route base, and optional write-only bearer
-        credential (kept when omitted, removed by clearCredential). The controller is probed: a
+        Sets the controller endpoint, optional data route base and optional write-only bearer
+        credential (kept when omitted, removed by clearCredential). Availability defaults to all
+        universes on creation and is preserved when omitted on update. The controller is probed: a
         definitive refusal is invalidRequest, unreachable is accepted.
 
         Args:
-            available_to_all_universes: Every universe may use the provider (the default). `false`
-                limits it to the universes it is bound to.
+            available_to_all_universes: Allow every universe to use the provider. Set to `false` to
+                require a binding. Omit to keep the current setting. New providers default to
+                `true`.
             clear_credential: Remove the stored credential. Excludes `credential`.
             controller_endpoint: `ws://`, `wss://` or `unix://` URL of the provider controller.
             credential: A new bearer credential; omit to keep the stored one. A provider needs none.

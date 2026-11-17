@@ -6831,9 +6831,11 @@
       "description": "Register or replace a provider. `credential` is the optional bearer\ntoken Lightspeed presents to the provider's controller and data routes:\nit is sealed on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
       "properties": {
         "availableToAllUniverses": {
-          "default": true,
-          "description": "Every universe may use the provider (the default). `false` limits it\nto the universes it is bound to.",
-          "type": "boolean"
+          "description": "Allow every universe to use the provider. Set to `false` to require a binding.\nOmit to keep the current setting. New providers default to `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "clearCredential": {
           "description": "Remove the stored credential. Excludes `credential`.",

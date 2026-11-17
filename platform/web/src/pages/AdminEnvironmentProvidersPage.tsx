@@ -372,7 +372,9 @@ function ProviderDialog({
         ...(dataRouteBase.trim() ? { dataRouteBase: dataRouteBase.trim() } : {}),
         ...(credential ? { credential } : {}),
         ...(clearCredential ? { clearCredential: true } : {}),
-        availableToAllUniverses: allUniverses,
+        ...(allUniverses !== (provider?.availableToAllUniverses ?? true)
+          ? { availableToAllUniverses: allUniverses }
+          : {}),
       }),
     onSuccess: () => {
       onOpenChange(false);

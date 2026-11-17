@@ -4998,6 +4998,7 @@ impl GatewayAgentApi {
         &self,
         params: EnvironmentExternalCreateParams,
     ) -> Result<EnvironmentExternalCreateResponse, AgentApiError> {
+        self.environment_gateway.require_external_environments()?;
         self.environment_service()
             .create_external_environment_record(params)
             .await

@@ -4070,10 +4070,10 @@ export interface DeploymentEnvironmentProviderListResponse {
  */
 export interface DeploymentEnvironmentProviderPutParams {
   /**
-   * Every universe may use the provider (the default). `false` limits it
-   * to the universes it is bound to.
+   * Allow every universe to use the provider. Set to `false` to require a binding.
+   * Omit to keep the current setting. New providers default to `true`.
    */
-  availableToAllUniverses?: boolean;
+  availableToAllUniverses?: boolean | null;
   /**
    * Remove the stored credential. Excludes `credential`.
    */

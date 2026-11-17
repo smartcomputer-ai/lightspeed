@@ -114,7 +114,9 @@ export function adminRoutes(store: DemoStore): Hono {
       ...(dataRouteBase ? { dataRouteBase } : {}),
       ...(effectiveDataRouteBase ? { effectiveDataRouteBase } : {}),
       hasCredential: credential ? true : body.clearCredential === true ? false : existing?.hasCredential ?? false,
-      availableToAllUniverses: body.availableToAllUniverses !== false,
+      availableToAllUniverses: typeof body.availableToAllUniverses === "boolean"
+        ? body.availableToAllUniverses
+        : existing?.availableToAllUniverses ?? true,
       createdAtMs: existing?.createdAtMs ?? now,
       updatedAtMs: now,
     };

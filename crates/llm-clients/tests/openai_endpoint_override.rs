@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use llm_clients::openai::{audio, completions, responses};
-use llm_clients::{EndpointOverride, RequestAuth};
+use llm_clients::{EndpointOverride, LlmApiError, RequestAuth, ScopedBearer};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -222,7 +222,10 @@ async fn responses_override_uses_the_responses_path() {
     let response = client
         .create_with_transport(
             responses::CreateResponseRequest::text("router-model", "hello"),
-            Some(RequestAuth::Bearer("oauth-token")),
+            Some(RequestAuth::ScopedBearer(ScopedBearer::new(
+                "oauth-token",
+                &base_url,
+            ))),
             Some(&endpoint),
         )
         .await
@@ -234,6 +237,67 @@ async fn responses_override_uses_the_responses_path() {
         .to_ascii_lowercase();
     assert!(request.starts_with("post /v1/responses http/1.1"));
     assert!(request.contains("authorization: bearer oauth-token"));
+    server.await.expect("server");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn discovery_checks_the_actual_endpoint_before_using_a_scoped_bearer() {
+    let mut config = responses::Config::without_api_key();
+    config.base_url = "http://127.0.0.1:1/approved".to_owned();
+    let openai = responses::Client::new(config).expect("OpenAI client");
+    let auth = RequestAuth::ScopedBearer(ScopedBearer::new("token", "http://127.0.0.1:1/approved"));
+    for url in [
+        "http://127.0.0.1:2/approved",
+        "http://127.0.0.1:1/approved-sibling",
+        "http://127.0.0.1:1/approved/../outside",
+    ] {
+        let endpoint = EndpointOverride::from_parts(url, &BTreeMap::new()).expect("endpoint");
+        assert!(
+            matches!(
+                openai
+                    .list_models_with_transport(Some(auth), Some(&endpoint))
+                    .await,
+                Err(LlmApiError::Configuration(_))
+            ),
+            "{url}"
+        );
+    }
+
+    let mut config = llm_clients::anthropic::messages::Config::without_api_key();
+    config.base_url = "http://127.0.0.1:1/other".to_owned();
+    let anthropic =
+        llm_clients::anthropic::messages::Client::new(config).expect("Anthropic client");
+    assert!(matches!(
+        anthropic.list_models_with_auth(Some(auth)).await,
+        Err(LlmApiError::Configuration(_))
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn model_requests_stop_at_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let mut config = responses::Config::without_api_key();
+    config.base_url = format!(
+        "http://{}/models-api",
+        listener.local_addr().expect("address")
+    );
+    let audience = config.base_url.clone();
+    let client = responses::Client::new(config).expect("client");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("connection");
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            request.push(stream.read_u8().await.expect("request headers"));
+        }
+        stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /another-service\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.expect("redirect");
+    });
+    let error = client
+        .list_models_with_auth(Some(RequestAuth::ScopedBearer(ScopedBearer::new(
+            "token", &audience,
+        ))))
+        .await
+        .expect_err("redirect is a provider response");
+    assert!(matches!(error, LlmApiError::HttpStatus(ref error) if error.status == 302));
     server.await.expect("server");
 }
 
