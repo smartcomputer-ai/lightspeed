@@ -12,6 +12,7 @@ import { ApiKeyRevokeDialog } from "@/components/api-key-revoke-dialog";
 import { ApiKeysCard } from "@/components/api-keys-card";
 import { PageHeader, LoadingNote } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
@@ -161,21 +162,22 @@ function OrganizationKeys({
           <FieldLabel htmlFor="key-serviceUser">
             Service user in {organizationName}
           </FieldLabel>
-          <select
-            id="key-serviceUser"
-            className="min-w-0 max-w-full rounded-md border bg-background p-2"
+          <Select
             value={serviceUserId}
-            onChange={(event) => selectServiceUser(event.target.value)}
+            onValueChange={(value) => value !== null && selectServiceUser(value)}
             disabled={serviceUsers.isLoading}
           >
-            <option value="">All service users</option>
-            {apps.map((app) => (
-              <option key={app.id} value={app.id}>
-                {app.name}
-                {!app.enabled ? " (disabled)" : ""}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="key-serviceUser"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">All service users</SelectItem>
+              {apps.map((app) => (
+                <SelectItem key={app.id} value={app.id}>
+                  {app.name}
+                  {!app.enabled ? " (disabled)" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
         {!serviceUser && (
           <Button
@@ -356,22 +358,23 @@ function OrganizationKeys({
           >
             <Field>
               <FieldLabel htmlFor="key-owner">Service user</FieldLabel>
-              <select
-                id="key-owner"
-                className="min-w-0 max-w-full rounded-md border bg-background p-2"
+              <Select
                 required
                 value={ownerId}
-                onChange={(event) => setOwnerId(event.target.value)}
+                onValueChange={(value) => value !== null && setOwnerId(value)}
               >
-                <option value="">Select a service user</option>
-                {apps
-                  .filter((app) => app.enabled)
-                  .map((app) => (
-                    <option key={app.id} value={app.id}>
-                      {app.name}
-                    </option>
-                  ))}
-              </select>
+                <SelectTrigger id="key-owner"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Select a service user</SelectItem>
+                  {apps
+                    .filter((app) => app.enabled)
+                    .map((app) => (
+                      <SelectItem key={app.id} value={app.id}>
+                        {app.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </Field>
             <DialogFooter>
               <Button

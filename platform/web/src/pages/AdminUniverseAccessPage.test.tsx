@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
+import { selectOption } from "@/test/select-option";
 import { AdminUniverseAccessPage } from "./AdminUniverseAccessPage";
 import { waitForUi } from "@/test/wait-for-ui";
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "owner", organizationRole: "member" }));
@@ -68,18 +69,9 @@ async function show() {
     ),
   );
 }
-async function choose(label: string, value: string) {
-  const node = document.querySelector<HTMLSelectElement>(
-    label === "Organization member or service user"
-      ? "#universe-access-recipient"
-      : label === "Universe role"
-        ? "#universe-access-role"
-        : `select[aria-label="${label}"]`,
-  )!;
-  await act(async () => {
-    node.value = value;
-    node.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+async function choose(label: string, option: string) {
+  const id = label === "Universe role" ? "universe-access-role" : "universe-access-recipient";
+  await selectOption(document.getElementById(id)!, option);
 }
 it("changes a service user's universe role using the native scoped grant API", async () => {
   await show();
@@ -87,7 +79,7 @@ it("changes a service user's universe role using the native scoped grant API", a
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit role for Build robot"]')!.click());
   expect(document.querySelector<HTMLInputElement>("#universe-access-recipient")?.readOnly).toBe(true);
   expect(document.querySelector<HTMLInputElement>("#universe-access-recipient")?.value).toBe("Build robot");
-  await choose("Universe role", "operator");
+  await choose("Universe role", "Operator");
   expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/universes/grants/put")).toBe(false);
   await act(async () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')!.click());
   await waitForUi(() =>
@@ -107,7 +99,7 @@ it("preserves the displayed Owner when the server refuses demotion", async () =>
   await show();
   await waitForUi(() => expect(container.querySelector('[aria-label="Edit role for Alice"]')).not.toBeNull());
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit role for Alice"]')!.click());
-  await choose("Universe role", "viewer");
+  await choose("Universe role", "Viewer");
   await act(async () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')!.click());
   await waitForUi(() =>
     expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toContain("at least one explicit Owner"),
@@ -118,9 +110,9 @@ it("preserves the displayed Owner when the server refuses demotion", async () =>
 it("grants an existing organization service user access without creating an organization member", async () => {
   await show();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Add access")!.click());
-  await waitForUi(() => expect(document.querySelector('[value="serviceUser:robot"]')).not.toBeNull());
-  await choose("Organization member or service user", "serviceUser:robot");
-  await choose("Universe role", "owner");
+  await waitForUi(() => expect(document.querySelector<HTMLButtonElement>("#universe-access-recipient")?.disabled).toBe(false));
+  await choose("Organization member or service user", "Build robot (service user)");
+  await choose("Universe role", "Owner");
   await act(async () => document.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
   await waitForUi(() =>
     expect(mocks.api).toHaveBeenCalledWith("platform/universes/grants/put", {
@@ -141,7 +133,8 @@ it.each(["viewer", "contributor", "operator"])("does not fetch the grant directo
 it("explains personal versus service user keys without organization admin controls for an Owner", async () => {
   await show();
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Add access")!.click());
-  await waitForUi(() => expect(document.querySelector('[value="user:alice"]')?.textContent).toContain("alice@example.com"));
+  await waitForUi(() => expect(document.querySelector<HTMLButtonElement>("#universe-access-recipient")?.disabled).toBe(false));
+  await choose("Organization member or service user", "Alice (alice@example.com)");
   expect(container.querySelector("h1")?.textContent).toBe("Test universe");
   expect(document.querySelector('[role="dialog"]')?.className).toContain("overflow-y-auto");
   expect(container.querySelector('a[href="/account#api-keys"]')).not.toBeNull();
@@ -167,7 +160,7 @@ it("shows directory failures and disables grants instead of presenting an empty 
   await show();
   await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("Directory unavailable"));
   await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Add access")!.click());
-  expect(document.querySelector<HTMLSelectElement>("#universe-access-recipient")?.disabled).toBe(true);
+  expect(document.querySelector<HTMLButtonElement>("#universe-access-recipient")?.disabled).toBe(true);
   expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
   expect(container.textContent).not.toContain("No organization members or enabled service users are available");
 });
@@ -196,12 +189,12 @@ it("cancels a role edit without changing access and resets the next edit", async
   const edit = container.querySelector<HTMLButtonElement>('[aria-label="Edit role for Alice"]')!;
   await act(async () => edit.click());
   expect(document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')!.disabled).toBe(true);
-  await choose("Universe role", "viewer");
+  await choose("Universe role", "Viewer");
   const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
   expect(dialog.className).toContain("overflow-y-auto");
   await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Cancel")!.click());
   expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/universes/grants/put")).toBe(false);
   expect(edit.closest("tr")?.querySelectorAll("td")[2]?.textContent).toBe("Owner");
   await act(async () => edit.click());
-  expect(document.querySelector<HTMLSelectElement>("#universe-access-role")?.value).toBe("owner");
+  expect(document.querySelector<HTMLButtonElement>("#universe-access-role")?.querySelector('[data-slot="select-value"]')?.textContent).toBe("Owner");
 });

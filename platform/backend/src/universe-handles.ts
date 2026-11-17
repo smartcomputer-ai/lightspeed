@@ -8,14 +8,17 @@ export class UniverseHandleCacheConflict extends Error {}
 export interface UniverseHandleSyncResult { updated: number; skipped: number }
 
 /** Explicit administrative sync. Ordinary reads never call runtime. */
-export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHandleSyncResult> {
+export async function syncUniverseHandles(ctx: AppContext, organizationId?: string): Promise<UniverseHandleSyncResult> {
   let skipped = 0;
-  const rows = await ctx.db.select({ universe: schema.universes, handle: schema.universes.handle })
+  const allRows = await ctx.db.select({ universe: schema.universes, handle: schema.universes.handle })
     .from(schema.universes).innerJoin(schema.organization, eq(schema.organization.id, schema.universes.organizationId));
+  const rows = organizationId === undefined ? allRows : allRows.filter(row => row.universe.organizationId === organizationId);
   if (!rows.length) return { updated: 0, skipped: 0 };
   const response = await deploymentClient(ctx.env).call("deployment/universes/list", {});
   const inventory = new Map((response.universes ?? []).map(universe => [universe.universeId, universe]));
-  const seen = new Set<string>();
+  // Other organizations keep their current caches during a scoped sync. Their
+  // cached handles still reserve deployment-wide URLs, even if runtime moved on.
+  const seen = new Set(organizationId === undefined ? [] : allRows.filter(row => row.universe.organizationId !== organizationId).map(row => row.handle));
   const changes: { universeId: string; handle: string }[] = [];
   const deletions: { id: string; configuration: Record<string, unknown> }[] = [];
   for (const row of rows) {
@@ -25,7 +28,7 @@ export async function syncUniverseHandles(ctx: AppContext): Promise<UniverseHand
     if (!runtime) skipped += 1;
     if (runtime?.deletion) deletions.push({ id: row.universe.id, configuration: { ...row.universe.runtimeConfiguration, deletion: runtime.deletion, deletionHandle: runtime.handle } });
     const handle = runtime?.deletion ? `_deleting-${runtime.universeId}` : runtime?.handle ?? row.handle;
-    if (seen.has(handle)) throw new UniverseHandleCacheConflict("Linked runtime universes have conflicting handles; choose distinct handles in runtime before refreshing Platform.");
+    if (seen.has(handle)) throw new UniverseHandleCacheConflict("Runtime handles conflict with Platform's cached handles. Resolve conflicting names or request a deployment-wide handle sync.");
     seen.add(handle);
     if (handle !== row.handle) changes.push({ universeId: row.universe.id, handle });
   }

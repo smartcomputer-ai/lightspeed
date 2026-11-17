@@ -18,6 +18,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { UniverseSwitcher } from "@/components/universe-switcher";
@@ -57,12 +58,12 @@ function shellMode(pathname: string): ShellMode {
 }
 
 const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
-  { to: "/admin/platform/organizations", icon: UserIcon, label: "Organizations" },
-  { to: "/admin/platform/universes", icon: UniversesIcon, label: "Universe inventory" },
+  { to: "/admin/platform/organizations", icon: UserIcon, label: "All Organizations" },
   { to: "/admin/platform/users", icon: UserAdminIcon, label: "Users" },
   { to: "/admin/platform/channels", icon: ChannelIcon, label: "Channels" },
   { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log" },
   { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
+  { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes" },
 ];
 const ORGANIZATION_NAV = [
   { path: "universes", icon: UniversesIcon, label: "Universes", administrator: false },
@@ -227,8 +228,8 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           data-sidebar-logo=""
           className="sidebar-logo pointer-events-none absolute -z-10 group-data-[collapsible=icon]:hidden"
         />
-        {/* Fixed at the pane bar height, so the collapsed sidebar keeps the line too. */}
-        <SidebarHeader className="relative h-(--pane-bar-height) shrink-0 justify-center p-(--sidebar-header-padding)">
+        {/* Admin stacks Back, the Organizations heading, and its selector. */}
+        <SidebarHeader className={cn("relative shrink-0 justify-center p-(--sidebar-header-padding)", mode !== "admin" && "h-(--pane-bar-height)")}>
           {mode === "universe" ? (
             <UniverseSwitcher active={active} admin={admin} />
           ) : mode === "admin" ? <OrganizationSwitcher /> : (
@@ -258,12 +259,12 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
             );
           })}
           {mode === "admin" && <>
-            {adminAccess.selected && <SidebarGroup><SidebarGroupLabel>Organization</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
+            {adminAccess.selected && <SidebarGroup><SidebarGroupContent><SidebarMenu>
               {ORGANIZATION_NAV.filter(item => !item.administrator || adminAccess.organizations).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
             </SidebarMenu></SidebarGroupContent></SidebarGroup>}
-            {adminAccess.platform && <SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
+            {adminAccess.platform && <><SidebarSeparator /><SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
               {PLATFORM_NAV.map(item => <NavItem key={item.to} {...item} />)}
-            </SidebarMenu></SidebarGroupContent></SidebarGroup>}
+            </SidebarMenu></SidebarGroupContent></SidebarGroup></>}
           </>}
           {(mode === "account" || mode === "preferences") && (
             <SidebarGroup>

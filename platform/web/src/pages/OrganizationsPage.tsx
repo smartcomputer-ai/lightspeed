@@ -6,8 +6,9 @@ import type {
   PlatformOperationResult,
 } from "@lightspeed-ai/platform-shared";
 import { platformApi, useOrganizations } from "@/lib/platform-api";
+import { organizationAdminPath } from "@/lib/admin-access";
 import { usePlatformAdmin } from "@/lib/permissions";
-import { AddIcon, BackIcon, EditIcon } from "@/icons";
+import { AddIcon, EditIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -71,17 +72,6 @@ export function OrganizationsPage({
     client.invalidateQueries({ queryKey: ["organizations"] });
   return (
     <>
-      {selected && admin && (
-        <Button
-          nativeButton={false}
-          className="mb-4"
-          variant="ghost"
-          render={<Link to="/admin/platform/organizations" />}
-        >
-          <BackIcon data-icon="inline-start" />
-          Organizations
-        </Button>
-      )}
       {(!organization || (!organization.enabled && section !== "settings")) && (
         <PageHeader
           title={
@@ -117,7 +107,7 @@ export function OrganizationsPage({
       {selected && organizations.data && !organization && (
         <p role="alert">
           This organization is unavailable or you do not have permission to
-          administer it. Return to Organizations to choose another.
+          administer it. Choose another organization in the sidebar.
         </p>
       )}
       {!selected && organizations.data && !manageable.length && (
@@ -146,7 +136,7 @@ export function OrganizationsPage({
                   <TableCell>
                     <Link
                       className="font-medium underline-offset-4 hover:underline"
-                      to={`/admin/organizations/${encodeURIComponent(organization.id)}/settings`}
+                      to={`${organizationAdminPath(organization.id)}/universes`}
                     >
                       {organization.name}
                     </Link>
@@ -209,7 +199,7 @@ export function OrganizationsPage({
           saved={async (organizationId) => {
             await refresh();
             navigate(
-              `/admin/organizations/${encodeURIComponent(organizationId)}/settings`,
+              `${organizationAdminPath(organizationId)}/universes`,
             );
             setCreateOpen(false);
           }}

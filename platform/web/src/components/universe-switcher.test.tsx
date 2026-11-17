@@ -109,7 +109,7 @@ async function show() {
   const trigger = container.querySelector<HTMLButtonElement>(
     'button[aria-haspopup="menu"]',
   )!;
-  expect(trigger.textContent).toContain("ExplorationPersonal");
+  expect(trigger.textContent).toBe("Exploration");
   await act(async () => trigger.click());
   await waitForUi(() =>
     expect(document.querySelector('[role="menu"]')).not.toBeNull(),

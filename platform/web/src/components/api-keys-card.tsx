@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { platformApi, useOrganizations } from "@/lib/platform-api";
 import { useUniverses } from "@/lib/universes";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { ApiKeyRevokeDialog } from "@/components/api-key-revoke-dialog";
@@ -409,23 +410,24 @@ function ApiKeysContent({
                       <FieldLabel htmlFor={`${id}-organizations`}>
                         Organizations
                       </FieldLabel>
-                      <select
-                        id={`${id}-organizations`}
-                        aria-label="Organization access"
-                        className="rounded-md border bg-background p-2 text-sm"
+                      <Select
                         value={limitOrganizations ? "selected" : "all"}
-                        onChange={(event) => {
+                        onValueChange={(value) => {
+                          if (value === null) return;
                           setLimitOrganizations(
-                            event.target.value === "selected",
+                            value === "selected",
                           );
                           setUniverseIds([]);
                         }}
                       >
-                        <option value="all">
-                          All my accessible organizations
-                        </option>
-                        <option value="selected">Selected organizations</option>
-                      </select>
+                        <SelectTrigger id={`${id}-organizations`} aria-label="Organization access"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">
+                            All my accessible organizations
+                          </SelectItem>
+                          <SelectItem value="selected">Selected organizations</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </Field>
                     {limitOrganizations && (
                       <ScopeChoices
@@ -454,24 +456,25 @@ function ApiKeysContent({
                       <FieldLabel htmlFor={`${id}-universes`}>
                         Universes
                       </FieldLabel>
-                      <select
-                        id={`${id}-universes`}
-                        aria-label="Universe access"
-                        className="rounded-md border bg-background p-2 text-sm"
+                      <Select
                         value={limitUniverses ? "selected" : "all"}
-                        onChange={(event) => {
-                          const limit = event.target.value === "selected";
+                        onValueChange={(value) => {
+                          if (value === null) return;
+                          const limit = value === "selected";
                           setLimitUniverses(limit);
                           if (limit) setAllowCreation(false);
                         }}
                       >
-                        <option value="all">
-                          {serviceUser
-                            ? "All universes this service user can access"
-                            : "All universes I can access in the allowed organizations"}
-                        </option>
-                        <option value="selected">Selected universes</option>
-                      </select>
+                        <SelectTrigger id={`${id}-universes`} aria-label="Universe access"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">
+                            {serviceUser
+                              ? "All universes this service user can access"
+                              : "All universes I can access in the allowed organizations"}
+                          </SelectItem>
+                          <SelectItem value="selected">Selected universes</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </Field>
                     {limitUniverses && (
                       <ScopeChoices

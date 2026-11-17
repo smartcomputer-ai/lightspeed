@@ -566,7 +566,8 @@ records and runtime provider/channel accounts remain distinct concepts.
 
 The work switcher groups all accessible active universes by organization with
 search and direct cross-organization selection. Personal organizations display
-as **Personal**. The closed selector shows the current universe and organization.
+as **Personal**. The closed selector retains the universe-only header; organization
+context appears in the open menu's group labels, preserving the tuned header layout.
 
 Admin uses explicit `/admin/organizations/:organizationId/...` context with
 Universes, People, Service users, API keys and Settings. Organization Admins
@@ -576,7 +577,7 @@ from organization Admin fixes the destination organization.
 
 Platform-only pages form a separately labeled sidebar section and display
 **Platform administration**. Organization inventory, users, infrastructure,
-connectors, audit, and deployment-wide reconciliation do not inherit the
+connectors, audit, and unclaimed runtime universes do not inherit the
 selected organization's scope. URLs define page context independently per tab.
 
 Human keys remain under **Your profile → Your API keys**, defaulting to a single
@@ -585,6 +586,16 @@ Service-user keys remain limited to the service user's one organization.
 Restrictions always intersect current principal permissions.
 
 ## Validation and progress
+
+- 2026-11-17: replaced the Platform-wide universe inventory with **Unclaimed
+  Universes**, for adoption of runtime-only universes. Adoption suggests the
+  runtime display name or handle and preserves user edits. Claimed universes
+  remain in their organization; deployment-admin reconciliation, handle sync,
+  repair and deleted-session controls now live in that organization view. Handle
+  synchronization is bounded to the selected organization. The full web suite
+  passed (1,572 tests), followed by 16 backend and 47 demo checks for scoped
+  repair and adoption. Type checking, builds, documentation validation and
+  desktop/mobile browser inspection passed.
 
 - 2026-11-17: renamed the product boundary to Organizations and automation
   identities to Service users across UI, native contracts, SDKs, CLI and database
@@ -786,3 +797,11 @@ Restrictions always intersect current principal permissions.
   unchanged bindings remain acceptable. Server admission remains authoritative
   for credential ceilings and current access on every request. Tests remain on
   hold.
+
+- 2026-11-17: the deployment-admin audit log now uses server-side cursor
+  pagination instead of a fixed latest-100 window. The browser offers 25/50/100
+  records, Previous/Next, and a refresh that returns to the newest records.
+  Timestamp/ID ordering preserves page boundaries, including PostgreSQL
+  sub-millisecond timestamps and new events arriving between page requests.
+  The demo uses the same response and validation. Backend integration and UI
+  tests cover boundaries, invalid cursors, permissions, and navigation recovery.

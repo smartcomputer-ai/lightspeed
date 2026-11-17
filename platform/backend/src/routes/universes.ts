@@ -264,7 +264,15 @@ export async function renameManagedUniverse(ctx: AppContext, access: UniverseAcc
 export function universeRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.get("/", c => withApiErrors(c, async () => c.json(await listAccessibleUniverses(ctx, getAuth(c)))));
-  app.post("/sync-handles", c => withApiErrors(c, async () => { if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required"); return c.json(await syncUniverseHandles(ctx)); }));
+  app.post("/sync-handles", c => withApiErrors(c, async () => {
+    if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+    let raw: unknown;
+    try { const text = await c.req.text(); raw = text ? JSON.parse(text) : {}; }
+    catch { return c.json({ error: "invalid JSON body" }, 400); }
+    const body = z.object({ organizationId: z.string().min(1).optional() }).strict().safeParse(raw);
+    if (!body.success) return c.json({ error: "validation failed", issues: body.error.issues }, 400);
+    return c.json(await syncUniverseHandles(ctx, body.data.organizationId));
+  }));
   app.post("/", c => withApiErrors(c, async () => {
     const body = await parseBody(c, organizationUniverseCreateSchema.extend({ organizationId: z.string().min(1) }));
     if (!body.ok) return body.response;
@@ -272,11 +280,14 @@ export function universeRoutes(ctx: AppContext) {
   }));
   app.get("/reconcile", c => withApiErrors(c, async () => {
     if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+    const organizationId = c.req.query("organizationId");
+    if (organizationId === "") return c.json({ error: "organizationId must not be empty" }, 400);
     const rows = await ctx.db.select().from(schema.universes);
     const listed = (await deploymentClient(ctx.env).call("deployment/universes/list", {})).universes ?? [];
     const index = new Map(listed.map(universe => [universe.universeId, universe]));
     const linked = new Set(rows.map(row => row.lightspeedUniverseId));
-    return c.json({ platform: rows.map(row => ({ id: row.id, organizationId: row.organizationId, lightspeedUniverseId: row.lightspeedUniverseId, engine: index.has(row.lightspeedUniverseId) ? index.get(row.lightspeedUniverseId)?.deletion ? "deleting" : "ok" : "missing", deletion: index.get(row.lightspeedUniverseId)?.deletion })), orphans: listed.filter(universe => !universe.deletion && !linked.has(universe.universeId)) });
+    const selected = organizationId === undefined ? rows : rows.filter(row => row.organizationId === organizationId);
+    return c.json({ platform: selected.map(row => ({ id: row.id, organizationId: row.organizationId, lightspeedUniverseId: row.lightspeedUniverseId, engine: index.has(row.lightspeedUniverseId) ? index.get(row.lightspeedUniverseId)?.deletion ? "deleting" : "ok" : "missing", deletion: index.get(row.lightspeedUniverseId)?.deletion })), orphans: organizationId === undefined ? listed.filter(universe => !universe.deletion && !linked.has(universe.universeId)) : [] });
   }));
   app.post("/adopt", c => withApiErrors(c, async () => {
     const body = await parseBody(c, organizationUniverseAdoptSchema.extend({ organizationId: z.string().min(1) })); if (!body.ok) return body.response;

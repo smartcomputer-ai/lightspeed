@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   organizationAdminPath,
@@ -18,18 +18,26 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
+  SidebarGroupLabel,
 } from "@/components/ui/sidebar";
 import { AddIcon, BackIcon, SwitcherIcon, UserIcon } from "@/icons";
 
 export function OrganizationSwitcher() {
   const access = useAdminAccess();
   const navigate = useNavigate();
-  const location = useLocation();
   const client = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
-  const platformPage = location.pathname.startsWith("/admin/platform/");
   return (
     <>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton render={<Link to="/" />} tooltip="Back to universes">
+            <BackIcon />
+            <span>Back to universes</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+      <SidebarGroupLabel render={<h2 />}>Organizations</SidebarGroupLabel>
       <SidebarMenu>
         <SidebarMenuItem>
           <DropdownMenu>
@@ -38,20 +46,16 @@ export function OrganizationSwitcher() {
                 <SidebarMenuButton
                   size="lg"
                   className="h-(--sidebar-header-button-height)"
+                  tooltip="Organizations"
                 />
               }
             >
               <UserIcon />
               <div className="grid flex-1 text-left leading-tight">
                 <span className="truncate text-sm font-medium">
-                  {platformPage
-                    ? "Platform administration"
-                    : access.selected
+                  {access.selected
                       ? organizationLabel(access.selected, access.platform)
-                      : "Administration"}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {platformPage ? "Deployment-wide" : "Organization"}
+                      : "Select organization"}
                 </span>
               </div>
               <SwitcherIcon />
@@ -82,11 +86,6 @@ export function OrganizationSwitcher() {
                   </DropdownMenuItem>
                 </>
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem render={<Link to="/" />}>
-                <BackIcon />
-                Back to universes
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarMenuItem>

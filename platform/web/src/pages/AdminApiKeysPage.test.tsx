@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { selectOption } from "@/test/select-option";
 import { AdminApiKeysPage } from "./AdminApiKeysPage";
 import { waitForUi } from "@/test/wait-for-ui";
 
@@ -107,12 +108,8 @@ function apiCallsForRevocation() {
     ([operation]) => operation === "platform/service-users/credentials/revoke",
   );
 }
-async function select(id: string, value: string) {
-  const select = document.getElementById(id) as HTMLSelectElement;
-  await act(async () => {
-    select.value = value;
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+async function select(id: string, label: string) {
+  await selectOption(document.getElementById(id)!, label);
 }
 
 it("uses the route organization without a second organization selector", async () => {
@@ -190,7 +187,7 @@ it("selects a named owner before opening key creation and excludes disabled serv
   expect(dialog.className).toContain("overflow-y-auto");
   expect(dialog.className).toContain("max-h-[min(92dvh,800px)]");
   expect(dialog.textContent).not.toContain("Old robot");
-  await select("key-owner", "robot");
+  await select("key-owner", "Build robot");
   await click("Continue");
   await waitForUi(() =>
     expect(mocks.card).toHaveBeenCalledWith(

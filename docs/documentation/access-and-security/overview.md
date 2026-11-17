@@ -71,8 +71,9 @@ token secret under the same name does not change its attribution.
 The Platform also keeps a durable access history for company admission and
 admin-status changes, emergency sign-ins, suspension, session revocation,
 local membership edits and successful permanent session
-deletion through Platform routes. Platform admins can view the latest 100 records
-under **Admin → Audit log**. Records contain identifiers, action, time,
+deletion through Platform routes. Deployment Admins can browse records newest
+first under **Admin → Platform → Audit log**, with 25, 50, or 100 records per page.
+Refresh returns to the newest records. Records contain identifiers, action, time,
 outcome and safe details; permanent deletion includes the actor, universe, target
 session and all removed session IDs. Records survive deletion of users and
 sessions. Provider tokens and passwords are never included.

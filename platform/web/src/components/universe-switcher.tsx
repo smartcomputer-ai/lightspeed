@@ -24,6 +24,7 @@ import { useIsDark } from "@/lib/theme";
 import { SETTINGS, useSetting } from "@/lib/settings";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -150,15 +151,12 @@ export function UniverseSwitcher({
             >
               <SwitcherFace
                 universe={active}
-                organizationName={
-                  active ? organizationName(active.organizationId) : undefined
-                }
                 iconRef={iconRef}
               />
               <SwitcherIcon className="ml-auto size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
-              className="max-h-[75dvh] min-w-64 overflow-y-auto"
+              className="max-h-[75dvh] min-w-56 overflow-y-auto"
               align="start"
             >
               <div className="p-2">
@@ -235,9 +233,7 @@ const SWITCHER_BUTTON_CLASS =
 function SwitcherFace({
   universe,
   iconRef,
-  organizationName,
 }: {
-  organizationName?: string;
   universe:
     Pick<Universe, "name" | "icon" | "iconColor" | "status"> | undefined;
   iconRef: RefObject<HTMLSpanElement | null>;
@@ -255,11 +251,6 @@ function SwitcherFace({
         <span className="truncate text-sm font-medium">
           {universe?.name ?? "Select universe"}
         </span>
-        {organizationName && (
-          <span className="truncate text-xs text-muted-foreground">
-            {organizationName}
-          </span>
-        )}
         {universe?.status === "archived" && (
           <span className="truncate text-xs text-muted-foreground">
             archived
@@ -446,37 +437,39 @@ export function NewUniverseDialog({
             <FieldLabel htmlFor="universe-organization">
               Organization
             </FieldLabel>
-            <select
+            <Select
               disabled={!!fixedOrganizationId}
-              id="universe-organization"
-              className="rounded-md border bg-background p-2"
               value={organizationId}
-              onChange={(event) => setSelectedOrganization(event.target.value)}
+              onValueChange={(value) => value !== null && setSelectedOrganization(value)}
               required
             >
-              {eligible.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organizationLabel(organization, platformAdmin)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="universe-organization"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {eligible.map((organization) => (
+                  <SelectItem key={organization.id} value={organization.id}>
+                    {organizationLabel(organization, platformAdmin)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
           {mayAppointOwner ? (
             <Field>
               <FieldLabel htmlFor="universe-owner">Initial Owner</FieldLabel>
-              <select
-                id="universe-owner"
-                className="rounded-md border bg-background p-2"
+              <Select
                 value={initialOwnerId}
-                onChange={(e) => setOwnerId(e.target.value)}
+                onValueChange={(value) => value !== null && setOwnerId(value)}
                 required
               >
-                {owners.data?.members.map((m) => (
-                  <option key={m.userId} value={m.userId}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="universe-owner"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {owners.data?.members.map((m) => (
+                    <SelectItem key={m.userId} value={m.userId}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
           ) : (
             <p className="text-sm text-muted-foreground">

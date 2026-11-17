@@ -254,7 +254,7 @@ it("keeps account membership and universe grants distinct on existing sessions",
   expect(await (await fixture.request("/api/ui/universes", undefined, cookie)).json()).toEqual([]);
   expect((await fixture.request("/api/ui/admin/audit", undefined, cookie)).status).toBe(403);
   await fixture.db.delete(schema.user).where(eq(schema.user.id, company.id));
-  const events = await (await fixture.request("/api/ui/admin/audit", undefined, adminCookie)).json() as Array<{ targetId: string; action: string }>;
+  const { events } = await (await fixture.request("/api/ui/admin/audit", undefined, adminCookie)).json() as { events: Array<{ targetId: string; action: string }> };
   expect(events.filter(event => event.targetId === company.id).map(event => event.action)).toContain("universe.grant.put");
   expect((await fixture.db.select().from(schema.universes).where(eq(schema.universes.id, universe!.id)))[0]?.organizationId).toBe(org);
   await fixture.db.delete(schema.organization).where(eq(schema.organization.id, org));

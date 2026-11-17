@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { EngineUniverse, Universe, UniverseReconcile } from "@/api";
 import { AdminUniversesPage } from "./AdminUniversesPage";
+import { UnclaimedUniversesPage } from "./UnclaimedUniversesPage";
 import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), platformAdmin: true }));
@@ -45,7 +46,7 @@ beforeEach(() => {
     if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "organization", name: "Team", enabled: true, role: "admin" }] };
     if (path === "/api/v1/platform/organizations/organization/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "GET" && path === "/api/ui/universes") return universes;
-    if (method === "GET" && path === "/api/ui/universes/reconcile") {
+    if (method === "GET" && path.startsWith("/api/ui/universes/reconcile")) {
       if (reconcile instanceof Error) throw reconcile;
       return reconcile;
     }
@@ -68,17 +69,17 @@ afterEach(async () => {
 function Location() {
   return <p data-testid="location">{useLocation().pathname}</p>;
 }
-async function show(path = "/admin/platform/universes") {
+async function show(path = "/admin/organizations/team/universes") {
   await act(async () => root.render(
     <QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/admin/platform/universes" element={<AdminUniversesPage />} />
+        <Route path="/admin/platform/unclaimed-universes" element={<UnclaimedUniversesPage />} />
         <Route path="/admin/organizations/:organizationId/universes" element={<AdminUniversesPage />} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></QueryClientProvider>,
   ));
-  await waitForUi(() => expect(container.querySelectorAll("table").length).toBeGreaterThan(0));
+  await waitForUi(() => expect(client.isFetching()).toBe(0));
 }
 const tables = () => [...container.querySelectorAll("table")];
 const rows = (table = tables()[0]) => [...table?.querySelectorAll("tbody tr") ?? []] as HTMLTableRowElement[];
@@ -88,7 +89,7 @@ const buttonIn = (scope: ParentNode, label: string) => [...scope.querySelectorAl
 const alertDialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
 const writes = () => mocks.api.mock.calls.filter(([method]) => method !== "GET");
 
-it("lists every universe by name with its status, engine link, and role", async () => {
+it("lists the selected organization’s universes with runtime status and role", async () => {
   await show();
   expect(rows().map((node) => cells(node).slice(0, 4))).toEqual([
     ["Alphaalpha", "archived", "ok", "—"],
@@ -139,37 +140,39 @@ it("reports what a runtime handle sync updated and skipped", async () => {
   await act(async () => buttonIn(container, "Sync from runtime")!.click());
   await waitForUi(() => expect(container.querySelector('[role="status"]')?.textContent).toContain("Synced runtime handles: 2 updated."));
   expect(container.querySelector('[role="status"]')?.textContent).toContain("1 missing from the runtime and skipped");
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/sync-handles", {});
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/sync-handles", { organizationId: "team" });
 });
 
 it("lists engine-only universes with their size, and deletes one after confirmation", async () => {
-  await show();
-  expect(rows(tables()[1]).map(cells)).toEqual([
-    ["core-orphan", "3", "1", "2", "2.0 KB", "AdoptDelete"],
-    ["core-bare", "3", "1", "2", "5.0 MB", "AdoptDelete"],
+  await show("/admin/platform/unclaimed-universes");
+  expect(rows(tables()[0]).map(cells)).toEqual([
+    ["kept", "core-orphan", "3", "1", "2", "2.0 KB", "AdoptDelete"],
+    ["u-core-bare", "core-bare", "3", "1", "2", "5.0 MB", "AdoptDelete"],
   ]);
-  await act(async () => buttonIn(rows(tables()[1])[1]!, "Delete")!.click());
+  await act(async () => buttonIn(rows(tables()[0])[1]!, "Delete")!.click());
   await waitForUi(() => expect(alertDialog()?.textContent).toContain("Permanently delete u-core-bare?"));
   await type("#delete-u-core-bare", "u-core-bare");
   await act(async () => buttonIn(alertDialog()!, "Delete permanently")!.click());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/universes/engine/core-bare", { handle: "u-core-bare" }));
 });
 
-it("requires a display name before adopting", async () => {
-  await show();
-  await act(async () => buttonIn(rows(tables()[1])[1]!, "Adopt")!.click());
+it("requires a nonempty name if the suggestion is cleared", async () => {
+  await show("/admin/platform/unclaimed-universes");
+  await act(async () => buttonIn(rows(tables()[0])[1]!, "Adopt")!.click());
   await waitForUi(() => expect(document.querySelector("#adopt-name")).not.toBeNull());
+  await type("#adopt-name", "");
   const form = document.querySelector<HTMLFormElement>('[role="dialog"] form')!;
   await act(async () => form.requestSubmit());
-  expect(form.textContent).toContain("a name is required");
+  expect(document.querySelector<HTMLInputElement>("#adopt-name")!.validity.valueMissing).toBe(true);
   expect(writes()).toHaveLength(0);
 });
 
 it("adopts an orphan under the runtime handle it already has", async () => {
-  await show();
-  await act(async () => buttonIn(rows(tables()[1])[0]!, "Adopt")!.click());
+  await show("/admin/platform/unclaimed-universes");
+  await act(async () => buttonIn(rows(tables()[0])[0]!, "Adopt")!.click());
   await waitForUi(() => expect(document.querySelector<HTMLInputElement>("#adopt-handle")?.readOnly).toBe(true));
   expect(document.querySelector<HTMLInputElement>("#adopt-handle")!.value).toBe("kept");
+  expect(document.querySelector<HTMLInputElement>("#adopt-name")!.value).toBe("kept");
   await type("#adopt-name", "Kept");
   await act(async () => document.querySelector<HTMLFormElement>('[role="dialog"] form')!.requestSubmit());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept", organizationId: "organization", initialOwner: { kind: "user", id: "user" } }));
@@ -221,10 +224,46 @@ it("shows only manageable universes and avoids deployment endpoints for an Owner
   await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/admin/organizations/team/universes/zeta/access"));
 });
 
-it("keeps a Platform Admin's organization view scoped and omits deployment reconciliation", async () => {
+it("keeps a Platform Admin's inventory and reconciliation scoped to the selected organization", async () => {
   universes = [universe("local", { name: "Local", role: "owner", organizationId: "team" }), universe("elsewhere", { name: "Elsewhere", role: "owner", organizationId: "other" })];
   await show("/admin/organizations/team/universes");
   expect(row("Local")).toBeDefined(); expect(row("Elsewhere")).toBeUndefined();
-  expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
-  expect(container.textContent).not.toContain("Sync from runtime");
+  expect(mocks.api).toHaveBeenCalledWith("GET", "/api/ui/universes/reconcile?organizationId=team");
+  expect(container.textContent).toContain("Sync from runtime");
+  expect(container.textContent).not.toContain("core-orphan");
+});
+
+
+it("shows only unclaimed runtime universes in Platform administration", async () => {
+  await show("/admin/platform/unclaimed-universes");
+  expect(container.querySelector("h1")?.textContent).toBe("Unclaimed Universes");
+  expect(tables()).toHaveLength(1);
+  expect(container.textContent).not.toContain("Zeta");
+  expect(buttonIn(container, "New universe")).toBeUndefined();
+  expect(buttonIn(container, "Sync from runtime")).toBeUndefined();
+  expect(mocks.api.mock.calls.some(([, path]) => path === "/api/ui/universes")).toBe(false);
+});
+
+it.each([["Display name", "Display name"], [null, "kept"], ["  ", "kept"]])("suggests the runtime name %s with a handle fallback", async (displayName, expected) => {
+  (reconcile as UniverseReconcile).orphans = [orphan("core-orphan", { handle: "kept", displayName })];
+  await show("/admin/platform/unclaimed-universes");
+  await act(async () => buttonIn(rows()[0]!, "Adopt")!.click());
+  await waitForUi(() => expect(document.querySelector<HTMLInputElement>("#adopt-name")?.value).toBe(expected));
+  await type("#adopt-name", "My custom name");
+  await act(async () => { await client.invalidateQueries({ queryKey: ["universes-reconcile"] }); });
+  expect(document.querySelector<HTMLInputElement>("#adopt-name")!.value).toBe("My custom name");
+});
+
+it("shows an empty state when all runtime universes are claimed", async () => {
+  (reconcile as UniverseReconcile).orphans = [];
+  await show("/admin/platform/unclaimed-universes");
+  expect(container.textContent).toContain("No unclaimed universes.");
+  expect(tables()).toHaveLength(0);
+});
+
+it("reports unavailable runtime inventory without claiming it is empty", async () => {
+  reconcile = new Error("runtime unreachable");
+  await show("/admin/platform/unclaimed-universes");
+  expect(container.textContent).toContain("Runtime inventory unavailable: runtime unreachable");
+  expect(container.textContent).not.toContain("No unclaimed universes.");
 });

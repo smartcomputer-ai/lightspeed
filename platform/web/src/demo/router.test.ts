@@ -1,3 +1,4 @@
+import type { AuditPage } from "@lightspeed-ai/platform-shared";
 import { defaultEnvironmentAttachment, environmentAttachments } from "@/lib/sessions/resource-features";
 import { describe, expect, it, vi } from "vitest";
 import { createDemoStore } from "./fixtures";
@@ -62,6 +63,29 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("paginates audit events by time and id while new events arrive", async () => {
+    const { store, call } = await boot();
+    const id = (n: number) => `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
+    const event = (n: number, createdAt = "2026-01-01T00:00:00.000Z") => ({
+      id: id(n), createdAt, actorId: null, targetId: null, universeId: null,
+      action: "test.event", outcome: "success", details: {},
+    });
+    store.auditEvents.push(event(1), event(3), event(2), event(4, "2025-12-31T00:00:00.000Z"));
+    const first = (await call("GET", "/api/ui/admin/audit?limit=2")).json as AuditPage;
+    expect(first.events.map(entry => entry.id)).toEqual([id(3), id(2)]);
+    expect(first.nextCursor).toBe(id(2));
+    store.auditEvents.push(event(5, "2026-01-02T00:00:00.000Z"));
+    const second = (await call("GET", `/api/ui/admin/audit?limit=2&cursor=${first.nextCursor}`)).json as AuditPage;
+    expect(second.events.map(entry => entry.id)).toEqual([id(1), id(4)]);
+    expect(second.nextCursor).toBeNull();
+    expect((await call("GET", `/api/ui/admin/audit?cursor=${id(4)}`)).json).toEqual({ events: [], nextCursor: null });
+    for (const query of ["limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=abc", "limit=", "cursor=bad", "cursor=", `cursor=${id(999)}`]) {
+      expect((await call("GET", `/api/ui/admin/audit?${query}`)).status).toBe(400);
+    }
+    store.currentUser.role = "user";
+    expect((await call("GET", "/api/ui/admin/audit?limit=2")).status).toBe(403);
+  });
+
   it("lets the UI read, cancel, and steer a queued message with attachments", async () => {
     vi.useFakeTimers();
     try {
@@ -207,12 +231,13 @@ describe("demo router", () => {
     expect((await call("POST", "/api/ui/universes", { name: "Another", handle: "chosen" })).status).toBe(409);
     const named = { universeId: "11111111-1111-4111-8111-111111111111", handle: "from-runtime", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
     store.orphanEngineUniverses.push(named);
-    const adopted = await call("POST", "/api/ui/universes/adopt", { name: "Unrelated name", lightspeedUniverseId: named.universeId });
+    const adoptionScope = { organizationId: "demo-organization", initialOwner: { kind: "user", id: store.currentUser.id } };
+    const adopted = await call("POST", "/api/ui/universes/adopt", { ...adoptionScope, name: "Unrelated name", lightspeedUniverseId: named.universeId });
     expect(adopted.status).toBe(201);
     expect(adopted.json).toMatchObject({ handle: "from-runtime", lightspeedUniverseId: named.universeId });
     const other = { ...named, universeId: "22222222-2222-4222-8222-222222222222", handle: "kept" };
     store.orphanEngineUniverses.push(other);
-    expect((await call("POST", "/api/ui/universes/adopt", { name: "Other", lightspeedUniverseId: other.universeId, handle: "renamed-on-adopt" })).status).toBe(400);
+    expect((await call("POST", "/api/ui/universes/adopt", { ...adoptionScope, name: "Other", lightspeedUniverseId: other.universeId, handle: "renamed-on-adopt" })).status).toBe(400);
     expect(store.orphanEngineUniverses.some(u => u.universeId === other.universeId)).toBe(true);
     const universe = created.json as Universe;
     expect((await call("PUT", `/api/ui/universes/${universe.id}/handle`, { handle: "from-runtime" })).status).toBe(409);
@@ -221,6 +246,29 @@ describe("demo router", () => {
     expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, handle: "renamed" });
     expect((await call("GET", "/api/ui/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, handle: "renamed" })]));
     expect((await call("POST", "/api/ui/universes/sync-handles", {})).json).toEqual({ updated: 0, skipped: 0 });
+  });
+
+  it("adopts into the explicit organization with an Owner from that organization", async () => {
+    const { store, call } = await boot();
+    const created = await call("POST", "/api/v1/platform/organizations", { name: "Destination", slug: "destination" });
+    const organizationId = (created.json as { organization: { id: string } }).organization.id;
+    const owner = [...store.users.values()].find(user => user.id !== store.currentUser.id)!;
+    const runtime = { universeId: crypto.randomUUID(), handle: "adopt-me", displayName: "Runtime name", protected: true, sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
+    store.orphanEngineUniverses.push(runtime);
+    const input = { organizationId, name: "Chosen name", lightspeedUniverseId: runtime.universeId, initialOwner: { kind: "user", id: owner.id } };
+    expect((await call("POST", "/api/ui/universes/adopt", { ...input, organizationId: "missing" })).status).toBe(404);
+    expect((await call("POST", "/api/ui/universes/adopt", input)).status).toBe(400);
+    await call("PUT", `/api/v1/platform/organizations/${organizationId}/members/${owner.id}`, { role: "member" });
+    await call("PATCH", `/api/v1/platform/organizations/${organizationId}`, { enabled: false });
+    expect((await call("POST", "/api/ui/universes/adopt", input)).status).toBe(404);
+    await call("PATCH", `/api/v1/platform/organizations/${organizationId}`, { enabled: true });
+    const adopted = await call("POST", "/api/ui/universes/adopt", input);
+    expect(adopted.status).toBe(201);
+    expect(adopted.json).toMatchObject({ organizationId, name: "Chosen name", handle: "adopt-me", protected: true, lightspeedUniverseId: runtime.universeId });
+    expect(store.orphanEngineUniverses.some(universe => universe.universeId === runtime.universeId)).toBe(false);
+    const grants = await call("GET", `/api/v1/platform/universes/${runtime.universeId}/grants`);
+    expect(grants.json).toEqual({ grants: [expect.objectContaining({ principal: { kind: "user", id: owner.id }, role: "owner" })] });
+    expect((await call("GET", `/api/ui/universes/reconcile?organizationId=${organizationId}`)).json).toMatchObject({ platform: [expect.objectContaining({ lightspeedUniverseId: runtime.universeId })], orphans: [] });
   });
 
   it("keeps seeded final replies outside each run's collapsible activity", async () => {
@@ -483,6 +531,23 @@ describe("demo router", () => {
     }
   });
 
+  it("scopes administrative reconciliation to one organization while keeping unclaimed names", async () => {
+    const { store, call } = await boot();
+    const selected = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    selected.universe.organizationId = "selected";
+    const unclaimed = { universeId: crypto.randomUUID(), handle: "unclaimed", displayName: "Runtime name", sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };
+    store.orphanEngineUniverses.push(unclaimed);
+    const scoped = await call("GET", "/api/ui/universes/reconcile?organizationId=selected");
+    expect(scoped.status).toBe(200);
+    expect(scoped.json).toEqual({ platform: [{ id: selected.universe.id, organizationId: "selected", lightspeedUniverseId: selected.universe.lightspeedUniverseId, engine: "ok" }], orphans: [] });
+    expect((await call("GET", "/api/ui/universes/reconcile")).json).toMatchObject({ orphans: expect.arrayContaining([unclaimed]) });
+    expect((await call("POST", "/api/ui/universes/sync-handles", { organizationId: "selected" })).json).toEqual({ updated: 0, skipped: 0 });
+    expect((await call("POST", "/api/ui/universes/sync-handles", { organizationId: "" })).status).toBe(400);
+    store.currentUser.role = "user";
+    expect((await call("GET", "/api/ui/universes/reconcile?organizationId=selected")).status).toBe(403);
+    expect((await call("POST", "/api/ui/universes/sync-handles", { organizationId: "selected" })).status).toBe(403);
+  });
+
   it("edits native grants and preserves the final Owner", async () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
@@ -716,7 +781,7 @@ describe("demo router", () => {
     expect(store.deletedSessions.size).toBe(1);
     expect((await call("POST", `${adminBase}/sessions/${session.id}/purge`, {})).status).toBe(200);
     expect(store.deletedSessions.size).toBe(0);
-    const audit = (await call("GET", "/api/ui/admin/audit")).json as { action: string; targetId: string }[];
+    const { events: audit } = (await call("GET", "/api/ui/admin/audit")).json as { events: { action: string; targetId: string }[] };
     expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
     const after = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);

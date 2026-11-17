@@ -1,16 +1,17 @@
 /** Demo organization state stays in memory; it cannot issue usable credentials. */
 import { Hono } from "hono";
-import { organizationCreateSchema, organizationUpdateSchema, organizationMemberPutSchema, serviceUserCreateSchema, serviceUserUpdateSchema, organizationUniverseCreateSchema, universeGrantPutSchema, universeLifecycleUpdateSchema, type OrganizationRole, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
+import { organizationCreateSchema, organizationUpdateSchema, organizationMemberPutSchema, serviceUserCreateSchema, serviceUserUpdateSchema, organizationUniverseCreateSchema, universeGrantPutSchema, universeLifecycleUpdateSchema, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type { DemoStore } from "../store";
 type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
 type ServiceUser = PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number];
 type Grant = PlatformOperationResult<"platform/universes/grants/list">["grants"][number];
 export function organizationRoutes(store: DemoStore) {
   const app = new Hono();
-  const organizations = new Map<string, Organization>([["demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", kind: "development", enabled: true, role: "admin", universeQuota: 100, defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() }]]);
-  const memberships = new Map<string, Map<string, OrganizationRole>>([["demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"]))]]);
-  const serviceUsers = new Map<string, ServiceUser>();
-  const serviceUserGrants = new Map<string, Grant[]>();
+  const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
+  if (!organizations.has("demo-organization")) {
+    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", kind: "development", enabled: true, role: "admin", universeQuota: 100, defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
+    memberships.set("demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"])));
+  }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
   app.use("/organizations/:organizationId/*", async (c, next) => { if (!organizations.has(c.req.param("organizationId")!)) return c.json({ error: "Organization not found" }, 404); await next(); });
   app.get("/organizations", c => c.json({ organizations: [...organizations.values()], canCreate: store.currentUser.role === "admin" }));

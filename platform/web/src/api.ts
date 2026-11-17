@@ -118,6 +118,7 @@ export interface Universe {
 
 /// Engine-side universe inventory entry (deployment/universes/list view).
 export interface EngineUniverse {
+  displayName?: string | null;
   protected?: boolean;
   handle: string;
   universeId: string;

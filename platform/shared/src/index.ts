@@ -222,3 +222,4 @@ export function canDeleteSession(role: UniverseRole | null | undefined, shared: 
 export * from "./platform-api.js";
 export * from "./credential-api.js";
 export * from "./session-api.js";
+export * from "./audit-log.js";

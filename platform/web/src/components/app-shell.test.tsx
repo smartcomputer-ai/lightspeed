@@ -175,7 +175,21 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
 it("offers Audit log in Platform admin navigation", async () => {
   const groups = await sidebarFor("owner", { bots: true, channels: true }, true);
   expect(groups["Platform"]).toContain("Audit log");
+  expect(container.querySelector('[data-sidebar="separator"]')).not.toBeNull();
   expect(container.querySelector('a[href="/admin/platform/audit"]')?.getAttribute("aria-current")).toBe("page");
+});
+
+it("puts Back and the Organizations heading above the organization selector", async () => {
+  await sidebarFor("owner", undefined, false, "/admin/organizations/team/universes", "admin");
+  const header = container.querySelector('[data-sidebar="header"]')!;
+  const back = header.querySelector('a[href="/"]')!;
+  const heading = header.querySelector("h2")!;
+  const selector = header.querySelector('button[aria-haspopup="menu"]')!;
+  expect(back.textContent).toBe("Back to universes");
+  expect(heading.textContent).toBe("Organizations");
+  expect(selector.textContent).toBe("Team");
+  expect(back.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(heading.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it("opens a personal-key deep link and keeps profile section links navigable", async () => {
@@ -207,11 +221,13 @@ it("opens a personal-key deep link and keeps profile section links navigable", a
 
 
 it("shows only universe administration to a universe Owner", async () => {
-  expect(await sidebarFor("owner", undefined, false, "/admin/organizations/team/universes")).toEqual({ Organization: ["Universes"] });
+  expect(await sidebarFor("owner", undefined, false, "/admin/organizations/team/universes")).toEqual({ "": ["Universes"] });
+  expect(container.querySelector('[data-sidebar="separator"]')).toBeNull();
 });
 
 it("shows organization administration without deployment controls to an Organization Admin", async () => {
-  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ Organization: ["Universes", "People", "Service users", "API keys", "Settings"] });
+  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "People", "Service users", "API keys", "Settings"] });
+  expect(container.querySelector('[data-sidebar="separator"]')).toBeNull();
 });
 
 it("does not offer administrative pages to a Creator with no owned universe", async () => {

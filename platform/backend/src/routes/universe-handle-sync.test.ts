@@ -40,6 +40,45 @@ it("preserves the cache when runtime synchronization fails", async () => {
   expect((await fixture.request("/api/ui/universes/sync-handles", "POST")).status).toBe(502);
   expect((await fixture.db.select().from(schema.universes))[0]?.handle).toBe("work");
 });
+
+it("limits reconciliation and handle synchronization to the requested organization", async () => {
+  const [other] = await fixture.db.insert(schema.universes).values({ organizationId: "organization-b", handle: "other-cached", name: "Other", lightspeedUniverseId: crypto.randomUUID() }).returning();
+  const unclaimed = { universeId: crypto.randomUUID(), handle: "unclaimed", displayName: "Runtime display name" };
+  vi.mocked(fetch).mockImplementation(async () => Response.json({ universes: [
+    { universeId: fixture.universe.lightspeedUniverseId, handle: "current" },
+    { universeId: other!.lightspeedUniverseId, handle: "other-runtime" },
+    unclaimed,
+  ] }));
+  const scoped = "/api/ui/universes/reconcile?organizationId=organization-a";
+  expect((await fixture.request(scoped)).status).toBe(403);
+  expect((await fixture.request("/api/ui/universes/sync-handles", "POST", { organizationId: "organization-a" })).status).toBe(403);
+  await fixture.asUser("owner", true);
+  expect(await (await fixture.request(scoped)).json()).toEqual({ platform: [{ id: fixture.universe.id, organizationId: "organization-a", lightspeedUniverseId: fixture.universe.lightspeedUniverseId, engine: "ok" }], orphans: [] });
+  expect(await (await fixture.request("/api/ui/universes/reconcile")).json()).toMatchObject({ orphans: [unclaimed] });
+  expect(await (await fixture.request("/api/ui/universes/sync-handles", "POST", { organizationId: "organization-a" })).json()).toEqual({ updated: 1, skipped: 0 });
+  const rows = await fixture.db.select().from(schema.universes);
+  expect(rows.find(row => row.id === fixture.universe.id)?.handle).toBe("current");
+  expect(rows.find(row => row.id === other!.id)?.handle).toBe("other-cached");
+});
+
+it("refuses empty or invalid scope instead of accidentally syncing the deployment", async () => {
+  await fixture.asUser("owner", true);
+  expect((await fixture.request("/api/ui/universes/reconcile?organizationId=")).status).toBe(400);
+  expect((await fixture.request("/api/ui/universes/sync-handles", "POST", { organizationId: "" })).status).toBe(400);
+  expect((await fixture.request("/api/ui/universes/sync-handles", "POST", { organizationId: 1 })).status).toBe(400);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("returns a conflict without changing another organization's cache", async () => {
+  await fixture.asUser("owner", true);
+  await fixture.db.insert(schema.universes).values({ organizationId: "organization-b", handle: runtimeHandle, name: "Other", lightspeedUniverseId: crypto.randomUUID() });
+  const response = await fixture.request("/api/ui/universes/sync-handles", "POST", { organizationId: "organization-a" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ error: expect.stringContaining("deployment-wide handle sync") });
+  const rows = await fixture.db.select().from(schema.universes);
+  expect(rows.find(row => row.id === fixture.universe.id)?.handle).toBe("work");
+  expect(rows.find(row => row.organizationId === "organization-b")?.handle).toBe(runtimeHandle);
+});
 it("renames through runtime and updates only the universe handle", async () => {
   const response = await fixture.request(`${path()}/handle`, "PUT", { handle: "renamed" });
   expect(response.status).toBe(200);

@@ -1,7 +1,7 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
 import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
-import { effectiveFeatures, mergeFeatureOverrides, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
+import { effectiveFeatures, mergeFeatureOverrides, type AuditEvent, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor, type OrganizationRole, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -228,9 +228,13 @@ const fallbackResponder: DemoResponder = (input) => ({
 });
 
 export class DemoStore {
-  readonly auditEvents: Array<{ id: string; createdAt: string; actorId: string; targetId: string; universeId: string; action: string; outcome: string; details: Record<string, unknown> }> = [];
+  readonly auditEvents: AuditEvent[] = [];
   readonly deletedSessions = new Map<string, { record: SessionRecord; deletedAtMs: number }>();
   readonly users = new Map<string, DemoUser>();
+  readonly organizations = new Map<string, PlatformOperationResult<"platform/organizations/read">["organization"]>();
+  readonly organizationMemberships = new Map<string, Map<string, OrganizationRole>>();
+  readonly serviceUsers = new Map<string, PlatformOperationResult<"platform/organizations/service-users/list">["serviceUsers"][number]>();
+  readonly serviceUserGrants = new Map<string, PlatformOperationResult<"platform/universes/grants/list">["grants"]>();
   currentUser: DemoUser;
   readonly universes = new Map<string, UniverseState>();
   /// Engine universes no platform row links to (admin reconcile view).

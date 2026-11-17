@@ -104,13 +104,13 @@ async function type(label: string, value: string) {
   });
 }
 async function select(label: string, value: string) {
-  const input = document.body.querySelector<HTMLSelectElement>(
-    `[aria-label="${label}"]`,
-  )!;
-  await act(async () => {
-    input.value = value;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  const trigger = document.body.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+  await act(async () => trigger.click());
+  const prefix = value === "selected" ? "Selected" : "All";
+  const option = [...document.querySelectorAll<HTMLElement>('[data-slot="select-content"]:not([data-closed]) [role="option"]')]
+    .find(item => item.textContent?.trim().startsWith(prefix));
+  if (!option) throw new Error(`Missing ${prefix} option`);
+  await act(async () => option.click());
 }
 function checkbox(label: string) {
   return [...document.body.querySelectorAll("label")]
@@ -383,7 +383,7 @@ it("opens a bounded scrollable dialog and resets an abandoned draft", async () =
 
 it("requires an explicit all-organizations choice to create an unrestricted user key", async () => {
   await show();
-  expect(document.body.querySelector<HTMLSelectElement>('[aria-label="Organization access"]')!.value).toBe("selected");
+  expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Organization access"]')!.querySelector('[data-slot="select-value"]')?.textContent).toBe("Selected organizations");
   expect(checkbox("Research").checked).toBe(true);
   await select("Organization access", "all");
   await type("API key name", "CLI everywhere");

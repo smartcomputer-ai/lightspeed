@@ -103,9 +103,13 @@ organization containing their universe but only administer their owned
 universes. They do not gain organization-wide People, Service users, API keys,
 or Settings pages. Organization Admins administer all universes in their
 organization. **Platform** is a separate sidebar section for organization
-inventory, sign-in users, deployment-wide universe operations, infrastructure,
+inventory, sign-in users, unclaimed runtime universes, infrastructure,
 connectors, and audit. Its pages show **Platform administration** and are
 unaffected by the organization selector.
+
+Deployment Admins can browse the audit log newest first with Previous and Next,
+choosing 25, 50, or 100 records per page. Refresh returns to the newest records.
+Audit records survive user and session deletion.
 
 Organization context is explicit in each Admin URL; it does not change another
 tab's context. Creation and membership changes use explicit add/edit dialogs

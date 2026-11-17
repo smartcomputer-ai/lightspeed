@@ -127,8 +127,8 @@ it("excludes ordinary memberships from organization administration and does not 
 it("lists manageable organizations without silently selecting one", async () => {
   mocks.role = "admin";
   await show();
-  expect(container.querySelector('a[href="/admin/organizations/team/settings"]')?.textContent).toBe("Team");
-  expect(container.querySelector('a[href="/admin/organizations/other/settings"]')?.textContent).toBe("Other Team");
+  expect(container.querySelector('a[href="/admin/organizations/team/universes"]')?.textContent).toBe("Team");
+  expect(container.querySelector('a[href="/admin/organizations/other/universes"]')?.textContent).toBe("Other Team");
   expect(mocks.api).not.toHaveBeenCalled();
 });
 
@@ -140,6 +140,11 @@ it("lets a Platform Admin open an organization without a direct membership", asy
     }),
   );
   expect(button("Add member")).toBeDefined();
+});
+
+it.each(["people", "service-users", "settings"])("keeps %s in the selected organization without a Platform back link", async (section) => {
+  await show(`/admin/organizations/team/${section}`, true);
+  expect(container.querySelector('a[href="/admin/platform/organizations"]')).toBeNull();
 });
 
 it.each(["missing", "team"])(

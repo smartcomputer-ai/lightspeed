@@ -14,6 +14,7 @@ import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 import { AccountPage } from "@/pages/AccountPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
+import { UnclaimedUniversesPage } from "@/pages/UnclaimedUniversesPage";
 import { AdminAuditPage } from "@/pages/AdminAuditPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
 import { AdminChannelsPage } from "@/pages/AdminChannelsPage";
@@ -181,7 +182,7 @@ export function App() {
           </Route>
           <Route element={<AdminGate scope="platform" />}>
             <Route path="admin/platform/organizations" element={<OrganizationsPage />} />
-            <Route path="admin/platform/universes" element={<AdminUniversesPage />} />
+            <Route path="admin/platform/unclaimed-universes" element={<UnclaimedUniversesPage />} />
             <Route path="admin/platform/audit" element={<AdminAuditPage />} />
             <Route path="admin/platform/users" element={<AdminUsersPage currentUser={user} />} />
             <Route path="admin/platform/channels" element={<AdminChannelsPage />} />

@@ -24,12 +24,11 @@ For sign-in and membership, see [People and roles](../access-and-security/people
 Creators and Organization Admins create universes using **New universe**, selecting
 an organization and an initial Owner. Platform Admins can provision for any organization
 with an explicit initial Owner. Creation observes the organization quota and
-protection policy. Owners grant existing organization members access on **Admin → Universes → Access**.
+protection policy. Owners grant existing organization members access on **Admin → organization → Universes → Access**.
 Creating a runtime universe directly through the API or server CLI creates
 only the runtime record; use **Adopt** to connect it to the Platform. Adoption
 keeps the universe's handle. The handle is chosen at creation, or derived from
-the UUID when none is given, and is renamed afterwards under **Settings →
-General** or with `lightspeed universe set-handle`.
+the UUID when none is given, and is renamed afterwards under **Admin → organization → Universes → Settings and lifecycle** or with `lightspeed universe set-handle`.
 
 ## Keep Platform and runtime records aligned
 
@@ -38,12 +37,18 @@ records the association in the Platform database. Because these are separate
 systems, an interrupted operation or a partial restore can leave one side
 without the other.
 
-**Admin → Universes** reconciles the configured runtime inventory.
-**Adopt** connects an existing runtime universe to a selected organization with an
-explicit initial Owner, without replacing its contents. **Create in engine** creates an empty missing runtime
-universe. It cannot restore deleted sessions or files, or recreate a universe whose
-UUID has been permanently deleted. All universes use the deployment's configured
-runtime endpoint.
+Deployment admins use **Admin → Platform → Unclaimed Universes** for the advanced
+case of runtime universes with no Platform organization. **Adopt** assigns one to
+a selected organization and explicit initial Owner without replacing its contents.
+The name is suggested from the runtime display name, falling back to its handle,
+and remains editable. The runtime handle is preserved.
+
+Claimed universes stay under **Admin → organization → Universes**. Deployment
+admins also see runtime status, **Sync from runtime**, **Recreate on engine**, and
+deleted-session controls there. Sync changes only the selected organization's
+cached handles. Recreating a missing runtime universe starts empty; it cannot
+restore deleted sessions or files, or recreate a UUID that has been permanently
+deleted. All universes use the deployment's configured runtime endpoint.
 
 Preserve runtime UUIDs and their Platform mappings during recovery. Secret
 encryption and workflow identities depend on those UUIDs, so copying records
@@ -60,7 +65,7 @@ step, not an access-revocation or shutdown mechanism.
 
 Deletion does not require archiving, closing sessions, stopping bots, or closing
 environments first. Retain any content you need before proceeding. A Platform
-administrator selects **Delete** under **Admin → Universes** and types
+administrator selects **Delete** under **Admin → organization → Universes** and types
 the universe's handle to confirm. Through the CLI:
 
 ```bash
@@ -72,7 +77,7 @@ cleanup finishes; an optional duration bounds how long the CLI waits.
 
 Deletion immediately refuses new universe requests, prevents new daemon
 registrations in that universe, and frees the handle for reuse. The universe then appears as **deleting** in the Platform
-admin inventory, with its current cleanup step and any waiting detail. It is
+organization inventory, with its current cleanup step and any waiting detail. It is
 hidden from ordinary members. Cleanup removes bot schedules, terminates the
 universe's open workflows, closes environments, clears object storage, and
 finally removes its database rows. Storage failures keep the universe in the

@@ -52,3 +52,17 @@ it("reports universes the runtime no longer has and keeps their cached handle", 
   expect(await syncUniverseHandles(f.ctx)).toEqual({ updated: 0, skipped: 1 });
   expect(f.updates).toEqual([]);
 });
+
+it("syncs only the selected organization's cache", async () => {
+  const f = fixture(["one", "two"], ["renamed-one", "renamed-two"]);
+  expect(await syncUniverseHandles(f.ctx, "org-0")).toEqual({ updated: 1, skipped: 0 });
+  expect(f.updates).toHaveLength(2);
+  expect(f.updates[1]).toBe("renamed-one");
+});
+
+it("refuses a scoped sync that collides with another organization's retained cache", async () => {
+  const f = fixture(["one", "two"], ["two", "one"]);
+  await expect(syncUniverseHandles(f.ctx, "org-0")).rejects.toBeInstanceOf(UniverseHandleCacheConflict);
+  expect(f.updates).toEqual([]);
+  expect(f.transaction).not.toHaveBeenCalled();
+});

@@ -8,7 +8,8 @@ import { HTTPException } from "hono/http-exception";
 import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withApiErrors } from "./http.js";
 import { Hono } from "hono";
-import { desc } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
+import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "./context.js";
 import { botRoutes } from "./routes/bots.js";
@@ -84,9 +85,21 @@ export function buildApp(ctx: AppContext) {
 
   api.get("/admin/audit", async (c) => {
     if (!isPlatformAdmin(c.get("session"))) return c.json({ error: "platform admin required" }, 403);
-    const rows = await ctx.db.select().from(schema.identityAudit)
-      .orderBy(desc(schema.identityAudit.createdAt), desc(schema.identityAudit.id)).limit(100);
-    return c.json(rows);
+    const query = auditQuerySchema.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: "invalid audit pagination" }, 400);
+    const { limit, cursor } = query.data;
+    const audit = schema.identityAudit;
+    if (cursor) {
+      const [anchor] = await ctx.db.select({ id: audit.id }).from(audit).where(eq(audit.id, cursor));
+      if (!anchor) return c.json({ error: "audit cursor not found" }, 400);
+    }
+    // Keep the cursor timestamp in PostgreSQL to preserve sub-millisecond precision.
+    const rows = await ctx.db.select().from(audit)
+      .where(cursor ? sql`(${audit.createdAt}, ${audit.id}) < (select created_at, id from identity_audit where id = ${cursor}::uuid)` : undefined)
+      .orderBy(desc(audit.createdAt), desc(audit.id)).limit(limit + 1);
+    const events = rows.slice(0, limit).map((event) => ({ ...event, createdAt: event.createdAt.toISOString() }));
+    const page: AuditPage = { events, nextCursor: rows.length > limit ? events.at(-1)!.id : null };
+    return c.json(page);
   });
 
   api.route("/universes", universeRoutes(ctx));

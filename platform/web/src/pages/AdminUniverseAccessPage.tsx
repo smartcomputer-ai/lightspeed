@@ -30,6 +30,7 @@ import { platformApi } from "@/lib/platform-api";
 import { useActiveUniverse } from "@/lib/universes";
 import { useActionPermissions } from "@/lib/permissions";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
@@ -260,43 +261,45 @@ function UniverseAccess({
                   readOnly
                 />
               ) : (
-                <select
-                  id="universe-access-recipient"
-                  className="max-w-full rounded-md border bg-background p-2"
+                <Select
                   value={principal}
-                  onChange={(e) => setPrincipal(e.target.value)}
+                  onValueChange={(value) => value !== null && setPrincipal(value)}
                   disabled={directoriesLoading || directoriesUnavailable}
                   required
                 >
-                  <option value="">
-                    {directoriesLoading
-                      ? "Loading organization members and service users…"
-                      : "Select a person or service user"}
-                  </option>
-                  {choices.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="universe-access-recipient"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">
+                      {directoriesLoading
+                        ? "Loading organization members and service users…"
+                        : "Select a person or service user"}
+                    </SelectItem>
+                    {choices.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </Field>
             <Field className="sm:w-auto">
               <FieldLabel htmlFor="universe-access-role">
                 Universe role
               </FieldLabel>
-              <select
-                id="universe-access-role"
-                className="rounded-md border bg-background p-2"
+              <Select
                 value={role}
-                onChange={(e) => setRole(e.target.value as UniverseRole)}
+                onValueChange={(value) => value !== null && setRole(value as UniverseRole)}
               >
-                {UNIVERSE_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {roleLabels[r]}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="universe-access-role"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {UNIVERSE_ROLES.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {roleLabels[r]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
             {put.error && (
               <p role="alert" className="text-destructive">

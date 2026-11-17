@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import type { OrganizationRole, PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import { platformApi } from "@/lib/platform-api";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import {
@@ -24,18 +25,19 @@ function RoleSelect({ value, onChange }: { value: OrganizationRole; onChange: (r
   return (
     <Field>
       <FieldLabel htmlFor="organization-role">Organization role</FieldLabel>
-      <select
-        id="organization-role"
-        className="min-w-0 rounded-md border bg-background p-2"
+      <Select
         value={value}
-        onChange={(event) => onChange(event.target.value as OrganizationRole)}
+        onValueChange={(value) => value !== null && onChange(value as OrganizationRole)}
       >
-        {roles.map((role) => (
-          <option key={role} value={role}>
-            {roleLabels[role]}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger id="organization-role"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {roles.map((role) => (
+            <SelectItem key={role} value={role}>
+              {roleLabels[role]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <FieldDescription>
         Members need universe access. Creators can create universes. Admins manage the organization and all its
         universes.
