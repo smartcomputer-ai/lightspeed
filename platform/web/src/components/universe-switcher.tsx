@@ -1,13 +1,14 @@
 import { organizationAllows, useDeploymentPermissions } from "@/lib/permissions";
 import { organizationLabel } from "@/lib/admin-access";
 import { useOrganizations } from "@/lib/platform-api";
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { useNavigate } from "react-router-dom";
 import { AddIcon, SelectedIcon, SwitcherIcon } from "@/icons";
 import { UniverseIcon } from "@/components/universe-icon";
 import { NewUniverseDialog } from "@/components/new-universe-dialog";
 import { Starscape } from "@/components/starscape/starscape";
 import { useIsDark } from "@/lib/theme";
+import { useReducedMotion } from "@/lib/reduced-motion";
 import { SETTINGS, useSetting } from "@/lib/settings";
 import type { Universe } from "@/api";
 import {
@@ -47,25 +48,67 @@ export const HEADER_STARSCAPE_CONFIG = { nebulaAmount: 0 };
 /// Covers the fade circle around the icon.
 export const HEADER_STARSCAPE_CLASS = "absolute inset-x-0 top-0 h-32";
 
+/// How long the header's sky stays after an arrival, then how long it takes
+/// to fade. The fade's class below spells the same duration out.
+export const HEADER_STARSCAPE_HOLD_MS = 2500;
+export const HEADER_STARSCAPE_FADE_OUT_MS = 1500;
+const FADE_OUT_CLASS = "transition-opacity duration-[1500ms] ease-out";
+
+type ArrivalPhase = "shown" | "fading" | "gone";
+
+/// The last arrival played in this page load. Coming back to the same
+/// universe from Settings or Admin remounts the header, which is no arrival.
+let playedArrival: string | undefined;
+
+/// Plays an arrival once per value of `arrival`: shown, fading, then gone.
+/// A new value before the end starts it over at full brightness.
+function useArrival(arrival: string | null | undefined): ArrivalPhase {
+  const key = arrival ?? undefined;
+  const [state, setState] = useState<{ key: string | undefined; phase: ArrivalPhase }>(() => ({ key, phase: key !== undefined && key === playedArrival ? "gone" : "shown" }));
+  useEffect(() => {
+    if (key === undefined) return;
+    // Mounted again for the arrival already played: stays gone.
+    if (key === playedArrival && state.key === key) return;
+    playedArrival = key;
+    setState({ key, phase: "shown" });
+    const fade = window.setTimeout(() => setState({ key, phase: "fading" }), HEADER_STARSCAPE_HOLD_MS);
+    const gone = window.setTimeout(() => setState({ key, phase: "gone" }), HEADER_STARSCAPE_HOLD_MS + HEADER_STARSCAPE_FADE_OUT_MS);
+    return () => { window.clearTimeout(fade); window.clearTimeout(gone); };
+    // Only a new arrival starts it; the phase changes come from the timers.
+  }, [key]);
+  // During the render that brings a new arrival, before the effect runs.
+  return state.key === key ? state.phase : "shown";
+}
+
 /// The header's sky, centred on the universe icon and fading out around it,
 /// the stars straight on the sidebar. Dark theme only: on a light sidebar
 /// the white stars would not show. Not at all with the starscape turned off
-/// in Preferences.
+/// in Settings.
+///
+/// With `arrival` (the sidebar passes the active universe, or null without
+/// one), it marks arriving: on loading and on each switch it shows, then
+/// fades and is removed, and with reduced motion it does not show. Without
+/// it (previews), it stays.
 export function HeaderStarscape({
   iconRef,
+  arrival,
 }: {
   iconRef: RefObject<HTMLElement | null>;
+  arrival?: string | null;
 }) {
   const dark = useIsDark();
   const [shown] = useSetting(SETTINGS.starscape);
+  const reduced = useReducedMotion();
+  const phase = useArrival(arrival);
   if (!dark || !shown) return null;
+  if (arrival !== undefined && (arrival === null || reduced || phase === "gone")) return null;
   return (
     <Starscape
       anchor={iconRef}
       fade={HEADER_STARSCAPE_FADE}
       config={HEADER_STARSCAPE_CONFIG}
       transparentBackground
-      className={HEADER_STARSCAPE_CLASS}
+      className={cn(HEADER_STARSCAPE_CLASS, arrival !== undefined && FADE_OUT_CLASS, phase === "fading" && "opacity-0")}
     />
   );
 }
@@ -116,7 +159,7 @@ export function UniverseSwitcher({
   return (
     <>
       {/* The header's sky: centred on the universe icon, fading out around it. */}
-      <HeaderStarscape iconRef={iconRef} />
+      <HeaderStarscape iconRef={iconRef} arrival={active?.id ?? null} />
       <SidebarMenu className="relative">
         <SidebarMenuItem>
           <DropdownMenu>
