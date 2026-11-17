@@ -256,7 +256,7 @@ mod tests {
                 "--controller-endpoint",
                 "wss://provider.example/control",
             ],
-            vec!["environment", "binding", "put", "local", "--enable"],
+            vec!["environment", "binding", "put", "local"],
             vec!["environment", "template", "list", "--provider", "local"],
             vec!["profile", "--json", "read", "reviewer"],
             vec!["session", "restart", "s1"],
@@ -704,7 +704,7 @@ mod tests {
                 "3",
             ],
             vec!["registration-key", "rotate", "registration_key_1"],
-            vec!["binding", "put", "incus", "--disable"],
+            vec!["binding", "put", "incus"],
             vec!["binding", "delete", "incus"],
             vec![
                 "provider",
@@ -724,8 +724,9 @@ mod tests {
             assert!(matches!(cli.command, Command::Env(_)));
         }
         assert!(
-            Cli::try_parse_from(["lightspeed", "env", "binding", "put", "incus"]).is_err(),
-            "a binding put states enabled or disabled"
+            Cli::try_parse_from(["lightspeed", "env", "binding", "put", "incus", "--enable"])
+                .is_err(),
+            "a binding has no on/off state"
         );
         assert!(
             Cli::try_parse_from([

@@ -11,7 +11,8 @@ pub(crate) struct EnvArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum EnvCommand {
-    /// Administer deployment-wide environment provider controllers (deployment key).
+    /// See the providers this universe may use, or administer the
+    /// deployment's provider controllers (deployment key).
     #[command(visible_alias = "providers")]
     Provider(ProviderArgs),
     /// Provision an environment from a provider template.
@@ -27,10 +28,11 @@ enum EnvCommand {
     /// connection, so that a machine with a new identity can bind. The
     /// environment keeps its id and everything that references it.
     Release(EnvironmentResourceArgs),
-    /// Inspect or set the current universe's bindings to environment providers.
+    /// Bind the current universe to a provider that is not available to
+    /// every universe, or unbind it (deployment key).
     #[command(visible_alias = "bindings")]
     Binding(BindingArgs),
-    /// Browse templates offered by the universe's enabled providers.
+    /// Browse templates offered by the providers available to the universe.
     #[command(visible_alias = "templates")]
     Template(TemplateArgs),
     /// Enable or disable provider-authorized public HTTPS ingress.
@@ -725,29 +727,16 @@ struct BindingArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum BindingCommand {
-    /// Bind the selected universe to a provider, enabled or disabled
-    /// (deployment key).
+    /// Let the selected universe use a provider that is not available to
+    /// every universe (deployment key).
     Put {
         provider_id: String,
-        /// Let the universe provision from this provider.
-        #[arg(long, conflicts_with = "disable", required_unless_present = "disable")]
-        enable: bool,
-        /// Keep the binding but stop new provisioning from it.
-        #[arg(long)]
-        disable: bool,
         #[arg(long)]
         json: bool,
     },
-    /// Delete the selected universe's binding to a provider (deployment key).
+    /// Stop the selected universe from using a provider that is not
+    /// available to every universe (deployment key).
     Delete {
-        provider_id: String,
-        #[arg(long)]
-        json: bool,
-    },
-    /// List the selected universe's provider bindings.
-    List(ResourceArgs),
-    /// Read the selected universe's binding to one provider.
-    Read {
         provider_id: String,
         #[arg(long)]
         json: bool,
@@ -760,7 +749,7 @@ struct TemplateArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum TemplateCommand {
-    /// List the templates the universe's enabled providers offer.
+    /// List the templates the providers available to the universe offer.
     List {
         /// Only this provider's templates; omit for every enabled binding.
         #[arg(long)]
@@ -882,19 +871,13 @@ async fn release(args: EnvironmentResourceArgs) -> Result<()> {
 async fn binding(args: BindingArgs) -> Result<()> {
     let client = HttpAgentApi::from_active();
     match args.command {
-        BindingCommand::Put {
-            provider_id,
-            enable: enabled,
-            disable: _,
-            json,
-        } => {
+        BindingCommand::Put { provider_id, json } => {
             let response: api::DeploymentProviderBindingPutResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
                     api::DeploymentProviderBindingPutParams {
                         universe: selected_universe("binding a provider")?,
                         provider_id,
-                        enabled,
                     },
                 )
                 .await?;
@@ -913,32 +896,6 @@ async fn binding(args: BindingArgs) -> Result<()> {
             if !json {
                 println!("Deleted environment provider binding.");
             }
-            crate::output::show(json, &response.binding)
-        }
-        BindingCommand::List(args) => {
-            let response: api::EnvironmentProviderBindingListResponse = client
-                .request(
-                    api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST,
-                    api::EnvironmentProviderBindingListParams {},
-                )
-                .await?;
-            if args.json {
-                crate::output::show(true, &response)
-            } else {
-                crate::output::table(
-                    &response.bindings,
-                    &[("providerId", "PROVIDER"), ("enabled", "ENABLED")],
-                    "No environment provider bindings available.",
-                )
-            }
-        }
-        BindingCommand::Read { provider_id, json } => {
-            let response: api::EnvironmentProviderBindingReadResponse = client
-                .request(
-                    api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ,
-                    api::EnvironmentProviderBindingReadParams { provider_id },
-                )
-                .await?;
             crate::output::show(json, &response.binding)
         }
     }
@@ -1027,6 +984,10 @@ struct ProviderPutArgs {
     /// Remove the stored credential.
     #[arg(long)]
     clear_credential: bool,
+    /// Only universes bound to the provider (`environment binding put`)
+    /// may use it. Without this flag every universe may.
+    #[arg(long)]
+    selected_universes: bool,
     #[arg(long)]
     json: bool,
 }
@@ -1052,7 +1013,15 @@ struct ProviderArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum ProviderCommand {
-    /// List the deployment's environment provider controllers.
+    /// The providers the selected universe may use: those available to
+    /// every universe, and those it is bound to. With a provider ID, only
+    /// that one.
+    Available {
+        provider_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the deployment's environment provider controllers (deployment key).
     List {
         #[arg(long)]
         json: bool,
@@ -1065,7 +1034,8 @@ enum ProviderCommand {
     },
     /// Register or replace a provider controller.
     Put(ProviderPutArgs),
-    /// Delete a provider controller that no universe is bound to.
+    /// Delete a provider controller that no universe is bound to and no open
+    /// environment uses.
     Delete {
         provider_id: String,
         #[arg(long)]
@@ -1075,6 +1045,37 @@ enum ProviderCommand {
 async fn provider(args: ProviderArgs) -> Result<()> {
     let client = HttpAgentApi::from_active();
     match args.command {
+        ProviderCommand::Available { provider_id, json } => match provider_id {
+            None => {
+                let response: api::AvailableEnvironmentProviderListResponse = client
+                    .request(
+                        api::METHOD_ENVIRONMENTS_PROVIDERS_LIST,
+                        api::AvailableEnvironmentProviderListParams {},
+                    )
+                    .await?;
+                if json {
+                    crate::output::show(true, &response)
+                } else {
+                    crate::output::table(
+                        &response.providers,
+                        &[
+                            ("providerId", "PROVIDER"),
+                            ("availableToAllUniverses", "ALL UNIVERSES"),
+                        ],
+                        "No environment providers are available to this universe.",
+                    )
+                }
+            }
+            Some(provider_id) => {
+                let response: api::AvailableEnvironmentProviderReadResponse = client
+                    .request(
+                        api::METHOD_ENVIRONMENTS_PROVIDERS_READ,
+                        api::AvailableEnvironmentProviderReadParams { provider_id },
+                    )
+                    .await?;
+                crate::output::show(json, &response.provider)
+            }
+        },
         ProviderCommand::List { json } => {
             let response: api::DeploymentEnvironmentProviderListResponse = client
                 .request(
@@ -1132,6 +1133,7 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                         data_route_base: args.data_route_base,
                         credential,
                         clear_credential: args.clear_credential,
+                        available_to_all_universes: !args.selected_universes,
                     },
                 )
                 .await?;

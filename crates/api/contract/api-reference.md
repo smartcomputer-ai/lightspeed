@@ -681,13 +681,13 @@ Synchronously moves an open provisioned environment's target to running, paused,
 - Group: `environments`
 - Role: `operator`
 
-### `environments/provider-bindings/list`
+### `environments/providers/list`
 
-**List environment provider bindings**
+**List available environment providers**
 
-Lists this universe's bindings to deployment providers and whether each is enabled.
+Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.
 
-- HTTP: `GET /api/v1/universes/{universe}/environment-provider-bindings`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers`
 - Success: `200`
 - Transfer: `json`
 - Query: none
@@ -696,13 +696,13 @@ Lists this universe's bindings to deployment providers and whether each is enabl
 - Group: `environments`
 - Role: `viewer`
 
-### `environments/provider-bindings/read`
+### `environments/providers/read`
 
-**Read an environment provider binding**
+**Read an available environment provider**
 
-Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
+Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.
 
-- HTTP: `GET /api/v1/universes/{universe}/environment-provider-bindings/{providerId}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers/{providerId}`
 - Success: `200`
 - Transfer: `json`
 - Query: none
@@ -716,9 +716,9 @@ Returns this universe's binding to one provider. Templates and physical resource
 
 **List environment templates**
 
-Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.
+Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.
 
-- HTTP: `GET /api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers/{providerId}/templates`
 - Success: `200`
 - Transfer: `json`
 - Query: none
@@ -732,9 +732,9 @@ Reads templates live from the controllers of the universe's enabled provider bin
 
 **Read an environment template**
 
-Returns one template, read live from a bound provider's controller.
+Returns one template, read live from the controller of a provider available to the universe.
 
-- HTTP: `GET /api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates/{templateId}`
+- HTTP: `GET /api/v1/universes/{universe}/environment-providers/{providerId}/templates/{templateId}`
 - Success: `200`
 - Transfer: `json`
 - Query: none
@@ -2243,14 +2243,14 @@ Refuses protected universes. Immediately fences an unprotected universe and rele
 
 **Put an environment provider**
 
-Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.
 
 - HTTP: `PUT /api/v1/environment-providers/{providerId}`
 - Success: `200`
 - Transfer: `json`
 - Query: none
 - Path input fields: `providerId` → `providerId`
-- Request body: JSON object: `clearCredential`, `controllerEndpoint`, `credential`, `dataRouteBase`, `displayName`
+- Request body: JSON object: `availableToAllUniverses`, `clearCredential`, `controllerEndpoint`, `credential`, `dataRouteBase`, `displayName`
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
@@ -2306,14 +2306,14 @@ Deletes a deployment provider only when no universe binding and no non-closed en
 
 **Put an environment provider binding**
 
-Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
+Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.
 
 - HTTP: `PUT /api/v1/universes/{universe}/deployment-provider-bindings/{providerId}`
 - Success: `200`
 - Transfer: `json`
 - Query: none
 - Path input fields: `universe` → `universe`, `providerId` → `providerId`
-- Request body: JSON object: `enabled`
+- Request body: empty JSON object or no body
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
 - Role: `none`
@@ -2322,7 +2322,7 @@ Creates or replaces one universe's binding to a deployment provider. Only an ena
 
 **Delete an environment provider binding**
 
-Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
+Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.
 
 - HTTP: `DELETE /api/v1/universes/{universe}/deployment-provider-bindings/{providerId}`
 - Success: `200`

@@ -205,8 +205,9 @@ and token. Retain the daemon state directory so a restart proves the same
 identity. A closed identity cannot reconnect as a new environment merely by
 reusing its key.
 
-For Incus, inspect provider `/health`, the universe provider binding, which
-must be enabled for its environments to be reachable, the selected template,
+For Incus, inspect provider `/health`, whether the provider is available to
+the universe (to every universe, or to this one through a binding), which its
+environments need to be reachable, the selected template,
 instance boot, and guest daemon. Follow the specific procedures in
 [Bring your own compute](../environments/bring-your-own-compute.md),
 [Incus VMs](../environments/incus-vms.md), and

@@ -91,6 +91,7 @@ async fn provider_universe(
             data_route_base: None,
             credential: controller.credential().map(str::to_owned),
             clear_credential: false,
+            available_to_all_universes: false,
         }),
     )
     .await?;
@@ -99,7 +100,6 @@ async fn provider_universe(
         operator.put_environment_provider_binding(DeploymentProviderBindingPutParams {
             universe: universe_id.to_string(),
             provider_id: provider_id.to_owned(),
-            enabled: true,
         }),
     )
     .await?;
@@ -252,6 +252,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                     data_route_base: None,
                     credential,
                     clear_credential: false,
+                    available_to_all_universes: false,
                 }),
             )
             .await
@@ -267,6 +268,7 @@ async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
                 data_route_base: None,
                 credential: Some("token".to_owned()),
                 clear_credential: true,
+                available_to_all_universes: false,
             }),
         )
         .await

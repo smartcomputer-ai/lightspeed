@@ -53,8 +53,8 @@ A provider adds machine lifecycle management. Lightspeed asks it to create a
 machine and, later, to close it; the provider runs everything in between,
 including power, idle policy, and wake-up. The included Incus provider offers
 operator-configured templates and runs VMs. A Platform admin registers the
-provider and enables a binding for the universe; Operators and Owners can
-then create environments from its available templates.
+provider, available to every universe or only to universes bound to it;
+Operators and Owners can then create environments from its templates.
 
 ## Select an environment for a session
 

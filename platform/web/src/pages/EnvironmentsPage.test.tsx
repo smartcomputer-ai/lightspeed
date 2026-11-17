@@ -7,6 +7,7 @@ const { organizationActions, universeActions } = await vi.hoisted(() => import("
 import { ApiError, type Environment, type EnvironmentRegistrationKey, type EnvironmentTemplate } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { EnvironmentsPage } from "./EnvironmentsPage";
+import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
@@ -79,7 +80,7 @@ beforeEach(() => {
     if (path.endsWith("/environment-templates")) return [template];
     if (path.endsWith("/secrets")) return { grants: [], providers: [] };
     if (path.endsWith("/hints")) return { devEnvdEndpoint: null };
-    if (path.endsWith("/environment-provider-bindings") || path.endsWith("/credentials")) return [];
+    if (path.endsWith("/environment-providers") || path.endsWith("/credentials")) return [];
     throw new Error(`Unexpected request: ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -292,12 +293,12 @@ it("shows empty inventory independently of provider metadata failures", async ()
   rows = [];
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path) => {
-    if (path.endsWith("/environment-provider-bindings")) throw new Error("Provider offline");
+    if (path.endsWith("/environment-providers")) throw new Error("Provider offline");
     return implementation(method, path);
   });
   await show();
   expect(container.textContent).toContain("No open environments");
-  expect(container.textContent).toContain("Provider bindings unavailable");
+  expect(container.textContent).toContain("Environment providers unavailable");
 });
 
 it("retains usable inventory when enrollment metadata fails", async () => {
@@ -473,4 +474,22 @@ it("declares an environment under a persistent key", async () => {
   }]]);
   expect(dialogTitled("Declare an environment under “Build machines”")).toBeUndefined();
   expect(listReads().length).toBeGreaterThan(1);
+});
+
+it("lists the providers this universe may use, and how", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path) => path.endsWith("/environment-providers")
+    ? [
+      { providerId: "incus-eu", displayName: "Incus EU", availableToAllUniverses: true },
+      { providerId: "gpu", availableToAllUniverses: false },
+    ]
+    : implementation(method, path));
+  await show();
+  await waitForUi(() => expect(container.textContent).toContain("2 available"));
+  const trigger = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.startsWith("Providers"))!;
+  await act(async () => trigger.click());
+  const table = container.querySelector('table[aria-label="Providers"]')!;
+  expect(table.textContent).toContain("Incus EU");
+  expect(table.textContent).toContain("All universes");
+  expect(table.textContent).toContain("This universe");
 });

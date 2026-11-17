@@ -52,8 +52,8 @@ OPERATIONS = (
     'environments/registered/release',
     'environments/ingress/put',
     'environments/power/put',
-    'environments/provider-bindings/list',
-    'environments/provider-bindings/read',
+    'environments/providers/list',
+    'environments/providers/read',
     'environments/templates/list',
     'environments/templates/read',
     'environments/jobs/create',
@@ -215,10 +215,10 @@ OPERATION_INFO = {
     'environments/registered/release': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': "Release a declared environment's daemon", 'description': 'Forgets the daemon bound to a declared environment and ends its connection, so another daemon identity may bind under the same key and name. The environment keeps its id, its name, its credential bindings and every reference to it. No effect when no daemon is bound. Refused for an environment that was not declared.', 'streaming': False, 'notifications': []},
     'environments/ingress/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Configure environment public ingress', 'description': 'Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.', 'streaming': False, 'notifications': []},
     'environments/power/put': {'scope': 'universe', 'access': {'action': 'configureResource', 'kind': 'universe'}, 'summary': 'Set environment power', 'description': "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.", 'streaming': False, 'notifications': []},
-    'environments/provider-bindings/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List environment provider bindings', 'description': "Lists this universe's bindings to deployment providers and whether each is enabled.", 'streaming': False, 'notifications': []},
-    'environments/provider-bindings/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an environment provider binding', 'description': "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.", 'streaming': False, 'notifications': []},
-    'environments/templates/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List environment templates', 'description': "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.", 'streaming': False, 'notifications': []},
-    'environments/templates/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an environment template', 'description': "Returns one template, read live from a bound provider's controller.", 'streaming': False, 'notifications': []},
+    'environments/providers/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List available environment providers', 'description': 'Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.', 'streaming': False, 'notifications': []},
+    'environments/providers/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an available environment provider', 'description': 'Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.', 'streaming': False, 'notifications': []},
+    'environments/templates/list': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'List environment templates', 'description': 'Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.', 'streaming': False, 'notifications': []},
+    'environments/templates/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read an environment template', 'description': 'Returns one template, read live from the controller of a provider available to the universe.', 'streaming': False, 'notifications': []},
     'environments/jobs/create': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Create environment jobs', 'description': 'Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environmentNotReady while it wakes or reconnects; retry with backoff.', 'streaming': False, 'notifications': []},
     'environments/jobs/read': {'scope': 'universe', 'access': {'action': 'read', 'kind': 'universe'}, 'summary': 'Read environment jobs', 'description': "Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.", 'streaming': False, 'notifications': []},
     'environments/jobs/cancel': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Cancel environment jobs', 'description': 'Requests cancellation for selected jobs, optionally including dependents. Force is provider-specific escalation; inspect each per-job result.', 'streaming': False, 'notifications': []},
@@ -313,12 +313,12 @@ OPERATION_INFO = {
     'deployment/universes/expiry/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Set or clear universe expiry', 'description': 'Sets a future Unix timestamp or clears expiry with explicit null. Protected universes cannot have an expiry. Expiry starts the normal deletion process, attributed to the runtime; activity does not extend it.', 'streaming': False, 'notifications': []},
     'deployment/universes/handle/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Rename a universe', 'description': "Changes the deployment-unique handle without changing the universe UUID or resources. The previous handle is released: requests and URLs that use it stop reaching this universe, and another universe may claim it. Claiming another universe's handle returns a conflict. Does not create a universe.", 'streaming': False, 'notifications': []},
     'deployment/universes/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Request universe deletion', 'description': 'Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound.', 'streaming': False, 'notifications': []},
-    'deployment/environment-providers/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider', 'description': 'Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.', 'streaming': False, 'notifications': []},
+    'deployment/environment-providers/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider', 'description': 'Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List environment providers', 'description': 'Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/read': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Read an environment provider', 'description': 'Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.', 'streaming': False, 'notifications': []},
     'deployment/environment-providers/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider', 'description': 'Deletes a deployment provider only when no universe binding and no non-closed environment references it.', 'streaming': False, 'notifications': []},
-    'deployment/environment-providers/bindings/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider binding', 'description': "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.", 'streaming': False, 'notifications': []},
-    'deployment/environment-providers/bindings/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider binding', 'description': "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.", 'streaming': False, 'notifications': []},
+    'deployment/environment-providers/bindings/put': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Put an environment provider binding', 'description': 'Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.', 'streaming': False, 'notifications': []},
+    'deployment/environment-providers/bindings/delete': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'Delete an environment provider binding', 'description': 'Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.', 'streaming': False, 'notifications': []},
     'deployment/channels/accounts/list': {'scope': 'deployment', 'access': {'kind': 'deployment'}, 'summary': 'List channel accounts across universes', 'description': "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since.", 'streaming': False, 'notifications': []},
     'blobs/upload': {'scope': 'universe', 'access': {'action': 'useResource', 'kind': 'universe'}, 'summary': 'Upload a content-addressed blob', 'description': "Streams bytes into immutable universe storage. The path is the expected content digest; Content-Length is required and both length and digest are verified. An identical upload is idempotent. Admission refreshes the blob's collection grace period.", 'streaming': False, 'notifications': []},
 }
@@ -380,8 +380,8 @@ CLIENT_HELPERS = {
     'release_registered_environment': 'environments/registered/release',
     'put_environment_ingress': 'environments/ingress/put',
     'put_environment_power': 'environments/power/put',
-    'list_environment_provider_bindings': 'environments/provider-bindings/list',
-    'read_environment_provider_binding': 'environments/provider-bindings/read',
+    'list_available_environment_providers': 'environments/providers/list',
+    'read_available_environment_provider': 'environments/providers/read',
     'read_environment_template': 'environments/templates/read',
     'create_environment_jobs': 'environments/jobs/create',
     'read_environment_jobs': 'environments/jobs/read',
@@ -618,11 +618,11 @@ class GeneratedClient:
     async def call(self, method: Literal['environments/power/put'], params: Api.EnvironmentPowerPutParams,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentPowerPutResponse: ...
     @overload
-    async def call(self, method: Literal['environments/provider-bindings/list'], params: Api.EnvironmentProviderBindingListParams | None = None,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingListResponse: ...
+    async def call(self, method: Literal['environments/providers/list'], params: Api.AvailableEnvironmentProviderListParams | None = None,
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.AvailableEnvironmentProviderListResponse: ...
     @overload
-    async def call(self, method: Literal['environments/provider-bindings/read'], params: Api.EnvironmentProviderBindingReadParams,
-                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentProviderBindingReadResponse: ...
+    async def call(self, method: Literal['environments/providers/read'], params: Api.AvailableEnvironmentProviderReadParams,
+                   *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.AvailableEnvironmentProviderReadResponse: ...
     @overload
     async def call(self, method: Literal['environments/templates/list'], params: Api.EnvironmentTemplateListParams | None = None,
                    *, headers: HeadersInput | None = None, body: bytes | AsyncIterator[bytes] | None = None, content_length: int | None = None) -> Api.EnvironmentTemplateListResponse: ...
@@ -1007,9 +1007,6 @@ class GeneratedClient:
     @overload
     async def call(self, method: Literal['platform/organizations/service-users/update'], params: Platform.PlatformOrganizationsServiceUsersUpdateParams,
                    *, headers: HeadersInput | None = None) -> Platform.PlatformOrganizationsServiceUsersUpdateResult: ...
-    @overload
-    async def call(self, method: Literal['platform/organizations/service-users/delete'], params: Platform.PlatformOrganizationsServiceUsersDeleteParams,
-                   *, headers: HeadersInput | None = None) -> Platform.PlatformOrganizationsServiceUsersDeleteResult: ...
     @overload
     async def call(self, method: Literal['platform/universes/adopt'], params: Platform.PlatformUniversesAdoptParams,
                    *, headers: HeadersInput | None = None) -> Platform.PlatformUniversesAdoptResult: ...
@@ -1495,8 +1492,8 @@ class GeneratedClient:
                 one allocated. An id already in use is a conflict.
             idle: Idle policy passed to the provider in place of the template's `idle`. The provider
                 runs the idle clock; it cannot be changed after create.
-            provider_id: The provider to create the environment with; the universe needs an enabled
-                binding to it.
+            provider_id: The provider to create the environment with; it must be available to the
+                universe.
             request_id: Stable caller-generated retry identity, unique inside the universe. Retrying
                 with identical inputs returns the same environment.
             template_id: The provider template to create the environment from.
@@ -1575,11 +1572,12 @@ class GeneratedClient:
     async def list_environment_templates(self, *, provider_id: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.EnvironmentTemplateListResponse:
         """List environment templates
 
-        Reads templates live from the controllers of the universe's enabled provider bindings, or of
+        Reads templates live from the controllers of every provider available to the universe, or of
         one provider: compute, power states, public ingress, and default idle policy.
 
         Args:
-            provider_id: Only this provider's templates; omit for every enabled binding.
+            provider_id: Only this provider's templates; omit for every provider available to the
+                universe.
         """
         params: dict[str, Any] = {}
         if provider_id is not UNSET:
@@ -1904,28 +1902,29 @@ class GeneratedClient:
         params['power'] = power
         return cast(Api.EnvironmentPowerPutResponse, await self._invoke('environments/power/put', params, headers))
 
-    async def list_environment_provider_bindings(self, *, headers: HeadersInput | None = None) -> Api.EnvironmentProviderBindingListResponse:
-        """List environment provider bindings
+    async def list_available_environment_providers(self, *, headers: HeadersInput | None = None) -> Api.AvailableEnvironmentProviderListResponse:
+        """List available environment providers
 
-        Lists this universe's bindings to deployment providers and whether each is enabled.
+        Lists the deployment providers this universe may create environments from: those available
+        to every universe, and those this universe is bound to.
         """
         params: dict[str, Any] = {}
-        return cast(Api.EnvironmentProviderBindingListResponse, await self._invoke('environments/provider-bindings/list', params, headers))
+        return cast(Api.AvailableEnvironmentProviderListResponse, await self._invoke('environments/providers/list', params, headers))
 
-    async def read_environment_provider_binding(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentProviderBindingReadResponse:
-        """Read an environment provider binding
+    async def read_available_environment_provider(self, provider_id: str, *, headers: HeadersInput | None = None) -> Api.AvailableEnvironmentProviderReadResponse:
+        """Read an available environment provider
 
-        Returns this universe's binding to one provider. Templates and physical resource, network,
-        and ingress policy remain provider-owned.
+        Returns one provider this universe may create environments from; not found when it may not.
+        Templates and physical resource, network, and ingress policy remain provider-owned.
         """
         params: dict[str, Any] = {}
         params['providerId'] = provider_id
-        return cast(Api.EnvironmentProviderBindingReadResponse, await self._invoke('environments/provider-bindings/read', params, headers))
+        return cast(Api.AvailableEnvironmentProviderReadResponse, await self._invoke('environments/providers/read', params, headers))
 
     async def read_environment_template(self, provider_id: str, template_id: str, *, headers: HeadersInput | None = None) -> Api.EnvironmentTemplateReadResponse:
         """Read an environment template
 
-        Returns one template, read live from a bound provider's controller.
+        Returns one template, read live from the controller of a provider available to the universe.
         """
         params: dict[str, Any] = {}
         params['providerId'] = provider_id
@@ -3076,15 +3075,17 @@ class GeneratedClient:
         params['universe'] = universe
         return cast(Api.DeploymentUniverseDeleteResponse, await self._invoke('deployment/universes/delete', params, headers))
 
-    async def put_environment_provider(self, provider_id: str, *, clear_credential: bool | Unset = UNSET, controller_endpoint: str, credential: str | None | Unset = UNSET, data_route_base: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderPutResponse:
+    async def put_environment_provider(self, provider_id: str, *, available_to_all_universes: bool | Unset = UNSET, clear_credential: bool | Unset = UNSET, controller_endpoint: str, credential: str | None | Unset = UNSET, data_route_base: str | None | Unset = UNSET, display_name: str | None | Unset = UNSET, headers: HeadersInput | None = None) -> Api.DeploymentEnvironmentProviderPutResponse:
         """Put an environment provider
 
-        Registers or replaces a deployment provider: controller endpoint, optional data route base,
-        and optional bearer credential for controller and data routes (write-only: kept when
-        omitted, removed by clearCredential, never returned). The controller is probed: a definitive
-        refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+        Registers or replaces a provider: who may use it (every universe unless limited to bound
+        ones), controller endpoint, optional data route base, and optional write-only bearer
+        credential (kept when omitted, removed by clearCredential). The controller is probed: a
+        definitive refusal is invalidRequest, unreachable is accepted.
 
         Args:
+            available_to_all_universes: Every universe may use the provider (the default). `false`
+                limits it to the universes it is bound to.
             clear_credential: Remove the stored credential. Excludes `credential`.
             controller_endpoint: `ws://`, `wss://` or `unix://` URL of the provider controller.
             credential: A new bearer credential; omit to keep the stored one. A provider needs none.
@@ -3094,6 +3095,8 @@ class GeneratedClient:
                 be `ws://` for a `wss://` controller.
         """
         params: dict[str, Any] = {}
+        if available_to_all_universes is not UNSET:
+            params['availableToAllUniverses'] = available_to_all_universes
         if clear_credential is not UNSET:
             params['clearCredential'] = clear_credential
         params['controllerEndpoint'] = controller_endpoint
@@ -3135,18 +3138,16 @@ class GeneratedClient:
         params['providerId'] = provider_id
         return cast(Api.DeploymentEnvironmentProviderDeleteResponse, await self._invoke('deployment/environment-providers/delete', params, headers))
 
-    async def put_universe_environment_provider_binding(self, universe: str, provider_id: str, *, enabled: bool, headers: HeadersInput | None = None) -> Api.DeploymentProviderBindingPutResponse:
+    async def put_universe_environment_provider_binding(self, universe: str, provider_id: str, *, headers: HeadersInput | None = None) -> Api.DeploymentProviderBindingPutResponse:
         """Put an environment provider binding
 
-        Creates or replaces one universe's binding to a deployment provider. Only an enabled binding
-        admits creates, template listing, and data routes for the universe.
+        Allows one universe to use a deployment provider that is not available to all universes.
+        Repeating it changes nothing.
 
         Args:
             universe: The universe's UUID or handle.
-            enabled: Admits creates, template listing and data routes for the universe.
         """
         params: dict[str, Any] = {}
-        params['enabled'] = enabled
         params['providerId'] = provider_id
         params['universe'] = universe
         return cast(Api.DeploymentProviderBindingPutResponse, await self._invoke('deployment/environment-providers/bindings/put', params, headers))
@@ -3154,8 +3155,8 @@ class GeneratedClient:
     async def delete_universe_environment_provider_binding(self, universe: str, provider_id: str, *, headers: HeadersInput | None = None) -> Api.DeploymentProviderBindingDeleteResponse:
         """Delete an environment provider binding
 
-        Deletes a universe's binding to a provider only when the universe has no non-closed
-        environment of that provider.
+        Stops a universe from using a provider that is not available to all universes. Its open
+        environments on the provider lose access until it is bound again.
 
         Args:
             universe: The universe's UUID or handle.

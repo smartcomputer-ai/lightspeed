@@ -19,7 +19,7 @@ export const CONFIGURATOR_OPERATIONS = [
   "mcp/servers/put", "mcp/servers/read", "mcp/servers/list", "mcp/servers/delete", "mcp/servers/tools/discover",
   "models/defaults/read", "models/defaults/put", "models/list",
   "environments/read", "environments/list", "environments/templates/list", "environments/templates/read",
-  "environments/provider-bindings/list", "environments/provider-bindings/read",
+  "environments/providers/list", "environments/providers/read",
   "bots/create", "bots/read", "bots/list", "bots/put", "bots/delete",
 ] satisfies OperationId[];
 const SETUP_ID = "configurator";

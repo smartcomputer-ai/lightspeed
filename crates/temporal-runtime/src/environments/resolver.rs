@@ -294,6 +294,7 @@ mod tests {
                 data_route_base: None,
                 credential: ProviderCredentialChange::Keep,
                 updated_at_ms: 10,
+                available_to_all_universes: false,
             })
             .await
             .expect("provider");
@@ -301,7 +302,6 @@ mod tests {
             .put_provider_binding(PutEnvironmentProviderBinding {
                 universe_id: store.universe_id(),
                 provider_id: provider_id.clone(),
-                enabled: true,
                 updated_at_ms: 10,
             })
             .await

@@ -46,7 +46,7 @@ const operator = await login(process.env.LIGHTSPEED_PLATFORM_LIVE_USER_EMAIL ?? 
 const browserClient = (cookie: string) => new LightspeedClient({ endpoint: origin, headers: { cookie, origin } });
 const adminApi = browserClient(admin.cookie);
 const operatorApi = browserClient(operator.cookie);
-const organization = (await adminApi.platform.createOrganization({ name: prefix, slug: prefix, initialAdminUserId: admin.id, defaultProtected: false })).organization;
+const organization = (await adminApi.platform.createOrganization({ name: prefix, handle: prefix, initialAdminUserId: admin.id, defaultProtected: false })).organization;
 await adminApi.platform.putOrganizationMember({ organizationId: organization.id, userId: operator.id, role: "creator" });
 const writer = await operatorApi.platform.createPersonalApiKey({ name: `${prefix}-writer`, restrictions: { organizationIds: [organization.id] } });
 const writerApi = new LightspeedClient({ endpoint: origin, token: writer.secret });
@@ -126,11 +126,11 @@ const serviceUserApi = new LightspeedClient({ endpoint: origin, token: serviceUs
 const serviceUserUniverse = (await serviceUserApi.platform.createUniverse({ organizationId: organization.id, name: `${prefix}-app`, handle: `${prefix}-app`, protected: false })).universe;
 assert.equal(serviceUserUniverse.role, "owner");
 assert.equal(serviceUserUniverse.createdBy, `serviceUser:${serviceUser.id}`);
-const otherOrganization = (await adminApi.platform.createOrganization({ name: `${prefix}-other`, slug: `${prefix}-other`, initialAdminUserId: admin.id })).organization;
+const otherOrganization = (await adminApi.platform.createOrganization({ name: `${prefix}-other`, handle: `${prefix}-other`, initialAdminUserId: admin.id })).organization;
 await expectStatus(await request(`/api/v1/platform/organizations/${otherOrganization.id}`, { token: serviceUserKey.secret }), 403);
 
 await expectStatus(await request(`/api/v1/universes/${a.lightspeedUniverseId}/profiles`, { token: serviceUserKey.secret }), 404);
-await adminApi.platform.disableServiceUser({ organizationId: organization.id, serviceUserId: serviceUser.id });
+await adminApi.platform.updateServiceUser({ organizationId: organization.id, serviceUserId: serviceUser.id, enabled: false });
 await expectStatus(await request("/api/v1/connection", { token: serviceUserKey.secret }), 401);
 
 function cli(args: string[], input?: string, onOutput?: (output: string) => void, expectedExit = 0): Promise<string> {

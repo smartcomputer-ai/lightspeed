@@ -42,10 +42,11 @@ use crate::{
 
 const PROVIDER_COLUMNS: &str = r#"
     provider_id, display_name, controller_endpoint, data_route_base,
-    credential_key_id IS NOT NULL AS has_credential, created_at_ms, updated_at_ms
+    credential_key_id IS NOT NULL AS has_credential, available_to_all_universes,
+    created_at_ms, updated_at_ms
 "#;
 
-const BINDING_COLUMNS: &str = "universe_id, provider_id, enabled, created_at_ms, updated_at_ms";
+const BINDING_COLUMNS: &str = "universe_id, provider_id, created_at_ms, updated_at_ms";
 
 /// Columns of `environments e` plus the identity mode of a registered row's
 /// key `k` (see [`ENVIRONMENT_FROM`]).
@@ -112,10 +113,11 @@ impl EnvironmentProviderStore for PgStore {
             INSERT INTO environment_providers (
                 provider_id, display_name, controller_endpoint, data_route_base,
                 credential_key_id, credential_nonce, credential_ciphertext,
-                created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                created_at_ms, updated_at_ms, available_to_all_universes
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$11)
             ON CONFLICT (provider_id) DO UPDATE SET
                 display_name = EXCLUDED.display_name,
+                available_to_all_universes = EXCLUDED.available_to_all_universes,
                 controller_endpoint = EXCLUDED.controller_endpoint,
                 data_route_base = EXCLUDED.data_route_base,
                 credential_key_id = CASE WHEN $10::boolean
@@ -141,6 +143,7 @@ impl EnvironmentProviderStore for PgStore {
             .bind(record.created_at_ms)
             .bind(record.updated_at_ms)
             .bind(keep)
+            .bind(record.available_to_all_universes)
             .fetch_one(&mut *tx)
             .await
             .map_err(|error| sql_error("put environment provider", error))?;
@@ -335,10 +338,9 @@ impl EnvironmentProviderBindingStore for PgStore {
         let query = format!(
             r#"
             INSERT INTO environment_provider_bindings (
-                universe_id, provider_id, enabled, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5)
+                universe_id, provider_id, created_at_ms, updated_at_ms
+            ) VALUES ($1,$2,$3,$4)
             ON CONFLICT (universe_id, provider_id) DO UPDATE SET
-                enabled = EXCLUDED.enabled,
                 created_at_ms = EXCLUDED.created_at_ms,
                 updated_at_ms = EXCLUDED.updated_at_ms
             RETURNING {BINDING_COLUMNS}
@@ -347,7 +349,6 @@ impl EnvironmentProviderBindingStore for PgStore {
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(record.universe_id)
             .bind(record.provider_id.as_str())
-            .bind(record.enabled)
             .bind(record.created_at_ms)
             .bind(record.updated_at_ms)
             .fetch_one(&mut *tx)
@@ -416,17 +417,8 @@ impl EnvironmentProviderBindingStore for PgStore {
             .await
             .map_err(|error| sql_error("lock provider binding", error))?
             .ok_or_else(|| not_found("environment_provider_binding", provider_id))?;
-        let active: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM environments WHERE universe_id = $1 AND provider_id = $2 AND state <> 'closed'",
-        )
-        .bind(universe_id)
-        .bind(provider_id.as_str())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|error| sql_error("count binding environments", error))?;
-        if active != 0 {
-            return invalid("provider binding is referenced by a non-closed environment");
-        }
+        // Unbinding is how a universe is cut off: its open environments on
+        // the provider lose their routes until it is bound again.
         let query = format!(
             "DELETE FROM environment_provider_bindings WHERE universe_id = $1 AND provider_id = $2 RETURNING {BINDING_COLUMNS}"
         );
@@ -569,25 +561,29 @@ impl EnvironmentStore for PgStore {
             .begin()
             .await
             .map_err(|error| sql_error("begin environment create", error))?;
-        // Share-lock the binding so it cannot be deleted or disabled while
-        // the row that references it is inserted.
-        let enabled: Option<bool> = sqlx::query_scalar(
-            "SELECT enabled FROM environment_provider_bindings WHERE universe_id = $1 AND provider_id = $2 FOR SHARE",
+        // Share-lock the provider and the universe's binding, so neither the
+        // provider's availability nor the binding can change while the row
+        // that uses them is inserted.
+        let all_universes: Option<bool> = sqlx::query_scalar(
+            "SELECT available_to_all_universes FROM environment_providers WHERE provider_id = $1 FOR SHARE",
+        )
+        .bind(request.provider_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| sql_error("lock environment provider", error))?;
+        let Some(all_universes) = all_universes else {
+            return Err(not_found("environment_provider", &request.provider_id));
+        };
+        let bound: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM environment_provider_bindings WHERE universe_id = $1 AND provider_id = $2 FOR SHARE",
         )
         .bind(self.config.universe_id)
         .bind(request.provider_id.as_str())
         .fetch_optional(&mut *tx)
         .await
         .map_err(|error| sql_error("lock provider binding", error))?;
-        match enabled {
-            None => {
-                return Err(not_found(
-                    "environment_provider_binding",
-                    &request.provider_id,
-                ));
-            }
-            Some(false) => return invalid("environment provider binding is disabled"),
-            Some(true) => {}
+        if !(all_universes || bound.is_some()) {
+            return invalid("environment provider is not available to this universe");
         }
         self.insert_requested_environment(tx, record, |existing| request.matches(existing))
             .await
@@ -1407,11 +1403,14 @@ pub async fn list_revoked_environment_routes(
         FROM unnest($1::uuid[], $2::text[]) AS route (universe_id, environment_id)
         LEFT JOIN environments e
           ON e.universe_id = route.universe_id AND e.environment_id = route.environment_id
+        LEFT JOIN environment_providers p ON p.provider_id = e.provider_id
         LEFT JOIN environment_provider_bindings b
           ON b.universe_id = e.universe_id AND b.provider_id = e.provider_id
         WHERE e.environment_id IS NULL
            OR e.state <> 'open'
-           OR (e.source_kind = 'provisioned' AND (b.provider_id IS NULL OR NOT b.enabled))
+           -- A provider no longer available to the universe.
+           OR (e.source_kind = 'provisioned'
+               AND NOT (coalesce(p.available_to_all_universes, false) OR b.provider_id IS NOT NULL))
            -- Released: the environment is open, but no daemon serves it.
            OR (e.source_kind = 'registered' AND e.daemon_public_key IS NULL)
         ORDER BY route.universe_id, route.environment_id
@@ -1776,6 +1775,9 @@ fn provider_from_row(row: &PgRow) -> Result<EnvironmentProviderRecord, Environme
         has_credential: row
             .try_get("has_credential")
             .map_err(|e| sql_error("decode provider credential presence", e))?,
+        available_to_all_universes: row
+            .try_get("available_to_all_universes")
+            .map_err(|e| sql_error("decode provider availability", e))?,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
     };
@@ -1791,9 +1793,6 @@ fn binding_from_row(
             .try_get("universe_id")
             .map_err(|e| sql_error("decode binding universe", e))?,
         provider_id: parse_id(row, "provider_id", EnvironmentProviderId::try_new)?,
-        enabled: row
-            .try_get("enabled")
-            .map_err(|e| sql_error("decode binding enabled", e))?,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
     };

@@ -1099,6 +1099,7 @@ fn test_deployment_environment_provider(provider_id: &str) -> DeploymentEnvironm
         data_route_base: None,
         effective_data_route_base: Some("ws://127.0.0.1:19090/routes".to_owned()),
         has_credential: false,
+        available_to_all_universes: true,
         created_at_ms: 10,
         updated_at_ms: 20,
     }

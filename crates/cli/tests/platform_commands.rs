@@ -301,17 +301,17 @@ impl Platform {
                         ),
                         (
                             "GET",
-                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/environment-provider-bindings",
+                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/environment-providers",
                         ) => (
                             200,
-                            json!({"bindings":[{"providerId":"incus","enabled":true}]}),
+                            json!({"providers":[{"providerId":"incus","availableToAllUniverses":false}]}),
                         ),
                         (
                             "PUT",
-                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus",
+                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/gpu",
                         ) => (
                             200,
-                            json!({"binding":{"providerId":"incus","enabled":body["enabled"]}}),
+                            json!({"binding":{"providerId":"gpu","createdAtMs":1,"updatedAtMs":1}}),
                         ),
                         (
                             "PUT",
@@ -570,7 +570,7 @@ fn configuration_binding_changes_fail_before_any_document_is_written() {
         ),
         (
             "second.json",
-            json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","environmentProviders":[{"providerId":"incus","enabled":false}]}),
+            json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","environmentProviders":[{"providerId":"gpu"}]}),
         ),
     ] {
         std::fs::write(platform.directory.path().join(file), document.to_string()).unwrap();
@@ -605,7 +605,7 @@ fn configuration_creation_with_bindings_is_refused_before_provisioning() {
     let platform = Platform::start();
     std::fs::write(
         platform.directory.path().join("universe.json"),
-        json!({"schemaVersion":1,"kind":"universe","handle":"new-work","environmentProviders":[{"providerId":"incus","enabled":true}]}).to_string(),
+        json!({"schemaVersion":1,"kind":"universe","handle":"new-work","environmentProviders":[{"providerId":"gpu"}]}).to_string(),
     ).unwrap();
     let result = platform.run(&[
         "--organization",
@@ -628,11 +628,7 @@ fn configuration_creation_with_bindings_is_refused_before_provisioning() {
 
 #[test]
 fn unchanged_or_unmanaged_bindings_do_not_require_platform_admin() {
-    for bindings in [
-        None,
-        Some(json!([])),
-        Some(json!([{"providerId":"incus","enabled":true}])),
-    ] {
+    for bindings in [None, Some(json!([])), Some(json!([{"providerId":"incus"}]))] {
         let platform = Platform::start();
         let mut document = json!({"schemaVersion":1,"kind":"universe","handle":"existing-work"});
         if let Some(bindings) = bindings {
@@ -660,7 +656,7 @@ fn platform_admin_can_reconcile_binding_on_the_resolved_universe_uuid() {
     let platform = Platform::with_platform_admin(true);
     std::fs::write(
         platform.directory.path().join("universe.json"),
-        json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","environmentProviders":[{"providerId":"incus","enabled":false}]}).to_string(),
+        json!({"schemaVersion":1,"kind":"universe","handle":"existing-work","environmentProviders":[{"providerId":"gpu"}]}).to_string(),
     ).unwrap();
     platform.success(&["config", "apply", "-f", "universe.json"]);
     let requests = platform.requests.lock().unwrap();
@@ -671,9 +667,9 @@ fn platform_admin_can_reconcile_binding_on_the_resolved_universe_uuid() {
     assert_eq!(writes.len(), 1);
     assert_eq!(
         writes[0].1,
-        "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus"
+        "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/gpu"
     );
-    assert_eq!(writes[0].2, json!({"enabled":false}));
+    assert_eq!(writes[0].2, json!({}));
 }
 
 #[test]

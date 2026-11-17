@@ -25,15 +25,16 @@ fn provider() -> PutEnvironmentProvider {
         controller_endpoint: endpoint("ws://127.0.0.1:19090/control"),
         data_route_base: None,
         credential: ProviderCredentialChange::Set(SecretValue::new("provider-secret")),
+        // Bindings decide, so the tests exercise them.
+        available_to_all_universes: false,
         updated_at_ms: 1_000,
     }
 }
 
-fn binding(universe_id: Uuid, enabled: bool, at: i64) -> PutEnvironmentProviderBinding {
+fn binding(universe_id: Uuid, at: i64) -> PutEnvironmentProviderBinding {
     PutEnvironmentProviderBinding {
         universe_id,
         provider_id: EnvironmentProviderId::new(PROVIDER),
-        enabled,
         updated_at_ms: at,
     }
 }
@@ -98,7 +99,7 @@ async fn store() -> (Uuid, InMemoryEnvironmentRegistryStore) {
     let store = InMemoryEnvironmentRegistryStore::for_universe(universe_id);
     store.put_provider(provider()).await.expect("provider");
     store
-        .put_provider_binding(binding(universe_id, true, 1_000))
+        .put_provider_binding(binding(universe_id, 1_000))
         .await
         .expect("binding");
     (universe_id, store)
@@ -238,10 +239,9 @@ async fn bindings_are_one_per_provider_and_guard_deletes() {
     let (universe_id, store) = store().await;
     let provider_id = EnvironmentProviderId::new(PROVIDER);
     let replaced = store
-        .put_provider_binding(binding(universe_id, false, 1_500))
+        .put_provider_binding(binding(universe_id, 1_500))
         .await
         .expect("replace");
-    assert!(!replaced.enabled);
     assert_eq!(replaced.created_at_ms, 1_000);
     assert_eq!(
         store
@@ -255,13 +255,18 @@ async fn bindings_are_one_per_provider_and_guard_deletes() {
         store
             .put_provider_binding(PutEnvironmentProviderBinding {
                 provider_id: EnvironmentProviderId::new("missing"),
-                ..binding(universe_id, true, 1_600)
+                ..binding(universe_id, 1_600)
             })
             .await,
         Err(EnvironmentRegistryError::NotFound { .. })
     ));
 
-    // A disabled binding refuses creates; a missing one is not found.
+    // Without a binding a provider not available to all universes refuses
+    // creates.
+    store
+        .delete_provider_binding(universe_id, &provider_id)
+        .await
+        .expect("unbind");
     assert!(matches!(
         store
             .create_environment(create("r-1", "env-1", 2_000))
@@ -269,25 +274,28 @@ async fn bindings_are_one_per_provider_and_guard_deletes() {
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
     store
-        .put_provider_binding(binding(universe_id, true, 1_700))
+        .put_provider_binding(binding(universe_id, 1_700))
         .await
-        .expect("enable");
+        .expect("bind");
     let environment = store
         .create_environment(create("r-1", "env-1", 2_000))
         .await
         .expect("create");
 
-    // Live environments guard the binding and the provider.
-    assert!(matches!(
-        store
-            .delete_provider_binding(universe_id, &provider_id)
-            .await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
+    // Live environments guard the provider, not the binding: unbinding
+    // cuts the universe off.
     assert!(matches!(
         store.delete_provider(&provider_id).await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
+    store
+        .delete_provider_binding(universe_id, &provider_id)
+        .await
+        .expect("unbind with an open environment");
+    store
+        .put_provider_binding(binding(universe_id, 1_800))
+        .await
+        .expect("bind again");
     store
         .begin_close_environment(BeginCloseEnvironment {
             environment_id: environment.environment_id.clone(),
@@ -311,7 +319,7 @@ async fn bindings_are_one_per_provider_and_guard_deletes() {
         store
             .create_environment(create("r-2", "env-2", 4_000))
             .await,
-        Err(EnvironmentRegistryError::NotFound { .. })
+        Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
     store
         .delete_provider(&provider_id)
@@ -2709,4 +2717,37 @@ fn deletion_close_preserves_newer_timestamps_and_never_changes_closed_rows() {
     assert_eq!(record.updated_at_ms, 4_000);
     assert!(!deletion.apply(&mut already_closed).unwrap());
     assert_eq!(already_closed, closed_before);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_available_to_all_universes_needs_no_binding() {
+    let universe_id = Uuid::new_v4();
+    let store = InMemoryEnvironmentRegistryStore::for_universe(universe_id);
+    store
+        .put_provider(PutEnvironmentProvider {
+            available_to_all_universes: true,
+            ..provider()
+        })
+        .await
+        .expect("provider");
+    assert!(
+        store
+            .list_provider_bindings(universe_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .create_environment(create("r-1", "env-1", 2_000))
+        .await
+        .expect("create without a binding");
+    assert!(matches!(
+        store
+            .create_environment(CreateEnvironment {
+                provider_id: EnvironmentProviderId::new("missing"),
+                ..create("r-2", "env-2", 2_100)
+            })
+            .await,
+        Err(EnvironmentRegistryError::NotFound { .. })
+    ));
 }

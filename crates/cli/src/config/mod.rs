@@ -33,8 +33,8 @@ pub(crate) struct ConfigArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum ConfigCommand {
-    /// Write the configuration of the selected universe, or of the
-    /// deployment, as a document.
+    /// Write the configuration of the selected universe, or with `--kind
+    /// organization` of the selected organization, as a document.
     Export(ExportArgs),
     /// Report what `apply` would change, without writing anything. Exits
     /// with status 2 when something would change.

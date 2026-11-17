@@ -220,7 +220,7 @@ operation without adding organization ownership.
 | environments/registered | `putRegisteredEnvironment`, `releaseRegisteredEnvironment` |
 | environments/ingress | `putEnvironmentIngress` |
 | environments/power | `putEnvironmentPower` |
-| environments/provider-bindings | `listEnvironmentProviderBindings`, `readEnvironmentProviderBinding` |
+| environments/providers | `listAvailableEnvironmentProviders`, `readAvailableEnvironmentProvider` |
 | environments/jobs | `createEnvironmentJobs`, `readEnvironmentJobs`, `cancelEnvironmentJobs` |
 | environments/registration-keys | `createEnvironmentRegistrationKey`, `putEnvironmentRegistrationKey`, `readEnvironmentRegistrationKey`, `listEnvironmentRegistrationKeys`, `updateEnvironmentRegistrationKey`, `rotateEnvironmentRegistrationKey`, `revokeEnvironmentRegistrationKey` |
 | transcriptions | `startTranscription`, `readTranscription`, `cancelTranscription` |
@@ -248,10 +248,11 @@ Native Platform helpers use `client.platform` and typed parameter objects:
 | Area | Platform helpers |
 | --- | --- |
 | session | `readCurrentSession`, `revokeCurrentSession` |
-| credentials | `listPersonalApiKeys`, `createPersonalApiKey`, `revokePersonalApiKey` |
-| service-users | `listServiceUserApiKeys`, `createServiceUserApiKey`, `revokeServiceUserApiKey` |
-| organizations | `listOrganizations`, `createOrganization`, `readOrganization`, `updateOrganization`, `listOrganizationMembers`, `putOrganizationMember`, `removeOrganizationMember`, `listServiceUsers`, `createServiceUser`, `updateServiceUser`, `disableServiceUser` |
-| universes | `adoptUniverse`, `createUniverse`, `updateUniverse`, `listUniverseGrants`, `putUniverseGrant`, `removeUniverseGrant`, `putUniverseAccessPolicy` |
+| settings | `listPlatformSettings`, `putPlatformSetting` |
+| credentials | `listPersonalApiKeys`, `createPersonalApiKey`, `replacePersonalApiKey`, `revokePersonalApiKey` |
+| service-users | `listServiceUserApiKeys`, `createServiceUserApiKey`, `putServiceUserApiKey`, `replaceServiceUserApiKey`, `revokeServiceUserApiKey` |
+| organizations | `listOrganizations`, `createOrganization`, `readOrganization`, `updateOrganization`, `listOrganizationMembers`, `putOrganizationMember`, `removeOrganizationMember`, `listOrganizationApiKeys`, `listServiceUsers`, `createServiceUser`, `updateServiceUser` |
+| universes | `adoptUniverse`, `createUniverse`, `readPlatformUniverse`, `updateUniverse`, `listUniverseGrants`, `putUniverseGrant`, `removeUniverseGrant`, `readUniverseAccessPolicy`, `putUniverseAccessPolicy` |
 
 Additional conveniences include `awaitRun`, `readBlobText`, `putBlob`,
 `openWatch`, and `openDownload`. They compose operations or expose their streams:

@@ -558,7 +558,7 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
             json!({"environment":{"environmentId":"env1","displayName":"Build box","metadata":{"team":"platform"},"source":{"type":"external","endpoint":"wss://env.example/ws"},"state":"open","status":"ready","stateChangedAtMs":0,"createdAtMs":0,"updatedAtMs":1}})
         }
         "deployment/environment-providers/list" => json!({"providers":[]}),
-        "environments/provider-bindings/list" => json!({"bindings":[]}),
+        "environments/providers/list" => json!({"providers":[]}),
         _ => panic!("unexpected request {method}"),
     });
     let templates = runtime.json(&[
@@ -602,8 +602,8 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
     );
     assert!(
         runtime
-            .success(&["environment", "binding", "list"])
-            .contains("No environment provider bindings")
+            .success(&["environment", "provider", "available"])
+            .contains("No environment providers are available to this universe")
     );
     let page = runtime.success(&["environment", "list", "--include-closed", "--after", "env0"]);
     assert!(page.contains("STATE"), "{page}");

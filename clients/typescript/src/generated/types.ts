@@ -2470,6 +2470,28 @@ export interface AttachmentSourceView {
   kind: string;
   path: string;
 }
+export interface AvailableEnvironmentProviderListParams {}
+export interface AvailableEnvironmentProviderListResponse {
+  providers: AvailableEnvironmentProviderView[];
+}
+/**
+ * A provider this universe may create environments from.
+ */
+export interface AvailableEnvironmentProviderView {
+  /**
+   * Available to every universe; otherwise to this one through its
+   * binding.
+   */
+  availableToAllUniverses: boolean;
+  displayName?: string | null;
+  providerId: string;
+}
+export interface AvailableEnvironmentProviderReadParams {
+  providerId: string;
+}
+export interface AvailableEnvironmentProviderReadResponse {
+  provider: AvailableEnvironmentProviderView;
+}
 export interface BlobHasItem {
   blobRef: string;
   exists: boolean;
@@ -4007,6 +4029,11 @@ export interface DeploymentEnvironmentProviderDeleteResponse {
 }
 export interface DeploymentEnvironmentProviderView {
   /**
+   * Every universe may use the provider. Otherwise only the universes it
+   * is bound to may.
+   */
+  availableToAllUniverses: boolean;
+  /**
    * `ws://`, `wss://` or `unix://` URL of the provider controller.
    */
   controllerEndpoint: string;
@@ -4042,6 +4069,11 @@ export interface DeploymentEnvironmentProviderListResponse {
  * redacts it; request logging must never echo these params.
  */
 export interface DeploymentEnvironmentProviderPutParams {
+  /**
+   * Every universe may use the provider (the default). `false` limits it
+   * to the universes it is bound to.
+   */
+  availableToAllUniverses?: boolean;
   /**
    * Remove the stored credential. Excludes `credential`.
    */
@@ -4084,23 +4116,20 @@ export interface DeploymentProviderBindingDeleteResponse {
   binding: EnvironmentProviderBindingView;
 }
 /**
- * A universe's binding to a deployment provider. Creates, templates and
- * data routes of the provider need it enabled.
+ * A universe allowed to use a provider that is not available to all
+ * universes.
  */
 export interface EnvironmentProviderBindingView {
   createdAtMs: number;
-  enabled: boolean;
   providerId: string;
   updatedAtMs: number;
 }
 /**
- * Create or replace a universe's binding to a deployment provider.
+ * Allow a universe to use a provider that is not available to all
+ * universes. Repeating it changes nothing; for a provider available to all
+ * universes it has no effect.
  */
 export interface DeploymentProviderBindingPutParams {
-  /**
-   * Admits creates, template listing and data routes for the universe.
-   */
-  enabled: boolean;
   providerId: string;
   /**
    * The universe's UUID or handle.
@@ -4286,8 +4315,8 @@ export interface EnvironmentCreateParams {
     [k: string]: string;
   };
   /**
-   * The provider to create the environment with; the universe needs an
-   * enabled binding to it.
+   * The provider to create the environment with; it must be available to
+   * the universe.
    */
   providerId: string;
   /**
@@ -4582,15 +4611,11 @@ export interface EnvironmentPowerPutParams {
 export interface EnvironmentPowerPutResponse {
   environment: EnvironmentView;
 }
-export interface EnvironmentProviderBindingListParams {}
+/**
+ * A universe's bindings, as a deployment administrator lists them.
+ */
 export interface EnvironmentProviderBindingListResponse {
   bindings: EnvironmentProviderBindingView[];
-}
-export interface EnvironmentProviderBindingReadParams {
-  providerId: string;
-}
-export interface EnvironmentProviderBindingReadResponse {
-  binding: EnvironmentProviderBindingView;
 }
 export interface EnvironmentReadParams {
   environmentId: string;
@@ -4850,7 +4875,8 @@ export interface EnvironmentRegistrationKeyUpdateResponse {
 }
 export interface EnvironmentTemplateListParams {
   /**
-   * Only this provider's templates; omit for every enabled binding.
+   * Only this provider's templates; omit for every provider available to
+   * the universe.
    */
   providerId?: string | null;
 }

@@ -5961,12 +5961,12 @@ export const HTTP_OPERATIONS = {
       }
     }
   },
-  "environments/provider-bindings/list": {
+  "environments/providers/list": {
     "access": {
       "action": "read",
       "kind": "universe"
     },
-    "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
+    "description": "Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.",
     "events": null,
     "group": "environments",
     "method": "GET",
@@ -5983,26 +5983,26 @@ export const HTTP_OPERATIONS = {
     ],
     "params": {
       "schema": {
-        "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingListParams"
+        "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderListParams"
       },
-      "type": "EnvironmentProviderBindingListParams"
+      "type": "AvailableEnvironmentProviderListParams"
     },
-    "path": "/api/v1/universes/{universe}/environment-provider-bindings",
+    "path": "/api/v1/universes/{universe}/environment-providers",
     "pathFields": [],
     "queryFields": [],
     "result": {
       "schema": {
-        "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingListResponse"
+        "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderListResponse"
       },
-      "type": "EnvironmentProviderBindingListResponse"
+      "type": "AvailableEnvironmentProviderListResponse"
     },
     "role": "viewer",
     "scope": "universe",
     "success": "ok",
-    "summary": "List environment provider bindings",
+    "summary": "List available environment providers",
     "target": null,
     "transfer": "json",
-    "operationId": "environments/provider-bindings/list",
+    "operationId": "environments/providers/list",
     "responses": {
       "200": {
         "contentTypes": [
@@ -6076,12 +6076,12 @@ export const HTTP_OPERATIONS = {
       }
     }
   },
-  "environments/provider-bindings/read": {
+  "environments/providers/read": {
     "access": {
       "action": "read",
       "kind": "universe"
     },
-    "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
+    "description": "Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.",
     "events": null,
     "group": "environments",
     "method": "GET",
@@ -6106,11 +6106,11 @@ export const HTTP_OPERATIONS = {
     ],
     "params": {
       "schema": {
-        "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingReadParams"
+        "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderReadParams"
       },
-      "type": "EnvironmentProviderBindingReadParams"
+      "type": "AvailableEnvironmentProviderReadParams"
     },
-    "path": "/api/v1/universes/{universe}/environment-provider-bindings/{providerId}",
+    "path": "/api/v1/universes/{universe}/environment-providers/{providerId}",
     "pathFields": [
       {
         "field": "providerId",
@@ -6120,17 +6120,17 @@ export const HTTP_OPERATIONS = {
     "queryFields": [],
     "result": {
       "schema": {
-        "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingReadResponse"
+        "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderReadResponse"
       },
-      "type": "EnvironmentProviderBindingReadResponse"
+      "type": "AvailableEnvironmentProviderReadResponse"
     },
     "role": "viewer",
     "scope": "universe",
     "success": "ok",
-    "summary": "Read an environment provider binding",
+    "summary": "Read an available environment provider",
     "target": null,
     "transfer": "json",
-    "operationId": "environments/provider-bindings/read",
+    "operationId": "environments/providers/read",
     "responses": {
       "200": {
         "contentTypes": [
@@ -6209,7 +6209,7 @@ export const HTTP_OPERATIONS = {
       "action": "read",
       "kind": "universe"
     },
-    "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
+    "description": "Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.",
     "events": null,
     "group": "environments",
     "method": "GET",
@@ -6228,7 +6228,7 @@ export const HTTP_OPERATIONS = {
         "name": "providerId",
         "required": true,
         "schema": {
-          "description": "Only this provider's templates; omit for every enabled binding.",
+          "description": "Only this provider's templates; omit for every provider available to\nthe universe.",
           "type": [
             "string",
             "null"
@@ -6242,7 +6242,7 @@ export const HTTP_OPERATIONS = {
       },
       "type": "EnvironmentTemplateListParams"
     },
-    "path": "/api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates",
+    "path": "/api/v1/universes/{universe}/environment-providers/{providerId}/templates",
     "pathFields": [
       {
         "field": "providerId",
@@ -6341,7 +6341,7 @@ export const HTTP_OPERATIONS = {
       "action": "read",
       "kind": "universe"
     },
-    "description": "Returns one template, read live from a bound provider's controller.",
+    "description": "Returns one template, read live from the controller of a provider available to the universe.",
     "events": null,
     "group": "environments",
     "method": "GET",
@@ -6378,7 +6378,7 @@ export const HTTP_OPERATIONS = {
       },
       "type": "EnvironmentTemplateReadParams"
     },
-    "path": "/api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates/{templateId}",
+    "path": "/api/v1/universes/{universe}/environment-providers/{providerId}/templates/{templateId}",
     "pathFields": [
       {
         "field": "providerId",
@@ -18457,7 +18457,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
+    "description": "Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.",
     "events": null,
     "group": "deployment/environment-providers",
     "method": "PUT",
@@ -18915,7 +18915,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.",
+    "description": "Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.",
     "events": null,
     "group": "deployment/environment-providers",
     "method": "PUT",
@@ -19046,7 +19046,7 @@ export const HTTP_OPERATIONS = {
     "access": {
       "kind": "deployment"
     },
-    "description": "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.",
+    "description": "Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.",
     "events": null,
     "group": "deployment/environment-providers",
     "method": "DELETE",

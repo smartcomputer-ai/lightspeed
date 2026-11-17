@@ -87,6 +87,7 @@ export function adminRoutes(store: DemoStore): Hono {
       dataRouteBase?: unknown;
       credential?: unknown;
       clearCredential?: unknown;
+      availableToAllUniverses?: unknown;
     }>(c);
     const controllerEndpoint = optionalString(body.controllerEndpoint);
     if (!controllerEndpoint || !CONTROLLER_ENDPOINT.test(controllerEndpoint)) {
@@ -113,6 +114,7 @@ export function adminRoutes(store: DemoStore): Hono {
       ...(dataRouteBase ? { dataRouteBase } : {}),
       ...(effectiveDataRouteBase ? { effectiveDataRouteBase } : {}),
       hasCredential: credential ? true : body.clearCredential === true ? false : existing?.hasCredential ?? false,
+      availableToAllUniverses: body.availableToAllUniverses !== false,
       createdAtMs: existing?.createdAtMs ?? now,
       updatedAtMs: now,
     };
@@ -150,8 +152,6 @@ export function adminRoutes(store: DemoStore): Hono {
   app.put("/admin/universes/:universeId/environment-provider-bindings/:providerId", async (c) => {
     const universe = universeByAnyId(store, c.req.param("universeId"));
     if (!universe) return notFound(c);
-    const body = await readBody<{ enabled?: unknown }>(c);
-    if (typeof body.enabled !== "boolean") return badRequest(c, "enabled must be a boolean");
     const providerId = c.req.param("providerId");
     if (!store.environmentProviders.has(providerId)) {
       return notFound(c, `environment provider not found: ${providerId}`);
@@ -161,7 +161,6 @@ export function adminRoutes(store: DemoStore): Hono {
     const now = Date.now();
     const binding: EnvironmentProviderBinding = {
       providerId,
-      enabled: body.enabled,
       createdAtMs: existing?.createdAtMs ?? now,
       updatedAtMs: now,
     };

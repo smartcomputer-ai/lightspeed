@@ -4349,6 +4349,7 @@ mod tests {
                     "provider-credential",
                 )),
                 updated_at_ms: 10,
+                available_to_all_universes: false,
             })
             .await
             .expect("register provider");
@@ -4356,7 +4357,6 @@ mod tests {
             .put_provider_binding(PutEnvironmentProviderBinding {
                 universe_id: store.universe_id(),
                 provider_id: EnvironmentProviderId::new(provider_id),
-                enabled: true,
                 updated_at_ms: 10,
             })
             .await

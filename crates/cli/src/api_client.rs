@@ -1,5 +1,6 @@
 use api::{
-    AgentApiError, AgentApiErrorKind, BlobHasParams, BlobHasResponse, BlobPutParams,
+    AgentApiError, AgentApiErrorKind, AvailableEnvironmentProviderListParams,
+    AvailableEnvironmentProviderListResponse, BlobHasParams, BlobHasResponse, BlobPutParams,
     BlobPutResponse, BlobReadParams, CredentialClientCreateParams, CredentialClientCreateResponse,
     CredentialClientDeleteParams, CredentialClientDeleteResponse, CredentialClientListParams,
     CredentialClientListResponse, CredentialClientReadParams, CredentialClientReadResponse,
@@ -16,7 +17,6 @@ use api::{
     EnvironmentCredentialListParams, EnvironmentCredentialListResponse,
     EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse, EnvironmentListParams,
     EnvironmentListResponse, EnvironmentPowerPutParams, EnvironmentPowerPutResponse,
-    EnvironmentProviderBindingListParams, EnvironmentProviderBindingListResponse,
     EnvironmentReadParams, EnvironmentReadResponse, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
     METHOD_BLOBS_READ, METHOD_CREDENTIALS_CLIENTS_CREATE, METHOD_CREDENTIALS_CLIENTS_DELETE,
     METHOD_CREDENTIALS_CLIENTS_LIST, METHOD_CREDENTIALS_CLIENTS_READ,
@@ -28,10 +28,10 @@ use api::{
     METHOD_CREDENTIALS_PROVIDERS_READ, METHOD_ENVIRONMENTS_CLOSE,
     METHOD_ENVIRONMENTS_CREDENTIALS_BIND, METHOD_ENVIRONMENTS_CREDENTIALS_LIST,
     METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND, METHOD_ENVIRONMENTS_LIST,
-    METHOD_ENVIRONMENTS_POWER_PUT, METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST,
-    METHOD_ENVIRONMENTS_READ, METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST,
-    METHOD_MCP_SERVERS_PUT, METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE,
-    METHOD_PROFILES_LIST, METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
+    METHOD_ENVIRONMENTS_POWER_PUT, METHOD_ENVIRONMENTS_PROVIDERS_LIST, METHOD_ENVIRONMENTS_READ,
+    METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_PUT,
+    METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
+    METHOD_PROFILES_PUT, METHOD_PROFILES_READ, METHOD_SESSION_CONFIG_PUT,
     METHOD_SESSION_EVENTS_READ, METHOD_SESSION_LIST, METHOD_SESSION_PROFILES_APPLY,
     METHOD_SESSION_READ, METHOD_SESSION_RUNS_APPROVALS_DECIDE, METHOD_SESSION_RUNS_CANCEL,
     METHOD_SESSION_RUNS_READ, METHOD_SESSION_RUNS_START, METHOD_SESSION_RUNS_STEER,
@@ -532,11 +532,11 @@ impl HttpAgentApi {
             .await
     }
 
-    pub(crate) async fn list_environment_provider_bindings(
+    pub(crate) async fn list_available_environment_providers(
         &self,
-        params: EnvironmentProviderBindingListParams,
-    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
-        self.request(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, params)
+        params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
+        self.request(METHOD_ENVIRONMENTS_PROVIDERS_LIST, params)
             .await
     }
 

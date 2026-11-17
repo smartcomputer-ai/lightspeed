@@ -30,12 +30,11 @@ function template(providerId: string) {
 
 function engineResult(method: string, params: Record<string, unknown>): unknown {
   switch (method) {
-    case "environments/provider-bindings/list":
+    case "environments/providers/list":
       return {
-        bindings: [
-          { providerId: "alpha", enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-          { providerId: "beta", enabled: true, createdAtMs: 1, updatedAtMs: 1 },
-          { providerId: "gamma", enabled: false, createdAtMs: 1, updatedAtMs: 1 },
+        providers: [
+          { providerId: "alpha", availableToAllUniverses: true },
+          { providerId: "beta", availableToAllUniverses: false },
         ],
       };
     case "environments/templates/list":
@@ -60,7 +59,7 @@ function engineResult(method: string, params: Record<string, unknown>): unknown 
       return { provider: { providerId: params.providerId } };
     case "deployment/environment-providers/bindings/put":
     case "deployment/environment-providers/bindings/delete":
-      return { binding: { providerId: params.providerId, enabled: params.enabled ?? false } };
+      return { binding: { providerId: params.providerId, createdAtMs: 1, updatedAtMs: 1 } };
     default:
       throw new Error(`unexpected engine call ${method}`);
   }
@@ -111,7 +110,7 @@ function request(method: string, path: string, body?: unknown, platformRole?: st
 
 const callsOf = (method: string) => calls.filter((call) => call.method === method);
 
-it("lists templates per enabled provider and drops a provider that fails", async () => {
+it("lists templates per available provider and drops a provider that fails", async () => {
   failingProviders.add("beta");
   const response = await request("GET", "/universes/u/environment-templates");
   expect(response.status).toBe(200);
@@ -125,7 +124,7 @@ it("lists templates per enabled provider and drops a provider that fails", async
 it("lists one provider's templates directly when asked", async () => {
   const response = await request("GET", "/universes/u/environment-templates?providerId=gamma");
   expect(await response.json()).toEqual([template("gamma")]);
-  expect(callsOf("environments/provider-bindings/list")).toEqual([]);
+  expect(callsOf("environments/providers/list")).toEqual([]);
 });
 
 it("maps the environment list query onto one environments/list page", async () => {
@@ -315,14 +314,14 @@ it("returns a rotated registration key's secret", async () => {
 });
 
 it("puts and deletes a universe binding by provider id", async () => {
-  const put = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", { enabled: false }, "admin");
+  expect((await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", { enabled: false }, "admin")).status).toBe(400);
+  const put = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", {}, "admin");
   expect(put.status).toBe(200);
   const deleted = await request("DELETE", "/admin/universes/u1/environment-provider-bindings/alpha", undefined, "admin");
   expect(deleted.status).toBe(200);
   expect(callsOf("deployment/environment-providers/bindings/put")[0]?.params).toEqual({
     universe: "u1",
     providerId: "alpha",
-    enabled: false,
   });
   expect(callsOf("deployment/environment-providers/bindings/delete")[0]?.params).toEqual({
     universe: "u1",
@@ -354,7 +353,7 @@ it("rejects a provider put with both a credential and clearCredential", async ()
 });
 
 it("keeps the deployment routes for platform admins", async () => {
-  const response = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", { enabled: true });
+  const response = await request("PUT", "/admin/universes/u1/environment-provider-bindings/alpha", {});
   expect(response.status).toBe(403);
   expect(calls).toEqual([]);
 });

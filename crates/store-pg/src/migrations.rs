@@ -202,9 +202,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "universe_lifecycle_configuration",
         sql: include_str!("../migrations/028_universe_lifecycle_configuration.sql"),
     },
+    EmbeddedMigration {
+        version: 29,
+        name: "provider_availability",
+        sql: include_str!("../migrations/029_provider_availability.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 28;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 29;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

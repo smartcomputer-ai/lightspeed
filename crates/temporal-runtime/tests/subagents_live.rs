@@ -1821,6 +1821,7 @@ async fn register_fake_provider(
                 }
                 None => ProviderCredentialChange::Keep,
             },
+            available_to_all_universes: false,
             updated_at_ms: 1,
         })
         .await?;
@@ -1828,7 +1829,6 @@ async fn register_fake_provider(
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id: store.config().universe_id,
             provider_id: EnvironmentProviderId::new(provider_id),
-            enabled: true,
             updated_at_ms: 1,
         })
         .await?;

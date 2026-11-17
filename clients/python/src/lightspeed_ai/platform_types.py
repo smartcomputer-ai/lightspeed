@@ -902,15 +902,6 @@ class PlatformOrganizationsServiceUsersUpdateResult(TypedDict):
     serviceUser: ServiceUser
 
 
-class PlatformOrganizationsServiceUsersDeleteParams(TypedDict):
-    organizationId: str
-    serviceUserId: str
-
-
-class PlatformOrganizationsServiceUsersDeleteResult(TypedDict):
-    ok: Literal[True]
-
-
 class InitialOwner(TypedDict):
     kind: Literal['user', 'serviceUser']
     id: str

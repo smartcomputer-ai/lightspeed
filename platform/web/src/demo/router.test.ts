@@ -47,7 +47,7 @@ const universeReads = [
   "workspaces",
   "environments",
   "environment-templates",
-  "environment-provider-bindings",
+  "environment-providers",
   "environment-registration-keys",
   "mcp-servers",
   "secrets",

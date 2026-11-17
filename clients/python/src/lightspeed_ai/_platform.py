@@ -77,9 +77,6 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/organizations/service-users/update': {'method': 'PATCH',
                                                  'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}',
                                                  'helper': {'name': 'updateServiceUser'}},
- 'platform/organizations/service-users/delete': {'method': 'DELETE',
-                                                 'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}',
-                                                 'helper': {'name': 'disableServiceUser'}},
  'platform/universes/adopt': {'method': 'POST',
                               'path': '/api/v1/platform/organizations/{organizationId}/universes/adopt',
                               'helper': {'name': 'adoptUniverse'}},
@@ -187,9 +184,6 @@ class PlatformApi:
 
     async def update_service_user(self, params: Api.PlatformOrganizationsServiceUsersUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersUpdateResult:
         return cast(Api.PlatformOrganizationsServiceUsersUpdateResult, await self._invoke('platform/organizations/service-users/update', dict(params or {}), headers))
-
-    async def disable_service_user(self, params: Api.PlatformOrganizationsServiceUsersDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersDeleteResult:
-        return cast(Api.PlatformOrganizationsServiceUsersDeleteResult, await self._invoke('platform/organizations/service-users/delete', dict(params or {}), headers))
 
     async def adopt_universe(self, params: Api.PlatformUniversesAdoptParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesAdoptResult:
         return cast(Api.PlatformUniversesAdoptResult, await self._invoke('platform/universes/adopt', dict(params or {}), headers))

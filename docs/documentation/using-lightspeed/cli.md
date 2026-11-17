@@ -568,15 +568,17 @@ universe. `environment provider put` takes the provider ID, its
 `--controller-endpoint`, and optionally `--display-name`, `--data-route-base`
 (required for a `unix://` controller), and a credential from
 `--credential-file`, `--credential-env` or `--credential-stdin`; omitting the
-credential keeps the stored one, and `--clear-credential` removes it.
-`environment binding put PROVIDER_ID --enable` (or `--disable`) binds the
-selected universe. These operations use the runtime token; provider
-list/read/delete and binding delete do as well. Normal environment and
+credential keeps the stored one, and `--clear-credential` removes it. Every
+universe may use the provider unless `--selected-universes` limits it to
+universes bound with `environment binding put PROVIDER_ID`; `environment
+binding delete PROVIDER_ID` unbinds the selected universe, whose open
+environments on that provider then lose access until it is bound again. These
+operations use the runtime token; provider list/read/delete do as well.
+`environment provider available` shows the providers the selected universe may use. Normal environment and
 template operations operate within the selected universe.
 
 ```bash
 lightspeed environment provider put incus-local --controller-endpoint ws://127.0.0.1:19090/control --credential-file ./provider-credential
-lightspeed environment binding put incus-local --enable
 lightspeed environment template list --provider incus-local
 lightspeed environment create --provider incus-local --template linux-v1 --request-id provision-my-machine
 lightspeed environment register wss://machine.example/envd --request-id register-my-machine

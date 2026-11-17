@@ -814,9 +814,9 @@ const _: () = assert!(
 );
 
 /// The provider data route of a provisioned environment and the credential
-/// it is dialed with (none when the provider has none). The universe's
-/// binding of the provider must exist and be enabled; a target the
-/// provider has not named yet is still provisioning.
+/// it is dialed with (none when the provider has none). The provider must
+/// still be available to the universe; a target the provider has not named
+/// yet is still provisioning.
 async fn provider_route(
     state: &GatewayState,
     api: &GatewayAgentApi,
@@ -834,18 +834,26 @@ async fn provider_route(
             Box::new(StatusCode::BAD_GATEWAY.into_response())
         }
     };
-    match environments::EnvironmentProviderBindingStore::read_provider_binding(
-        api.store().as_ref(),
-        key.universe_id,
-        provider_id,
-    )
-    .await
-    {
-        Ok(binding) if binding.enabled => {}
-        Ok(_) | Err(environments::EnvironmentRegistryError::NotFound { .. }) => {
-            return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
-        }
+    let forbidden = || Box::new(StatusCode::FORBIDDEN.into_response());
+    let provider = match state.environment_provider(provider_id).await {
+        Ok(provider) => provider,
+        Err(environments::EnvironmentRegistryError::NotFound { .. }) => return Err(forbidden()),
         Err(error) => return Err(unavailable(error)),
+    };
+    let allowed = provider.available_to_all_universes
+        || match environments::EnvironmentProviderBindingStore::read_provider_binding(
+            api.store().as_ref(),
+            key.universe_id,
+            provider_id,
+        )
+        .await
+        {
+            Ok(_) => true,
+            Err(environments::EnvironmentRegistryError::NotFound { .. }) => false,
+            Err(error) => return Err(unavailable(error)),
+        };
+    if !allowed {
+        return Err(forbidden());
     }
     let Some(target_id) = source.provider_target_id.as_ref() else {
         return Err(Box::new(refusal_response(
@@ -853,10 +861,6 @@ async fn provider_route(
             None,
         )));
     };
-    let provider = state
-        .environment_provider(provider_id)
-        .await
-        .map_err(unavailable)?;
     let base = provider.effective_data_route_base().map_err(unavailable)?;
     let credential = state
         .environment_provider_credential(provider_id)

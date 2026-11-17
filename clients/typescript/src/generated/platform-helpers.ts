@@ -27,7 +27,6 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listServiceUsers": "platform/organizations/service-users/list",
   "createServiceUser": "platform/organizations/service-users/create",
   "updateServiceUser": "platform/organizations/service-users/update",
-  "disableServiceUser": "platform/organizations/service-users/delete",
   "adoptUniverse": "platform/universes/adopt",
   "createUniverse": "platform/universes/create",
   "updateUniverse": "platform/universes/update",
@@ -111,9 +110,6 @@ export class PlatformHelpers {
   }
   updateServiceUser(params: PlatformOperationParams<"platform/organizations/service-users/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/update">> {
     return this.client.call("platform/organizations/service-users/update", params, options);
-  }
-  disableServiceUser(params: PlatformOperationParams<"platform/organizations/service-users/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/delete">> {
-    return this.client.call("platform/organizations/service-users/delete", params, options);
   }
   adoptUniverse(params: PlatformOperationParams<"platform/universes/adopt">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/adopt">> {
     return this.client.call("platform/universes/adopt", params, options);

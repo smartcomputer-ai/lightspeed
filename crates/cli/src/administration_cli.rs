@@ -11,7 +11,8 @@ pub struct UniverseArgs {
 }
 #[derive(Debug, Subcommand)]
 enum UniverseCommand {
-    /// Manage this universe's user/service-user grants and policy through Platform.
+    /// List, give and remove this universe's roles for people and service
+    /// users, through Platform. Group access is declared in documents.
     Access(crate::platform_cli::AccessArgs),
     /// List universes; * marks the active universe for this invocation.
     List {

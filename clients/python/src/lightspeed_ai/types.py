@@ -157,6 +157,28 @@ the runtime records them without resolving caller permissions.
 """
 
 
+class AvailableEnvironmentProviderListParams(TypedDict):
+    pass
+
+
+class AvailableEnvironmentProviderReadParams(TypedDict):
+    providerId: str
+
+
+class AvailableEnvironmentProviderView(TypedDict):
+    """
+    A provider this universe may create environments from.
+    """
+
+    availableToAllUniverses: bool
+    """
+    Available to every universe; otherwise to this one through its
+    binding.
+    """
+    displayName: NotRequired[str | None]
+    providerId: str
+
+
 class BlobHasItem(TypedDict):
     blobRef: str
     exists: bool
@@ -1205,6 +1227,11 @@ class DeploymentEnvironmentProviderPutParams(TypedDict):
     redacts it; request logging must never echo these params.
     """
 
+    availableToAllUniverses: NotRequired[bool]
+    """
+    Every universe may use the provider (the default). `false` limits it
+    to the universes it is bound to.
+    """
     clearCredential: NotRequired[bool]
     """
     Remove the stored credential. Excludes `credential`.
@@ -1233,6 +1260,11 @@ class DeploymentEnvironmentProviderReadParams(TypedDict):
 
 
 class DeploymentEnvironmentProviderView(TypedDict):
+    availableToAllUniverses: bool
+    """
+    Every universe may use the provider. Otherwise only the universes it
+    is bound to may.
+    """
     controllerEndpoint: str
     """
     `ws://`, `wss://` or `unix://` URL of the provider controller.
@@ -1269,13 +1301,11 @@ class DeploymentProviderBindingDeleteParams(TypedDict):
 
 class DeploymentProviderBindingPutParams(TypedDict):
     """
-    Create or replace a universe's binding to a deployment provider.
+    Allow a universe to use a provider that is not available to all
+    universes. Repeating it changes nothing; for a provider available to all
+    universes it has no effect.
     """
 
-    enabled: bool
-    """
-    Admits creates, template listing and data routes for the universe.
-    """
     providerId: str
     universe: str
     """
@@ -1588,22 +1618,13 @@ class EnvironmentPromptsConfig(TypedDict):
     """
 
 
-class EnvironmentProviderBindingListParams(TypedDict):
-    pass
-
-
-class EnvironmentProviderBindingReadParams(TypedDict):
-    providerId: str
-
-
 class EnvironmentProviderBindingView(TypedDict):
     """
-    A universe's binding to a deployment provider. Creates, templates and
-    data routes of the provider need it enabled.
+    A universe allowed to use a provider that is not available to all
+    universes.
     """
 
     createdAtMs: int
-    enabled: bool
     providerId: str
     updatedAtMs: int
 
@@ -1888,7 +1909,8 @@ Lifecycle phase of a provider target, as the provider reports it.
 class EnvironmentTemplateListParams(TypedDict):
     providerId: NotRequired[str | None]
     """
-    Only this provider's templates; omit for every enabled binding.
+    Only this provider's templates; omit for every provider available to
+    the universe.
     """
 
 
@@ -4236,6 +4258,14 @@ class ApprovalDecisionResult(TypedDict):
     status: ApprovalDecisionStatus
 
 
+class AvailableEnvironmentProviderListResponse(TypedDict):
+    providers: list[AvailableEnvironmentProviderView]
+
+
+class AvailableEnvironmentProviderReadResponse(TypedDict):
+    provider: AvailableEnvironmentProviderView
+
+
 class BlobPutResponse(TypedDict):
     blobs: NotRequired[list[BlobPutResult]]
 
@@ -5183,8 +5213,8 @@ class EnvironmentCreateParams(TypedDict):
     metadata: NotRequired[dict[str, str]]
     providerId: str
     """
-    The provider to create the environment with; the universe needs an
-    enabled binding to it.
+    The provider to create the environment with; it must be available to
+    the universe.
     """
     requestId: str
     """
@@ -5303,11 +5333,11 @@ class EnvironmentPowerPutParams(TypedDict):
 
 
 class EnvironmentProviderBindingListResponse(TypedDict):
+    """
+    A universe's bindings, as a deployment administrator lists them.
+    """
+
     bindings: list[EnvironmentProviderBindingView]
-
-
-class EnvironmentProviderBindingReadResponse(TypedDict):
-    binding: EnvironmentProviderBindingView
 
 
 class EnvironmentRegistrationKeyCreateResponse(TypedDict):

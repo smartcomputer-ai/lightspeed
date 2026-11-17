@@ -2216,87 +2216,87 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                             'summary': 'Set environment power',
                             'target': None,
                             'transfer': 'json'},
- 'environments/provider-bindings/list': {'access': {'action': 'read',
-                                                    'kind': 'universe'},
-                                         'description': "Lists this universe's "
-                                                        'bindings to '
-                                                        'deployment providers '
-                                                        'and whether each is '
-                                                        'enabled.',
-                                         'events': None,
-                                         'group': 'environments',
-                                         'method': 'GET',
-                                         'operationId': 'environments/provider-bindings/list',
-                                         'parameters': [{'in': 'path',
-                                                         'name': 'universe',
-                                                         'required': True,
-                                                         'schema': {'description': 'Universe '
-                                                                                   'UUID '
-                                                                                   'or '
-                                                                                   'active '
-                                                                                   'handle.',
-                                                                    'type': 'string'}}],
-                                         'params': {'schema': {'$ref': 'api.schema.json#/definitions/EnvironmentProviderBindingListParams'},
-                                                    'type': 'EnvironmentProviderBindingListParams'},
-                                         'path': '/api/v1/universes/{universe}/environment-provider-bindings',
-                                         'pathFields': [],
-                                         'queryFields': [],
-                                         'result': {'schema': {'$ref': 'api.schema.json#/definitions/EnvironmentProviderBindingListResponse'},
-                                                    'type': 'EnvironmentProviderBindingListResponse'},
-                                         'role': 'viewer',
-                                         'scope': 'universe',
-                                         'success': 'ok',
-                                         'summary': 'List environment provider '
-                                                    'bindings',
-                                         'target': None,
-                                         'transfer': 'json'},
- 'environments/provider-bindings/read': {'access': {'action': 'read',
-                                                    'kind': 'universe'},
-                                         'description': 'Returns this '
-                                                        "universe's binding to "
-                                                        'one provider. '
-                                                        'Templates and '
-                                                        'physical resource, '
-                                                        'network, and ingress '
-                                                        'policy remain '
-                                                        'provider-owned.',
-                                         'events': None,
-                                         'group': 'environments',
-                                         'method': 'GET',
-                                         'operationId': 'environments/provider-bindings/read',
-                                         'parameters': [{'in': 'path',
-                                                         'name': 'universe',
-                                                         'required': True,
-                                                         'schema': {'description': 'Universe '
-                                                                                   'UUID '
-                                                                                   'or '
-                                                                                   'active '
-                                                                                   'handle.',
-                                                                    'type': 'string'}},
-                                                        {'in': 'path',
-                                                         'name': 'providerId',
-                                                         'required': True,
-                                                         'schema': {'type': 'string'}}],
-                                         'params': {'schema': {'$ref': 'api.schema.json#/definitions/EnvironmentProviderBindingReadParams'},
-                                                    'type': 'EnvironmentProviderBindingReadParams'},
-                                         'path': '/api/v1/universes/{universe}/environment-provider-bindings/{providerId}',
-                                         'pathFields': [{'field': 'providerId',
-                                                         'parameter': 'providerId'}],
-                                         'queryFields': [],
-                                         'result': {'schema': {'$ref': 'api.schema.json#/definitions/EnvironmentProviderBindingReadResponse'},
-                                                    'type': 'EnvironmentProviderBindingReadResponse'},
-                                         'role': 'viewer',
-                                         'scope': 'universe',
-                                         'success': 'ok',
-                                         'summary': 'Read an environment '
-                                                    'provider binding',
-                                         'target': None,
-                                         'transfer': 'json'},
+ 'environments/providers/list': {'access': {'action': 'read',
+                                            'kind': 'universe'},
+                                 'description': 'Lists the deployment '
+                                                'providers this universe may '
+                                                'create environments from: '
+                                                'those available to every '
+                                                'universe, and those this '
+                                                'universe is bound to.',
+                                 'events': None,
+                                 'group': 'environments',
+                                 'method': 'GET',
+                                 'operationId': 'environments/providers/list',
+                                 'parameters': [{'in': 'path',
+                                                 'name': 'universe',
+                                                 'required': True,
+                                                 'schema': {'description': 'Universe '
+                                                                           'UUID '
+                                                                           'or '
+                                                                           'active '
+                                                                           'handle.',
+                                                            'type': 'string'}}],
+                                 'params': {'schema': {'$ref': 'api.schema.json#/definitions/AvailableEnvironmentProviderListParams'},
+                                            'type': 'AvailableEnvironmentProviderListParams'},
+                                 'path': '/api/v1/universes/{universe}/environment-providers',
+                                 'pathFields': [],
+                                 'queryFields': [],
+                                 'result': {'schema': {'$ref': 'api.schema.json#/definitions/AvailableEnvironmentProviderListResponse'},
+                                            'type': 'AvailableEnvironmentProviderListResponse'},
+                                 'role': 'viewer',
+                                 'scope': 'universe',
+                                 'success': 'ok',
+                                 'summary': 'List available environment '
+                                            'providers',
+                                 'target': None,
+                                 'transfer': 'json'},
+ 'environments/providers/read': {'access': {'action': 'read',
+                                            'kind': 'universe'},
+                                 'description': 'Returns one provider this '
+                                                'universe may create '
+                                                'environments from; not found '
+                                                'when it may not. Templates '
+                                                'and physical resource, '
+                                                'network, and ingress policy '
+                                                'remain provider-owned.',
+                                 'events': None,
+                                 'group': 'environments',
+                                 'method': 'GET',
+                                 'operationId': 'environments/providers/read',
+                                 'parameters': [{'in': 'path',
+                                                 'name': 'universe',
+                                                 'required': True,
+                                                 'schema': {'description': 'Universe '
+                                                                           'UUID '
+                                                                           'or '
+                                                                           'active '
+                                                                           'handle.',
+                                                            'type': 'string'}},
+                                                {'in': 'path',
+                                                 'name': 'providerId',
+                                                 'required': True,
+                                                 'schema': {'type': 'string'}}],
+                                 'params': {'schema': {'$ref': 'api.schema.json#/definitions/AvailableEnvironmentProviderReadParams'},
+                                            'type': 'AvailableEnvironmentProviderReadParams'},
+                                 'path': '/api/v1/universes/{universe}/environment-providers/{providerId}',
+                                 'pathFields': [{'field': 'providerId',
+                                                 'parameter': 'providerId'}],
+                                 'queryFields': [],
+                                 'result': {'schema': {'$ref': 'api.schema.json#/definitions/AvailableEnvironmentProviderReadResponse'},
+                                            'type': 'AvailableEnvironmentProviderReadResponse'},
+                                 'role': 'viewer',
+                                 'scope': 'universe',
+                                 'success': 'ok',
+                                 'summary': 'Read an available environment '
+                                            'provider',
+                                 'target': None,
+                                 'transfer': 'json'},
  'environments/templates/list': {'access': {'action': 'read',
                                             'kind': 'universe'},
                                  'description': 'Reads templates live from the '
-                                                "controllers of the universe's "
-                                                'enabled provider bindings, or '
+                                                'controllers of every provider '
+                                                'available to the universe, or '
                                                 'of one provider: compute, '
                                                 'power states, public ingress, '
                                                 'and default idle policy.',
@@ -2323,13 +2323,16 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                                                            'omit '
                                                                            'for '
                                                                            'every '
-                                                                           'enabled '
-                                                                           'binding.',
+                                                                           'provider '
+                                                                           'available '
+                                                                           'to\n'
+                                                                           'the '
+                                                                           'universe.',
                                                             'type': ['string',
                                                                      'null']}}],
                                  'params': {'schema': {'$ref': 'api.schema.json#/definitions/EnvironmentTemplateListParams'},
                                             'type': 'EnvironmentTemplateListParams'},
-                                 'path': '/api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates',
+                                 'path': '/api/v1/universes/{universe}/environment-providers/{providerId}/templates',
                                  'pathFields': [{'field': 'providerId',
                                                  'parameter': 'providerId'}],
                                  'queryFields': [],
@@ -2344,8 +2347,9 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
  'environments/templates/read': {'access': {'action': 'read',
                                             'kind': 'universe'},
                                  'description': 'Returns one template, read '
-                                                "live from a bound provider's "
-                                                'controller.',
+                                                'live from the controller of a '
+                                                'provider available to the '
+                                                'universe.',
                                  'events': None,
                                  'group': 'environments',
                                  'method': 'GET',
@@ -2369,7 +2373,7 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                                  'schema': {'type': 'string'}}],
                                  'params': {'schema': {'$ref': 'api.schema.json#/definitions/EnvironmentTemplateReadParams'},
                                             'type': 'EnvironmentTemplateReadParams'},
-                                 'path': '/api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates/{templateId}',
+                                 'path': '/api/v1/universes/{universe}/environment-providers/{providerId}/templates/{templateId}',
                                  'pathFields': [{'field': 'providerId',
                                                  'parameter': 'providerId'},
                                                 {'field': 'templateId',
@@ -6044,27 +6048,25 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                  'transfer': 'json'},
  'deployment/environment-providers/put': {'access': {'kind': 'deployment'},
                                           'description': 'Registers or '
-                                                         'replaces a '
-                                                         'deployment provider: '
+                                                         'replaces a provider: '
+                                                         'who may use it '
+                                                         '(every universe '
+                                                         'unless limited to '
+                                                         'bound ones), '
                                                          'controller endpoint, '
                                                          'optional data route '
                                                          'base, and optional '
-                                                         'bearer credential '
-                                                         'for controller and '
-                                                         'data routes '
-                                                         '(write-only: kept '
+                                                         'write-only bearer '
+                                                         'credential (kept '
                                                          'when omitted, '
                                                          'removed by '
-                                                         'clearCredential, '
-                                                         'never returned). The '
-                                                         'controller is '
+                                                         'clearCredential). '
+                                                         'The controller is '
                                                          'probed: a definitive '
                                                          'refusal is '
                                                          'invalidRequest, '
                                                          'unreachable is '
-                                                         'accepted. The '
-                                                         'provider never calls '
-                                                         'Lightspeed.',
+                                                         'accepted.',
                                           'events': None,
                                           'group': 'deployment/environment-providers',
                                           'method': 'PUT',
@@ -6183,25 +6185,18 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                              'target': None,
                                              'transfer': 'json'},
  'deployment/environment-providers/bindings/put': {'access': {'kind': 'deployment'},
-                                                   'description': 'Creates or '
-                                                                  'replaces '
-                                                                  'one '
-                                                                  "universe's "
-                                                                  'binding to '
-                                                                  'a '
+                                                   'description': 'Allows one '
+                                                                  'universe to '
+                                                                  'use a '
                                                                   'deployment '
-                                                                  'provider. '
-                                                                  'Only an '
-                                                                  'enabled '
-                                                                  'binding '
-                                                                  'admits '
-                                                                  'creates, '
-                                                                  'template '
-                                                                  'listing, '
-                                                                  'and data '
-                                                                  'routes for '
-                                                                  'the '
-                                                                  'universe.',
+                                                                  'provider '
+                                                                  'that is not '
+                                                                  'available '
+                                                                  'to all '
+                                                                  'universes. '
+                                                                  'Repeating '
+                                                                  'it changes '
+                                                                  'nothing.',
                                                    'events': None,
                                                    'group': 'deployment/environment-providers',
                                                    'method': 'PUT',
@@ -6239,20 +6234,25 @@ HTTP_OPERATIONS: dict[str, Any] = {'universe/watch': {'access': {'action': 'read
                                                    'target': None,
                                                    'transfer': 'json'},
  'deployment/environment-providers/bindings/delete': {'access': {'kind': 'deployment'},
-                                                      'description': 'Deletes '
-                                                                     'a '
-                                                                     "universe's "
-                                                                     'binding '
-                                                                     'to a '
-                                                                     'provider '
-                                                                     'only '
-                                                                     'when the '
+                                                      'description': 'Stops a '
                                                                      'universe '
-                                                                     'has no '
-                                                                     'non-closed '
-                                                                     'environment '
-                                                                     'of that '
-                                                                     'provider.',
+                                                                     'from '
+                                                                     'using a '
+                                                                     'provider '
+                                                                     'that is '
+                                                                     'not '
+                                                                     'available '
+                                                                     'to all '
+                                                                     'universes. '
+                                                                     'Its open '
+                                                                     'environments '
+                                                                     'on the '
+                                                                     'provider '
+                                                                     'lose '
+                                                                     'access '
+                                                                     'until it '
+                                                                     'is bound '
+                                                                     'again.',
                                                       'events': None,
                                                       'group': 'deployment/environment-providers',
                                                       'method': 'DELETE',

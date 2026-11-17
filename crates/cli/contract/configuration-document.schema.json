@@ -529,16 +529,12 @@
     "EnvironmentProvidersEntry": {
       "additionalProperties": false,
       "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
         "providerId": {
           "type": "string"
         }
       },
       "required": [
-        "providerId",
-        "enabled"
+        "providerId"
       ],
       "type": "object"
     },

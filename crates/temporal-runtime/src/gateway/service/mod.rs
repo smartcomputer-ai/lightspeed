@@ -3696,22 +3696,24 @@ impl AgentApiService for GatewayAgentApi {
         self.cancel_environment_job_records(params).await
     }
 
-    async fn list_environment_provider_bindings(
+    async fn list_available_environment_providers(
         &self,
-        params: EnvironmentProviderBindingListParams,
-    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
-        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, None)
+        params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDERS_LIST, None)
             .await?;
-        self.list_environment_provider_binding_records(params).await
+        self.list_available_environment_provider_records(params)
+            .await
     }
 
-    async fn read_environment_provider_binding(
+    async fn read_available_environment_provider(
         &self,
-        params: EnvironmentProviderBindingReadParams,
-    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
-        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ, None)
+        params: AvailableEnvironmentProviderReadParams,
+    ) -> Result<AvailableEnvironmentProviderReadResponse, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDERS_READ, None)
             .await?;
-        self.read_environment_provider_binding_record(params).await
+        self.read_available_environment_provider_record(params)
+            .await
     }
 
     async fn list_environment_templates(
@@ -5079,21 +5081,21 @@ impl GatewayAgentApi {
             .await
     }
 
-    pub(super) async fn list_environment_provider_binding_records(
+    pub(super) async fn list_available_environment_provider_records(
         &self,
-        _params: EnvironmentProviderBindingListParams,
-    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
+        _params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
         self.environment_service()
-            .list_environment_provider_binding_records(_params)
+            .list_available_environment_provider_records(_params)
             .await
     }
 
-    pub(super) async fn read_environment_provider_binding_record(
+    pub(super) async fn read_available_environment_provider_record(
         &self,
-        params: EnvironmentProviderBindingReadParams,
-    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
+        params: AvailableEnvironmentProviderReadParams,
+    ) -> Result<AvailableEnvironmentProviderReadResponse, AgentApiError> {
         self.environment_service()
-            .read_environment_provider_binding_record(params)
+            .read_available_environment_provider_record(params)
             .await
     }
 

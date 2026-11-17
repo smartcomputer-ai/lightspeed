@@ -1100,21 +1100,6 @@ export interface PlatformOrganizationsServiceUsersUpdateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformOrganizationsServiceUsersDeleteParams".
- */
-export interface PlatformOrganizationsServiceUsersDeleteParams {
-  organizationId: string;
-  serviceUserId: string;
-}
-/**
- * This interface was referenced by `PlatformApi`'s JSON-Schema
- * via the `definition` "PlatformOrganizationsServiceUsersDeleteResult".
- */
-export interface PlatformOrganizationsServiceUsersDeleteResult {
-  ok: true;
-}
-/**
- * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformUniversesAdoptParams".
  */
 export interface PlatformUniversesAdoptParams {

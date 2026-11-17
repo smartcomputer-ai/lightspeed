@@ -175,6 +175,9 @@ export function AdminEnvironmentProvidersPage() {
                     <Badge variant="outline">
                       {provider.hasCredential ? "credential" : "no credential"}
                     </Badge>
+                    <Badge variant="secondary">
+                      {provider.availableToAllUniverses ? "All universes" : "Selected universes"}
+                    </Badge>
                   </div>
                   <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
                     {provider.controllerEndpoint}
@@ -192,10 +195,12 @@ export function AdminEnvironmentProvidersPage() {
                     <EditIcon data-icon="inline-start" />
                     Edit
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => setBindingFor(provider)}>
-                    <AddIcon data-icon="inline-start" />
-                    Bind universe
-                  </Button>
+                  {!provider.availableToAllUniverses && (
+                    <Button variant="outline" size="sm" onClick={() => setBindingFor(provider)}>
+                      <AddIcon data-icon="inline-start" />
+                      Bind universe
+                    </Button>
+                  )}
                   <AlertDialog>
                     <AlertDialogTrigger
                       render={
@@ -216,9 +221,9 @@ export function AdminEnvironmentProvidersPage() {
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                           Removes the registration from this deployment. The engine
-                          refuses the delete while any universe binding or any
-                          non-closed environment of this provider exists; delete
-                          those bindings and close those environments first.
+                          refuses the delete while any universe is bound to it or any
+                          non-closed environment of this provider exists; unbind
+                          those universes and close those environments first.
                           Provider-side machines are not touched.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
@@ -236,9 +241,13 @@ export function AdminEnvironmentProvidersPage() {
                 </div>
               </div>
               <div className="px-4 py-3 md:px-5">
-                {providerBindings.length === 0 ? (
+                {provider.availableToAllUniverses ? (
                   <p className="text-sm text-muted-foreground">
-                    No universe is bound to this provider yet.
+                    Every universe may use this provider.
+                  </p>
+                ) : providerBindings.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Only bound universes may use this provider, and none is bound yet.
                   </p>
                 ) : (
                   <TableCard className="rounded-lg">
@@ -246,7 +255,6 @@ export function AdminEnvironmentProvidersPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Universe</TableHead>
-                          <TableHead>Enabled</TableHead>
                           <TableHead className="w-0" />
                         </TableRow>
                       </TableHeader>
@@ -291,42 +299,29 @@ function BindingRow({
   onChanged: () => void;
 }) {
   const path = `/api/ui/admin/universes/${universe.lightspeedUniverseId}/environment-provider-bindings/${encodeURIComponent(binding.providerId)}`;
-  const setEnabled = useMutation({
-    mutationFn: (enabled: boolean) =>
-      api<EnvironmentProviderBindingView>("PUT", path, { enabled }),
-    onSuccess: onChanged,
-  });
   const remove = useMutation({
     mutationFn: () => api<EnvironmentProviderBindingView>("DELETE", path),
     onSuccess: onChanged,
   });
-  const error = setEnabled.error ?? remove.error;
+  const error = remove.error;
   return (
     <TableRow>
       <TableTitleCell title={universe.name} subtitle={universe.lightspeedUniverseId} />
-      <TableCell>
-        <Switch
-          aria-label={`Enable ${binding.providerId} for ${universe.name}`}
-          checked={binding.enabled}
-          disabled={setEnabled.isPending}
-          onCheckedChange={(enabled) => setEnabled.mutate(enabled)}
-        />
-      </TableCell>
       <TableActionsCell>
         <AlertDialog>
           <AlertDialogTrigger
             render={<Button variant="ghost" size="sm" className="text-destructive" disabled={remove.isPending} />}
           >
-            Delete
+            Unbind
           </AlertDialogTrigger>
           <AlertDialogContent className="max-h-[min(92dvh,800px)] overflow-y-auto">
             <AlertDialogHeader>
               <AlertDialogTitle>Unbind {universe.name}?</AlertDialogTitle>
               <AlertDialogDescription>
-                {universe.name} will no longer be able to provision from{" "}
-                <span className="font-mono text-xs">{binding.providerId}</span>. The engine
-                rejects the delete while a non-closed environment of this provider is still
-                open in the universe; disable the binding instead to stop new provisioning.
+                {universe.name} will no longer be able to use{" "}
+                <span className="font-mono text-xs">{binding.providerId}</span>. Its open
+                environments on this provider lose access until it is bound again; close
+                them to clean up.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -335,7 +330,7 @@ function BindingRow({
                 className="bg-destructive text-white hover:bg-destructive/90"
                 onClick={() => remove.mutate()}
               >
-                Delete binding
+                Unbind
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -365,6 +360,7 @@ function ProviderDialog({
   const [dataRouteBase, setDataRouteBase] = useState(provider?.dataRouteBase ?? "");
   const [credential, setCredential] = useState("");
   const [clearCredential, setClearCredential] = useState(false);
+  const [allUniverses, setAllUniverses] = useState(provider?.availableToAllUniverses ?? true);
   const [error, setError] = useState<string | null>(null);
   const editing = provider !== null;
 
@@ -376,6 +372,7 @@ function ProviderDialog({
         ...(dataRouteBase.trim() ? { dataRouteBase: dataRouteBase.trim() } : {}),
         ...(credential ? { credential } : {}),
         ...(clearCredential ? { clearCredential: true } : {}),
+        availableToAllUniverses: allUniverses,
       }),
     onSuccess: () => {
       onOpenChange(false);
@@ -409,8 +406,8 @@ function ProviderDialog({
           </DialogTitle>
           <DialogDescription>
             Records how Lightspeed reaches the provider's controller and data routes, and the
-            optional bearer credential it presents there. The provider never self-registers.
-            Universes get access through bindings.
+            optional bearer credential it presents there, and who may use it. The provider
+            never self-registers.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
@@ -491,6 +488,16 @@ function ProviderDialog({
               </label>
             )}
           </Field>
+          <div className="flex items-start justify-between gap-4">
+            <div className="grid gap-0.5">
+              <label htmlFor="provider-all-universes" className="text-sm font-medium">Available to every universe</label>
+              <p className="text-xs text-muted-foreground">
+                Off: only universes you bind to it may use it. Turning it off cuts unbound
+                universes off from their open environments on this provider.
+              </p>
+            </div>
+            <Switch id="provider-all-universes" checked={allUniverses} onCheckedChange={setAllUniverses} />
+          </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
@@ -543,7 +550,7 @@ function BindUniverseDialog({
       api<EnvironmentProviderBindingView>(
         "PUT",
         `/api/ui/admin/universes/${universeId}/environment-provider-bindings/${encodeURIComponent(provider!.providerId)}`,
-        { enabled: true },
+        {},
       ),
     onSuccess: () => {
       onOpenChange(false);
@@ -565,9 +572,8 @@ function BindUniverseDialog({
         <DialogHeader>
           <DialogTitle>Bind a universe to {provider?.displayName ?? provider?.providerId}</DialogTitle>
           <DialogDescription>
-            An enabled binding lets the universe list this provider's templates and
-            provision environments from it. There is at most one binding per
-            universe and provider.
+            A bound universe may list this provider's templates and create environments
+            from it.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">

@@ -12,7 +12,7 @@ import {
   api,
   type Environment,
   type EnvironmentCredential,
-  type EnvironmentProviderBinding,
+  type AvailableEnvironmentProvider,
   type EnvironmentRegistrationKey,
   type EnvironmentRegistrationKeyCreated,
   type EnvironmentTemplate,
@@ -106,12 +106,12 @@ function EnvironmentList({ universeId }: { universeId: string }) {
   const [showClosed, setShowClosed] = useState(false);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null);
   const detailsTriggerRef = useRef<HTMLElement | null>(null);
-  const bindings = useQuery({
-    queryKey: ["environment-provider-bindings", universeId],
+  const providers = useQuery({
+    queryKey: ["environment-providers", universeId],
     queryFn: () =>
-      api<EnvironmentProviderBinding[]>(
+      api<AvailableEnvironmentProvider[]>(
         "GET",
-        `/api/ui/universes/${universeId}/environment-provider-bindings`,
+        `/api/ui/universes/${universeId}/environment-providers`,
       ),
   });
   const templates = useQuery(environmentTemplatesQuery(universeId));
@@ -154,7 +154,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
       ),
   });
 
-  const bindingRows = (bindings.data ?? [])
+  const providerRows = (providers.data ?? [])
     .slice()
     .sort((a, b) => a.providerId.localeCompare(b.providerId));
   const templateRows = (templates.data ?? [])
@@ -166,11 +166,9 @@ function EnvironmentList({ universeId }: { universeId: string }) {
     .sort((a, b) => environmentName(a).localeCompare(environmentName(b))
       || a.environmentId.localeCompare(b.environmentId));
   const selectedEnvironment = environmentRows.find((environment) => environment.environmentId === selectedEnvironmentId);
-  const enabledProviders = new Set(
-    bindingRows.filter((binding) => binding.enabled).map((binding) => binding.providerId),
-  );
+  const availableProviders = new Set(providerRows.map((provider) => provider.providerId));
   const creatableTemplates = templateRows.filter(
-    (template) => enabledProviders.has(template.providerId) && !template.deprecated,
+    (template) => availableProviders.has(template.providerId) && !template.deprecated,
   );
   const keyRows = (registrationKeys.data ?? [])
     .slice()
@@ -203,9 +201,9 @@ function EnvironmentList({ universeId }: { universeId: string }) {
           </div>
         )}
       />
-      {(bindings.isLoading || templates.isLoading || environments.isLoading || secrets.isLoading) && <LoadingNote />}
-      {bindings.error && (
-        <ReadError error={bindings.error} loading={!bindings.data} prefix="Provider bindings unavailable" />
+      {(providers.isLoading || templates.isLoading || environments.isLoading || secrets.isLoading) && <LoadingNote />}
+      {providers.error && (
+        <ReadError error={providers.error} loading={!providers.data} prefix="Environment providers unavailable" />
       )}
       {templates.error && (
         <ReadError error={templates.error} loading={!templates.data} prefix="Environment templates unavailable" />
@@ -287,7 +285,7 @@ function EnvironmentList({ universeId }: { universeId: string }) {
           {keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
         </section>
       )}
-      {bindingRows.length > 0 && <ProviderBindings bindings={bindingRows} />}
+      {providerRows.length > 0 && <AvailableProviders providers={providerRows} />}
     </>
   );
 }
@@ -1428,42 +1426,34 @@ function EditRegistrationKeyDialog({
   );
 }
 
-function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[] }) {
+/// The providers this universe may create environments from: those
+/// available to every universe, and those it is bound to.
+function AvailableProviders({ providers }: { providers: AvailableEnvironmentProvider[] }) {
   const [open, setOpen] = useState(false);
-  const enabled = bindings.filter((binding) => binding.enabled).length;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <TableCard className="mt-6">
         <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left outline-none hover:bg-muted/30 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 md:px-5">
-          <span className="text-sm font-medium">Provider configuration</span>
-          <span className="text-xs text-muted-foreground">
-            {enabled} enabled · {bindings.length} total
-          </span>
+          <span className="text-sm font-medium">Providers</span>
+          <span className="text-xs text-muted-foreground">{providers.length} available</span>
           <DropdownCaretIcon className={`ml-auto size-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          {/* A table without a header: the provider's name, its state and id, and
-              when it changed. */}
-          <Table aria-label="Provider configuration" className="border-t [&_td]:px-4 [&_td]:py-3 md:[&_td]:px-5">
+          {/* A table without a header: the provider's name and id, and whether
+              every universe may use it or this one through its binding. */}
+          <Table aria-label="Providers" className="border-t [&_td]:px-4 [&_td]:py-3 md:[&_td]:px-5">
             <TableBody>
-              {bindings.map((binding) => (
-                <TableRow key={binding.providerId} className="hover:bg-transparent">
+              {providers.map((provider) => (
+                <TableRow key={provider.providerId} className="hover:bg-transparent">
                   <TableCell className="w-full max-w-0">
                     <div className="grid min-w-0 gap-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{humanizeIdentifier(binding.providerId)}</span>
-                        {binding.enabled ? (
-                          <Badge variant="secondary">enabled</Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
-                        )}
-                      </div>
-                      <IdText className="text-muted-foreground">{binding.providerId}</IdText>
+                      <span className="font-medium">{provider.displayName ?? humanizeIdentifier(provider.providerId)}</span>
+                      <IdText className="text-muted-foreground">{provider.providerId}</IdText>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">
-                    Updated {relativeTime(binding.updatedAtMs)}
+                  <TableCell className="text-right">
+                    <Badge variant="secondary">{provider.availableToAllUniverses ? "All universes" : "This universe"}</Badge>
                   </TableCell>
                 </TableRow>
               ))}

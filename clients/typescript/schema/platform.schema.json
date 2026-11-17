@@ -3310,37 +3310,6 @@
       ],
       "additionalProperties": false
     },
-    "PlatformOrganizationsServiceUsersDeleteParams": {
-      "type": "object",
-      "properties": {
-        "organizationId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "serviceUserId": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "organizationId",
-        "serviceUserId"
-      ],
-      "additionalProperties": false
-    },
-    "PlatformOrganizationsServiceUsersDeleteResult": {
-      "type": "object",
-      "properties": {
-        "ok": {
-          "type": "boolean",
-          "const": true
-        }
-      },
-      "required": [
-        "ok"
-      ],
-      "additionalProperties": false
-    },
     "PlatformUniversesAdoptParams": {
       "type": "object",
       "properties": {

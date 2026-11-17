@@ -25,7 +25,6 @@ export interface PlatformOperationMap {
   "platform/organizations/service-users/list": { params: T.PlatformOrganizationsServiceUsersListParams; result: T.PlatformOrganizationsServiceUsersListResult };
   "platform/organizations/service-users/create": { params: T.PlatformOrganizationsServiceUsersCreateParams; result: T.PlatformOrganizationsServiceUsersCreateResult };
   "platform/organizations/service-users/update": { params: T.PlatformOrganizationsServiceUsersUpdateParams; result: T.PlatformOrganizationsServiceUsersUpdateResult };
-  "platform/organizations/service-users/delete": { params: T.PlatformOrganizationsServiceUsersDeleteParams; result: T.PlatformOrganizationsServiceUsersDeleteResult };
   "platform/universes/adopt": { params: T.PlatformUniversesAdoptParams; result: T.PlatformUniversesAdoptResult };
   "platform/universes/create": { params: T.PlatformUniversesCreateParams; result: T.PlatformUniversesCreateResult };
   "platform/universes/update": { params: T.PlatformUniversesUpdateParams; result: T.PlatformUniversesUpdateResult };
@@ -134,10 +133,6 @@ export const PLATFORM_OPERATIONS = {
   },
   "platform/organizations/service-users/update": {
     "method": "PATCH",
-    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}"
-  },
-  "platform/organizations/service-users/delete": {
-    "method": "DELETE",
     "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}"
   },
   "platform/universes/adopt": {

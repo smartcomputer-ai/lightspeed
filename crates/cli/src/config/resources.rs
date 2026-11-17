@@ -661,7 +661,8 @@ impl Resource for McpServers {
 
 // --- environment providers ---------------------------------------------------
 
-/// Which deployment providers this universe may provision from
+/// Deployment providers this universe is bound to, for providers that are
+/// not available to every universe
 /// (`deployment/environment-providers/bindings/put`).
 pub(crate) struct EnvironmentProviders;
 
@@ -669,7 +670,6 @@ pub(crate) struct EnvironmentProviders;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProviderBindingEntry {
     provider_id: String,
-    enabled: bool,
 }
 
 #[async_trait]
@@ -691,18 +691,21 @@ impl Resource for EnvironmentProviders {
         if !target.exists() {
             return Ok(live);
         }
+        // A provider available to every universe needs no binding, so a
+        // document that names one finds it in place; only real bindings are
+        // exported.
         let response = target
-            .call("environments/provider-bindings/list", json!({}))
+            .call("environments/providers/list", json!({}))
             .await?;
-        for view in list(&response, "bindings") {
+        for view in list(&response, "providers") {
             let Some(id) = text(&view, "providerId").map(str::to_owned) else {
                 continue;
             };
             live.insert(
                 id.clone(),
                 Live {
-                    entry: json!({ "providerId": id, "enabled": view["enabled"] }),
-                    exportable: true,
+                    entry: json!({ "providerId": id }),
+                    exportable: view["availableToAllUniverses"] != true,
                     ..Live::default()
                 },
             );
@@ -719,7 +722,6 @@ impl Resource for EnvironmentProviders {
         let params = json!({
             "universe": target.universe_id()?,
             "providerId": entry["providerId"],
-            "enabled": entry["enabled"],
         });
         target
             .call("deployment/environment-providers/bindings/put", params)

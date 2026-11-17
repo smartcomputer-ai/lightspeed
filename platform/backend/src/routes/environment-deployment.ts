@@ -27,17 +27,17 @@ const providerPutSchema = z.object({
   // Write-only and optional: omitted keeps the stored credential.
   credential: z.string().min(1).max(4096).optional(),
   clearCredential: z.boolean().optional(),
+  // Omitted: every universe may use the provider.
+  availableToAllUniverses: z.boolean().optional(),
 }).refine(
   (value) => !(value.credential && value.clearCredential),
   "credential and clearCredential are mutually exclusive",
 );
-const bindingPutSchema = z.object({
-  enabled: z.boolean(),
-});
+const bindingPutSchema = z.object({}).strict();
 
-/// Deployment environment administration. Universe owners consume
-/// enabled bindings elsewhere; only platform admins may mutate physical
-/// provider registrations or universe admission bindings here.
+/// Deployment environment administration: provider registrations, who may
+/// use each provider, and the universes bound to a provider that is not
+/// available to all. Only platform admins change them.
 export function environmentDeploymentRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
@@ -113,7 +113,6 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
       const params: DeploymentProviderBindingPutParams = {
         universe: c.req.param("universeId"),
         providerId: c.req.param("providerId"),
-        enabled: body.data.enabled,
       };
       const response = await deploymentClient(ctx.env).call(
         "deployment/environment-providers/bindings/put",

@@ -84,24 +84,33 @@ pub(crate) struct OrganizationArgs {
 }
 #[derive(Debug, Subcommand)]
 enum OrganizationCommand {
+    /// List the organizations this connection can see.
     List,
+    /// Show one organization: the selected one unless an ID is given.
     Show {
         #[arg(value_name = "ORGANIZATION_ID")]
         target: Option<String>,
     },
+    /// Select the organization later commands use, for this connection.
     Use {
         #[arg(value_name = "ORGANIZATION_ID")]
         target: String,
     },
+    /// Create a shared organization (Platform Admin). Its settings are kept
+    /// in an organization document; see `config apply`.
     Create {
         name: String,
+        /// The organization's deployment-unique handle.
         #[arg(long)]
         handle: String,
-        #[arg(long)]
+        /// The user who becomes its first Organization Admin; you by default.
+        #[arg(long, value_name = "USER_ID")]
         initial_admin_user: Option<String>,
+        /// Its own universe limit; without it the deployment default applies.
         #[arg(long)]
-        quota: Option<u32>,
+        universe_limit: Option<u32>,
     },
+    /// List, add or remove the selected organization's people.
     Member {
         #[command(subcommand)]
         command: MemberCommand,
@@ -109,15 +118,21 @@ enum OrganizationCommand {
 }
 #[derive(Debug, Subcommand)]
 enum MemberCommand {
+    /// List the selected organization's people and how each joined.
     List,
-    /// Add or update an organization member. Universe grants are managed with universe access.
+    /// Add a person to the selected organization, or change their role.
+    /// Universe roles are given with `universe access`.
     #[command(visible_alias = "set-role")]
     Add {
+        #[arg(value_name = "USER_ID")]
         user: String,
         #[arg(long, value_enum, default_value = "member")]
         role: OrganizationRole,
     },
+    /// Remove a person from the selected organization, with the roles they
+    /// were given in its universes.
     Remove {
+        #[arg(value_name = "USER_ID")]
         user: String,
     },
 }
@@ -128,13 +143,20 @@ pub(crate) struct ServiceUserArgs {
 }
 #[derive(Debug, Subcommand)]
 enum ServiceUserCommand {
+    /// List the selected organization's service users.
     List,
+    /// Create a service user; issue its keys with `platform api-key create
+    /// --service-user ID`.
     Create {
+        /// Unique in the organization.
         name: String,
         #[arg(long, value_enum, default_value = "member")]
         role: OrganizationRole,
     },
+    /// Rename a service user, change its role, or disable or enable it.
+    /// Disabled, its keys stop working until it is enabled again.
     Update {
+        #[arg(value_name = "SERVICE_USER_ID")]
         service_user: String,
         #[arg(long)]
         name: Option<String>,
@@ -142,9 +164,6 @@ enum ServiceUserCommand {
         role: Option<OrganizationRole>,
         #[arg(long)]
         enabled: Option<bool>,
-    },
-    Disable {
-        service_user: String,
     },
 }
 #[derive(Debug, Args)]
@@ -163,7 +182,10 @@ enum AccessCommand {
         #[arg(long, value_enum)]
         role: UniverseRole,
     },
+    /// Remove a grant from the selected universe; the principal keeps what
+    /// the organization's default access gives it.
     Remove {
+        #[arg(value_name = "GRANT_ID")]
         grant: String,
     },
 }
@@ -218,7 +240,10 @@ pub(crate) struct ApiKeyArgs {
 }
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
+    /// List your keys, or a service user's.
     List,
+    /// Issue a key; its secret is shown once. Restrictions only narrow what
+    /// its owner may do.
     Create {
         name: String,
         #[arg(long, conflicts_with = "no_expiry")]
@@ -240,13 +265,16 @@ enum ApiKeyCommand {
         #[command(flatten)]
         output: SecretOutput,
     },
+    /// Revoke a key: it stops working at once, for good.
     Revoke {
+        #[arg(value_name = "KEY_ID")]
         key: String,
     },
     /// Give a key a new secret in place. Its name, access and expiry stay,
     /// so nothing that refers to it changes; the old secret stops working at
     /// once.
     Replace {
+        #[arg(value_name = "KEY_ID")]
         key: String,
         #[command(flatten)]
         output: SecretOutput,
@@ -346,13 +374,13 @@ pub(crate) async fn organization(args: OrganizationArgs) -> Result<()> {
             name,
             handle,
             initial_admin_user,
-            quota,
+            universe_limit,
         } => {
             let mut params = json!({"name":name,"handle":handle});
             if let Some(value) = initial_admin_user {
                 params["initialAdminUserId"] = json!(value);
             }
-            if let Some(value) = quota {
+            if let Some(value) = universe_limit {
                 params["universeQuota"] = json!(value);
             }
             ("platform/organizations/create", params)
@@ -399,10 +427,6 @@ pub(crate) async fn service_user(args: ServiceUserArgs) -> Result<()> {
             }
             ("platform/organizations/service-users/update", params)
         }
-        ServiceUserCommand::Disable { service_user } => (
-            "platform/organizations/service-users/delete",
-            json!({"serviceUserId":service_user}),
-        ),
     };
     show(&call(operation, with_organization(params)?).await?)
 }

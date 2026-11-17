@@ -50,7 +50,7 @@ every request. Choose authority for the work the document will perform:
 | Reconcile ordinary resources in an existing universe | Universe Operator or Owner; Organization Admin has Owner access throughout its organization. |
 | Change universe `displayName`, `metadata`, or enable `protected` | Universe Owner. |
 | Clear `protected` | Organization Admin or Platform Admin, and organization policy must permit unprotected universes. |
-| Change `environmentProviders` allocation bindings | Platform Admin; see [Environment provider allocation](#environment-provider-allocation). |
+| Change `environmentProviders` bindings | Platform Admin; see [Environment provider allocation](#environment-provider-allocation). |
 | Create an organization | Platform Admin. |
 | Change an organization's settings, `membershipPolicy` and `serviceUsers` | Organization Admin. |
 | Set an organization's `universeQuota` | Platform Admin. |
@@ -170,30 +170,29 @@ the fields.
 | `providers` | `credentials/providers/put` | `providerId` |
 | `modelDefaults` | `models/defaults/put`; a map of slot (`agentRun`, `speechToText`) to model, where `null` clears a slot | slot |
 | `mcpServers` | `mcp/servers/put` (the `server` object) | `serverId` |
-| `environmentProviders` | `deployment/environment-providers/bindings/put`: `providerId` and `enabled` | `providerId` |
+| `environmentProviders` | `deployment/environment-providers/bindings/put`: `providerId` | `providerId` |
 | `registrationKeys` | `environments/registration-keys/put` | `registrationKeyId` |
 | `environments` | see below | `environmentId` |
 | `profiles` | `profiles/put` (the `profile` object) | `profileId` |
 
 ### Environment provider allocation
 
-`environmentProviders` enables or disables a universe's allocation to an
-existing deployment environment provider. This grants access to deployment
-infrastructure, so Platform keeps changes under Platform Admin authority.
-Organization Admin and universe Owner do not imply permission to allocate any
-deployment provider.
+Most universe documents need no `environmentProviders` section. A deployment
+environment provider is available to every universe unless a deployment
+administrator limited it to selected universes when registering it. Declare
+`source.type: provisioned` environments with such a provider directly, with
+Universe Operator authority.
 
-An organization pipeline should normally omit this section and use a provider
-already allocated to its universe by a deployment administrator. It can then
-declare `source.type: provisioned` environments using that provider with
-Universe Operator authority. Deployment administrators can manage the
-allocation in a separate universe document containing `handle` and
-`environmentProviders`, using a Platform Admin key whose restrictions permit
-the target universe and operation. Provider registration itself remains
-deployment administration and is not a document section.
+For a provider limited to selected universes, `environmentProviders` lists the
+providers this universe is bound to, by `providerId`. Binding grants access to
+deployment infrastructure, so Platform keeps it under Platform Admin
+authority; Organization Admin and universe Owner do not imply it. A provider
+available to every universe already counts as present, so listing one changes
+nothing. A provider left out keeps its binding. Provider registration and
+availability remain deployment administration and are not a document section.
 
-When a Platform principal is not a Platform Admin, `diff` and `apply` report
-changed allocation bindings as conflicts before writing any document. An
+When a Platform principal is not a Platform Admin, `diff` and `apply` report a
+binding the document would add as a conflict before writing any document. An
 unchanged binding is allowed. This checks the principal's allocation authority;
 the server still checks current credential restrictions and policy on each
 request, and access can change between planning and applying.
@@ -534,9 +533,9 @@ credentials created through a sign-in flow.
 To promote a universe from one deployment to another, export it, review the
 file, and apply it against the other deployment with that deployment's
 secrets. To start a new universe from an existing one, change `handle` in the
-exported file. Review exported `environmentProviders` allocations separately:
-the destination provider must exist, and changing allocations through Platform
-requires Platform Admin authority.
+exported file. An export lists only real bindings, to providers limited to
+selected universes; review them separately: the destination provider must
+exist, and binding through Platform requires Platform Admin authority.
 
 ## Run it from a pipeline
 

@@ -53,6 +53,8 @@ export function seedPlatform(store: DemoStore): void {
     controllerEndpoint: "wss://incus-eu-1.lightspeed.demo:19090/control",
     effectiveDataRouteBase: "wss://incus-eu-1.lightspeed.demo:19090/routes",
     hasCredential: true,
+    // Each demo universe is bound to it.
+    availableToAllUniverses: false,
     createdAtMs: Date.parse("2026-06-05T12:00:00.000Z"),
     updatedAtMs: Date.parse("2026-08-10T09:00:00.000Z"),
   });

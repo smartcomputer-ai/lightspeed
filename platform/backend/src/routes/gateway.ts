@@ -1737,17 +1737,18 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
-  /// Universe-scoped admission bindings. Physical provider registration is
-  /// deployment state and is never exposed through this member API.
-  app.get("/:id/environment-provider-bindings", async (c) => {
+  /// The providers this universe may create environments from. Provider
+  /// registration is deployment state and is never exposed through this
+  /// member API.
+  app.get("/:id/environment-providers", async (c) => {
     const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
     return withApiErrors(c, async () => {
       const client = universeClient(ctx.env, access.universe, access.caller);
-      const response = await client.call("environments/provider-bindings/list", {});
-      return c.json(response.bindings);
+      const response = await client.call("environments/providers/list", {});
+      return c.json(response.providers);
     });
   });
 
@@ -1763,15 +1764,13 @@ export function gatewayRoutes(ctx: AppContext) {
         const response = await client.call("environments/templates/list", { providerId });
         return c.json(response.templates);
       }
-      // One call per enabled provider so an unreachable provider drops only
-      // its own templates instead of failing the whole listing.
-      const bindings = await client.call("environments/provider-bindings/list", {});
+      // One call per available provider so an unreachable provider drops
+      // only its own templates instead of failing the whole listing.
+      const available = await client.call("environments/providers/list", {});
       const results = await Promise.allSettled(
-        bindings.bindings
-          .filter((binding) => binding.enabled)
-          .map((binding) => client.call("environments/templates/list", {
-            providerId: binding.providerId,
-          })),
+        available.providers.map((provider) => client.call("environments/templates/list", {
+          providerId: provider.providerId,
+        })),
       );
       return c.json(results.flatMap((result) =>
         result.status === "fulfilled" ? result.value.templates : []

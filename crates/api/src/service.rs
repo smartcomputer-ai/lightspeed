@@ -237,21 +237,21 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentPowerPutParams,
     ) -> Result<EnvironmentPowerPutResponse, AgentApiError>;
 
-    async fn list_environment_provider_bindings(
+    async fn list_available_environment_providers(
         &self,
-        _params: EnvironmentProviderBindingListParams,
-    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
+        _params: AvailableEnvironmentProviderListParams,
+    ) -> Result<AvailableEnvironmentProviderListResponse, AgentApiError> {
         Err(AgentApiError::internal(
-            "environment provider bindings are unavailable",
+            "environment providers are unavailable",
         ))
     }
 
-    async fn read_environment_provider_binding(
+    async fn read_available_environment_provider(
         &self,
-        _params: EnvironmentProviderBindingReadParams,
-    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
+        _params: AvailableEnvironmentProviderReadParams,
+    ) -> Result<AvailableEnvironmentProviderReadResponse, AgentApiError> {
         Err(AgentApiError::internal(
-            "environment provider bindings are unavailable",
+            "environment providers are unavailable",
         ))
     }
 

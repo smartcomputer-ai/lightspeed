@@ -198,7 +198,7 @@ power states and the idle policy its provider applies. Turn on **Custom idle
 policy** to set this environment's own pause, stop or close thresholds instead;
 only the stages the template supports are offered, and the policy cannot be
 changed after the environment is created. The button appears
-when the universe has a non-deprecated template from an enabled binding.
+when the universe has a non-deprecated template from a provider available to it.
 Configure [credentials](credentials.md) on the environment, then select it
 in a session or profile.
 

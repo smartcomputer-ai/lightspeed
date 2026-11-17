@@ -64,8 +64,8 @@ export const CLIENT_HELPERS = {
   releaseRegisteredEnvironment: "environments/registered/release",
   putEnvironmentIngress: "environments/ingress/put",
   putEnvironmentPower: "environments/power/put",
-  listEnvironmentProviderBindings: "environments/provider-bindings/list",
-  readEnvironmentProviderBinding: "environments/provider-bindings/read",
+  listAvailableEnvironmentProviders: "environments/providers/list",
+  readAvailableEnvironmentProvider: "environments/providers/read",
   readEnvironmentTemplate: "environments/templates/read",
   createEnvironmentJobs: "environments/jobs/create",
   readEnvironmentJobs: "environments/jobs/read",
@@ -473,7 +473,7 @@ export abstract class LightspeedHelpers {
   /**
    * List environment templates
    *
-   * Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.
+   * Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.
    */
   listEnvironmentTemplates(options: Api.EnvironmentTemplateListParams & CallOptions = {}): Promise<Api.EnvironmentTemplateListResponse> {
     return this.invoke("environments/templates/list", {  }, options);
@@ -687,27 +687,27 @@ export abstract class LightspeedHelpers {
   }
 
   /**
-   * List environment provider bindings
+   * List available environment providers
    *
-   * Lists this universe's bindings to deployment providers and whether each is enabled.
+   * Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.
    */
-  listEnvironmentProviderBindings(options: Api.EnvironmentProviderBindingListParams & CallOptions = {}): Promise<Api.EnvironmentProviderBindingListResponse> {
-    return this.invoke("environments/provider-bindings/list", {  }, options);
+  listAvailableEnvironmentProviders(options: Api.AvailableEnvironmentProviderListParams & CallOptions = {}): Promise<Api.AvailableEnvironmentProviderListResponse> {
+    return this.invoke("environments/providers/list", {  }, options);
   }
 
   /**
-   * Read an environment provider binding
+   * Read an available environment provider
    *
-   * Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
+   * Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.
    */
-  readEnvironmentProviderBinding(providerId: Api.EnvironmentProviderBindingReadParams["providerId"], options: Omit<Api.EnvironmentProviderBindingReadParams, "providerId"> & CallOptions = {}): Promise<Api.EnvironmentProviderBindingReadResponse> {
-    return this.invoke("environments/provider-bindings/read", { providerId }, options);
+  readAvailableEnvironmentProvider(providerId: Api.AvailableEnvironmentProviderReadParams["providerId"], options: Omit<Api.AvailableEnvironmentProviderReadParams, "providerId"> & CallOptions = {}): Promise<Api.AvailableEnvironmentProviderReadResponse> {
+    return this.invoke("environments/providers/read", { providerId }, options);
   }
 
   /**
    * Read an environment template
    *
-   * Returns one template, read live from a bound provider's controller.
+   * Returns one template, read live from the controller of a provider available to the universe.
    */
   readEnvironmentTemplate(providerId: Api.EnvironmentTemplateReadParams["providerId"], templateId: Api.EnvironmentTemplateReadParams["templateId"], options: Omit<Api.EnvironmentTemplateReadParams, "providerId" | "templateId"> & CallOptions = {}): Promise<Api.EnvironmentTemplateReadResponse> {
     return this.invoke("environments/templates/read", { providerId, templateId }, options);
@@ -1400,7 +1400,7 @@ export abstract class LightspeedHelpers {
   /**
    * Put an environment provider
    *
-   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+   * Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.
    */
   putEnvironmentProvider(providerId: Api.DeploymentEnvironmentProviderPutParams["providerId"], options: Omit<Api.DeploymentEnvironmentProviderPutParams, "providerId"> & CallOptions): Promise<Api.DeploymentEnvironmentProviderPutResponse> {
     return this.invoke("deployment/environment-providers/put", { providerId }, options);
@@ -1436,16 +1436,16 @@ export abstract class LightspeedHelpers {
   /**
    * Put an environment provider binding
    *
-   * Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
+   * Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.
    */
-  putUniverseEnvironmentProviderBinding(universe: Api.DeploymentProviderBindingPutParams["universe"], providerId: Api.DeploymentProviderBindingPutParams["providerId"], options: Omit<Api.DeploymentProviderBindingPutParams, "universe" | "providerId"> & CallOptions): Promise<Api.DeploymentProviderBindingPutResponse> {
+  putUniverseEnvironmentProviderBinding(universe: Api.DeploymentProviderBindingPutParams["universe"], providerId: Api.DeploymentProviderBindingPutParams["providerId"], options: Omit<Api.DeploymentProviderBindingPutParams, "universe" | "providerId"> & CallOptions = {}): Promise<Api.DeploymentProviderBindingPutResponse> {
     return this.invoke("deployment/environment-providers/bindings/put", { universe, providerId }, options);
   }
 
   /**
    * Delete an environment provider binding
    *
-   * Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
+   * Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.
    */
   deleteUniverseEnvironmentProviderBinding(universe: Api.DeploymentProviderBindingDeleteParams["universe"], providerId: Api.DeploymentProviderBindingDeleteParams["providerId"], options: Omit<Api.DeploymentProviderBindingDeleteParams, "universe" | "providerId"> & CallOptions = {}): Promise<Api.DeploymentProviderBindingDeleteResponse> {
     return this.invoke("deployment/environment-providers/bindings/delete", { universe, providerId }, options);

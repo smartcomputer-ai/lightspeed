@@ -241,16 +241,6 @@
       "result": "PlatformOrganizationsServiceUsersUpdateResult"
     },
     {
-      "operationId": "platform/organizations/service-users/delete",
-      "helper": {
-        "name": "disableServiceUser"
-      },
-      "method": "DELETE",
-      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}",
-      "params": "PlatformOrganizationsServiceUsersDeleteParams",
-      "result": "PlatformOrganizationsServiceUsersDeleteResult"
-    },
-    {
       "operationId": "platform/universes/adopt",
       "helper": {
         "name": "adoptUniverse"

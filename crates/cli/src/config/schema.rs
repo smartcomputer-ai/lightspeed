@@ -416,7 +416,6 @@ mcpServers:
       x-upstream-token: { type: credential, grantId: tracker-token }
 environmentProviders:
   - providerId: pods
-    enabled: true
 registrationKeys:
   - registrationKeyId: runners
     displayName: Runners

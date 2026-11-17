@@ -302,6 +302,9 @@ pub struct DeploymentEnvironmentProviderView {
     /// A bearer credential is stored and presented to the controller and
     /// data routes; without one no `Authorization` header is sent.
     pub has_credential: bool,
+    /// Every universe may use the provider. Otherwise only the universes it
+    /// is bound to may.
+    pub available_to_all_universes: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -330,6 +333,14 @@ pub struct DeploymentEnvironmentProviderPutParams {
     /// Remove the stored credential. Excludes `credential`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clear_credential: bool,
+    /// Every universe may use the provider (the default). `false` limits it
+    /// to the universes it is bound to.
+    #[serde(default = "available_to_all_universes_default")]
+    pub available_to_all_universes: bool,
+}
+
+fn available_to_all_universes_default() -> bool {
+    true
 }
 
 impl fmt::Debug for DeploymentEnvironmentProviderPutParams {
@@ -344,6 +355,10 @@ impl fmt::Debug for DeploymentEnvironmentProviderPutParams {
                 &self.credential.as_ref().map(|_| "<redacted>"),
             )
             .field("clear_credential", &self.clear_credential)
+            .field(
+                "available_to_all_universes",
+                &self.available_to_all_universes,
+            )
             .finish()
     }
 }
@@ -388,15 +403,15 @@ pub struct DeploymentEnvironmentProviderDeleteResponse {
     pub provider: DeploymentEnvironmentProviderView,
 }
 
-/// Create or replace a universe's binding to a deployment provider.
+/// Allow a universe to use a provider that is not available to all
+/// universes. Repeating it changes nothing; for a provider available to all
+/// universes it has no effect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentProviderBindingPutParams {
     /// The universe's UUID or handle.
     pub universe: String,
     pub provider_id: EnvironmentProviderId,
-    /// Admits creates, template listing and data routes for the universe.
-    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -660,7 +675,7 @@ macro_rules! for_each_deployment_operation {
         ["Request universe deletion", "Refuses protected universes. Immediately fences an unprotected universe and releases its handle. A background worker removes schedules, workflows, environments, objects and rows. Repeated requests return deleting or deleted; unknown IDs return notFound."], access: $crate::MethodAccess::Deployment,
         http: (DELETE, "/api/v1/universes/{universe}", [("universe", "universe")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider($crate::DeploymentEnvironmentProviderPutParams) -> $crate::DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed."], access: $crate::MethodAccess::Deployment,
+        ["Put an environment provider", "Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted."], access: $crate::MethodAccess::Deployment,
         http: (PUT, "/api/v1/environment-providers/{providerId}", [("providerId", "providerId")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers($crate::DeploymentEnvironmentProviderListParams) -> $crate::DeploymentEnvironmentProviderListResponse =>
         ["List environment providers", "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: $crate::MethodAccess::Deployment,
@@ -672,10 +687,10 @@ macro_rules! for_each_deployment_operation {
         ["Delete an environment provider", "Deletes a deployment provider only when no universe binding and no non-closed environment references it."], access: $crate::MethodAccess::Deployment,
         http: (DELETE, "/api/v1/environment-providers/{providerId}", [("providerId", "providerId")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding($crate::DeploymentProviderBindingPutParams) -> $crate::DeploymentProviderBindingPutResponse =>
-        ["Put an environment provider binding", "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe."], access: $crate::MethodAccess::Deployment,
+        ["Put an environment provider binding", "Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing."], access: $crate::MethodAccess::Deployment,
         http: (PUT, "/api/v1/universes/{universe}/deployment-provider-bindings/{providerId}", [("universe", "universe"), ("providerId", "providerId")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding($crate::DeploymentProviderBindingDeleteParams) -> $crate::DeploymentProviderBindingDeleteResponse =>
-        ["Delete an environment provider binding", "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider."], access: $crate::MethodAccess::Deployment,
+        ["Delete an environment provider binding", "Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again."], access: $crate::MethodAccess::Deployment,
         http: (DELETE, "/api/v1/universes/{universe}/deployment-provider-bindings/{providerId}", [("universe", "universe"), ("providerId", "providerId")], [], Json, Ok),
     $crate::METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts($crate::DeploymentChannelAccountListParams) -> $crate::DeploymentChannelAccountListResponse =>
         ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: $crate::MethodAccess::Deployment,

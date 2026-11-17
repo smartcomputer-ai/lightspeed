@@ -12,6 +12,7 @@ import type {
   RunStatus,
   EnvironmentCredentialSourceView,
   EnvironmentCredentialView,
+  AvailableEnvironmentProviderView,
   EnvironmentProviderBindingView,
   EnvironmentRegistrationKeyCreateResponse,
   EnvironmentRegistrationKeyView,
@@ -431,6 +432,8 @@ export interface McpServerAuthDiscovery {
 /// Exact projections of the generated Lightspeed environment contract.
 export type Environment = EnvironmentView;
 export type EnvironmentProviderBinding = EnvironmentProviderBindingView;
+/// A provider this universe may create environments from.
+export type AvailableEnvironmentProvider = AvailableEnvironmentProviderView;
 export type EnvironmentTemplate = EnvironmentTemplateView;
 export type EnvironmentCredentialSource = EnvironmentCredentialSourceView;
 export type EnvironmentCredential = EnvironmentCredentialView;

@@ -35,8 +35,8 @@ pub struct EnvironmentCreateParams {
     /// one allocated. An id already in use is a conflict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment_id: Option<EnvironmentId>,
-    /// The provider to create the environment with; the universe needs an
-    /// enabled binding to it.
+    /// The provider to create the environment with; it must be available to
+    /// the universe.
     pub provider_id: EnvironmentProviderId,
     /// The provider template to create the environment from.
     pub template_id: EnvironmentTemplateId,
@@ -696,37 +696,55 @@ pub struct EnvironmentView {
     pub closed_at_ms: Option<i64>,
 }
 
-/// A universe's binding to a deployment provider. Creates, templates and
-/// data routes of the provider need it enabled.
+/// A universe allowed to use a provider that is not available to all
+/// universes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentProviderBindingView {
     pub provider_id: EnvironmentProviderId,
-    pub enabled: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentProviderBindingListParams {}
-
+/// A universe's bindings, as a deployment administrator lists them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentProviderBindingListResponse {
     pub bindings: Vec<EnvironmentProviderBindingView>,
 }
 
+/// A provider this universe may create environments from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EnvironmentProviderBindingReadParams {
+pub struct AvailableEnvironmentProviderView {
+    pub provider_id: EnvironmentProviderId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Available to every universe; otherwise to this one through its
+    /// binding.
+    pub available_to_all_universes: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableEnvironmentProviderListParams {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableEnvironmentProviderListResponse {
+    pub providers: Vec<AvailableEnvironmentProviderView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableEnvironmentProviderReadParams {
     pub provider_id: EnvironmentProviderId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EnvironmentProviderBindingReadResponse {
-    pub binding: EnvironmentProviderBindingView,
+pub struct AvailableEnvironmentProviderReadResponse {
+    pub provider: AvailableEnvironmentProviderView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -771,7 +789,8 @@ pub struct EnvironmentTemplateResourcesView {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentTemplateListParams {
-    /// Only this provider's templates; omit for every enabled binding.
+    /// Only this provider's templates; omit for every provider available to
+    /// the universe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<EnvironmentProviderId>,
 }

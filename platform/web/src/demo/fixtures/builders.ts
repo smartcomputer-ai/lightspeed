@@ -457,11 +457,11 @@ export interface ProviderBindingInit {
   updatedAtMs: number;
 }
 
-/// The universe's enabled binding to an operator-registered provider.
+/// The universe's binding to an operator-registered provider that is not
+/// available to every universe.
 export function providerBinding(init: ProviderBindingInit): EnvironmentProviderBinding {
   return {
     providerId: init.providerId ?? INCUS_PROVIDER_ID,
-    enabled: true,
     createdAtMs: init.createdAtMs,
     updatedAtMs: init.updatedAtMs,
   };

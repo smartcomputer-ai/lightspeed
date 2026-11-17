@@ -235,6 +235,9 @@ pub struct EnvironmentProviderRecord {
     /// A bearer credential is stored; without one no `Authorization` header
     /// is sent on the controller or data routes.
     pub has_credential: bool,
+    /// Every universe may use the provider. Otherwise only universes with a
+    /// binding may ([`provider_available`]).
+    pub available_to_all_universes: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -291,6 +294,7 @@ pub struct PutEnvironmentProvider {
     pub controller_endpoint: EnvironmentEndpoint,
     pub data_route_base: Option<DataRouteBase>,
     pub credential: ProviderCredentialChange,
+    pub available_to_all_universes: bool,
     pub updated_at_ms: i64,
 }
 
@@ -318,6 +322,7 @@ impl PutEnvironmentProvider {
             controller_endpoint: self.controller_endpoint,
             data_route_base: self.data_route_base,
             has_credential,
+            available_to_all_universes: self.available_to_all_universes,
             created_at_ms,
             updated_at_ms: self.updated_at_ms.max(created_at_ms),
         };
@@ -346,15 +351,22 @@ pub fn validate_provider_credential(
     Ok(())
 }
 
-/// A universe's use of a provider. At most one per `(universe, provider)`;
-/// `enabled` admits creates, template listing and data routes.
+/// A universe allowed to use a provider that is not available to all
+/// universes. At most one per `(universe, provider)`; for a provider
+/// available to all universes it changes nothing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentProviderBindingRecord {
     pub universe_id: Uuid,
     pub provider_id: EnvironmentProviderId,
-    pub enabled: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+/// Whether a universe may use a provider: creates, template listing and data
+/// routes all ask this. The provider is available to every universe, or the
+/// universe has a binding.
+pub fn provider_available(provider: &EnvironmentProviderRecord, bound: bool) -> bool {
+    provider.available_to_all_universes || bound
 }
 
 impl EnvironmentProviderBindingRecord {
@@ -367,7 +379,6 @@ impl EnvironmentProviderBindingRecord {
 pub struct PutEnvironmentProviderBinding {
     pub universe_id: Uuid,
     pub provider_id: EnvironmentProviderId,
-    pub enabled: bool,
     pub updated_at_ms: i64,
 }
 
@@ -383,7 +394,6 @@ impl PutEnvironmentProviderBinding {
         let record = EnvironmentProviderBindingRecord {
             universe_id: self.universe_id,
             provider_id: self.provider_id,
-            enabled: self.enabled,
             created_at_ms,
             updated_at_ms: self.updated_at_ms.max(created_at_ms),
         };
@@ -1541,9 +1551,9 @@ pub fn clean_state_message(text: &str) -> Option<String> {
 // Creates
 // ---------------------------------------------------------------------------
 
-/// Create a provisioned environment. The store checks that the universe's
-/// binding of `provider_id` exists (`NotFound`) and is enabled
-/// (`InvalidInput`). The same `request_id` with identical inputs returns the
+/// Create a provisioned environment. The store checks that the provider
+/// exists (`NotFound`) and is available to the universe ([`provider_available`],
+/// `InvalidInput`). The same `request_id` with identical inputs returns the
 /// stored row; with different inputs it is `AlreadyExists`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateEnvironment {

@@ -4483,8 +4483,8 @@ async fn pg_live_concurrent_inline_puts_of_the_same_bytes_all_succeed() {
 // Environments
 // ---------------------------------------------------------------------------
 
-/// Register a provider with a unique id (providers are deployment-wide) and
-/// bind it, enabled, to the store's universe.
+/// Register a provider with a unique id (providers are deployment-wide),
+/// limited to bound universes, and bind it to the store's universe.
 async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProviderId {
     let provider_id = EnvironmentProviderId::new(format!("{name}-{}", Uuid::new_v4().simple()));
     store
@@ -4495,6 +4495,7 @@ async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProvider
                 .expect("endpoint"),
             data_route_base: None,
             credential: ProviderCredentialChange::Keep,
+            available_to_all_universes: false,
             updated_at_ms: 1,
         })
         .await
@@ -4503,7 +4504,6 @@ async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProvider
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id: store.config().universe_id,
             provider_id: provider_id.clone(),
-            enabled: true,
             updated_at_ms: 2,
         })
         .await
@@ -4567,6 +4567,8 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         controller_endpoint: endpoint.clone(),
         data_route_base,
         credential,
+        // Bindings decide, so the test exercises them.
+        available_to_all_universes: false,
         updated_at_ms,
     };
 
@@ -4661,40 +4663,36 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
     );
 
     // Bindings are keyed by provider; a missing provider is NotFound.
-    let binding = store
+    store
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id,
             provider_id: provider_id.clone(),
-            enabled: true,
             updated_at_ms: 5,
         })
         .await
         .expect("bind provider");
-    assert!(binding.enabled);
-    let disabled = store
+    let rebound = store
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id,
             provider_id: provider_id.clone(),
-            enabled: false,
             updated_at_ms: 6,
         })
         .await
-        .expect("disable binding");
-    assert!(!disabled.enabled);
-    assert_eq!((disabled.created_at_ms, disabled.updated_at_ms), (5, 6));
+        .expect("bind again");
+    assert_eq!((rebound.created_at_ms, rebound.updated_at_ms), (5, 6));
     assert_eq!(
         store
             .read_provider_binding(universe_id, &provider_id)
             .await
             .expect("read binding"),
-        disabled
+        rebound
     );
     assert_eq!(
         store
             .list_provider_bindings(universe_id)
             .await
             .expect("list bindings"),
-        vec![disabled]
+        vec![rebound]
     );
     assert!(matches!(
         store
@@ -4704,7 +4702,6 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
                     "missing-{}",
                     Uuid::new_v4().simple()
                 )),
-                enabled: true,
                 updated_at_ms: 6,
             })
             .await,
@@ -4714,7 +4711,12 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         })
     ));
 
-    // Creates need an enabled binding; deletes are guarded.
+    // Without a binding a provider limited to bound universes refuses
+    // creates; deletes are guarded.
+    store
+        .delete_provider_binding(universe_id, &provider_id)
+        .await
+        .expect("unbind");
     assert!(matches!(
         store
             .create_environment(create_environment(
@@ -4730,11 +4732,10 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .put_provider_binding(PutEnvironmentProviderBinding {
             universe_id,
             provider_id: provider_id.clone(),
-            enabled: true,
             updated_at_ms: 7,
         })
         .await
-        .expect("enable binding");
+        .expect("bind again");
     let environment = store
         .create_environment(create_environment(
             &provider_id,
@@ -4746,12 +4747,6 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .expect("create environment");
     assert!(matches!(
         store.delete_provider(&provider_id).await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    assert!(matches!(
-        store
-            .delete_provider_binding(universe_id, &provider_id)
-            .await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
     store
@@ -4778,6 +4773,24 @@ async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
         .delete_provider(&provider_id)
         .await
         .expect("closed environments do not hold a provider");
+
+    // A provider available to every universe needs no binding.
+    store
+        .put_provider(PutEnvironmentProvider {
+            available_to_all_universes: true,
+            ..put(None, None, ProviderCredentialChange::Keep, 20)
+        })
+        .await
+        .expect("register for all universes");
+    store
+        .create_environment(create_environment(
+            &provider_id,
+            "open-request",
+            "open-env",
+            21,
+        ))
+        .await
+        .expect("create without a binding");
 
     // The all-or-none credential CHECK names its NULL case explicitly.
     let orphan_id = format!("check-{}", Uuid::new_v4().simple());
@@ -6584,18 +6597,13 @@ async fn pg_live_environment_deployment_queries_find_work_and_revoked_routes() {
         ]
     );
     store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id,
-            provider_id: provider_id.clone(),
-            enabled: false,
-            updated_at_ms: 103,
-        })
+        .delete_provider_binding(universe_id, &provider_id)
         .await
-        .expect("disable binding");
+        .expect("unbind with an open environment");
     assert!(
         store_pg::list_revoked_environment_routes(store.pool(), &routes)
             .await
-            .expect("revoked routes after disable")
+            .expect("revoked routes after unbinding")
             .contains(&(universe_id, opened.environment_id.as_str().to_owned()))
     );
 

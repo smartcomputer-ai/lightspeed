@@ -231,6 +231,7 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 controller_endpoint: controller_endpoint.clone(),
                 data_route_base,
                 credential,
+                available_to_all_universes: params.available_to_all_universes,
                 updated_at_ms: i64::try_from(current_time_ms()?)
                     .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
             };
@@ -340,7 +341,6 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .put_provider_binding(PutEnvironmentProviderBinding {
                     universe_id,
                     provider_id: parse_environment_provider_id(params.provider_id)?,
-                    enabled: params.enabled,
                     updated_at_ms: i64::try_from(current_time_ms()?)
                         .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
                 })

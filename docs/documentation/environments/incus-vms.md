@@ -1,8 +1,8 @@
 # Incus VMs
 
 The included Incus provider creates and manages virtual machines for Lightspeed
-environments. An operator supplies trusted images and templates; a universe
-receives access through a provider binding. Universe Operators and Owners
+environments. An operator supplies trusted images and templates; the provider
+is available to every universe, or only to universes bound to it. Universe Operators and Owners
 create machines from those templates, then attach them to sessions or profiles.
 
 The provider runs as a separate process. It talks to Incus using an HTTPS
@@ -226,10 +226,12 @@ reachable from the environment gateway rather than its own loopback address.
 A data route base you enter must use `wss://` when the controller is reached
 over TLS.
 
-Choose **Bind universe**, select the **Universe**, and choose **Bind**. There
-can be at most one binding for each universe and provider.
+By default every universe may use the provider. To limit it, switch off
+**Available to every universe** when registering or editing it, then choose
+**Bind universe**, select the **Universe**, and choose **Bind** for each
+universe that may use it.
 
-An enabled binding lets that universe list the provider's templates, create
+A universe the provider is available to can list its templates, create
 environments, and reach the ones it created. The provider lazily creates a
 restricted Incus project, managed network, ACL, and profile for the
 universe. You do not need to add the universe to the provider JSON or
@@ -299,11 +301,11 @@ another environment protocol version than the runtime fails when it becomes
 ready, with an error naming both versions; recreate it from a current
 template.
 
-Disabling a universe binding prevents new provisioning and makes the
-universe's environments from that provider unreachable until it is enabled
-again. It does not close them. Binding deletion is refused while the universe
-has nonclosed environments from the provider, and provider deletion is
-refused while bindings or nonclosed environments reference it. Removing
+Unbinding a universe, or limiting the provider to selected universes without
+binding it, prevents new provisioning and makes the universe's environments
+from that provider unreachable until it may use the provider again. It does
+not close them. Provider deletion is refused while bindings or nonclosed
+environments reference it. Removing
 registry records does not automatically remove all provider-side projects or
 network infrastructure.
 
@@ -330,7 +332,7 @@ before adopting that topology.
 | Symptom | What to check |
 | --- | --- |
 | The provider cannot start or its health check fails | Check configuration, Incus HTTPS trust, client permissions, topology mode, and endpoint reachability. |
-| The universe has no templates | Check provider registration, the universe's enabled binding, and template deprecation. |
+| The universe has no templates | Check provider registration, whether the provider is available to the universe, and template deprecation. |
 | Incus cannot find the configured image | Use the immutable fingerprint, make it available on the target, or configure a trusted image server. |
 | Registering the provider is refused | Check the controller URL path, the credential, and that a data route base you entered uses `wss://` when the controller is reached over TLS. |
 | A VM boots but its environment is not ready | Read the environment's state message. Check the guest daemon service, matching binary architecture, provider-to-guest routes, private daemon port, and that the data route base, derived or entered, reaches the provider from the environment gateway. |

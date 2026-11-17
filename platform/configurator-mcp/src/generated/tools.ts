@@ -5082,7 +5082,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "object"
         },
         "providerId": {
-          "description": "The provider to create the environment with; the universe needs an\nenabled binding to it.",
+          "description": "The provider to create the environment with; it must be available to\nthe universe.",
           "type": "string"
         },
         "requestId": {
@@ -5451,26 +5451,26 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_environments_provider-bindings_list",
-    "method": "environments/provider-bindings/list",
+    "name": "lightspeed_environments_providers_list",
+    "method": "environments/providers/list",
     "group": "environments",
-    "summary": "List environment provider bindings",
-    "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
-    "paramsType": "EnvironmentProviderBindingListParams",
-    "resultType": "EnvironmentProviderBindingListResponse",
+    "summary": "List available environment providers",
+    "description": "Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.",
+    "paramsType": "AvailableEnvironmentProviderListParams",
+    "resultType": "AvailableEnvironmentProviderListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object"
     }
   },
   {
-    "name": "lightspeed_environments_provider-bindings_read",
-    "method": "environments/provider-bindings/read",
+    "name": "lightspeed_environments_providers_read",
+    "method": "environments/providers/read",
     "group": "environments",
-    "summary": "Read an environment provider binding",
-    "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
-    "paramsType": "EnvironmentProviderBindingReadParams",
-    "resultType": "EnvironmentProviderBindingReadResponse",
+    "summary": "Read an available environment provider",
+    "description": "Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.",
+    "paramsType": "AvailableEnvironmentProviderReadParams",
+    "resultType": "AvailableEnvironmentProviderReadResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -5489,14 +5489,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/templates/list",
     "group": "environments",
     "summary": "List environment templates",
-    "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
+    "description": "Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.",
     "paramsType": "EnvironmentTemplateListParams",
     "resultType": "EnvironmentTemplateListResponse",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "providerId": {
-          "description": "Only this provider's templates; omit for every enabled binding.",
+          "description": "Only this provider's templates; omit for every provider available to\nthe universe.",
           "type": [
             "string",
             "null"
@@ -5511,7 +5511,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/templates/read",
     "group": "environments",
     "summary": "Read an environment template",
-    "description": "Returns one template, read live from a bound provider's controller.",
+    "description": "Returns one template, read live from the controller of a provider available to the universe.",
     "paramsType": "EnvironmentTemplateReadParams",
     "resultType": "EnvironmentTemplateReadResponse",
     "inputSchema": {

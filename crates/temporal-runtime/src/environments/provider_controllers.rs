@@ -457,6 +457,7 @@ mod tests {
                     None => ::environments::ProviderCredentialChange::Keep,
                 },
                 updated_at_ms: 1,
+                available_to_all_universes: false,
             })
             .await
             .unwrap();

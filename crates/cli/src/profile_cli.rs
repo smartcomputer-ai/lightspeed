@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use api::{
-    AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentIdentityModeView,
-    EnvironmentProviderBindingListParams, EnvironmentSourceView, EnvironmentStateView,
+    AgentApiErrorKind, AgentProfile, AgentProfileInput, AvailableEnvironmentProviderListParams,
+    EnvironmentIdentityModeView, EnvironmentSourceView, EnvironmentStateView,
     EnvironmentStatusView, InlineAgentProfile, ProfileApplyParams, ProfileDeleteParams, ProfileId,
     ProfileListParams, ProfilePutParams, ProfileReadParams, ProfileSource, WorkspaceAccess,
     WorkspaceAttachment,
@@ -610,32 +610,32 @@ async fn validate_environments(
     if environment_ids.is_empty() {
         return;
     }
-    let bindings = match api
-        .list_environment_provider_bindings(EnvironmentProviderBindingListParams::default())
+    let available = match api
+        .list_available_environment_providers(AvailableEnvironmentProviderListParams::default())
         .await
     {
-        Ok(response) => response.bindings,
+        Ok(response) => response.providers,
         Err(error) => {
             report.error(format!(
-                "failed to list environment provider bindings: {}",
+                "failed to list available environment providers: {}",
                 api_error(error)
             ));
             return;
         }
     };
-    let bindings = bindings
+    let available = available
         .into_iter()
-        .map(|binding| (binding.provider_id.clone(), binding))
-        .collect::<BTreeMap<_, _>>();
+        .map(|provider| provider.provider_id)
+        .collect::<BTreeSet<_>>();
     for environment_id in environment_ids {
-        validate_environment_attachment(api, &environment_id, &bindings, report).await;
+        validate_environment_attachment(api, &environment_id, &available, report).await;
     }
 }
 
 async fn validate_environment_attachment(
     api: &HttpAgentApi,
     environment_id: &str,
-    bindings: &BTreeMap<String, api::EnvironmentProviderBindingView>,
+    available: &BTreeSet<String>,
     report: &mut ValidationReport,
 ) {
     let environment = match api
@@ -702,8 +702,8 @@ async fn validate_environment_attachment(
         ));
     }
     if let EnvironmentSourceView::Provisioned { provider_id, .. } = &environment.source {
-        warn_unusable_binding(
-            bindings,
+        warn_unavailable_provider(
+            available,
             provider_id,
             &format!("profile environment {environment_id}"),
             report,
@@ -711,22 +711,16 @@ async fn validate_environment_attachment(
     }
 }
 
-fn warn_unusable_binding(
-    bindings: &BTreeMap<String, api::EnvironmentProviderBindingView>,
+fn warn_unavailable_provider(
+    available: &BTreeSet<String>,
     provider_id: &str,
     subject: &str,
     report: &mut ValidationReport,
 ) {
-    match bindings.get(provider_id) {
-        Some(binding) if !binding.enabled => {
-            report.warning(format!(
-                "{subject}: provider binding {provider_id} is disabled"
-            ));
-        }
-        None => report.warning(format!(
-            "{subject}: provider binding {provider_id} is missing"
-        )),
-        _ => {}
+    if !available.contains(provider_id) {
+        report.warning(format!(
+            "{subject}: provider {provider_id} is not available to this universe"
+        ));
     }
 }
 

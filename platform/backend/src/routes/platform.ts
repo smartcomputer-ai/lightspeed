@@ -219,17 +219,6 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       await auditAsSubject(ctx.db, auth, { action: "serviceUser.update", targetId: serviceUser.id, details: { organizationId } });
       return { serviceUser: serviceUserView(serviceUser) };
     }
-    case "platform/organizations/service-users/delete": {
-      await requireOrganizationAction(ctx, auth, organizationId, "manageServiceUsers");
-      // Suspension preserves attribution and Owner grants while immediately disabling all keys.
-      await ctx.db.transaction(async tx => {
-        await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, organizationId)).for("update");
-        await requireOrganizationAction({ ...ctx, db: tx as unknown as AppContext["db"] }, auth, organizationId, "manageServiceUsers");
-        await tx.update(schema.serviceUsers).set({ enabled: false }).where(and(eq(schema.serviceUsers.organizationId, organizationId), eq(schema.serviceUsers.id, params.serviceUserId as string)));
-      });
-      await auditAsSubject(ctx.db, auth, { action: "serviceUser.suspend", targetId: params.serviceUserId as string, details: { organizationId } });
-      return { ok: true };
-    }
     case "platform/universes/adopt": return { universe: await adoptManagedUniverse(ctx, auth, organizationId, params as PlatformOperationParams<"platform/universes/adopt">) };
     case "platform/universes/create": return { universe: await createManagedUniverse(ctx, auth, organizationId, params as PlatformOperationParams<"platform/universes/create">) };
     case "platform/universes/read": {

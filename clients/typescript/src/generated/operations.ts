@@ -47,8 +47,8 @@ export const OPERATIONS = [
   "environments/registered/release",
   "environments/ingress/put",
   "environments/power/put",
-  "environments/provider-bindings/list",
-  "environments/provider-bindings/read",
+  "environments/providers/list",
+  "environments/providers/read",
   "environments/templates/list",
   "environments/templates/read",
   "environments/jobs/create",
@@ -492,21 +492,21 @@ export const OPERATION_INFO = {
     summary: "Set environment power",
     description: "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
   },
-  "environments/provider-bindings/list": {
+  "environments/providers/list": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
-    summary: "List environment provider bindings",
-    description: "Lists this universe's bindings to deployment providers and whether each is enabled.",
+    summary: "List available environment providers",
+    description: "Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.",
   },
-  "environments/provider-bindings/read": {
+  "environments/providers/read": {
     scope: "universe",
     streaming: false,
     notifications: [],
     access: {"action":"read","kind":"universe"},
-    summary: "Read an environment provider binding",
-    description: "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
+    summary: "Read an available environment provider",
+    description: "Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.",
   },
   "environments/templates/list": {
     scope: "universe",
@@ -514,7 +514,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "List environment templates",
-    description: "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
+    description: "Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.",
   },
   "environments/templates/read": {
     scope: "universe",
@@ -522,7 +522,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"action":"read","kind":"universe"},
     summary: "Read an environment template",
-    description: "Returns one template, read live from a bound provider's controller.",
+    description: "Returns one template, read live from the controller of a provider available to the universe.",
   },
   "environments/jobs/create": {
     scope: "universe",
@@ -1282,7 +1282,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Put an environment provider",
-    description: "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
+    description: "Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.",
   },
   "deployment/environment-providers/list": {
     scope: "deployment",
@@ -1314,7 +1314,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Put an environment provider binding",
-    description: "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.",
+    description: "Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.",
   },
   "deployment/environment-providers/bindings/delete": {
     scope: "deployment",
@@ -1322,7 +1322,7 @@ export const OPERATION_INFO = {
     notifications: [],
     access: {"kind":"deployment"},
     summary: "Delete an environment provider binding",
-    description: "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.",
+    description: "Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.",
   },
   "deployment/channels/accounts/list": {
     scope: "deployment",
@@ -1737,27 +1737,27 @@ export interface OperationMap {
     result: Api.EnvironmentPowerPutResponse;
   };
   /**
-   * List environment provider bindings
+   * List available environment providers
    *
-   * Lists this universe's bindings to deployment providers and whether each is enabled.
+   * Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.
    */
-  "environments/provider-bindings/list": {
-    params: Api.EnvironmentProviderBindingListParams;
-    result: Api.EnvironmentProviderBindingListResponse;
+  "environments/providers/list": {
+    params: Api.AvailableEnvironmentProviderListParams;
+    result: Api.AvailableEnvironmentProviderListResponse;
   };
   /**
-   * Read an environment provider binding
+   * Read an available environment provider
    *
-   * Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
+   * Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.
    */
-  "environments/provider-bindings/read": {
-    params: Api.EnvironmentProviderBindingReadParams;
-    result: Api.EnvironmentProviderBindingReadResponse;
+  "environments/providers/read": {
+    params: Api.AvailableEnvironmentProviderReadParams;
+    result: Api.AvailableEnvironmentProviderReadResponse;
   };
   /**
    * List environment templates
    *
-   * Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.
+   * Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.
    */
   "environments/templates/list": {
     params: Api.EnvironmentTemplateListParams;
@@ -1766,7 +1766,7 @@ export interface OperationMap {
   /**
    * Read an environment template
    *
-   * Returns one template, read live from a bound provider's controller.
+   * Returns one template, read live from the controller of a provider available to the universe.
    */
   "environments/templates/read": {
     params: Api.EnvironmentTemplateReadParams;
@@ -2621,7 +2621,7 @@ export interface OperationMap {
   /**
    * Put an environment provider
    *
-   * Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.
+   * Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.
    */
   "deployment/environment-providers/put": {
     params: Api.DeploymentEnvironmentProviderPutParams;
@@ -2657,7 +2657,7 @@ export interface OperationMap {
   /**
    * Put an environment provider binding
    *
-   * Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
+   * Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.
    */
   "deployment/environment-providers/bindings/put": {
     params: Api.DeploymentProviderBindingPutParams;
@@ -2666,7 +2666,7 @@ export interface OperationMap {
   /**
    * Delete an environment provider binding
    *
-   * Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
+   * Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.
    */
   "deployment/environment-providers/bindings/delete": {
     params: Api.DeploymentProviderBindingDeleteParams;

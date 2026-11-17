@@ -192,6 +192,7 @@ async fn provision(
             data_route_base: None,
             credential: controller.credential().map(str::to_owned),
             clear_credential: false,
+            available_to_all_universes: false,
         }),
     )
     .await?;
@@ -200,7 +201,6 @@ async fn provision(
         operator.put_environment_provider_binding(api::DeploymentProviderBindingPutParams {
             universe: id.to_string(),
             provider_id: provider_id.clone(),
-            enabled: true,
         }),
     )
     .await?;

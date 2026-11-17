@@ -131,7 +131,7 @@ impl Runtime {
                     "credentials/providers/list" => json!({"providers":[]}),
                     "models/defaults/read" => json!({"defaults":{}}),
                     "mcp/servers/list" => json!({"servers":[]}),
-                    "environments/provider-bindings/list" => json!({"bindings":[]}),
+                    "environments/providers/list" => json!({"providers":[]}),
                     "environments/registration-keys/list" => json!({"registrationKeys":[]}),
                     "environments/list" => json!({"environments":[]}),
                     "profiles/list" => json!({"profiles":[]}),

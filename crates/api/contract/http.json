@@ -7250,7 +7250,7 @@
             "type": "object"
           },
           "providerId": {
-            "description": "The provider to create the environment with; the universe needs an\nenabled binding to it.",
+            "description": "The provider to create the environment with; it must be available to\nthe universe.",
             "type": "string"
           },
           "requestId": {
@@ -9462,11 +9462,11 @@
         "kind": "universe"
       },
       "body": null,
-      "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
+      "description": "Lists the deployment providers this universe may create environments from: those available to every universe, and those this universe is bound to.",
       "events": null,
       "group": "environments",
       "method": "GET",
-      "operationId": "environments/provider-bindings/list",
+      "operationId": "environments/providers/list",
       "parameters": [
         {
           "in": "path",
@@ -9480,11 +9480,11 @@
       ],
       "params": {
         "schema": {
-          "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingListParams"
+          "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderListParams"
         },
-        "type": "EnvironmentProviderBindingListParams"
+        "type": "AvailableEnvironmentProviderListParams"
       },
-      "path": "/api/v1/universes/{universe}/environment-provider-bindings",
+      "path": "/api/v1/universes/{universe}/environment-providers",
       "pathFields": [],
       "queryFields": [],
       "responses": {
@@ -9492,7 +9492,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/schemas/EnvironmentProviderBindingListResponse"
+                "$ref": "#/schemas/AvailableEnvironmentProviderListResponse"
               }
             }
           },
@@ -9631,14 +9631,14 @@
       },
       "result": {
         "schema": {
-          "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingListResponse"
+          "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderListResponse"
         },
-        "type": "EnvironmentProviderBindingListResponse"
+        "type": "AvailableEnvironmentProviderListResponse"
       },
       "role": "viewer",
       "scope": "universe",
       "success": "ok",
-      "summary": "List environment provider bindings",
+      "summary": "List available environment providers",
       "target": null,
       "transfer": "json"
     },
@@ -9648,11 +9648,11 @@
         "kind": "universe"
       },
       "body": null,
-      "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
+      "description": "Returns one provider this universe may create environments from; not found when it may not. Templates and physical resource, network, and ingress policy remain provider-owned.",
       "events": null,
       "group": "environments",
       "method": "GET",
-      "operationId": "environments/provider-bindings/read",
+      "operationId": "environments/providers/read",
       "parameters": [
         {
           "in": "path",
@@ -9674,11 +9674,11 @@
       ],
       "params": {
         "schema": {
-          "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingReadParams"
+          "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderReadParams"
         },
-        "type": "EnvironmentProviderBindingReadParams"
+        "type": "AvailableEnvironmentProviderReadParams"
       },
-      "path": "/api/v1/universes/{universe}/environment-provider-bindings/{providerId}",
+      "path": "/api/v1/universes/{universe}/environment-providers/{providerId}",
       "pathFields": [
         {
           "field": "providerId",
@@ -9691,7 +9691,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/schemas/EnvironmentProviderBindingReadResponse"
+                "$ref": "#/schemas/AvailableEnvironmentProviderReadResponse"
               }
             }
           },
@@ -9830,14 +9830,14 @@
       },
       "result": {
         "schema": {
-          "$ref": "api.schema.json#/definitions/EnvironmentProviderBindingReadResponse"
+          "$ref": "api.schema.json#/definitions/AvailableEnvironmentProviderReadResponse"
         },
-        "type": "EnvironmentProviderBindingReadResponse"
+        "type": "AvailableEnvironmentProviderReadResponse"
       },
       "role": "viewer",
       "scope": "universe",
       "success": "ok",
-      "summary": "Read an environment provider binding",
+      "summary": "Read an available environment provider",
       "target": null,
       "transfer": "json"
     },
@@ -9847,7 +9847,7 @@
         "kind": "universe"
       },
       "body": null,
-      "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
+      "description": "Reads templates live from the controllers of every provider available to the universe, or of one provider: compute, power states, public ingress, and default idle policy.",
       "events": null,
       "group": "environments",
       "method": "GET",
@@ -9867,7 +9867,7 @@
           "name": "providerId",
           "required": true,
           "schema": {
-            "description": "Only this provider's templates; omit for every enabled binding.",
+            "description": "Only this provider's templates; omit for every provider available to\nthe universe.",
             "type": [
               "string",
               "null"
@@ -9881,7 +9881,7 @@
         },
         "type": "EnvironmentTemplateListParams"
       },
-      "path": "/api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates",
+      "path": "/api/v1/universes/{universe}/environment-providers/{providerId}/templates",
       "pathFields": [
         {
           "field": "providerId",
@@ -10050,7 +10050,7 @@
         "kind": "universe"
       },
       "body": null,
-      "description": "Returns one template, read live from a bound provider's controller.",
+      "description": "Returns one template, read live from the controller of a provider available to the universe.",
       "events": null,
       "group": "environments",
       "method": "GET",
@@ -10088,7 +10088,7 @@
         },
         "type": "EnvironmentTemplateReadParams"
       },
-      "path": "/api/v1/universes/{universe}/environment-provider-bindings/{providerId}/templates/{templateId}",
+      "path": "/api/v1/universes/{universe}/environment-providers/{providerId}/templates/{templateId}",
       "pathFields": [
         {
           "field": "providerId",
@@ -30435,6 +30435,11 @@
         "additionalProperties": false,
         "description": "Register or replace a provider. `credential` is the optional bearer\ntoken Lightspeed presents to the provider's controller and data routes:\nit is sealed on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
         "properties": {
+          "availableToAllUniverses": {
+            "default": true,
+            "description": "Every universe may use the provider (the default). `false` limits it\nto the universes it is bound to.",
+            "type": "boolean"
+          },
           "clearCredential": {
             "description": "Remove the stored credential. Excludes `credential`.",
             "type": "boolean"
@@ -30469,7 +30474,7 @@
         ],
         "type": "object"
       },
-      "description": "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted. The provider never calls Lightspeed.",
+      "description": "Registers or replaces a provider: who may use it (every universe unless limited to bound ones), controller endpoint, optional data route base, and optional write-only bearer credential (kept when omitted, removed by clearCredential). The controller is probed: a definitive refusal is invalidRequest, unreachable is accepted.",
       "events": null,
       "group": "deployment/environment-providers",
       "method": "PUT",
@@ -31212,19 +31217,12 @@
       },
       "body": {
         "additionalProperties": false,
-        "description": "Create or replace a universe's binding to a deployment provider.",
-        "properties": {
-          "enabled": {
-            "description": "Admits creates, template listing and data routes for the universe.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "enabled"
-        ],
+        "description": "Allow a universe to use a provider that is not available to all\nuniverses. Repeating it changes nothing; for a provider available to all\nuniverses it has no effect.",
+        "properties": {},
+        "required": [],
         "type": "object"
       },
-      "description": "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.",
+      "description": "Allows one universe to use a deployment provider that is not available to all universes. Repeating it changes nothing.",
       "events": null,
       "group": "deployment/environment-providers",
       "method": "PUT",
@@ -31426,7 +31424,7 @@
         "kind": "deployment"
       },
       "body": null,
-      "description": "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.",
+      "description": "Stops a universe from using a provider that is not available to all universes. Its open environments on the provider lose access until it is bound again.",
       "events": null,
       "group": "deployment/environment-providers",
       "method": "DELETE",
@@ -32793,6 +32791,73 @@
           "type": "object"
         }
       ]
+    },
+    "AvailableEnvironmentProviderListParams": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "AvailableEnvironmentProviderListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/schemas/AvailableEnvironmentProviderView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "type": "object"
+    },
+    "AvailableEnvironmentProviderReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "AvailableEnvironmentProviderReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "$ref": "#/schemas/AvailableEnvironmentProviderView"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "AvailableEnvironmentProviderView": {
+      "additionalProperties": false,
+      "description": "A provider this universe may create environments from.",
+      "properties": {
+        "availableToAllUniverses": {
+          "description": "Available to every universe; otherwise to this one through its\nbinding.",
+          "type": "boolean"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "availableToAllUniverses"
+      ],
+      "type": "object"
     },
     "BlobHasItem": {
       "additionalProperties": false,
@@ -38926,6 +38991,11 @@
       "additionalProperties": false,
       "description": "Register or replace a provider. `credential` is the optional bearer\ntoken Lightspeed presents to the provider's controller and data routes:\nit is sealed on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
       "properties": {
+        "availableToAllUniverses": {
+          "default": true,
+          "description": "Every universe may use the provider (the default). `false` limits it\nto the universes it is bound to.",
+          "type": "boolean"
+        },
         "clearCredential": {
           "description": "Remove the stored credential. Excludes `credential`.",
           "type": "boolean"
@@ -39003,6 +39073,10 @@
     "DeploymentEnvironmentProviderView": {
       "additionalProperties": false,
       "properties": {
+        "availableToAllUniverses": {
+          "description": "Every universe may use the provider. Otherwise only the universes it\nis bound to may.",
+          "type": "boolean"
+        },
         "controllerEndpoint": {
           "description": "`ws://`, `wss://` or `unix://` URL of the provider controller.",
           "type": "string"
@@ -39047,6 +39121,7 @@
         "providerId",
         "controllerEndpoint",
         "hasCredential",
+        "availableToAllUniverses",
         "createdAtMs",
         "updatedAtMs"
       ],
@@ -39083,12 +39158,8 @@
     },
     "DeploymentProviderBindingPutParams": {
       "additionalProperties": false,
-      "description": "Create or replace a universe's binding to a deployment provider.",
+      "description": "Allow a universe to use a provider that is not available to all\nuniverses. Repeating it changes nothing; for a provider available to all\nuniverses it has no effect.",
       "properties": {
-        "enabled": {
-          "description": "Admits creates, template listing and data routes for the universe.",
-          "type": "boolean"
-        },
         "providerId": {
           "type": "string"
         },
@@ -39099,8 +39170,7 @@
       },
       "required": [
         "universe",
-        "providerId",
-        "enabled"
+        "providerId"
       ],
       "type": "object"
     },
@@ -39604,7 +39674,7 @@
           "type": "object"
         },
         "providerId": {
-          "description": "The provider to create the environment with; the universe needs an\nenabled binding to it.",
+          "description": "The provider to create the environment with; it must be available to\nthe universe.",
           "type": "string"
         },
         "requestId": {
@@ -40306,12 +40376,9 @@
       },
       "type": "object"
     },
-    "EnvironmentProviderBindingListParams": {
-      "additionalProperties": false,
-      "type": "object"
-    },
     "EnvironmentProviderBindingListResponse": {
       "additionalProperties": false,
+      "description": "A universe's bindings, as a deployment administrator lists them.",
       "properties": {
         "bindings": {
           "items": {
@@ -40325,40 +40392,13 @@
       ],
       "type": "object"
     },
-    "EnvironmentProviderBindingReadParams": {
-      "additionalProperties": false,
-      "properties": {
-        "providerId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "type": "object"
-    },
-    "EnvironmentProviderBindingReadResponse": {
-      "additionalProperties": false,
-      "properties": {
-        "binding": {
-          "$ref": "#/schemas/EnvironmentProviderBindingView"
-        }
-      },
-      "required": [
-        "binding"
-      ],
-      "type": "object"
-    },
     "EnvironmentProviderBindingView": {
       "additionalProperties": false,
-      "description": "A universe's binding to a deployment provider. Creates, templates and\ndata routes of the provider need it enabled.",
+      "description": "A universe allowed to use a provider that is not available to all\nuniverses.",
       "properties": {
         "createdAtMs": {
           "format": "int64",
           "type": "integer"
-        },
-        "enabled": {
-          "type": "boolean"
         },
         "providerId": {
           "type": "string"
@@ -40370,7 +40410,6 @@
       },
       "required": [
         "providerId",
-        "enabled",
         "createdAtMs",
         "updatedAtMs"
       ],
@@ -41175,7 +41214,7 @@
       "additionalProperties": false,
       "properties": {
         "providerId": {
-          "description": "Only this provider's templates; omit for every enabled binding.",
+          "description": "Only this provider's templates; omit for every provider available to\nthe universe.",
           "type": [
             "string",
             "null"
