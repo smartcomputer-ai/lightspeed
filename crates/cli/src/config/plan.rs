@@ -103,23 +103,30 @@ pub(crate) struct Step {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub done: bool,
     #[serde(skip)]
-    work: Option<Work>,
+    pub(super) work: Option<Work>,
+}
+
+/// A universe to create, as the document and the command describe it.
+#[derive(Clone, Debug)]
+pub(super) struct Creation {
+    handle: String,
+    protected: bool,
+    metadata: Value,
+    initial_owner: Option<Value>,
+    name: String,
+    universe_id: uuid::Uuid,
+    /// The handle of the organization the document names, if any.
+    organization: Option<String>,
 }
 
 /// What a step needs to be carried out.
 #[derive(Clone, Debug)]
-enum Work {
+pub(super) enum Work {
+    Platform(super::platform::PlatformWork),
     ConfigureUniverse {
         configuration: Value,
     },
-    CreateUniverse {
-        handle: String,
-        protected: bool,
-        metadata: Value,
-        initial_owner: Option<Value>,
-        name: String,
-        universe_id: uuid::Uuid,
-    },
+    CreateUniverse(Creation),
     Write {
         resource: usize,
         entry: Value,
@@ -133,7 +140,12 @@ enum Work {
 }
 
 impl Step {
-    fn new(subject: &str, section: &'static str, id: impl Into<String>, action: Action) -> Self {
+    pub(super) fn new(
+        subject: &str,
+        section: &'static str,
+        id: impl Into<String>,
+        action: Action,
+    ) -> Self {
         Self {
             subject: subject.to_owned(),
             section,
@@ -147,7 +159,7 @@ impl Step {
         }
     }
 
-    fn with_message(mut self, message: impl Into<String>) -> Self {
+    pub(super) fn with_message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
         self
     }
@@ -217,22 +229,42 @@ pub(crate) async fn plan_with_owner(
     loaded: &LoadedDocument,
     initial_owner: Option<Value>,
     requested_universe_id: Option<uuid::Uuid>,
+    declared: &super::platform::Declared,
 ) -> Result<DocumentPlan> {
     let subject = loaded.subject();
-    let (resources, sections, handle) = match &loaded.document {
-        Document::Universe(document) => (
-            universe_resources(),
-            universe_sections(document)?,
-            Some(document.handle.clone()),
-        ),
-    };
-
-    let configuration = match &loaded.document {
-        Document::Universe(document) => {
-            let configuration = document.configuration();
-            configuration.validate().map_err(anyhow::Error::msg)?;
-            serde_json::to_value(configuration)?
+    let document = match &loaded.document {
+        Document::Organization(organization) => {
+            let target = connect(base, None).await?;
+            let steps = super::platform::plan_organization(
+                base,
+                &target,
+                &subject,
+                organization,
+                loaded.directory(),
+            )
+            .await?;
+            return Ok(DocumentPlan {
+                subject,
+                steps,
+                target,
+                resources: Vec::new(),
+            });
         }
+        Document::Universe(document) => document,
+    };
+    if document.organization.is_some() || document.access.is_some() {
+        super::platform::require_platform(base, &format!("{subject}: organization and access"))?;
+    }
+    let (resources, sections, handle) = (
+        universe_resources(),
+        universe_sections(document)?,
+        Some(document.handle.clone()),
+    );
+
+    let configuration = {
+        let configuration = document.configuration();
+        configuration.validate().map_err(anyhow::Error::msg)?;
+        serde_json::to_value(configuration)?
     };
     // Phase 1: every entry is checked before anything is read or written.
     let mut entries: BTreeMap<&'static str, Vec<Entry>> = BTreeMap::new();
@@ -290,8 +322,8 @@ pub(crate) async fn plan_with_owner(
     {
         if base.is_platform() {
             anyhow::ensure!(
-                base.selected_organization().is_some(),
-                "Platform creation requires --organization ID or platform organization use ID"
+                document.organization.is_some() || base.selected_organization().is_some(),
+                "Platform creation requires the document's organization, --organization ID or platform organization use ID"
             );
         } else {
             anyhow::ensure!(
@@ -303,7 +335,7 @@ pub(crate) async fn plan_with_owner(
         let mut step = Step::new(&subject, "universe", handle, Action::Create).with_message(
             format!("universeId {universe_id}; retry with --universe-id {universe_id}"),
         );
-        step.work = Some(Work::CreateUniverse {
+        step.work = Some(Work::CreateUniverse(Creation {
             handle: handle.clone(),
             initial_owner,
             universe_id,
@@ -316,9 +348,24 @@ pub(crate) async fn plan_with_owner(
                 .get("metadata")
                 .cloned()
                 .unwrap_or_else(|| json!({})),
-        });
+            organization: document.organization.clone(),
+        }));
         steps.push(step);
     }
+    let home =
+        if base.is_platform() && (document.organization.is_some() || document.access.is_some()) {
+            let (home, conflict) = super::platform::check_home(
+                &target,
+                &subject,
+                document.organization.as_deref(),
+                declared,
+            )
+            .await?;
+            steps.extend(conflict);
+            home
+        } else {
+            None
+        };
 
     if configuration
         .as_object()
@@ -445,6 +492,20 @@ pub(crate) async fn plan_with_owner(
             }
         }
     }
+    if let Some(access) = &document.access {
+        steps.extend(
+            super::platform::plan_access(
+                &target,
+                &subject,
+                &document.handle,
+                access,
+                home.as_ref(),
+                declared,
+            )
+            .await
+            .with_context(|| format!("{subject}: read access"))?,
+        );
+    }
     Ok(DocumentPlan {
         subject,
         steps,
@@ -467,6 +528,7 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
             continue;
         };
         let result = match work {
+            Work::Platform(work) => super::platform::run(&plan.target, work).await,
             Work::ConfigureUniverse { mut configuration } => {
                 configuration["universe"] = json!(plan.target.universe_id);
                 plan.target
@@ -474,25 +536,7 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
                     .await
                     .map(drop)
             }
-            Work::CreateUniverse {
-                handle,
-                protected,
-                metadata,
-                initial_owner,
-                name,
-                universe_id,
-            } => {
-                create_universe(
-                    &mut plan.target,
-                    &handle,
-                    protected,
-                    metadata,
-                    initial_owner,
-                    name,
-                    universe_id,
-                )
-                .await
-            }
+            Work::CreateUniverse(creation) => create_universe(&mut plan.target, creation).await,
             Work::Write {
                 resource,
                 entry,
@@ -528,28 +572,32 @@ pub(crate) async fn apply(plan: &mut DocumentPlan) -> Result<()> {
     Ok(())
 }
 
-async fn create_universe(
-    target: &mut Target,
-    handle: &str,
-    protected: bool,
-    metadata: Value,
-    initial_owner: Option<Value>,
-    name: String,
-    universe_id: uuid::Uuid,
-) -> Result<()> {
+async fn create_universe(target: &mut Target, creation: Creation) -> Result<()> {
+    let Creation {
+        handle,
+        protected,
+        metadata,
+        initial_owner,
+        name,
+        universe_id,
+        organization,
+    } = creation;
+    let handle = handle.as_str();
     let platform = target.api.connection().is_platform();
     eprintln!(
         "Provisioning universe {handle}: {universe_id}. Retry this document with --universe-id {universe_id} if interrupted."
     );
     let mut params = json!({ "universeId": universe_id.to_string(), "handle": handle, "protected":protected,"metadata":metadata });
     let response = if platform {
-        params["organizationId"] = json!(
-            target
+        params["organizationId"] = json!(match &organization {
+            Some(handle) => super::platform::organization_id(target, handle).await?,
+            None => target
                 .api
                 .connection()
                 .selected_organization()
                 .context("Platform creation needs an organization")?
-        );
+                .to_owned(),
+        });
         params["name"] = json!(name);
         if let Some(owner) = initial_owner {
             params["initialOwner"] = owner;

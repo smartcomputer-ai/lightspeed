@@ -44,6 +44,13 @@ export function createApiKey(owner: ManagedApiKeyOwner, input: ApiKeyInput) {
     : platformApi("platform/service-users/credentials/create", { ...input, organizationId: owner.organizationId, serviceUserId: owner.serviceUserId });
 }
 
+/// A new secret for the same key; the old secret stops working at once.
+export function replaceApiKey(owner: ManagedApiKeyOwner, keyId: string) {
+  return owner.kind === "personal"
+    ? platformApi("platform/credentials/replace", { keyId })
+    : platformApi("platform/service-users/credentials/replace", { organizationId: owner.organizationId, serviceUserId: owner.serviceUserId, keyId });
+}
+
 export function revokeApiKey(owner: ManagedApiKeyOwner, keyId: string) {
   return owner.kind === "personal"
     ? platformApi("platform/credentials/revoke", { keyId })

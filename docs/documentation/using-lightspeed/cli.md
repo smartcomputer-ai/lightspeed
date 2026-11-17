@@ -8,7 +8,7 @@ current organization and universe permissions as other Platform API clients.
 
 `connect` manages connections and login. `platform organization`,
 `platform service-user`, and `platform api-key` manage Platform resources.
-`universe access` manages grants and declared access policy for a universe.
+`universe access` lists, gives and removes a universe's grants; its declared access policy is set with documents.
 The generic `api` command remains at the root.
 
 ## Connect to Platform
@@ -79,8 +79,12 @@ requires a human browser or CLI session; API keys cannot mint other keys.
 New key secrets require `--output-secret FILE` (creates a new private file) or
 explicit `--show-secret`.
 
-Use `platform organization update --file settings.json` for organization settings and
-`universe access policy-put --file policy.json` for declared access policy. `universe archive` and
+`platform api-key replace KEY_ID --output-secret FILE` gives a key a new
+secret in place; add `--service-user ID` for a service user's key.
+Organization settings, membership policy, service users and their declared
+keys, and a universe's declared
+access are configured with documents; see
+[Configuration as code](../deployment/configuration-as-code.md). `universe archive` and
 `universe restore` change Platform presentation state; they do not delete runtime
 resources. `api OPERATION --params params.json` exposes generated runtime and
 Platform operations, for example `platform/organizations/list` and `profiles/list`,

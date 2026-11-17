@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
         Command::Token(_) => true,
         Command::Env(args) => args.offline(),
         Command::Config(args) => args.offline(),
+        Command::Platform(args) => args.offline(),
         _ => false,
     };
     if offline {
@@ -119,6 +120,7 @@ async fn main() -> Result<()> {
             Command::Token(args) => administration_cli::token(args),
             Command::Env(args) => env_cli::handle(args).await,
             Command::Config(args) => config::handle(args).await,
+            Command::Platform(args) => platform_cli::handle(args).await,
             _ => unreachable!("only these commands have offline forms"),
         };
     }

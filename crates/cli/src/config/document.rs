@@ -23,6 +23,107 @@ pub(crate) const SCHEMA_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Kind {
     Universe,
+    Organization,
+}
+
+/// A field where `null` is a value of its own: present `null` becomes
+/// `Some(Value::Null)`, while a field left out stays `None`.
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
+/// One Platform organization. Platform only: the runtime has no
+/// organizations. Every field but `handle` is optional; a field left out is not
+/// managed by the document.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct OrganizationDocument {
+    pub schema_version: u32,
+    pub kind: Kind,
+    /// The organization's deployment-unique handle.
+    pub handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The universe role every member person holds in every universe;
+    /// `null` gives members only what they are granted.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub base_universe_role: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_protected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_protected: Option<bool>,
+    /// The organization's own universe limit; `null` follows the deployment
+    /// default. Changing it needs a Platform Admin.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub universe_quota: Option<Value>,
+    /// Members and directory groups declared to hold organization roles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_policy: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_users: Option<Vec<ServiceUserEntry>>,
+}
+
+/// A service user, identified by its name in the organization. Its keys are
+/// issued with `lightspeed platform service-user key`, never declared.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ServiceUserEntry {
+    pub name: String,
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Keys whose secret comes from outside, by name. A key left out is kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keys: Option<Vec<ServiceUserKey>>,
+}
+
+/// A service user's key with a supplied secret, so the secret flows in from
+/// a secret store and never out of Lightspeed. The document is the key's
+/// desired state: restrictions left out mean none, and an expiry left out
+/// means never.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ServiceUserKey {
+    pub name: String,
+    pub secret_from: SecretSource,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<Value>,
+}
+
+/// Who may use a universe beyond its organization's default access.
+/// Platform only. `members` and `directoryGroupMappings` are the universe's
+/// declared access policy; each one present replaces its part. Service users
+/// are granted their role by name; one left out keeps its grant.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct UniverseAccess {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_group_mappings: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_users: Option<Vec<ServiceUserGrant>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ServiceUserGrant {
+    pub name: String,
+    pub role: String,
 }
 
 /// One universe's configuration. Every section is optional; an absent
@@ -34,6 +135,11 @@ pub(crate) struct UniverseDocument {
     pub kind: Kind,
     /// The universe's deployment-unique name.
     pub handle: String,
+    /// The handle of the Platform organization holding the universe. apply
+    /// creates a missing universe there; an existing universe must already
+    /// be there. Left out, creation uses the selected organization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,11 +162,14 @@ pub(crate) struct UniverseDocument {
     pub environments: Option<Vec<Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profiles: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<UniverseAccess>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum Document {
     Universe(Box<UniverseDocument>),
+    Organization(Box<OrganizationDocument>),
 }
 
 /// A document and the file it came from. Relative paths inside it (includes
@@ -80,6 +189,7 @@ impl LoadedDocument {
     pub(crate) fn subject(&self) -> String {
         match &self.document {
             Document::Universe(universe) => format!("universe {}", universe.handle),
+            Document::Organization(organization) => format!("organization {}", organization.handle),
         }
     }
 }
@@ -177,7 +287,7 @@ fn parse(path: &Path, mut value: Value) -> Result<LoadedDocument> {
     }
     resolve_includes(path, &mut value)?;
     let kind: Kind = serde_json::from_value(value.get("kind").cloned().unwrap_or(Value::Null))
-        .with_context(|| format!("kind must be universe {}", located()))?;
+        .with_context(|| format!("kind must be universe or organization {}", located()))?;
     let document = match kind {
         Kind::Universe => {
             let document: UniverseDocument = serde_json::from_value(value).with_context(located)?;
@@ -185,6 +295,35 @@ fn parse(path: &Path, mut value: Value) -> Result<LoadedDocument> {
                 bail!("handle is empty {}", located());
             }
             Document::Universe(Box::new(document))
+        }
+        Kind::Organization => {
+            let document: OrganizationDocument =
+                serde_json::from_value(value).with_context(located)?;
+            if document.handle.trim().is_empty() {
+                bail!("handle is empty {}", located());
+            }
+            let mut names = std::collections::BTreeSet::new();
+            for service_user in document.service_users.iter().flatten() {
+                if !names.insert(service_user.name.as_str()) {
+                    bail!(
+                        "service user {} is listed twice {}",
+                        service_user.name,
+                        located()
+                    );
+                }
+                let mut keys = std::collections::BTreeSet::new();
+                for key in service_user.keys.iter().flatten() {
+                    if !keys.insert(key.name.as_str()) {
+                        bail!(
+                            "key {} of service user {} is listed twice {}",
+                            key.name,
+                            service_user.name,
+                            located()
+                        );
+                    }
+                }
+            }
+            Document::Organization(Box::new(document))
         }
     };
     Ok(LoadedDocument {
@@ -367,7 +506,9 @@ mod tests {
         let documents = load(std::slice::from_ref(&mount)).unwrap();
         assert_eq!(documents.len(), 1);
         assert_eq!(documents[0].path, mount.join("research.yaml"));
-        let Document::Universe(universe) = &documents[0].document;
+        let Document::Universe(universe) = &documents[0].document else {
+            panic!("a universe document");
+        };
         // An include next to the document resolves through the mount too.
         assert_eq!(
             universe.profiles.as_ref().unwrap()[0]["profileId"],
@@ -457,6 +598,7 @@ mod tests {
             .iter()
             .find_map(|loaded| match &loaded.document {
                 Document::Universe(universe) => (universe.handle == "research").then_some(universe),
+                Document::Organization(_) => None,
             })
             .expect("universe document");
         assert_eq!(universe.handle, "research");

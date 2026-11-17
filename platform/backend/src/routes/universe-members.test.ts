@@ -116,3 +116,21 @@ it("checks service user identity and suspension without manufacturing a human se
   await fixture.db.update(schema.serviceUsers).set({ enabled: false }).where(eq(schema.serviceUsers.id, serviceUser!.id));
   expect(await universeForPrincipal(fixture.context, auth, fixture.universe.id)).toBeNull();
 });
+
+it("reads a universe for anyone with access, and its declared access policy for its Owners only", async () => {
+  await fixture.asUser("owner");
+  expect((await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}/access-policy`, "PUT", { policy: { members: [{ email: "dana@example.test", role: "operator" }] } })).status).toBe(200);
+  const read = await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}`);
+  expect(read.status).toBe(200);
+  expect(await read.json()).toMatchObject({ universe: { organizationId: "organization-a", handle: "work" } });
+  expect(await (await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}/access-policy`)).json()).toEqual({ policy: { members: [{ email: "dana@example.test", role: "operator" }] } });
+  await fixture.asUser("viewer");
+  expect((await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}`)).status).toBe(200);
+  expect((await fixture.request(`/universes/${fixture.universe.lightspeedUniverseId}/access-policy`)).status).toBe(403);
+});
+
+it("keeps service user names unique in an organization", async () => {
+  await fixture.asUser("organization-admin");
+  expect((await fixture.request("/organizations/organization-a/service-users", "POST", { name: "Deployer", role: "member" })).status).toBe(200);
+  expect((await fixture.request("/organizations/organization-a/service-users", "POST", { name: "Deployer", role: "member" })).status).toBe(409);
+});

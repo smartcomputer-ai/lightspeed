@@ -17,6 +17,9 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/credentials/create': {'method': 'POST',
                                  'path': '/api/v1/platform/credentials',
                                  'helper': {'name': 'createPersonalApiKey'}},
+ 'platform/credentials/replace': {'method': 'POST',
+                                  'path': '/api/v1/platform/credentials/{keyId}/replace',
+                                  'helper': {'name': 'replacePersonalApiKey'}},
  'platform/credentials/revoke': {'method': 'DELETE',
                                  'path': '/api/v1/platform/credentials/{keyId}',
                                  'helper': {'name': 'revokePersonalApiKey'}},
@@ -29,6 +32,12 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/service-users/credentials/create': {'method': 'POST',
                                                'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials',
                                                'helper': {'name': 'createServiceUserApiKey'}},
+ 'platform/service-users/credentials/replace': {'method': 'POST',
+                                                'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}/replace',
+                                                'helper': {'name': 'replaceServiceUserApiKey'}},
+ 'platform/service-users/credentials/put': {'method': 'PUT',
+                                            'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials',
+                                            'helper': {'name': 'putServiceUserApiKey'}},
  'platform/service-users/credentials/revoke': {'method': 'DELETE',
                                                'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}',
                                                'helper': {'name': 'revokeServiceUserApiKey'}},
@@ -89,6 +98,12 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/universes/grants/delete': {'method': 'DELETE',
                                       'path': '/api/v1/platform/universes/{universe}/grants/{grantId}',
                                       'helper': {'name': 'removeUniverseGrant'}},
+ 'platform/universes/read': {'method': 'GET',
+                             'path': '/api/v1/platform/universes/{universe}',
+                             'helper': {'name': 'readPlatformUniverse'}},
+ 'platform/universes/access-policy/read': {'method': 'GET',
+                                           'path': '/api/v1/platform/universes/{universe}/access-policy',
+                                           'helper': {'name': 'readUniverseAccessPolicy'}},
  'platform/universes/access-policy/put': {'method': 'PUT',
                                           'path': '/api/v1/platform/universes/{universe}/access-policy',
                                           'helper': {'name': 'putUniverseAccessPolicy'}}}
@@ -113,6 +128,9 @@ class PlatformApi:
     async def create_personal_api_key(self, params: Api.PlatformCredentialsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformCredentialsCreateResult:
         return cast(Api.PlatformCredentialsCreateResult, await self._invoke('platform/credentials/create', dict(params or {}), headers))
 
+    async def replace_personal_api_key(self, params: Api.PlatformCredentialsReplaceParams, *, headers: HeadersInput | None = None) -> Api.PlatformCredentialsReplaceResult:
+        return cast(Api.PlatformCredentialsReplaceResult, await self._invoke('platform/credentials/replace', dict(params or {}), headers))
+
     async def revoke_personal_api_key(self, params: Api.PlatformCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformCredentialsRevokeResult:
         return cast(Api.PlatformCredentialsRevokeResult, await self._invoke('platform/credentials/revoke', dict(params or {}), headers))
 
@@ -124,6 +142,12 @@ class PlatformApi:
 
     async def create_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsCreateResult:
         return cast(Api.PlatformServiceUsersCredentialsCreateResult, await self._invoke('platform/service-users/credentials/create', dict(params or {}), headers))
+
+    async def replace_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsReplaceParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsReplaceResult:
+        return cast(Api.PlatformServiceUsersCredentialsReplaceResult, await self._invoke('platform/service-users/credentials/replace', dict(params or {}), headers))
+
+    async def put_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsPutResult:
+        return cast(Api.PlatformServiceUsersCredentialsPutResult, await self._invoke('platform/service-users/credentials/put', dict(params or {}), headers))
 
     async def revoke_service_user_api_key(self, params: Api.PlatformServiceUsersCredentialsRevokeParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersCredentialsRevokeResult:
         return cast(Api.PlatformServiceUsersCredentialsRevokeResult, await self._invoke('platform/service-users/credentials/revoke', dict(params or {}), headers))
@@ -184,6 +208,12 @@ class PlatformApi:
 
     async def remove_universe_grant(self, params: Api.PlatformUniversesGrantsDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesGrantsDeleteResult:
         return cast(Api.PlatformUniversesGrantsDeleteResult, await self._invoke('platform/universes/grants/delete', dict(params or {}), headers))
+
+    async def read_platform_universe(self, params: Api.PlatformUniversesReadParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesReadResult:
+        return cast(Api.PlatformUniversesReadResult, await self._invoke('platform/universes/read', dict(params or {}), headers))
+
+    async def read_universe_access_policy(self, params: Api.PlatformUniversesAccessPolicyReadParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesAccessPolicyReadResult:
+        return cast(Api.PlatformUniversesAccessPolicyReadResult, await self._invoke('platform/universes/access-policy/read', dict(params or {}), headers))
 
     async def put_universe_access_policy(self, params: Api.PlatformUniversesAccessPolicyPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesAccessPolicyPutResult:
         return cast(Api.PlatformUniversesAccessPolicyPutResult, await self._invoke('platform/universes/access-policy/put', dict(params or {}), headers))

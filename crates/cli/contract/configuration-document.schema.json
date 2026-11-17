@@ -1,5 +1,4 @@
 {
-  "$ref": "#/definitions/UniverseDocument",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
     "CodeModeFeature": {
@@ -1252,6 +1251,262 @@
       ],
       "type": "string"
     },
+    "OrganizationDocument": {
+      "additionalProperties": false,
+      "description": "Platform only. The configuration of one organization. A field left out is not managed by the document.",
+      "properties": {
+        "baseUniverseRole": {
+          "anyOf": [
+            {
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The default universe access: the role every member person holds in every universe of the organization. `null` gives members only what they are granted."
+        },
+        "defaultProtected": {
+          "description": "New universes start with deletion protection.",
+          "type": "boolean"
+        },
+        "handle": {
+          "description": "The organization's deployment-unique handle. apply finds the organization by it and creates it when none has it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "organization"
+        },
+        "membershipPolicy": {
+          "additionalProperties": false,
+          "description": "People and company directory groups declared to hold organization roles. When present, it replaces the organization's policy.",
+          "properties": {
+            "directoryGroupMappings": {
+              "items": {
+                "additionalProperties": false,
+                "description": "Everyone in a company directory group holds the role.",
+                "properties": {
+                  "group": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "issuer": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "member",
+                      "creator",
+                      "admin"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "members": {
+              "items": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "email": {
+                        "format": "email",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "issuer": {
+                        "format": "uri",
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "member",
+                          "creator",
+                          "admin"
+                        ],
+                        "type": "string"
+                      },
+                      "subject": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "description": "A person declared by verified email, or by their company sign-in issuer and subject."
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "name": {
+          "description": "Required to create the organization.",
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "requireProtected": {
+          "description": "Every universe must stay protected and cannot expire.",
+          "type": "boolean"
+        },
+        "schemaVersion": {
+          "const": 1,
+          "description": "The layout of this file. It is not a revision of the configuration."
+        },
+        "serviceUsers": {
+          "description": "Service users, by their name in the organization. Their API keys are issued with `lightspeed platform service-user`, never declared. One left out is kept.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "keys": {
+                "description": "Keys whose secret comes from outside, by name. The document is each key's desired state: restrictions left out mean none, an expiry left out means never. A changed secret replaces the old one at once. A key left out is kept.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "expiresAt": {
+                      "anyOf": [
+                        {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "maxLength": 120,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "restrictions": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "allowUniverseCreation": {
+                          "type": "boolean"
+                        },
+                        "operations": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "organizationIds": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        },
+                        "universeIds": {
+                          "items": {
+                            "format": "uuid",
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "secretFrom": {
+                      "$ref": "#/definitions/SecretSource"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "secretFrom"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "member",
+                  "creator",
+                  "admin"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "universeQuota": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The organization's own universe limit; `null` follows the deployment default. Only a Platform Admin changes it."
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "kind",
+        "handle"
+      ],
+      "type": "object"
+    },
     "ProfileId": {
       "type": "string"
     },
@@ -1749,10 +2004,137 @@
         }
       ]
     },
+    "UniverseAccess": {
+      "additionalProperties": false,
+      "description": "Platform only. Who may use the universe beyond the organization's default access. `members` and `directoryGroupMappings` are its declared access policy; each one present replaces its part. Service users are granted their role by name; one left out keeps its grant.",
+      "properties": {
+        "directoryGroupMappings": {
+          "items": {
+            "additionalProperties": false,
+            "description": "Everyone in a company directory group holds the role.",
+            "properties": {
+              "group": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "issuer": {
+                "format": "uri",
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "operator",
+                  "owner"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "group",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "members": {
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "email": {
+                    "format": "email",
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email",
+                  "role"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "issuer": {
+                    "format": "uri",
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ],
+                    "type": "string"
+                  },
+                  "subject": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject",
+                  "role"
+                ],
+                "type": "object"
+              }
+            ],
+            "description": "A person declared by verified email, or by their company sign-in issuer and subject."
+          },
+          "type": "array"
+        },
+        "serviceUsers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "viewer",
+                  "contributor",
+                  "operator",
+                  "owner"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "role"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "UniverseDocument": {
       "additionalProperties": false,
       "description": "The configuration of one universe. A section left out is not managed by the document.",
       "properties": {
+        "access": {
+          "$ref": "#/definitions/UniverseAccess"
+        },
         "credentials": {
           "items": {
             "anyOf": [
@@ -1855,6 +2237,11 @@
             }
           },
           "type": "object"
+        },
+        "organization": {
+          "description": "Platform only. The handle of the organization holding the universe: apply creates a missing universe there, and an existing universe must already be there. Left out, creation uses the selected organization.",
+          "minLength": 1,
+          "type": "string"
         },
         "profiles": {
           "items": {
@@ -2093,6 +2480,14 @@
       "type": "object"
     }
   },
-  "description": "A document that `lightspeed config apply` makes a universe match. Generated from the API's input types; do not edit.",
+  "description": "A document that `lightspeed config apply` makes a universe or a Platform organization match. Generated from the API's input types; do not edit.",
+  "oneOf": [
+    {
+      "$ref": "#/definitions/UniverseDocument"
+    },
+    {
+      "$ref": "#/definitions/OrganizationDocument"
+    }
+  ],
   "title": "Lightspeed configuration document"
 }

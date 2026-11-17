@@ -3,13 +3,14 @@ import { Hono, type Handler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { schema } from "@lightspeed-ai/platform-db";
-import { CREDENTIAL_OPERATIONS, ORGANIZATION_ROLES, credentialCreateSchema, credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
+import { CREDENTIAL_OPERATIONS, ORGANIZATION_ROLES, credentialCreateSchema, credentialPutSchema, credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
+import { defaultKeyHasher } from "@better-auth/api-key";
 import { z } from "zod";
 import type { ApiVariables, AppContext } from "./context.js";
 import { getAuth, requireCredentialManagement, type AuthContext } from "./auth-context.js";
 import { declaredPrincipalRole, requireOrganizationAction } from "./organization-access.js";
 import { hasPlatformAdminRole } from "./context.js";
-import { PERSONAL_KEY_CONFIG, SERVICE_USER_KEY_CONFIG } from "./api-key-config.js";
+import { PERSONAL_KEY_CONFIG, PERSONAL_KEY_PREFIX, SERVICE_USER_KEY_CONFIG, SERVICE_USER_KEY_PREFIX, apiKeyRowDefaults } from "./api-key-config.js";
 import { auditIdentity } from "./identity-audit.js";
 
 type Owner = { userId: string; serviceUserId?: never; organizationId?: never } | { userId?: never; serviceUserId: string; organizationId: string };
@@ -69,6 +70,93 @@ async function createCredential(ctx: AppContext, auth: AuthContext, owner: Owner
     return { credential: metadata({ ...key, lastUsedAt: key.lastRequest, restrictions: input.restrictions }), secret: key.key };
   };
   return owner.serviceUserId ? ctx.auth.withOrganizationKeyAuthority({ userId: auth.principal.id, organizationId: owner.organizationId }, create) : create();
+}
+
+const SECRET_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+/** A new secret in the form Better Auth issues: the prefix and 64 letters. */
+function newSecret(prefix: string): string {
+  const letters: string[] = [];
+  // Rejection sampling keeps every letter equally likely.
+  while (letters.length < 64) {
+    for (const byte of crypto.getRandomValues(new Uint8Array(96))) {
+      if (byte < 208 && letters.length < 64) letters.push(SECRET_ALPHABET[byte % 52]!);
+    }
+  }
+  return prefix + letters.join("");
+}
+
+/** The secret's columns as Better Auth stores them: a hash it finds the key
+ * by, and the first characters it shows. */
+async function secretColumns(secret: string) {
+  return { key: await defaultKeyHasher(secret), start: secret.slice(0, 12) };
+}
+
+/** Give a key a new secret in place: its ID, name, restrictions and expiry
+ * stay, the old secret stops working at once, and the new one is returned
+ * once. Nothing that holds the key needs renaming. */
+async function replaceCredential(ctx: AppContext, auth: AuthContext, owner: Owner, keyId: string) {
+  const [row] = await ctx.db.select(publicKeyColumns).from(schema.credentialBindings)
+    .innerJoin(schema.apikey, eq(schema.apikey.id, schema.credentialBindings.keyId))
+    .where(and(ownerConditions(owner), eq(schema.apikey.id, keyId)));
+  if (!row) throw new HTTPException(404, { message: "Credential not found" });
+  if (!row.enabled) throw new HTTPException(409, { message: "A revoked key cannot be given a new secret" });
+  const secret = newSecret(owner.serviceUserId ? SERVICE_USER_KEY_PREFIX : PERSONAL_KEY_PREFIX);
+  const columns = await secretColumns(secret);
+  await ctx.db.transaction(async (tx) => {
+    await tx.update(schema.apikey).set({ ...columns, updatedAt: new Date() }).where(eq(schema.apikey.id, keyId));
+    await auditIdentity(tx, { actorId: auth.actorId, action: "credential.replace", targetId: keyId,
+      details: { principalKind: owner.serviceUserId ? "serviceUser" : "user", principalId: owner.serviceUserId ?? owner.userId!, credentialId: auth.credential.id } });
+  });
+  return { credential: metadata({ ...row, start: columns.start }), secret };
+}
+
+/** Declare a service user's key by name with a supplied secret: created when
+ * missing; otherwise its secret, restrictions and expiry are made to match.
+ * The comparison happens here, so a dry run tells a client what would change
+ * without the client ever seeing a stored secret. */
+async function putServiceUserCredential(ctx: AppContext, auth: AuthContext, owner: Owner & { serviceUserId: string }, input: z.infer<typeof credentialPutSchema>) {
+  const maximum = ctx.env.apiKeyMaxExpiryDays;
+  const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+  if (maximum !== undefined && (expiresAt === null || expiresAt.getTime() > Date.now() + maximum * 86400_000)) {
+    throw new HTTPException(400, { message: `This deployment requires keys to expire within ${maximum} days` });
+  }
+  const restrictions = credentialRestrictionsSchema.parse(input.restrictions);
+  const columns = await secretColumns(input.secret);
+  const named = await ctx.db.select({ ...publicKeyColumns, key: schema.apikey.key }).from(schema.credentialBindings)
+    .innerJoin(schema.apikey, eq(schema.apikey.id, schema.credentialBindings.keyId))
+    .where(and(ownerConditions(owner), eq(schema.apikey.name, input.name), eq(schema.apikey.enabled, true)));
+  if (named.length > 1) throw new HTTPException(409, { message: `The service user has several keys named ${input.name}; revoke all but one` });
+  const current = named[0];
+  // Better Auth finds a key by its secret's hash, so a secret serves one key.
+  const [taken] = await ctx.db.select({ id: schema.apikey.id }).from(schema.apikey).where(eq(schema.apikey.key, columns.key));
+  if (taken && taken.id !== current?.id) throw new HTTPException(409, { message: "This secret is already used by another key" });
+  const secretReplaced = !!current && current.key !== columns.key;
+  const updated: ("restrictions" | "expiresAt")[] = [];
+  if (current && JSON.stringify(credentialRestrictionsSchema.parse(current.restrictions)) !== JSON.stringify(restrictions)) updated.push("restrictions");
+  if (current && (current.expiresAt?.getTime() ?? null) !== (expiresAt?.getTime() ?? null)) updated.push("expiresAt");
+  const outcome = { created: !current, secretReplaced, updated };
+  if (input.dryRun) return { credential: current ? metadata(current) : null, ...outcome };
+  const details = { principalKind: "serviceUser", principalId: owner.serviceUserId, credentialId: auth.credential.id };
+  const keyId = await ctx.db.transaction(async (tx) => {
+    if (!current) {
+      const id = crypto.randomUUID();
+      const now = new Date();
+      await tx.insert(schema.apikey).values({ ...apiKeyRowDefaults(), ...columns, id, configId: SERVICE_USER_KEY_CONFIG, name: input.name,
+        prefix: SERVICE_USER_KEY_PREFIX, referenceId: owner.organizationId, expiresAt, createdAt: now, updatedAt: now });
+      await tx.insert(schema.credentialBindings).values({ keyId: id, serviceUserId: owner.serviceUserId, restrictions, createdBy: auth.actorId });
+      await auditIdentity(tx, { actorId: auth.actorId, action: "credential.put", targetId: id, details: { ...details, created: true } });
+      return id;
+    }
+    if (secretReplaced || updated.length) {
+      await tx.update(schema.apikey).set({ ...(secretReplaced ? columns : {}), expiresAt, updatedAt: new Date() }).where(eq(schema.apikey.id, current.id));
+      if (updated.includes("restrictions")) await tx.update(schema.credentialBindings).set({ restrictions }).where(eq(schema.credentialBindings.keyId, current.id));
+      await auditIdentity(tx, { actorId: auth.actorId, action: "credential.put", targetId: current.id, details: { ...details, secretReplaced, updated: updated.join(",") } });
+    }
+    return current.id;
+  });
+  const [row] = await ctx.db.select(publicKeyColumns).from(schema.credentialBindings)
+    .innerJoin(schema.apikey, eq(schema.apikey.id, schema.credentialBindings.keyId)).where(eq(schema.apikey.id, keyId));
+  return { credential: metadata(row!), ...outcome };
 }
 
 async function revokeCredential(ctx: AppContext, auth: AuthContext, owner: Owner, keyId: string) {
@@ -167,6 +255,9 @@ export function credentialRoutes(ctx: AppContext) {
     const auth = getAuth(c); const owner = personal(auth);
     return c.json(await createCredential(ctx, auth, owner, await input(c.req.raw)), 201);
   },
+  "platform/credentials/replace": async c => {
+    const auth = getAuth(c); return c.json(await replaceCredential(ctx, auth, personal(auth), c.req.param("keyId")!));
+  },
   "platform/credentials/revoke": async c => {
     const auth = getAuth(c); return c.json(await revokeCredential(ctx, auth, personal(auth), c.req.param("keyId")!));
   },
@@ -175,6 +266,18 @@ export function credentialRoutes(ctx: AppContext) {
   "platform/service-users/credentials/create": async c => {
     const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);
     return c.json(await createCredential(ctx, auth, owner, await input(c.req.raw)), 201);
+  },
+  "platform/service-users/credentials/replace": async c => {
+    const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);
+    return c.json(await replaceCredential(ctx, auth, owner, c.req.param("keyId")!));
+  },
+  "platform/service-users/credentials/put": async c => {
+    const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);
+    let raw: unknown;
+    try { raw = await c.req.json(); } catch { throw new HTTPException(400, { message: "Invalid JSON" }); }
+    const parsed = credentialPutSchema.safeParse(raw);
+    if (!parsed.success) throw new HTTPException(400, { message: `Invalid credential: ${parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; ")}` });
+    return c.json(await putServiceUserCredential(ctx, auth, owner as Owner & { serviceUserId: string }, parsed.data));
   },
   "platform/service-users/credentials/revoke": async c => {
     const auth = getAuth(c); const owner = await serviceUserOwner(ctx, auth, c.req.param("organizationId")!, c.req.param("serviceUserId")!);

@@ -10,7 +10,7 @@ standalone runtime needs its own trusted gateway or a trusted network.
 Create user keys under **Settings → API keys**. Create service-user
 keys from the service user itself: **Admin → organization → Members**, open the
 service user, then **New key**. Each key opens to show what it may reach, when
-it was last used, and **Revoke key**. Organization Admins see every key that can
+it was last used, **Replace secret** and **Revoke key**. Organization Admins see every key that can
 reach their organization under **Admin → organization → API keys**: its service
 users' keys and the personal keys of its members whose restrictions allow it,
 each with its owner. They can revoke service-user keys there; only a person can
@@ -25,9 +25,22 @@ the CLI) creates a key that works until it is revoked, for automation that must
 not stop unexpectedly. A deployment that sets a maximum key lifetime refuses
 keys without expiry. Key lists show **Never expires** and when each key was last
 used, so forgotten keys are easy to find and revoke.
-Copy a new secret when it is shown; it is never returned again. For rotation,
-create a replacement, move consumers, and explicitly revoke the previous key.
+Copy a new secret when it is shown; it is never returned again. A lost or
+leaked secret is replaced in place with **Replace secret** (`lightspeed
+platform api-key replace KEY_ID --output-secret FILE`): the key keeps its ID,
+name, restrictions and expiry, gets a new secret shown once, and the old
+secret stops working at once. Nothing that refers to the key needs renaming;
+only the secret its consumers hold changes. To rotate without a gap instead,
+create a second key, move consumers, and revoke the first.
 Keys cannot mint other keys. Human browser and CLI sessions manage credentials.
+
+A service user's keys can also be declared with a secret supplied from your
+secret store, so the secret flows into Lightspeed and never out: list them
+under the service user in an
+[organization document](../deployment/configuration-as-code.md#configure-organizations-and-access).
+`lightspeed platform api-key generate-secret` makes a secret of the accepted
+form without contacting Lightspeed. A changed secret in the store replaces the
+key's secret on the next `apply`.
 
 Send `Authorization: Bearer <key>` to the Platform `/api/v1` base URL. Runtime
 resource routes are shared with the direct runtime API; native organization,

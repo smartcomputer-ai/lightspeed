@@ -12,6 +12,183 @@ use std::{
     time::Duration,
 };
 
+/// What declarative documents create, kept across the commands of a test.
+#[derive(Default)]
+struct State {
+    organizations: Vec<Value>,
+    service_users: Vec<Value>,
+    universes: Vec<Value>,
+    policies: std::collections::BTreeMap<String, Value>,
+    grants: Vec<Value>,
+    /// Declared keys: (service user ID, key name) to the last put.
+    keys: std::collections::BTreeMap<(String, String), Value>,
+}
+
+/// Organizations, service users, and the universes, policies and grants that
+/// documents declare. `None` leaves the request to the fixed routes.
+fn stateful(state: &mut State, method: &str, path: &str, body: &Value) -> Option<(u16, Value)> {
+    let not_found = || {
+        (
+            404,
+            json!({"type":"about:blank","title":"Not found","detail":"not found","status":404,"kind":"notFound"}),
+        )
+    };
+    let parts: Vec<&str> = path.trim_start_matches("/api/v1/").split('/').collect();
+    match (method, parts.as_slice()) {
+        ("GET", ["platform", "organizations"]) => Some((
+            200,
+            json!({"organizations": state.organizations, "canCreate": true}),
+        )),
+        ("POST", ["platform", "organizations"]) => {
+            let organization = json!({
+                "id": format!("org-{}", body["handle"].as_str().unwrap()), "handle": body["handle"], "name": body["name"], "personal": false,
+                "baseUniverseRole": body.get("baseUniverseRole").cloned().unwrap_or(json!("viewer")),
+                "defaultProtected": body.get("defaultProtected").cloned().unwrap_or(json!(true)),
+                "requireProtected": body.get("requireProtected").cloned().unwrap_or(json!(false)),
+                "universeQuota": 100, "universeQuotaSource": "deployment", "membershipPolicy": {},
+            });
+            let mut organization = organization;
+            if let Some(quota) = body.get("universeQuota").filter(|quota| !quota.is_null()) {
+                organization["universeQuota"] = quota.clone();
+                organization["universeQuotaSource"] = json!("organization");
+            }
+            state.organizations.push(organization.clone());
+            Some((200, json!({"organization": organization})))
+        }
+        ("PATCH", ["platform", "organizations", id]) => {
+            let organization = state
+                .organizations
+                .iter_mut()
+                .find(|candidate| candidate["id"] == *id)?;
+            for (field, value) in body.as_object().unwrap() {
+                organization[field] = value.clone();
+            }
+            Some((200, json!({"organization": organization})))
+        }
+        ("GET", ["platform", "organizations", id, "service-users"]) => {
+            let listed: Vec<&Value> = state
+                .service_users
+                .iter()
+                .filter(|candidate| candidate["organizationId"] == *id)
+                .collect();
+            Some((200, json!({"serviceUsers": listed})))
+        }
+        ("POST", ["platform", "organizations", id, "service-users"]) if id.starts_with("org-") => {
+            let service_user = json!({"id": format!("su-{}", body["name"].as_str().unwrap()), "organizationId": id, "name": body["name"], "role": body["role"], "enabled": true});
+            state.service_users.push(service_user.clone());
+            Some((200, json!({"serviceUser": service_user})))
+        }
+        ("PATCH", ["platform", "organizations", _, "service-users", id]) => {
+            let service_user = state
+                .service_users
+                .iter_mut()
+                .find(|candidate| candidate["id"] == *id)?;
+            for (field, value) in body.as_object().unwrap() {
+                service_user[field] = value.clone();
+            }
+            Some((200, json!({"serviceUser": service_user})))
+        }
+        ("POST", ["platform", "organizations", id, "universes"]) if id.starts_with("org-") => {
+            let universe = json!({"lightspeedUniverseId": body["universeId"], "handle": body["handle"], "organizationId": id});
+            state.universes.push(universe.clone());
+            Some((200, json!({"universe": universe})))
+        }
+        ("GET", ["universes", reference])
+            if reference.starts_with("declared-")
+                || state
+                    .universes
+                    .iter()
+                    .any(|universe| universe["lightspeedUniverseId"] == *reference) =>
+        {
+            match state.universes.iter().find(|universe| {
+                universe["handle"] == *reference || universe["lightspeedUniverseId"] == *reference
+            }) {
+                Some(universe) => Some((
+                    200,
+                    json!({"universe": {"universeId": universe["lightspeedUniverseId"], "handle": universe["handle"], "protected": true}}),
+                )),
+                None => Some(not_found()),
+            }
+        }
+        (
+            "PUT",
+            [
+                "platform",
+                "organizations",
+                _,
+                "service-users",
+                service_user,
+                "credentials",
+            ],
+        ) => {
+            let index = (
+                (*service_user).to_owned(),
+                body["name"].as_str().unwrap().to_owned(),
+            );
+            let current = state.keys.get(&index).cloned();
+            let mut updated = Vec::new();
+            if let Some(current) = &current {
+                if current.get("restrictions") != body.get("restrictions") {
+                    updated.push("restrictions");
+                }
+                if current.get("expiresAt") != body.get("expiresAt") {
+                    updated.push("expiresAt");
+                }
+            }
+            let outcome = json!({
+                "credential": current.as_ref().map(|_| json!({"id": "declared-key"})),
+                "created": current.is_none(),
+                "secretReplaced": current.as_ref().is_some_and(|current| current["secret"] != body["secret"]),
+                "updated": updated,
+            });
+            if body["dryRun"] != true {
+                let mut stored = body.clone();
+                stored.as_object_mut().unwrap().remove("dryRun");
+                state.keys.insert(index, stored);
+            }
+            Some((200, outcome))
+        }
+        ("POST", ["platform", "credentials", key, "replace"]) => Some((
+            200,
+            json!({"credential": {"id": key}, "secret": "lsp_replaced"}),
+        )),
+        ("GET", ["platform", "universes", id]) => {
+            let universe = state
+                .universes
+                .iter()
+                .find(|universe| universe["lightspeedUniverseId"] == *id)?;
+            Some((200, json!({"universe": universe})))
+        }
+        ("GET", ["platform", "universes", id, "access-policy"]) => Some((
+            200,
+            json!({"policy": state.policies.get(*id).cloned().unwrap_or(json!({}))}),
+        )),
+        ("PUT", ["platform", "universes", id, "access-policy"]) => {
+            state
+                .policies
+                .insert((*id).to_owned(), body["policy"].clone());
+            Some((200, json!({"policy": body["policy"]})))
+        }
+        ("GET", ["platform", "universes", id, "grants"]) => {
+            let listed: Vec<&Value> = state
+                .grants
+                .iter()
+                .filter(|grant| grant["universeId"] == *id)
+                .collect();
+            Some((200, json!({"grants": listed})))
+        }
+        ("PUT", ["platform", "universes", id, "grants"]) => {
+            state.grants.retain(|grant| {
+                !(grant["universeId"] == *id && grant["principal"] == body["principal"])
+            });
+            let grant = json!({"id": "grant", "universeId": id, "principal": body["principal"], "role": body["role"]});
+            state.grants.push(grant.clone());
+            Some((200, json!({"grant": grant})))
+        }
+        _ => None,
+    }
+}
+
 struct Platform {
     endpoint: String,
     requests: Arc<Mutex<Vec<(String, String, Value)>>>,
@@ -32,6 +209,7 @@ impl Platform {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
         let worker = thread::spawn(move || {
+            let mut state = State::default();
             while !stopping.load(Ordering::Relaxed) {
                 let (mut socket, _) = match listener.accept() {
                     Ok(pair) => pair,
@@ -81,67 +259,73 @@ impl Platform {
                     .lock()
                     .unwrap()
                     .push((method.clone(), path.clone(), body.clone()));
-                let (status, response) = match (method.as_str(), path.as_str()) {
-                    (_, "/api/v1/connection") => (
-                        200,
-                        json!({"runtime":"platform","contractRevision":"1","caller":{"single":false},"serverInfo":{"name":"Platform","version":"test"},"platform":{"principal":{"kind":"user","id":"creator","name":"Creator","platformAdmin":platform_admin},"credential":{"kind":"personalKey","id":"key-id"},"organizations":[],"restrictions":{}}}),
-                    ),
-                    ("GET", "/api/v1/platform/organizations/organization-a") => {
-                        (200, json!({"organization":{"id":"organization-a"}}))
+                let fixed = stateful(&mut state, &method, &path, &body);
+                let (status, response) = if let Some(response) = fixed {
+                    response
+                } else {
+                    match (method.as_str(), path.as_str()) {
+                        (_, "/api/v1/connection") => (
+                            200,
+                            json!({"runtime":"platform","contractRevision":"1","caller":{"single":false},"serverInfo":{"name":"Platform","version":"test"},"platform":{"principal":{"kind":"user","id":"creator","name":"Creator","platformAdmin":platform_admin},"credential":{"kind":"personalKey","id":"key-id"},"organizations":[],"restrictions":{}}}),
+                        ),
+                        ("GET", "/api/v1/platform/organizations/organization-a") => {
+                            (200, json!({"organization":{"id":"organization-a"}}))
+                        }
+                        ("PUT", "/api/v1/platform/organizations/organization-a/members/user-b") => {
+                            (
+                                200,
+                                json!({"member":{"userId":"user-b","role":body["role"]}}),
+                            )
+                        }
+                        ("POST", "/api/v1/platform/organizations/organization-a/service-users") => {
+                            (
+                                200,
+                                json!({"serviceUser":{"id":"worker","name":body["name"],"role":body["role"]}}),
+                            )
+                        }
+                        ("POST", "/api/v1/platform/organizations/organization-a/universes") => (
+                            200,
+                            json!({"universe":{"lightspeedUniverseId":body["universeId"],"handle":body["handle"],"organizationId":"organization-a"}}),
+                        ),
+                        ("GET", "/api/v1/universes/new-work") => (
+                            404,
+                            json!({"type":"about:blank","title":"Not found","detail":"not found","status":404,"kind":"notFound"}),
+                        ),
+                        (
+                            "GET",
+                            "/api/v1/universes/existing-work"
+                            | "/api/v1/universes/00000000-0000-0000-0000-000000000002",
+                        ) => (
+                            200,
+                            json!({"universe":{"universeId":"00000000-0000-0000-0000-000000000002","handle":"existing-work","protected":false}}),
+                        ),
+                        (
+                            "GET",
+                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/environment-provider-bindings",
+                        ) => (
+                            200,
+                            json!({"bindings":[{"providerId":"incus","enabled":true}]}),
+                        ),
+                        (
+                            "PUT",
+                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus",
+                        ) => (
+                            200,
+                            json!({"binding":{"providerId":"incus","enabled":body["enabled"]}}),
+                        ),
+                        (
+                            "PUT",
+                            "/api/v1/universes/00000000-0000-0000-0000-000000000002/configuration",
+                        ) => (200, json!({"universe":body})),
+                        ("POST", "/api/v1/platform/credentials") => (
+                            200,
+                            json!({"credential":{"id":"key-id"},"secret":"lsk_supersecret"}),
+                        ),
+                        _ => (
+                            500,
+                            json!({"type":"about:blank","title":"Unexpected request","detail":format!("{method} {path}"),"status":500,"kind":"internal"}),
+                        ),
                     }
-                    ("GET", "/api/v1/platform/organizations") => {
-                        (200, json!({"organizations":[],"canCreate":true}))
-                    }
-                    ("PUT", "/api/v1/platform/organizations/organization-a/members/user-b") => (
-                        200,
-                        json!({"member":{"userId":"user-b","role":body["role"]}}),
-                    ),
-                    ("POST", "/api/v1/platform/organizations/organization-a/service-users") => (
-                        200,
-                        json!({"serviceUser":{"id":"worker","name":body["name"],"role":body["role"]}}),
-                    ),
-                    ("POST", "/api/v1/platform/organizations/organization-a/universes") => (
-                        200,
-                        json!({"universe":{"lightspeedUniverseId":body["universeId"],"handle":body["handle"],"organizationId":"organization-a"}}),
-                    ),
-                    ("GET", "/api/v1/universes/new-work") => (
-                        404,
-                        json!({"type":"about:blank","title":"Not found","detail":"not found","status":404,"kind":"notFound"}),
-                    ),
-                    (
-                        "GET",
-                        "/api/v1/universes/existing-work"
-                        | "/api/v1/universes/00000000-0000-0000-0000-000000000002",
-                    ) => (
-                        200,
-                        json!({"universe":{"universeId":"00000000-0000-0000-0000-000000000002","handle":"existing-work","protected":false}}),
-                    ),
-                    (
-                        "GET",
-                        "/api/v1/universes/00000000-0000-0000-0000-000000000002/environment-provider-bindings",
-                    ) => (
-                        200,
-                        json!({"bindings":[{"providerId":"incus","enabled":true}]}),
-                    ),
-                    (
-                        "PUT",
-                        "/api/v1/universes/00000000-0000-0000-0000-000000000002/deployment-provider-bindings/incus",
-                    ) => (
-                        200,
-                        json!({"binding":{"providerId":"incus","enabled":body["enabled"]}}),
-                    ),
-                    (
-                        "PUT",
-                        "/api/v1/universes/00000000-0000-0000-0000-000000000002/configuration",
-                    ) => (200, json!({"universe":body})),
-                    ("POST", "/api/v1/platform/credentials") => (
-                        200,
-                        json!({"credential":{"id":"key-id"},"secret":"lsk_supersecret"}),
-                    ),
-                    _ => (
-                        500,
-                        json!({"type":"about:blank","title":"Unexpected request","detail":format!("{method} {path}"),"status":500,"kind":"internal"}),
-                    ),
                 };
                 let response = response.to_string();
                 write!(socket, "HTTP/1.1 {status} Response\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
@@ -542,4 +726,303 @@ fn owner_configuration_updates_do_not_resubmit_unchanged_protection() {
         "/api/v1/universes/00000000-0000-0000-0000-000000000002/configuration"
     );
     assert_eq!(writes[0].2, json!({"metadata":{"purpose":"automation"}}));
+}
+
+fn write_documents(platform: &Platform, files: &[(&str, &str)]) -> String {
+    let directory = platform.directory.path().join("documents");
+    std::fs::create_dir_all(&directory).unwrap();
+    for (name, text) in files {
+        std::fs::write(directory.join(name), text).unwrap();
+    }
+    directory.to_string_lossy().into_owned()
+}
+
+const ORGANIZATION_DOCUMENT: &str = "schemaVersion: 1
+kind: organization
+handle: research
+name: Research
+baseUniverseRole: null
+universeQuota: 20
+membershipPolicy:
+  directoryGroupMappings:
+    - { issuer: \"https://id.example\", group: research, role: member }
+serviceUsers:
+  - { name: deployer, role: creator }
+";
+
+#[test]
+fn documents_declare_an_organization_and_a_universe_with_its_access_in_one_run() {
+    let platform = Platform::with_platform_admin(true);
+    let documents = write_documents(
+        &platform,
+        &[
+            ("research.yaml", ORGANIZATION_DOCUMENT),
+            (
+                "work.yaml",
+                "schemaVersion: 1
+kind: universe
+handle: declared-work
+organization: research
+access:
+  directoryGroupMappings:
+    - { issuer: \"https://id.example\", group: research-ops, role: operator }
+  serviceUsers:
+    - { name: deployer, role: owner }
+",
+            ),
+        ],
+    );
+    platform.success(&["config", "apply", "-f", &documents]);
+    let writes: Vec<(String, String, Value)> = platform
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _, _)| method != "GET")
+        .cloned()
+        .collect();
+    let paths: Vec<(&str, &str)> = writes
+        .iter()
+        .map(|(method, path, _)| (method.as_str(), path.as_str()))
+        .collect();
+    // The organization and its service user come first, so the universe and
+    // its grant find them.
+    assert_eq!(
+        paths,
+        [
+            ("POST", "/api/v1/platform/organizations"),
+            ("PATCH", "/api/v1/platform/organizations/org-research"),
+            (
+                "POST",
+                "/api/v1/platform/organizations/org-research/service-users"
+            ),
+            (
+                "POST",
+                "/api/v1/platform/organizations/org-research/universes"
+            ),
+            (
+                "PUT",
+                &*format!(
+                    "/api/v1/platform/universes/{}/access-policy",
+                    writes[3].2["universeId"].as_str().unwrap()
+                )
+            ),
+            (
+                "PUT",
+                &*format!(
+                    "/api/v1/platform/universes/{}/grants",
+                    writes[3].2["universeId"].as_str().unwrap()
+                )
+            ),
+        ]
+    );
+    assert_eq!(
+        writes[0].2,
+        json!({"name": "Research", "handle": "research", "baseUniverseRole": null, "universeQuota": 20})
+    );
+    assert_eq!(
+        writes[1].2["membershipPolicy"]["directoryGroupMappings"][0]["group"],
+        "research"
+    );
+    assert_eq!(writes[2].2, json!({"name": "deployer", "role": "creator"}));
+    assert_eq!(
+        writes[5].2,
+        json!({"principal": {"kind": "serviceUser", "id": "su-deployer"}, "role": "owner"})
+    );
+    drop(writes);
+    // Applied, the documents describe what is there.
+    let diff = platform.run(&["config", "diff", "-f", &documents]);
+    assert!(
+        diff.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&diff.stdout),
+        String::from_utf8_lossy(&diff.stderr)
+    );
+}
+
+#[test]
+fn a_grant_to_an_undeclared_service_user_is_refused_before_anything_is_written() {
+    let platform = Platform::with_platform_admin(true);
+    let documents = write_documents(
+        &platform,
+        &[
+            ("research.yaml", ORGANIZATION_DOCUMENT),
+            (
+                "work.yaml",
+                "schemaVersion: 1
+kind: universe
+handle: declared-work
+organization: research
+access:
+  serviceUsers:
+    - { name: ghost, role: viewer }
+",
+            ),
+        ],
+    );
+    let result = platform.run(&["config", "apply", "-f", &documents]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stdout).contains("no service user named ghost"));
+    assert!(
+        platform
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(method, _, _)| method == "GET")
+    );
+}
+
+#[test]
+fn only_a_platform_admin_sets_an_organization_universe_limit() {
+    let platform = Platform::start();
+    let documents = write_documents(&platform, &[("research.yaml", ORGANIZATION_DOCUMENT)]);
+    let result = platform.run(&["config", "apply", "-f", &documents]);
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stdout)
+            .contains("only a Platform Admin sets a universe limit")
+    );
+    assert!(
+        platform
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(method, _, _)| method == "GET")
+    );
+}
+
+#[test]
+fn an_exported_organization_applies_without_changes() {
+    let platform = Platform::with_platform_admin(true);
+    let documents = write_documents(&platform, &[("research.yaml", ORGANIZATION_DOCUMENT)]);
+    platform.success(&["config", "apply", "-f", &documents]);
+    let exported = platform.success(&[
+        "--organization",
+        "org-research",
+        "config",
+        "export",
+        "--kind",
+        "organization",
+    ]);
+    let document: Value = serde_yaml::from_str(&exported).unwrap();
+    assert_eq!(document["kind"], "organization");
+    assert_eq!(document["handle"], "research");
+    assert_eq!(document["universeQuota"], 20);
+    assert_eq!(
+        document["serviceUsers"],
+        json!([{"name": "deployer", "role": "creator"}])
+    );
+    let reexported = write_documents(&platform, &[("research.yaml", &exported)]);
+    let diff = platform.run(&["config", "diff", "-f", &reexported]);
+    assert!(
+        diff.status.success(),
+        "{}",
+        String::from_utf8_lossy(&diff.stdout)
+    );
+}
+
+#[test]
+fn a_declared_service_user_key_takes_its_secret_from_outside_and_a_changed_secret_replaces_it() {
+    let platform = Platform::with_platform_admin(true);
+    let documents = write_documents(
+        &platform,
+        &[(
+            "research.yaml",
+            "schemaVersion: 1
+kind: organization
+handle: research
+name: Research
+serviceUsers:
+  - name: deployer
+    role: creator
+    keys:
+      - { name: ci, secretFrom: { env: DEPLOYER_KEY }, restrictions: { readOnly: true } }
+",
+        )],
+    );
+    let first = format!("lsa_{}", "a".repeat(64));
+    let run = |args: &[&str], secret: &str| {
+        Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+            .current_dir(platform.directory.path())
+            .args(args)
+            .env(
+                "LIGHTSPEED_CONFIG_DIR",
+                platform.directory.path().join("config"),
+            )
+            .env("LIGHTSPEED_API_URL", &platform.endpoint)
+            .env("LIGHTSPEED_API_TOKEN", "lsk_fixture")
+            .env("DEPLOYER_KEY", secret)
+            .output()
+            .unwrap()
+    };
+    let applied = run(&["config", "apply", "-f", &documents], &first);
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let put = platform
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(method, path, _)| {
+            method == "PUT" && path.ends_with("/service-users/su-deployer/credentials")
+        })
+        .cloned()
+        .expect("the key was put");
+    assert_eq!(
+        put.2,
+        json!({"name": "ci", "secret": first, "restrictions": {"readOnly": true}})
+    );
+    // The same secret again: nothing to do.
+    assert!(
+        run(&["config", "diff", "-f", &documents], &first)
+            .status
+            .success()
+    );
+    // A rotated secret in the secret store replaces the key's secret in place.
+    let rotated = run(
+        &["config", "diff", "-f", &documents],
+        &format!("lsa_{}", "b".repeat(64)),
+    );
+    assert_eq!(rotated.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rotated.stdout).contains("keys/deployer/ci (secret)"));
+}
+
+#[test]
+fn a_key_gets_a_new_secret_in_place_only_to_an_explicit_destination() {
+    let platform = Platform::start();
+    let refused = platform.run(&["platform", "api-key", "replace", "key-id"]);
+    assert!(!refused.status.success());
+    let shown = platform.success(&["platform", "api-key", "replace", "key-id", "--show-secret"]);
+    assert!(shown.contains("lsp_replaced"));
+    assert!(
+        platform
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, path, _)| method == "POST"
+                && path == "/api/v1/platform/credentials/key-id/replace")
+    );
+}
+
+#[test]
+fn a_service_user_key_secret_is_generated_without_a_connection() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lightspeed"))
+        .args(["platform", "api-key", "generate-secret"])
+        .env_remove("LIGHTSPEED_API_URL")
+        .env("LIGHTSPEED_CONFIG_DIR", tempfile::tempdir().unwrap().path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let secret = String::from_utf8(output.stdout).unwrap();
+    assert!(secret.trim().starts_with("lsa_") && secret.trim().len() >= 68);
 }

@@ -1,13 +1,14 @@
 # Configuration as code
 
-A universe's configuration can be kept in a file and applied by a pipeline,
-with the review and promotion flow you already use for the deployment
-itself. The `lightspeed config` commands do this:
+A universe's configuration, and through Platform an organization's, can be
+kept in files and applied by a pipeline, with the review and promotion flow
+you already use for the deployment itself. The `lightspeed config` commands
+do this:
 
 | Command | Effect |
 | --- | --- |
-| `lightspeed config export` | Writes the configuration of a universe as a document. |
-| `lightspeed config apply -f FILE` | Makes a universe match a document. |
+| `lightspeed config export` | Writes the configuration of a universe, or with `--kind organization` of an organization, as a document. |
+| `lightspeed config apply -f FILE` | Makes universes and organizations match documents. |
 | `lightspeed config diff -f FILE` | Reports what `apply` would change, and writes nothing. |
 | `lightspeed config schema` | Prints the JSON Schema of a document, for editors. |
 
@@ -33,9 +34,10 @@ services; see [Configure a deployment](configuration.md).
   runtime connection. Runtime tokens have full deployment authority and belong
   in infrastructure secret stores, outside agent workspaces. See
   [Runtime access](../access-and-security/api-keys-and-service-access.md).
-- Documents configure universes. Organization membership, access grants, API keys,
-  and deployment service configuration have separate APIs;
-  `apiKeys` sections and `kind: deployment` documents are not supported.
+- Documents configure universes and, through Platform, organizations and who
+  may use a universe. API keys are issued, never declared, and deployment
+  settings belong to the deployment's environment; `apiKeys` sections and
+  `kind: deployment` documents are not supported.
 
 ### Platform permissions
 
@@ -49,6 +51,10 @@ every request. Choose authority for the work the document will perform:
 | Change universe `displayName`, `metadata`, or enable `protected` | Universe Owner. |
 | Clear `protected` | Organization Admin or Platform Admin, and organization policy must permit unprotected universes. |
 | Change `environmentProviders` allocation bindings | Platform Admin; see [Environment provider allocation](#environment-provider-allocation). |
+| Create an organization | Platform Admin. |
+| Change an organization's settings, `membershipPolicy` and `serviceUsers` | Organization Admin. |
+| Set an organization's `universeQuota` | Platform Admin. |
+| Change a universe's `access` | Universe Owner. |
 
 A Creator becomes the first Owner of each universe it creates. Creator alone
 does not grant access to other existing universes; give the principal a
@@ -274,6 +280,106 @@ It belongs to the CLI version that printed it; regenerate it when you
 upgrade. An included file holds a single entry without the envelope, so the
 schema does not apply to it directly.
 
+## Configure organizations and access
+
+Through Platform, a document can also declare an organization, and a
+universe document can say which organization holds the universe and who may
+use it beyond the organization's default access. Organizations, people and
+roles are Platform's, so these documents and sections need a Platform
+connection.
+
+```yaml
+schemaVersion: 1
+kind: organization
+handle: research
+name: Research
+baseUniverseRole: viewer
+defaultProtected: true
+membershipPolicy:
+  directoryGroupMappings:
+    - { issuer: https://login.example.com, group: research, role: member }
+    - { issuer: https://login.example.com, group: research-leads, role: admin }
+serviceUsers:
+  - { name: deployer, role: creator }
+```
+
+`handle` names the organization. `apply` finds the organization by it and
+creates it when none has it; creating one needs `name` and a Platform Admin.
+The other fields follow `platform/organizations/update`:
+
+| Field | Meaning |
+| --- | --- |
+| `name` | The organization's name. |
+| `baseUniverseRole` | The default universe access: the role every member person holds in every universe. `null` gives members only what they are granted. |
+| `defaultProtected`, `requireProtected` | Deletion protection for new universes, and whether every universe must stay protected. |
+| `universeQuota` | The organization's own universe limit; `null` follows the deployment default. Only a Platform Admin changes it. |
+| `membershipPolicy` | People, by verified email or by company sign-in issuer and subject, and company directory groups that hold organization roles. When present, it replaces the organization's policy. |
+| `serviceUsers` | Service users by name, with their organization role, optionally `enabled: false`, and optionally `keys`. A name is unique in its organization. |
+
+A service user's `keys` are declared with secrets from your secret store, so
+the secret flows into Lightspeed and never out:
+
+```yaml
+serviceUsers:
+  - name: deployer
+    role: creator
+    keys:
+      - name: ci
+        secretFrom: { file: /run/secrets/deployer-key }
+        restrictions: { readOnly: false }
+        expiresAt: 2027-12-31T00:00:00Z
+```
+
+A key is identified by its `name` among the service user's keys. Its secret is
+`lsa_` followed by at least 64 letters, digits, `-` or `_`;
+`lightspeed platform api-key generate-secret` makes one. The entry is the
+key's desired state: restrictions left out mean none, and an expiry left out
+means the key never expires, which a deployment maximum refuses. Platform
+compares the secret itself, so `diff` reports a changed secret as
+`(secret)` without either side revealing it. `apply` then replaces it in
+place: the key keeps its ID, and the old secret stops working at once. Two keys
+cannot share a secret. Keys issued in the web app or with
+`platform api-key create` are not listed by `export`; a key left out of a
+document is kept.
+
+A universe document names its organization with `organization` and declares
+access with `access`:
+
+```yaml
+schemaVersion: 1
+kind: universe
+handle: research
+organization: research
+access:
+  directoryGroupMappings:
+    - { issuer: https://login.example.com, group: research-ops, role: operator }
+  serviceUsers:
+    - { name: deployer, role: owner }
+```
+
+- `organization` is the handle of the organization holding the universe.
+  `apply` creates a missing universe there, so the document needs no
+  `--organization`. An existing universe must already be there; universes do
+  not move between organizations. Left out, creation uses the selected
+  organization.
+- `access.members` and `access.directoryGroupMappings` are the universe's
+  declared access policy, in the shape of `membershipPolicy` with universe
+  roles. Each one present replaces its part of the policy.
+- `access.serviceUsers` gives service users of the universe's organization a
+  universe role by name. Service users get nothing from the organization's
+  default access, so a pipeline's service user needs a role here.
+
+People are given roles one at a time in the web app; documents declare roles
+for groups and service users, whose names are the same in every deployment.
+Nothing is removed: a service user or grant a document leaves out is kept.
+
+`apply` applies organization documents before universe documents, and finds
+organizations and service users by handle and name when each step runs. One
+directory can therefore declare an organization, its service users, and the
+universes and grants that need them. A grant to a service user that neither
+exists nor is declared in the run is reported as a conflict, and nothing is
+written. Personal organizations are not configured by documents.
+
 ## Supply secrets
 
 A secret source is `{ env: NAME }` or `{ file: PATH }`. The process that
@@ -398,18 +504,20 @@ organization protection must first be removed. Runtime tokens remain full-author
 infrastructure credentials; the runtime still refuses deletion until
 protection has been explicitly cleared.
 
-Organization members, directory-group mappings, and universe access policies are
-Platform-native configuration, not runtime universe configuration. A universe
-created directly with a runtime token has no Platform organization association
-until an administrator adopts it into an organization with an initial Owner.
-See [Managing universes](multi-tenancy.md).
+A universe created directly with a runtime token has no Platform organization
+association until an administrator adopts it into an organization with an
+initial Owner. See [Managing universes](multi-tenancy.md).
 
 ## Export a universe
 
 ```bash
 lightspeed --universe research config export -o config/universes/research.yaml
 lightspeed --universe research config export -o research.json --profiles-dir profiles
+lightspeed --organization ORGANIZATION_ID config export --kind organization -o config/organizations/research.yaml
 ```
+
+Through Platform, a universe's export includes its `organization` and, for an
+Owner, its `access`.
 
 The exported document is in a normal form: entries ordered by id, fields the
 runtime derives removed, and fields left out when they hold their default.

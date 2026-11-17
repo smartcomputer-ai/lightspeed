@@ -186,3 +186,45 @@ it("lists every key that can reach an organization, with whose key it is", async
   expect(credentials.find(credential => credential.name === "Deployer key")?.owner).toMatchObject({ kind: "serviceUser", name: "Deployer" });
   expect(credentials.find(credential => credential.name === "Here")?.owner).toMatchObject({ kind: "user" });
 });
+
+it("gives a key a new secret in place: same key, old secret refused at once", async () => {
+  const created = await (await fixture.request("/api/v1/platform/credentials", { name: "Replaceable", restrictions: { readOnly: true } }, cookie)).json() as { credential: { id: string }; secret: string };
+  const response = await fixture.request(`/api/v1/platform/credentials/${created.credential.id}/replace`, {}, cookie);
+  expect(response.status).toBe(200);
+  const replaced = await response.json() as { credential: { id: string; name: string; restrictions: unknown; start: string }; secret: string };
+  expect(replaced.credential).toMatchObject({ id: created.credential.id, name: "Replaceable", restrictions: { readOnly: true } });
+  expect(replaced.secret).toMatch(/^lsp_[A-Za-z]{64}$/);
+  expect(replaced.credential.start).toBe(replaced.secret.slice(0, 12));
+  expect(await admission(created.secret)).toBeNull();
+  expect((await admission(replaced.secret))?.auth).toMatchObject({ principal: { kind: "user", id: userId }, credential: { id: created.credential.id } });
+  await fixture.request(`/api/v1/platform/credentials/${created.credential.id}`, undefined, cookie, "DELETE");
+  expect((await fixture.request(`/api/v1/platform/credentials/${created.credential.id}/replace`, {}, cookie)).status).toBe(404);
+});
+
+it("declares a service user's key with a supplied secret, and reports and makes only what changed", async () => {
+  const organizationId = crypto.randomUUID();
+  await fixture.db.insert(schema.organization).values({ id: organizationId, name: "Declared keys", slug: organizationId, createdAt: new Date() });
+  const [serviceUser] = await fixture.db.insert(schema.serviceUsers).values({ organizationId, name: "Deployer", role: "creator" }).returning();
+  const path = `/api/v1/platform/organizations/${organizationId}/service-users/${serviceUser!.id}/credentials`;
+  const secret = `lsa_${"a".repeat(32)}${"B".repeat(32)}`;
+  const put = async (body: Record<string, unknown>) => {
+    const response = await fixture.request(path, body, cookie, "PUT");
+    return { status: response.status, body: await response.json() as { credential: { id: string } | null; created: boolean; secretReplaced: boolean; updated: string[] } };
+  };
+  expect((await put({ name: "ci", secret: "lsa_short" })).status).toBe(400);
+  expect((await put({ name: "ci", secret, dryRun: true })).body).toEqual({ credential: null, created: true, secretReplaced: false, updated: [] });
+  expect(await admission(secret)).toBeNull();
+  const created = await put({ name: "ci", secret });
+  expect(created.body).toMatchObject({ created: true, secretReplaced: false, updated: [] });
+  expect((await admission(secret))?.auth).toMatchObject({ principal: { kind: "serviceUser", id: serviceUser!.id }, credential: { id: created.body.credential!.id } });
+  expect((await put({ name: "ci", secret })).body).toMatchObject({ created: false, secretReplaced: false, updated: [] });
+  const rotated = `lsa_${"c".repeat(64)}`;
+  expect((await put({ name: "ci", secret: rotated, restrictions: { readOnly: true }, dryRun: true })).body).toMatchObject({ secretReplaced: true, updated: ["restrictions"] });
+  expect(await admission(secret)).not.toBeNull();
+  const changed = await put({ name: "ci", secret: rotated, restrictions: { readOnly: true } });
+  expect(changed.body).toMatchObject({ credential: { id: created.body.credential!.id }, secretReplaced: true, updated: ["restrictions"] });
+  expect(await admission(secret)).toBeNull();
+  expect((await admission(rotated))?.auth.credential.restrictions).toEqual({ readOnly: true });
+  // A secret serves one key.
+  expect((await put({ name: "other", secret: rotated })).status).toBe(409);
+});

@@ -67,7 +67,11 @@ export const serviceUsers = pgTable("service_users", {
   role: text("role", { enum: ["admin", "creator", "member"] }).default("member").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, (table) => [index("service_users_organization_idx").on(table.organizationId)]);
+}, (table) => [
+  index("service_users_organization_idx").on(table.organizationId),
+  // Documents name service users, so a name is unique in its organization.
+  uniqueIndex("service_users_organization_name_idx").on(table.organizationId, table.name),
+]);
 
 /** Membership in the containing organization remains mandatory for every grant. */
 export const universeGrants = pgTable("universe_grants", {

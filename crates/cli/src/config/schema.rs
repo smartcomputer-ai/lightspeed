@@ -190,6 +190,25 @@ pub(crate) fn document_schema() -> Value {
                     "minLength": 1,
                 }),
             );
+            properties.insert(
+                "organization".to_owned(),
+                json!({
+                    "description": "Platform only. The handle of the organization holding the universe: apply creates a missing universe there, and an existing universe must already be there. Left out, creation uses the selected organization.",
+                    "type": "string",
+                    "minLength": 1,
+                }),
+            );
+            properties.insert("access".to_owned(), reference("UniverseAccess"));
+        }
+        if kind == "organization" {
+            properties.insert(
+                "handle".to_owned(),
+                json!({
+                    "description": "The organization's deployment-unique handle. apply finds the organization by it and creates it when none has it.",
+                    "type": "string",
+                    "minLength": 1,
+                }),
+            );
         }
         properties.extend(sections);
         json!({
@@ -215,6 +234,115 @@ pub(crate) fn document_schema() -> Value {
         }),
     );
     definitions.extend(entries);
+    let role = |roles: &[&str]| json!({ "type": "string", "enum": roles });
+    let organization_role = role(&["member", "creator", "admin"]);
+    let universe_role = role(&["viewer", "contributor", "operator", "owner"]);
+    let declared_member = |role: &Value| {
+        json!({
+            "description": "A person declared by verified email, or by their company sign-in issuer and subject.",
+            "anyOf": [
+                { "type": "object", "properties": { "email": { "type": "string", "format": "email" }, "role": role }, "required": ["email", "role"], "additionalProperties": false },
+                { "type": "object", "properties": { "issuer": { "type": "string", "format": "uri" }, "subject": { "type": "string", "minLength": 1 }, "role": role }, "required": ["issuer", "subject", "role"], "additionalProperties": false },
+            ],
+        })
+    };
+    let group_mapping = |role: &Value| {
+        json!({
+            "description": "Everyone in a company directory group holds the role.",
+            "type": "object",
+            "properties": { "issuer": { "type": "string", "format": "uri" }, "group": { "type": "string", "minLength": 1 }, "role": role },
+            "required": ["issuer", "group", "role"],
+            "additionalProperties": false,
+        })
+    };
+    definitions.insert(
+        "UniverseAccess".to_owned(),
+        json!({
+            "description": "Platform only. Who may use the universe beyond the organization's default access. `members` and `directoryGroupMappings` are its declared access policy; each one present replaces its part. Service users are granted their role by name; one left out keeps its grant.",
+            "type": "object",
+            "properties": {
+                "members": { "type": "array", "items": declared_member(&universe_role) },
+                "directoryGroupMappings": { "type": "array", "items": group_mapping(&universe_role) },
+                "serviceUsers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": { "name": { "type": "string", "minLength": 1 }, "role": universe_role },
+                        "required": ["name", "role"],
+                        "additionalProperties": false,
+                    },
+                },
+            },
+            "additionalProperties": false,
+        }),
+    );
+    let mut organization_sections = Map::new();
+    organization_sections.insert("name".to_owned(), json!({ "description": "Required to create the organization.", "type": "string", "minLength": 1, "maxLength": 120 }));
+    organization_sections.insert("baseUniverseRole".to_owned(), json!({
+        "description": "The default universe access: the role every member person holds in every universe of the organization. `null` gives members only what they are granted.",
+        "anyOf": [universe_role.clone(), { "type": "null" }],
+    }));
+    organization_sections.insert("defaultProtected".to_owned(), json!({ "description": "New universes start with deletion protection.", "type": "boolean" }));
+    organization_sections.insert("requireProtected".to_owned(), json!({ "description": "Every universe must stay protected and cannot expire.", "type": "boolean" }));
+    organization_sections.insert("universeQuota".to_owned(), json!({
+        "description": "The organization's own universe limit; `null` follows the deployment default. Only a Platform Admin changes it.",
+        "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 100000 }, { "type": "null" }],
+    }));
+    organization_sections.insert("membershipPolicy".to_owned(), json!({
+        "description": "People and company directory groups declared to hold organization roles. When present, it replaces the organization's policy.",
+        "type": "object",
+        "properties": {
+            "members": { "type": "array", "items": declared_member(&organization_role) },
+            "directoryGroupMappings": { "type": "array", "items": group_mapping(&organization_role) },
+        },
+        "additionalProperties": false,
+    }));
+    organization_sections.insert("serviceUsers".to_owned(), json!({
+        "description": "Service users, by their name in the organization. Their API keys are issued with `lightspeed platform service-user`, never declared. One left out is kept.",
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "role": organization_role,
+                "enabled": { "type": "boolean" },
+                "keys": {
+                    "description": "Keys whose secret comes from outside, by name. The document is each key's desired state: restrictions left out mean none, an expiry left out means never. A changed secret replaces the old one at once. A key left out is kept.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+                            "secretFrom": reference("SecretSource"),
+                            "expiresAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+                            "restrictions": {
+                                "type": "object",
+                                "properties": {
+                                    "organizationIds": { "type": "array", "items": { "type": "string" } },
+                                    "universeIds": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+                                    "operations": { "type": "array", "items": { "type": "string" } },
+                                    "readOnly": { "type": "boolean" },
+                                    "allowUniverseCreation": { "type": "boolean" },
+                                },
+                            },
+                        },
+                        "required": ["name", "secretFrom"],
+                    },
+                },
+            },
+            "required": ["name", "role"],
+            "additionalProperties": false,
+        },
+    }));
+    definitions.insert(
+        "OrganizationDocument".to_owned(),
+        envelope(
+            "organization",
+            "Platform only. The configuration of one organization. A field left out is not managed by the document.",
+            &["schemaVersion", "kind", "handle"],
+            organization_sections,
+        ),
+    );
     definitions.insert(
         "UniverseDocument".to_owned(),
         envelope(
@@ -229,8 +357,8 @@ pub(crate) fn document_schema() -> Value {
     json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "Lightspeed configuration document",
-        "description": "A document that `lightspeed config apply` makes a universe match. Generated from the API's input types; do not edit.",
-        "$ref": reference("UniverseDocument")["$ref"],
+        "description": "A document that `lightspeed config apply` makes a universe or a Platform organization match. Generated from the API's input types; do not edit.",
+        "oneOf": [reference("UniverseDocument"), reference("OrganizationDocument")],
         "definitions": definitions,
     })
 }

@@ -41,6 +41,16 @@
       "result": "PlatformCredentialsCreateResult"
     },
     {
+      "operationId": "platform/credentials/replace",
+      "helper": {
+        "name": "replacePersonalApiKey"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/credentials/{keyId}/replace",
+      "params": "PlatformCredentialsReplaceParams",
+      "result": "PlatformCredentialsReplaceResult"
+    },
+    {
       "operationId": "platform/credentials/revoke",
       "helper": {
         "name": "revokePersonalApiKey"
@@ -79,6 +89,26 @@
       "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
       "params": "PlatformServiceUsersCredentialsCreateParams",
       "result": "PlatformServiceUsersCredentialsCreateResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/replace",
+      "helper": {
+        "name": "replaceServiceUserApiKey"
+      },
+      "method": "POST",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}/replace",
+      "params": "PlatformServiceUsersCredentialsReplaceParams",
+      "result": "PlatformServiceUsersCredentialsReplaceResult"
+    },
+    {
+      "operationId": "platform/service-users/credentials/put",
+      "helper": {
+        "name": "putServiceUserApiKey"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials",
+      "params": "PlatformServiceUsersCredentialsPutParams",
+      "result": "PlatformServiceUsersCredentialsPutResult"
     },
     {
       "operationId": "platform/service-users/credentials/revoke",
@@ -279,6 +309,26 @@
       "path": "/api/v1/platform/universes/{universe}/grants/{grantId}",
       "params": "PlatformUniversesGrantsDeleteParams",
       "result": "PlatformUniversesGrantsDeleteResult"
+    },
+    {
+      "operationId": "platform/universes/read",
+      "helper": {
+        "name": "readPlatformUniverse"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/universes/{universe}",
+      "params": "PlatformUniversesReadParams",
+      "result": "PlatformUniversesReadResult"
+    },
+    {
+      "operationId": "platform/universes/access-policy/read",
+      "helper": {
+        "name": "readUniverseAccessPolicy"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/universes/{universe}/access-policy",
+      "params": "PlatformUniversesAccessPolicyReadParams",
+      "result": "PlatformUniversesAccessPolicyReadResult"
     },
     {
       "operationId": "platform/universes/access-policy/put",

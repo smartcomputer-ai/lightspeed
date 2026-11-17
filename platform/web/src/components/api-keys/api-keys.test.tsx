@@ -143,6 +143,20 @@ it("lists keys as rows that open their details, where a key is revoked only afte
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/credentials/revoke", { keyId: "key-1" }));
 });
 
+it("replaces a service user key's secret in place after confirming, and shows the new one once", async () => {
+  mocks.credentials = [key({ prefix: "lsa_" })];
+  await show(robot);
+  await waitForUi(() => expect(container.querySelectorAll("tbody tr")).toHaveLength(1));
+  await act(async () => (container.querySelector("tbody tr td") as HTMLElement).click());
+  await click("Replace secret");
+  expect(mocks.api.mock.calls.some(([operation]) => operation.endsWith("/replace"))).toBe(false);
+  const confirm = [...document.body.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')].find((node) => node.textContent?.trim() === "Replace secret");
+  await act(async () => confirm!.click());
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/service-users/credentials/replace", { organizationId: "team", serviceUserId: "robot", keyId: "key-1" }));
+  await waitForUi(() => expect(document.body.querySelector('[role="dialog"] [role="status"]')?.textContent).toBe("one-time-secret"));
+  expect(button("Revoke key")).toBeUndefined();
+});
+
 it("keeps a disabled service user's keys listed but offers no new key", async () => {
   await show({ ...robot, enabled: false } as ApiKeyOwner);
   expect(button("New key")!.disabled).toBe(true);

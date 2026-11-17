@@ -5,10 +5,13 @@ export interface PlatformOperationMap {
   "platform/session/revoke": { params: T.PlatformSessionRevokeParams; result: T.PlatformSessionRevokeResult };
   "platform/credentials/list": { params: T.PlatformCredentialsListParams; result: T.PlatformCredentialsListResult };
   "platform/credentials/create": { params: T.PlatformCredentialsCreateParams; result: T.PlatformCredentialsCreateResult };
+  "platform/credentials/replace": { params: T.PlatformCredentialsReplaceParams; result: T.PlatformCredentialsReplaceResult };
   "platform/credentials/revoke": { params: T.PlatformCredentialsRevokeParams; result: T.PlatformCredentialsRevokeResult };
   "platform/organizations/credentials/list": { params: T.PlatformOrganizationsCredentialsListParams; result: T.PlatformOrganizationsCredentialsListResult };
   "platform/service-users/credentials/list": { params: T.PlatformServiceUsersCredentialsListParams; result: T.PlatformServiceUsersCredentialsListResult };
   "platform/service-users/credentials/create": { params: T.PlatformServiceUsersCredentialsCreateParams; result: T.PlatformServiceUsersCredentialsCreateResult };
+  "platform/service-users/credentials/replace": { params: T.PlatformServiceUsersCredentialsReplaceParams; result: T.PlatformServiceUsersCredentialsReplaceResult };
+  "platform/service-users/credentials/put": { params: T.PlatformServiceUsersCredentialsPutParams; result: T.PlatformServiceUsersCredentialsPutResult };
   "platform/service-users/credentials/revoke": { params: T.PlatformServiceUsersCredentialsRevokeParams; result: T.PlatformServiceUsersCredentialsRevokeResult };
   "platform/settings/list": { params: T.PlatformSettingsListParams; result: T.PlatformSettingsListResult };
   "platform/settings/put": { params: T.PlatformSettingsPutParams; result: T.PlatformSettingsPutResult };
@@ -29,6 +32,8 @@ export interface PlatformOperationMap {
   "platform/universes/grants/list": { params: T.PlatformUniversesGrantsListParams; result: T.PlatformUniversesGrantsListResult };
   "platform/universes/grants/put": { params: T.PlatformUniversesGrantsPutParams; result: T.PlatformUniversesGrantsPutResult };
   "platform/universes/grants/delete": { params: T.PlatformUniversesGrantsDeleteParams; result: T.PlatformUniversesGrantsDeleteResult };
+  "platform/universes/read": { params: T.PlatformUniversesReadParams; result: T.PlatformUniversesReadResult };
+  "platform/universes/access-policy/read": { params: T.PlatformUniversesAccessPolicyReadParams; result: T.PlatformUniversesAccessPolicyReadResult };
   "platform/universes/access-policy/put": { params: T.PlatformUniversesAccessPolicyPutParams; result: T.PlatformUniversesAccessPolicyPutResult };
 }
 export type PlatformOperationId = keyof PlatformOperationMap;
@@ -51,6 +56,10 @@ export const PLATFORM_OPERATIONS = {
     "method": "POST",
     "path": "/api/v1/platform/credentials"
   },
+  "platform/credentials/replace": {
+    "method": "POST",
+    "path": "/api/v1/platform/credentials/{keyId}/replace"
+  },
   "platform/credentials/revoke": {
     "method": "DELETE",
     "path": "/api/v1/platform/credentials/{keyId}"
@@ -65,6 +74,14 @@ export const PLATFORM_OPERATIONS = {
   },
   "platform/service-users/credentials/create": {
     "method": "POST",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials"
+  },
+  "platform/service-users/credentials/replace": {
+    "method": "POST",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials/{keyId}/replace"
+  },
+  "platform/service-users/credentials/put": {
+    "method": "PUT",
     "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/credentials"
   },
   "platform/service-users/credentials/revoke": {
@@ -146,6 +163,14 @@ export const PLATFORM_OPERATIONS = {
   "platform/universes/grants/delete": {
     "method": "DELETE",
     "path": "/api/v1/platform/universes/{universe}/grants/{grantId}"
+  },
+  "platform/universes/read": {
+    "method": "GET",
+    "path": "/api/v1/platform/universes/{universe}"
+  },
+  "platform/universes/access-policy/read": {
+    "method": "GET",
+    "path": "/api/v1/platform/universes/{universe}/access-policy"
   },
   "platform/universes/access-policy/put": {
     "method": "PUT",

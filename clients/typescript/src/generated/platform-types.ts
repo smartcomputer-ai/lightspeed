@@ -184,6 +184,49 @@ export interface PlatformCredentialsCreateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformCredentialsReplaceParams".
+ */
+export interface PlatformCredentialsReplaceParams {
+  keyId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformCredentialsReplaceResult".
+ */
+export interface PlatformCredentialsReplaceResult {
+  credential: {
+    id: string;
+    name: string;
+    prefix: string | null;
+    start: string | null;
+    createdAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
+    enabled: boolean;
+    lastUsedAt: string | null;
+    restrictions: {
+      /**
+       * @maxItems 1000
+       */
+      organizationIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      universeIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      operations?: string[];
+      readOnly?: boolean;
+      allowUniverseCreation?: boolean;
+    };
+  };
+  secret: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformCredentialsRevokeParams".
  */
 export interface PlatformCredentialsRevokeParams {
@@ -364,6 +407,135 @@ export interface PlatformServiceUsersCredentialsCreateResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersCredentialsReplaceParams".
+ */
+export interface PlatformServiceUsersCredentialsReplaceParams {
+  organizationId: string;
+  serviceUserId: string;
+  keyId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersCredentialsReplaceResult".
+ */
+export interface PlatformServiceUsersCredentialsReplaceResult {
+  credential: {
+    id: string;
+    name: string;
+    prefix: string | null;
+    start: string | null;
+    createdAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
+    enabled: boolean;
+    lastUsedAt: string | null;
+    restrictions: {
+      /**
+       * @maxItems 1000
+       */
+      organizationIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      universeIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      operations?: string[];
+      readOnly?: boolean;
+      allowUniverseCreation?: boolean;
+    };
+  };
+  secret: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersCredentialsPutParams".
+ */
+export interface PlatformServiceUsersCredentialsPutParams {
+  /**
+   * Identifies the key among the service user's keys.
+   */
+  name: string;
+  /**
+   * The key's secret: `lsa_` followed by at least 64 letters, digits, `-` or `_`. `lightspeed platform api-key generate-secret` makes one.
+   */
+  secret: string;
+  /**
+   * When the key stops working. Omitted or null: never, which a deployment maximum refuses.
+   */
+  expiresAt?: string | null;
+  restrictions?: {
+    /**
+     * @maxItems 1000
+     */
+    organizationIds?: string[];
+    /**
+     * @maxItems 1000
+     */
+    universeIds?: string[];
+    /**
+     * @maxItems 1000
+     */
+    operations?: string[];
+    readOnly?: boolean;
+    allowUniverseCreation?: boolean;
+  };
+  /**
+   * Report what would change without changing it.
+   */
+  dryRun?: boolean;
+  organizationId: string;
+  serviceUserId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersCredentialsPutResult".
+ */
+export interface PlatformServiceUsersCredentialsPutResult {
+  /**
+   * Null only for a dry run that would create the key.
+   */
+  credential: {
+    id: string;
+    name: string;
+    prefix: string | null;
+    start: string | null;
+    createdAt: string;
+    /**
+     * Null for a key that never expires.
+     */
+    expiresAt: string | null;
+    enabled: boolean;
+    lastUsedAt: string | null;
+    restrictions: {
+      /**
+       * @maxItems 1000
+       */
+      organizationIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      universeIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      operations?: string[];
+      readOnly?: boolean;
+      allowUniverseCreation?: boolean;
+    };
+  } | null;
+  created: boolean;
+  secretReplaced: boolean;
+  /**
+   * Settings that differed and were, or would be, changed.
+   */
+  updated: ("restrictions" | "expiresAt")[];
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformServiceUsersCredentialsRevokeParams".
  */
 export interface PlatformServiceUsersCredentialsRevokeParams {
@@ -459,7 +631,10 @@ export interface PlatformOrganizationsListResult {
   organizations: {
     id: string;
     name: string;
-    slug: string;
+    /**
+     * The organization's deployment-unique name.
+     */
+    handle: string;
     personal: boolean;
     /**
      * The highest organization role the caller holds, for display.
@@ -522,7 +697,7 @@ export interface PlatformOrganizationsListResult {
  */
 export interface PlatformOrganizationsCreateParams {
   name: string;
-  slug: string;
+  handle: string;
   initialAdminUserId?: string;
   /**
    * The organization's own universe limit; omitted or null follows the deployment default.
@@ -540,7 +715,10 @@ export interface PlatformOrganizationsCreateResult {
   organization: {
     id: string;
     name: string;
-    slug: string;
+    /**
+     * The organization's deployment-unique name.
+     */
+    handle: string;
     personal: boolean;
     /**
      * The highest organization role the caller holds, for display.
@@ -611,7 +789,10 @@ export interface PlatformOrganizationsReadResult {
   organization: {
     id: string;
     name: string;
-    slug: string;
+    /**
+     * The organization's deployment-unique name.
+     */
+    handle: string;
     personal: boolean;
     /**
      * The highest organization role the caller holds, for display.
@@ -714,7 +895,10 @@ export interface PlatformOrganizationsUpdateResult {
   organization: {
     id: string;
     name: string;
-    slug: string;
+    /**
+     * The organization's deployment-unique name.
+     */
+    handle: string;
     personal: boolean;
     /**
      * The highest organization role the caller holds, for display.
@@ -1131,6 +1315,79 @@ export interface PlatformUniversesGrantsDeleteParams {
  */
 export interface PlatformUniversesGrantsDeleteResult {
   ok: true;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformUniversesReadParams".
+ */
+export interface PlatformUniversesReadParams {
+  universe: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformUniversesReadResult".
+ */
+export interface PlatformUniversesReadResult {
+  universe: {
+    id: string;
+    organizationId: string;
+    lightspeedUniverseId: string;
+    name: string;
+    handle: string;
+    role: "viewer" | "contributor" | "operator" | "owner";
+    organizationRole: ("member" | "creator" | "admin") | null;
+    status: "provisioning" | "active" | "archived" | "deleting";
+    protected: boolean;
+    expiresAtMs: number | null;
+    createdBy: string | null;
+    features: {
+      [k: string]: boolean;
+    };
+    icon: string;
+    iconColor: string;
+    runtimeConfiguration: {
+      [k: string]: unknown;
+    };
+    createdAt: string;
+    updatedAt: string;
+  };
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformUniversesAccessPolicyReadParams".
+ */
+export interface PlatformUniversesAccessPolicyReadParams {
+  universe: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformUniversesAccessPolicyReadResult".
+ */
+export interface PlatformUniversesAccessPolicyReadResult {
+  policy: {
+    /**
+     * @maxItems 1000
+     */
+    members?: (
+      | {
+          email: string;
+          role: "viewer" | "contributor" | "operator" | "owner";
+        }
+      | {
+          issuer: string;
+          subject: string;
+          role: "viewer" | "contributor" | "operator" | "owner";
+        }
+    )[];
+    /**
+     * @maxItems 1000
+     */
+    directoryGroupMappings?: {
+      issuer: string;
+      group: string;
+      role: "viewer" | "contributor" | "operator" | "owner";
+    }[];
+  };
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema

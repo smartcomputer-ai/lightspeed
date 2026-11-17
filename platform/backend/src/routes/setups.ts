@@ -72,7 +72,8 @@ export function setupRoutes(ctx: AppContext) {
       if (existing?.status === "installing" && existing.state.serviceUserId) await tx.update(schema.serviceUsers)
         .set({ enabled: false, updatedAt: new Date() }).where(and(eq(schema.serviceUsers.id, existing.state.serviceUserId), eq(schema.serviceUsers.organizationId, organization.id)));
       const [serviceUser] = await tx.insert(schema.serviceUsers).values({ organizationId: organization.id,
-        name: `Configurator · ${access.universe.name}`, role: "member" }).returning();
+        // Each installation has its own service user; names are unique in an organization.
+        name: `Configurator · ${access.universe.name} · ${crypto.randomUUID().slice(0, 8)}`, role: "member" }).returning();
       await tx.insert(schema.universeGrants).values({ universeId: access.universe.id, serviceUserId: serviceUser!.id, role: "operator" });
       const state = { ...(previous ? { previous } : {}), serviceUserId: serviceUser!.id, grantId: `configurator-${serviceUser!.id}`, serverId: "configurator" };
       const [reserved] = await tx.insert(schema.universeSetupInstallations).values({ universeId: access.universe.id,

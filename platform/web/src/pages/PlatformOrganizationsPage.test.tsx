@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlatformOrganizationsPage } from "./PlatformOrganizationsPage";
 
 const organization = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
-  id, name, slug: id, personal: false, role: "admin", universeQuota: 25, universeCount: 3,
+  id, name, handle: id, personal: false, role: "admin", universeQuota: 25, universeCount: 3,
   defaultProtected: true, requireProtected: false, createdAt: "2026-11-01T00:00:00.000Z", ...overrides,
 });
 const mocks = vi.hoisted(() => ({

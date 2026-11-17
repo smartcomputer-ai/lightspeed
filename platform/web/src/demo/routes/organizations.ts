@@ -10,7 +10,7 @@ export function organizationRoutes(store: DemoStore) {
   const app = new Hono();
   const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
   if (!organizations.has("demo-organization")) {
-    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, universeQuotaSource: "deployment", canCreateUniverse: true, baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
+    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", handle: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, universeQuotaSource: "deployment", canCreateUniverse: true, baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
     memberships.set("demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"])));
   }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
@@ -40,7 +40,7 @@ export function organizationRoutes(store: DemoStore) {
   app.get("/organizations", c => c.json({ organizations: [...organizations.values()].map(view), canCreate: demoDeploymentAllows(store, "createOrganization") }));
   app.post("/organizations", async c => {
     const parsed = organizationCreateSchema.safeParse(await c.req.json()); if (!parsed.success) return c.json({ error: "Invalid organization" }, 400);
-    if ([...organizations.values()].some(a => a.slug === parsed.data.slug)) return c.json({ error: "Organization handle already exists" }, 409);
+    if ([...organizations.values()].some(a => a.handle === parsed.data.handle)) return c.json({ error: "Organization handle already exists" }, 409);
     const { initialAdminUserId = store.currentUser.id, ...input } = parsed.data;
     if (!store.users.has(initialAdminUserId)) return c.json({ error: "User not found" }, 404);
     const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", actions: [], universeQuota: input.universeQuota ?? 0, universeQuotaSource: input.universeQuota == null ? "deployment" : "organization", canCreateUniverse: true, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };

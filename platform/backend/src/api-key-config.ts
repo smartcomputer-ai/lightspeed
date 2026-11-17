@@ -22,3 +22,12 @@ export function apiKeyConfigurations(env: Pick<ServerEnv, "apiKeyMaxExpiryDays">
     { ...common, configId: SERVICE_USER_KEY_CONFIG, references: "organization", defaultPrefix: SERVICE_USER_KEY_PREFIX },
   ];
 }
+
+/// The columns Better Auth sets on a key it creates, for a key whose secret
+/// is supplied from outside. They match the configurations above.
+export function apiKeyRowDefaults() {
+  return {
+    enabled: true, rateLimitEnabled: true, rateLimitTimeWindow: 60_000, rateLimitMax: 1000,
+    requestCount: 0, remaining: null, permissions: null, metadata: null,
+  };
+}

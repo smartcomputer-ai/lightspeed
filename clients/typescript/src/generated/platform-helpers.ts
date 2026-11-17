@@ -7,10 +7,13 @@ export const PLATFORM_CLIENT_HELPERS = {
   "revokeCurrentSession": "platform/session/revoke",
   "listPersonalApiKeys": "platform/credentials/list",
   "createPersonalApiKey": "platform/credentials/create",
+  "replacePersonalApiKey": "platform/credentials/replace",
   "revokePersonalApiKey": "platform/credentials/revoke",
   "listOrganizationApiKeys": "platform/organizations/credentials/list",
   "listServiceUserApiKeys": "platform/service-users/credentials/list",
   "createServiceUserApiKey": "platform/service-users/credentials/create",
+  "replaceServiceUserApiKey": "platform/service-users/credentials/replace",
+  "putServiceUserApiKey": "platform/service-users/credentials/put",
   "revokeServiceUserApiKey": "platform/service-users/credentials/revoke",
   "listPlatformSettings": "platform/settings/list",
   "putPlatformSetting": "platform/settings/put",
@@ -31,6 +34,8 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listUniverseGrants": "platform/universes/grants/list",
   "putUniverseGrant": "platform/universes/grants/put",
   "removeUniverseGrant": "platform/universes/grants/delete",
+  "readPlatformUniverse": "platform/universes/read",
+  "readUniverseAccessPolicy": "platform/universes/access-policy/read",
   "putUniverseAccessPolicy": "platform/universes/access-policy/put"
 } as const;
 export class PlatformHelpers {
@@ -47,6 +52,9 @@ export class PlatformHelpers {
   createPersonalApiKey(params: PlatformOperationParams<"platform/credentials/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/credentials/create">> {
     return this.client.call("platform/credentials/create", params, options);
   }
+  replacePersonalApiKey(params: PlatformOperationParams<"platform/credentials/replace">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/credentials/replace">> {
+    return this.client.call("platform/credentials/replace", params, options);
+  }
   revokePersonalApiKey(params: PlatformOperationParams<"platform/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/credentials/revoke">> {
     return this.client.call("platform/credentials/revoke", params, options);
   }
@@ -58,6 +66,12 @@ export class PlatformHelpers {
   }
   createServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/create">> {
     return this.client.call("platform/service-users/credentials/create", params, options);
+  }
+  replaceServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/replace">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/replace">> {
+    return this.client.call("platform/service-users/credentials/replace", params, options);
+  }
+  putServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/put">> {
+    return this.client.call("platform/service-users/credentials/put", params, options);
   }
   revokeServiceUserApiKey(params: PlatformOperationParams<"platform/service-users/credentials/revoke">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/credentials/revoke">> {
     return this.client.call("platform/service-users/credentials/revoke", params, options);
@@ -118,6 +132,12 @@ export class PlatformHelpers {
   }
   removeUniverseGrant(params: PlatformOperationParams<"platform/universes/grants/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/grants/delete">> {
     return this.client.call("platform/universes/grants/delete", params, options);
+  }
+  readPlatformUniverse(params: PlatformOperationParams<"platform/universes/read">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/read">> {
+    return this.client.call("platform/universes/read", params, options);
+  }
+  readUniverseAccessPolicy(params: PlatformOperationParams<"platform/universes/access-policy/read">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/access-policy/read">> {
+    return this.client.call("platform/universes/access-policy/read", params, options);
   }
   putUniverseAccessPolicy(params: PlatformOperationParams<"platform/universes/access-policy/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/access-policy/put">> {
     return this.client.call("platform/universes/access-policy/put", params, options);

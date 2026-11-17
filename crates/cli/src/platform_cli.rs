@@ -23,7 +23,19 @@ enum PlatformCommand {
     ApiKey(ApiKeyArgs),
 }
 
+impl PlatformArgs {
+    /// Whether the command runs without a connection.
+    pub(crate) fn offline(&self) -> bool {
+        matches!(&self.command, PlatformCommand::ApiKey(args) if matches!(args.command, ApiKeyCommand::GenerateSecret))
+    }
+}
+
 pub(crate) async fn handle(args: PlatformArgs) -> Result<()> {
+    if args.offline() {
+        return crate::key_secrets::print_generated_secret(
+            crate::key_secrets::SecretKind::ServiceUserKey,
+        );
+    }
     require_platform()?;
     match args.command {
         PlatformCommand::Organization(args) => organization(args).await,
@@ -84,16 +96,11 @@ enum OrganizationCommand {
     Create {
         name: String,
         #[arg(long)]
-        slug: String,
+        handle: String,
         #[arg(long)]
         initial_admin_user: Option<String>,
         #[arg(long)]
         quota: Option<u32>,
-    },
-    /// Apply organization settings from a JSON object, including membershipPolicy.
-    Update {
-        #[arg(long)]
-        file: PathBuf,
     },
     Member {
         #[command(subcommand)]
@@ -158,11 +165,6 @@ enum AccessCommand {
     },
     Remove {
         grant: String,
-    },
-    /// Replace declared access policy with a JSON object from a file.
-    PolicyPut {
-        #[arg(long)]
-        file: PathBuf,
     },
 }
 #[derive(Debug, Args)]
@@ -241,6 +243,17 @@ enum ApiKeyCommand {
     Revoke {
         key: String,
     },
+    /// Give a key a new secret in place. Its name, access and expiry stay,
+    /// so nothing that refers to it changes; the old secret stops working at
+    /// once.
+    Replace {
+        key: String,
+        #[command(flatten)]
+        output: SecretOutput,
+    },
+    /// Print a new secret for a service user key declared in an organization
+    /// document. Contacts nothing and saves nothing.
+    GenerateSecret,
 }
 #[derive(Debug, Default, Args)]
 #[group(multiple = false)]
@@ -331,11 +344,11 @@ pub(crate) async fn organization(args: OrganizationArgs) -> Result<()> {
         }
         OrganizationCommand::Create {
             name,
-            slug,
+            handle,
             initial_admin_user,
             quota,
         } => {
-            let mut params = json!({"name":name,"slug":slug});
+            let mut params = json!({"name":name,"handle":handle});
             if let Some(value) = initial_admin_user {
                 params["initialAdminUserId"] = json!(value);
             }
@@ -344,10 +357,6 @@ pub(crate) async fn organization(args: OrganizationArgs) -> Result<()> {
             }
             ("platform/organizations/create", params)
         }
-        OrganizationCommand::Update { file } => (
-            "platform/organizations/update",
-            with_organization(read_object(&file)?)?,
-        ),
         OrganizationCommand::Member { command } => match command {
             MemberCommand::List => (
                 "platform/organizations/members/list",
@@ -408,10 +417,6 @@ pub(crate) async fn access(args: AccessArgs) -> Result<()> {
         AccessCommand::Remove { grant } => {
             ("platform/universes/grants/delete", json!({"grantId":grant}))
         }
-        AccessCommand::PolicyPut { file } => (
-            "platform/universes/access-policy/put",
-            json!({"policy":read_object(&file)?}),
-        ),
     };
     params["universe"] = json!(selected_universe()?);
     show(&call(operation, params).await?)
@@ -508,6 +513,12 @@ pub(crate) async fn api_key(args: ApiKeyArgs) -> Result<()> {
             params["keyId"] = json!(key);
             show(&call(&format!("{prefix}/revoke"), params).await?)
         }
+        ApiKeyCommand::Replace { key, output } => {
+            params["keyId"] = json!(key);
+            let file = output.prepare(true)?;
+            output.finish(call(&format!("{prefix}/replace"), params).await?, file)
+        }
+        ApiKeyCommand::GenerateSecret => unreachable!("handled offline"),
         ApiKeyCommand::Create {
             name,
             expires_in_days,

@@ -251,7 +251,7 @@ describe("demo router", () => {
 
   it("adopts into the explicit organization with an Owner from that organization", async () => {
     const { store, call } = await boot();
-    const created = await call("POST", "/api/v1/platform/organizations", { name: "Destination", slug: "destination" });
+    const created = await call("POST", "/api/v1/platform/organizations", { name: "Destination", handle: "destination" });
     const organizationId = (created.json as { organization: { id: string } }).organization.id;
     const owner = [...store.users.values()].find(user => user.id !== store.currentUser.id)!;
     const runtime = { universeId: crypto.randomUUID(), handle: "adopt-me", displayName: "Runtime name", protected: true, sessions: 0, workspaces: 0, profiles: 0, blobBytes: 0, createdAtMs: 0 };

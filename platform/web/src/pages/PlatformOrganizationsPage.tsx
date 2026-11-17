@@ -66,7 +66,7 @@ export function PlatformOrganizationsPage() {
             <ResourceLinkRow key={organization.id} name={organization.name} to={`${organizationAdminPath(organization.id)}/universes`}>
               <ResourceIdentityCell
                 name={organization.name}
-                subtitle={organization.personal ? undefined : organization.slug}
+                subtitle={organization.personal ? undefined : organization.handle}
                 mono
               />
               <TableCell className="hidden text-muted-foreground sm:table-cell">

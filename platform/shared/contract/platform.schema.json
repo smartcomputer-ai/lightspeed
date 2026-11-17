@@ -535,6 +535,125 @@
       ],
       "additionalProperties": false
     },
+    "PlatformCredentialsReplaceParams": {
+      "type": "object",
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformCredentialsReplaceResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "description": "Null for a key that never expires.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
     "PlatformCredentialsRevokeParams": {
       "type": "object",
       "properties": {
@@ -1043,6 +1162,356 @@
       ],
       "additionalProperties": false
     },
+    "PlatformServiceUsersCredentialsReplaceParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId",
+        "keyId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsReplaceResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "prefix": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "expiresAt": {
+              "description": "Null for a key that never expires.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "lastUsedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "prefix",
+            "start",
+            "createdAt",
+            "expiresAt",
+            "enabled",
+            "lastUsedAt",
+            "restrictions"
+          ],
+          "additionalProperties": false
+        },
+        "secret": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential",
+        "secret"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsPutParams": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Identifies the key among the service user's keys."
+        },
+        "secret": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^lsa_[A-Za-z0-9_-]{64,}$",
+          "description": "The key's secret: `lsa_` followed by at least 64 letters, digits, `-` or `_`. `lightspeed platform api-key generate-secret` makes one."
+        },
+        "expiresAt": {
+          "description": "When the key stops working. Omitted or null: never, which a deployment maximum refuses.",
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "default": {},
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "dryRun": {
+          "description": "Report what would change without changing it.",
+          "type": "boolean"
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "name",
+        "secret",
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersCredentialsPutResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "start": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "expiresAt": {
+                  "description": "Null for a key that never expires.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "lastUsedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "restrictions": {
+                  "type": "object",
+                  "properties": {
+                    "organizationIds": {
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "universeIds": {
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "operations": {
+                      "maxItems": 1000,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "readOnly": {
+                      "type": "boolean"
+                    },
+                    "allowUniverseCreation": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "prefix",
+                "start",
+                "createdAt",
+                "expiresAt",
+                "enabled",
+                "lastUsedAt",
+                "restrictions"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null only for a dry run that would create the key."
+        },
+        "created": {
+          "type": "boolean"
+        },
+        "secretReplaced": {
+          "type": "boolean"
+        },
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "restrictions",
+              "expiresAt"
+            ]
+          },
+          "description": "Settings that differed and were, or would be, changed."
+        }
+      },
+      "required": [
+        "credential",
+        "created",
+        "secretReplaced",
+        "updated"
+      ],
+      "additionalProperties": false
+    },
     "PlatformServiceUsersCredentialsRevokeParams": {
       "type": "object",
       "properties": {
@@ -1312,9 +1781,10 @@
                 "minLength": 1,
                 "maxLength": 120
               },
-              "slug": {
+              "handle": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "The organization's deployment-unique name."
               },
               "personal": {
                 "type": "boolean"
@@ -1499,7 +1969,7 @@
             "required": [
               "id",
               "name",
-              "slug",
+              "handle",
               "personal",
               "role",
               "actions",
@@ -1532,7 +2002,7 @@
           "minLength": 1,
           "maxLength": 120
         },
-        "slug": {
+        "handle": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
         },
@@ -1578,7 +2048,7 @@
       },
       "required": [
         "name",
-        "slug"
+        "handle"
       ],
       "additionalProperties": false
     },
@@ -1597,9 +2067,10 @@
               "minLength": 1,
               "maxLength": 120
             },
-            "slug": {
+            "handle": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "The organization's deployment-unique name."
             },
             "personal": {
               "type": "boolean"
@@ -1784,7 +2255,7 @@
           "required": [
             "id",
             "name",
-            "slug",
+            "handle",
             "personal",
             "role",
             "actions",
@@ -1832,9 +2303,10 @@
               "minLength": 1,
               "maxLength": 120
             },
-            "slug": {
+            "handle": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "The organization's deployment-unique name."
             },
             "personal": {
               "type": "boolean"
@@ -2019,7 +2491,7 @@
           "required": [
             "id",
             "name",
-            "slug",
+            "handle",
             "personal",
             "role",
             "actions",
@@ -2202,9 +2674,10 @@
               "minLength": 1,
               "maxLength": 120
             },
-            "slug": {
+            "handle": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "The organization's deployment-unique name."
             },
             "personal": {
               "type": "boolean"
@@ -2389,7 +2862,7 @@
           "required": [
             "id",
             "name",
-            "slug",
+            "handle",
             "personal",
             "role",
             "actions",
@@ -3677,6 +4150,274 @@
       },
       "required": [
         "ok"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesReadParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesReadResult": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "organizationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lightspeedUniverseId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            "organizationRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "member",
+                    "creator",
+                    "admin"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "provisioning",
+                "active",
+                "archived",
+                "deleting"
+              ]
+            },
+            "protected": {
+              "type": "boolean"
+            },
+            "expiresAtMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "createdBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "features": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "boolean"
+              }
+            },
+            "icon": {
+              "type": "string"
+            },
+            "iconColor": {
+              "type": "string"
+            },
+            "runtimeConfiguration": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            }
+          },
+          "required": [
+            "id",
+            "organizationId",
+            "lightspeedUniverseId",
+            "name",
+            "handle",
+            "role",
+            "organizationRole",
+            "status",
+            "protected",
+            "expiresAtMs",
+            "createdBy",
+            "features",
+            "icon",
+            "iconColor",
+            "runtimeConfiguration",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyReadParams": {
+      "type": "object",
+      "properties": {
+        "universe": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "universe"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformUniversesAccessPolicyReadResult": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "viewer",
+                          "contributor",
+                          "operator",
+                          "owner"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "issuer",
+                      "subject",
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "directoryGroupMappings": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "group": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "group",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "policy"
       ],
       "additionalProperties": false
     },

@@ -56,6 +56,8 @@ pub(crate) struct Exported {
     kind: Option<Kind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    organization: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     credentials: Vec<Ordered>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -72,6 +74,8 @@ pub(crate) struct Exported {
     environments: Vec<Ordered>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     profiles: Vec<Ordered>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access: Option<super::document::UniverseAccess>,
 }
 
 impl Exported {
@@ -124,6 +128,11 @@ pub(crate) async fn universe(base: &ResolvedConnection, universe: &str) -> Resul
         ..Exported::default()
     };
     read_sections(&probe, &universe_resources(), &mut exported).await?;
+    if base.is_platform() {
+        let (organization, access) = super::platform::export_universe(&probe).await?;
+        exported.organization = organization;
+        exported.access = access;
+    }
     Ok(exported)
 }
 

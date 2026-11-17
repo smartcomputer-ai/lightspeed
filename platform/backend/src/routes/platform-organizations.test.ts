@@ -31,7 +31,7 @@ it("keeps universe usage out of a plain member's view", async () => {
 
 it("protects new universes by default in a created organization", async () => {
   await fixture.asUser("organization-admin", true);
-  const response = await fixture.request("/organizations", "POST", { name: "Research", slug: "research" });
+  const response = await fixture.request("/organizations", "POST", { name: "Research", handle: "research" });
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ organization: { personal: false, defaultProtected: true, universeCount: 0 } });
 });
@@ -72,9 +72,9 @@ it("presents a personal organization under its owner's current name", async () =
 
 it("lets only a deployment administrator create an organization, with Viewer as the member default", async () => {
   await fixture.asUser("organization-admin");
-  expect((await fixture.request("/organizations", "POST", { name: "Research", slug: "research" })).status).toBe(403);
+  expect((await fixture.request("/organizations", "POST", { name: "Research", handle: "research" })).status).toBe(403);
   await fixture.asUser("platform-admin", true);
-  const response = await fixture.request("/organizations", "POST", { name: "Research", slug: "research", initialAdminUserId: "creator" });
+  const response = await fixture.request("/organizations", "POST", { name: "Research", handle: "research", initialAdminUserId: "creator" });
   expect(await response.json()).toMatchObject({ organization: { baseUniverseRole: "viewer", role: "admin", actions: expect.arrayContaining(["managePolicy", "administerUniverses"]) } });
 });
 

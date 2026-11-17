@@ -11,11 +11,11 @@ import { effectiveUniverseQuota, listPlatformSettings, platformSettings, putPlat
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
 import { policyBody, problem } from "../runtime-http.js";
-import { activeGrantIds, adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
+import { activeGrantIds, universeView, adoptManagedUniverse, createManagedUniverse, requireOrganizationPrincipal, listUniverseAccesses, universeForPrincipal, updateUniverseLifecycle, type UniverseAccess } from "./universes.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
 /** Usage and policy are administration details: only a caller who may manage the organization's policy sees them. */
-function organizationView(organization: typeof schema.organization.$inferSelect, access: Pick<OrganizationAccess, "role" | "actions">, universeCount: number, settings: PlatformSettings) { return { id: organization.id, name: organization.name, slug: organization.slug, personal: organization.personalUserId !== null, role: access.role, actions: [...access.actions], universeQuota: effectiveUniverseQuota(organization, settings), universeQuotaSource: organization.universeQuota === null ? "deployment" as const : "organization" as const, canCreateUniverse: access.actions.has("createUniverse") && universeCount < effectiveUniverseQuota(organization, settings), baseUniverseRole: organization.baseUniverseRole, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(access.actions.has("managePolicy") ? { universeCount, membershipPolicy: organization.membershipPolicy } : {}) }; }
+function organizationView(organization: typeof schema.organization.$inferSelect, access: Pick<OrganizationAccess, "role" | "actions">, universeCount: number, settings: PlatformSettings) { return { id: organization.id, name: organization.name, handle: organization.slug, personal: organization.personalUserId !== null, role: access.role, actions: [...access.actions], universeQuota: effectiveUniverseQuota(organization, settings), universeQuotaSource: organization.universeQuota === null ? "deployment" as const : "organization" as const, canCreateUniverse: access.actions.has("createUniverse") && universeCount < effectiveUniverseQuota(organization, settings), baseUniverseRole: organization.baseUniverseRole, defaultProtected: organization.defaultProtected, requireProtected: organization.requireProtected, createdAt: organization.createdAt, ...(access.actions.has("managePolicy") ? { universeCount, membershipPolicy: organization.membershipPolicy } : {}) }; }
 /** The same allocation the universe quota is enforced against: every row, including provisioning and deleting universes. */
 async function universeCounts(db: AppContext["db"], organizationIds: string[]) {
   if (!organizationIds.length) return new Map<string, number>();
@@ -101,7 +101,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, adminId)).limit(1);
       if (!user || user.banned) throw new GateRefusal(400, "initial admin must be an active user");
       const organization = await ctx.db.transaction(async tx => {
-        const [created] = await tx.insert(schema.organization).values({ id: crypto.randomUUID(), name: input.name, slug: input.slug, createdAt: new Date(), universeQuota: input.universeQuota ?? null, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false }).returning();
+        const [created] = await tx.insert(schema.organization).values({ id: crypto.randomUUID(), name: input.name, slug: input.handle, createdAt: new Date(), universeQuota: input.universeQuota ?? null, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false }).returning();
         await tx.insert(schema.member).values({ id: crypto.randomUUID(), organizationId: created!.id, userId: adminId, role: "admin", createdAt: new Date() });
         await auditAsSubject(tx, auth, { action: "organization.create", targetId: created!.id });
         return created!;
@@ -232,6 +232,16 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     }
     case "platform/universes/adopt": return { universe: await adoptManagedUniverse(ctx, auth, organizationId, params as PlatformOperationParams<"platform/universes/adopt">) };
     case "platform/universes/create": return { universe: await createManagedUniverse(ctx, auth, organizationId, params as PlatformOperationParams<"platform/universes/create">) };
+    case "platform/universes/read": {
+      const access = await universeForPrincipal(ctx, auth, params.universe as string);
+      if (!access) throw new GateRefusal(404, "universe not found");
+      enforceRestrictions(auth, { operation, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: false });
+      return { universe: universeView(access) };
+    }
+    case "platform/universes/access-policy/read": {
+      const access = await ownerAccess(ctx, auth, params.universe as string, operation);
+      return { policy: access.universe.accessPolicy ?? {} };
+    }
     case "platform/universes/update": {
       const access = await ownerAccess(ctx, auth, params.universe as string, operation);
       return { universe: await updateUniverseLifecycle(ctx, access, params as PlatformOperationParams<"platform/universes/update">) };
@@ -285,7 +295,7 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
 async function ownerAccess(ctx: AppContext, auth: AuthContext, reference: string, operation: string) {
   const access = await universeForPrincipal(ctx, auth, reference);
   if (!access) throw new GateRefusal(404, "universe not found");
-  enforceRestrictions(auth, { operation, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: !operation.endsWith("/list") });
+  enforceRestrictions(auth, { operation, organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: !/\/(list|read)$/.test(operation) });
   if (!access.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
   return access;
 }

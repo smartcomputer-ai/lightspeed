@@ -96,12 +96,12 @@ export function CreateOrganizationDialog({
   saved: (organizationId: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
+  const [handle, setHandle] = useState("");
   const create = useMutation({
     mutationFn: () =>
       platformApi("platform/organizations/create", {
         name: name.trim(),
-        slug,
+        handle,
       }),
     onSuccess: (result) => saved(result.organization.id),
   });
@@ -130,12 +130,12 @@ export function CreateOrganizationDialog({
           />
         </Field>
         <Field>
-          <FieldLabel htmlFor="new-organization-slug">Handle</FieldLabel>
+          <FieldLabel htmlFor="new-organization-handle">Handle</FieldLabel>
           <Input
-            id="new-organization-slug"
-            aria-label="New organization slug"
-            value={slug}
-            onChange={(event) => setSlug(event.target.value)}
+            id="new-organization-handle"
+            aria-label="New organization handle"
+            value={handle}
+            onChange={(event) => setHandle(event.target.value)}
             required
             pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
             placeholder="team-name"

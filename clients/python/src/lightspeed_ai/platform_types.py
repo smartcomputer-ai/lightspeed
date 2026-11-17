@@ -163,6 +163,38 @@ class PlatformCredentialsCreateResult(TypedDict):
     secret: str
 
 
+class PlatformCredentialsReplaceParams(TypedDict):
+    keyId: str
+
+
+class Restrictions4(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class Credential4(TypedDict):
+    id: str
+    name: str
+    prefix: str | None
+    start: str | None
+    createdAt: str
+    expiresAt: str | None
+    """
+    Null for a key that never expires.
+    """
+    enabled: bool
+    lastUsedAt: str | None
+    restrictions: Restrictions4
+
+
+class PlatformCredentialsReplaceResult(TypedDict):
+    credential: Credential4
+    secret: str
+
+
 class PlatformCredentialsRevokeParams(TypedDict):
     keyId: str
 
@@ -175,7 +207,7 @@ class PlatformOrganizationsCredentialsListParams(TypedDict):
     organizationId: str
 
 
-class Restrictions4(TypedDict):
+class Restrictions5(TypedDict):
     organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
@@ -197,42 +229,6 @@ class OwnerServiceUser(TypedDict):
     enabled: bool
 
 
-class Credential4(TypedDict):
-    id: str
-    name: str
-    prefix: str | None
-    start: str | None
-    createdAt: str
-    expiresAt: str | None
-    """
-    Null for a key that never expires.
-    """
-    enabled: bool
-    lastUsedAt: str | None
-    restrictions: Restrictions4
-    owner: OwnerUser | OwnerServiceUser
-
-
-class PlatformOrganizationsCredentialsListResult(TypedDict):
-    credentials: list[Credential4]
-    """
-    Keys that can reach the organization: its service users' keys, and personal keys of people with a role in it whose restrictions allow it.
-    """
-
-
-class PlatformServiceUsersCredentialsListParams(TypedDict):
-    organizationId: str
-    serviceUserId: str
-
-
-class Restrictions5(TypedDict):
-    organizationIds: NotRequired[list[OrganizationId]]
-    universeIds: NotRequired[list[UniverseId]]
-    operations: NotRequired[list[Operation]]
-    readOnly: NotRequired[bool]
-    allowUniverseCreation: NotRequired[bool]
-
-
 class Credential5(TypedDict):
     id: str
     name: str
@@ -246,32 +242,22 @@ class Credential5(TypedDict):
     enabled: bool
     lastUsedAt: str | None
     restrictions: Restrictions5
+    owner: OwnerUser | OwnerServiceUser
 
 
-class PlatformServiceUsersCredentialsListResult(TypedDict):
+class PlatformOrganizationsCredentialsListResult(TypedDict):
     credentials: list[Credential5]
-
-
-class Restrictions6(TypedDict):
-    organizationIds: NotRequired[list[OrganizationId]]
-    universeIds: NotRequired[list[UniverseId]]
-    operations: NotRequired[list[Operation]]
-    readOnly: NotRequired[bool]
-    allowUniverseCreation: NotRequired[bool]
-
-
-class PlatformServiceUsersCredentialsCreateParams(TypedDict):
-    name: str
-    expiresInDays: NotRequired[int | None]
     """
-    Days until the key expires. Omitted uses the deployment default; null creates a key that never expires, which a deployment maximum refuses.
+    Keys that can reach the organization: its service users' keys, and personal keys of people with a role in it whose restrictions allow it.
     """
-    restrictions: NotRequired[Restrictions6]
+
+
+class PlatformServiceUsersCredentialsListParams(TypedDict):
     organizationId: str
     serviceUserId: str
 
 
-class Restrictions7(TypedDict):
+class Restrictions6(TypedDict):
     organizationIds: NotRequired[list[OrganizationId]]
     universeIds: NotRequired[list[UniverseId]]
     operations: NotRequired[list[Operation]]
@@ -291,12 +277,162 @@ class Credential6(TypedDict):
     """
     enabled: bool
     lastUsedAt: str | None
-    restrictions: Restrictions7
+    restrictions: Restrictions6
+
+
+class PlatformServiceUsersCredentialsListResult(TypedDict):
+    credentials: list[Credential6]
+
+
+class Restrictions7(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class PlatformServiceUsersCredentialsCreateParams(TypedDict):
+    name: str
+    expiresInDays: NotRequired[int | None]
+    """
+    Days until the key expires. Omitted uses the deployment default; null creates a key that never expires, which a deployment maximum refuses.
+    """
+    restrictions: NotRequired[Restrictions7]
+    organizationId: str
+    serviceUserId: str
+
+
+class Restrictions8(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class Credential7(TypedDict):
+    id: str
+    name: str
+    prefix: str | None
+    start: str | None
+    createdAt: str
+    expiresAt: str | None
+    """
+    Null for a key that never expires.
+    """
+    enabled: bool
+    lastUsedAt: str | None
+    restrictions: Restrictions8
 
 
 class PlatformServiceUsersCredentialsCreateResult(TypedDict):
-    credential: Credential6
+    credential: Credential7
     secret: str
+
+
+class PlatformServiceUsersCredentialsReplaceParams(TypedDict):
+    organizationId: str
+    serviceUserId: str
+    keyId: str
+
+
+class Restrictions9(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class Credential8(TypedDict):
+    id: str
+    name: str
+    prefix: str | None
+    start: str | None
+    createdAt: str
+    expiresAt: str | None
+    """
+    Null for a key that never expires.
+    """
+    enabled: bool
+    lastUsedAt: str | None
+    restrictions: Restrictions9
+
+
+class PlatformServiceUsersCredentialsReplaceResult(TypedDict):
+    credential: Credential8
+    secret: str
+
+
+class Restrictions10(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class PlatformServiceUsersCredentialsPutParams(TypedDict):
+    name: str
+    """
+    Identifies the key among the service user's keys.
+    """
+    secret: str
+    """
+    The key's secret: `lsa_` followed by at least 64 letters, digits, `-` or `_`. `lightspeed platform api-key generate-secret` makes one.
+    """
+    expiresAt: NotRequired[str | None]
+    """
+    When the key stops working. Omitted or null: never, which a deployment maximum refuses.
+    """
+    restrictions: NotRequired[Restrictions10]
+    dryRun: NotRequired[bool]
+    """
+    Report what would change without changing it.
+    """
+    organizationId: str
+    serviceUserId: str
+
+
+class Restrictions11(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+
+
+class Credential9(TypedDict):
+    """
+    Null only for a dry run that would create the key.
+    """
+
+    id: str
+    name: str
+    prefix: str | None
+    start: str | None
+    createdAt: str
+    expiresAt: str | None
+    """
+    Null for a key that never expires.
+    """
+    enabled: bool
+    lastUsedAt: str | None
+    restrictions: Restrictions11
+
+
+class PlatformServiceUsersCredentialsPutResult(TypedDict):
+    credential: Credential9 | None
+    """
+    Null only for a dry run that would create the key.
+    """
+    created: bool
+    secretReplaced: bool
+    updated: list[Literal['restrictions', 'expiresAt']]
+    """
+    Settings that differed and were, or would be, changed.
+    """
 
 
 class PlatformServiceUsersCredentialsRevokeParams(TypedDict):
@@ -383,7 +519,10 @@ class MembershipPolicy(TypedDict):
 class Organization1(TypedDict):
     id: str
     name: str
-    slug: str
+    handle: str
+    """
+    The organization's deployment-unique name.
+    """
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     """
@@ -431,7 +570,7 @@ class PlatformOrganizationsListResult(TypedDict):
 
 class PlatformOrganizationsCreateParams(TypedDict):
     name: str
-    slug: str
+    handle: str
     initialAdminUserId: NotRequired[str]
     universeQuota: NotRequired[int | None]
     """
@@ -463,7 +602,10 @@ class MembershipPolicy1(TypedDict):
 class Organization2(TypedDict):
     id: str
     name: str
-    slug: str
+    handle: str
+    """
+    The organization's deployment-unique name.
+    """
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     """
@@ -531,7 +673,10 @@ class MembershipPolicy2(TypedDict):
 class Organization3(TypedDict):
     id: str
     name: str
-    slug: str
+    handle: str
+    """
+    The organization's deployment-unique name.
+    """
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     """
@@ -626,7 +771,10 @@ class MembershipPolicy4(TypedDict):
 class Organization4(TypedDict):
     id: str
     name: str
-    slug: str
+    handle: str
+    """
+    The organization's deployment-unique name.
+    """
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
     """
@@ -879,6 +1027,18 @@ class PlatformUniversesGrantsDeleteResult(TypedDict):
     ok: Literal[True]
 
 
+class PlatformUniversesReadParams(TypedDict):
+    universe: str
+
+
+class PlatformUniversesReadResult(TypedDict):
+    universe: Universe
+
+
+class PlatformUniversesAccessPolicyReadParams(TypedDict):
+    universe: str
+
+
 class Members10(TypedDict):
     email: str
     role: Literal['viewer', 'contributor', 'operator', 'owner']
@@ -901,8 +1061,7 @@ class Policy(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping5]]
 
 
-class PlatformUniversesAccessPolicyPutParams(TypedDict):
-    universe: str
+class PlatformUniversesAccessPolicyReadResult(TypedDict):
     policy: Policy
 
 
@@ -922,5 +1081,26 @@ class Policy1(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping5]]
 
 
-class PlatformUniversesAccessPolicyPutResult(TypedDict):
+class PlatformUniversesAccessPolicyPutParams(TypedDict):
+    universe: str
     policy: Policy1
+
+
+class Members14(TypedDict):
+    email: str
+    role: Literal['viewer', 'contributor', 'operator', 'owner']
+
+
+class Members15(TypedDict):
+    issuer: str
+    subject: str
+    role: Literal['viewer', 'contributor', 'operator', 'owner']
+
+
+class Policy2(TypedDict):
+    members: NotRequired[list[Members14 | Members15]]
+    directoryGroupMappings: NotRequired[list[DirectoryGroupMapping5]]
+
+
+class PlatformUniversesAccessPolicyPutResult(TypedDict):
+    policy: Policy2

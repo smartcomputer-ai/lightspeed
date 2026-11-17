@@ -10,6 +10,7 @@
 mod document;
 mod export;
 mod plan;
+mod platform;
 mod resources;
 mod schema;
 
@@ -96,8 +97,20 @@ pub(crate) struct ApplyArgs {
     wait: Option<u64>,
 }
 
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportKind {
+    /// The selected universe.
+    Universe,
+    /// The selected Platform organization.
+    Organization,
+}
+
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ExportArgs {
+    /// What to export: the selected universe, or the selected organization
+    /// (Platform only).
+    #[arg(long, value_enum, default_value = "universe")]
+    kind: ExportKind,
     /// Write the document to this file instead of standard output.
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
@@ -126,10 +139,15 @@ async fn plan_all(
         "--universe-id requires exactly one document"
     );
     let base = base_connection();
+    let declared = platform::Declared::of(&documents);
+    // Organizations first, so the universes and grants that need them
+    // find them when they are applied.
+    let mut ordered: Vec<&document::LoadedDocument> = documents.iter().collect();
+    ordered.sort_by_key(|loaded| !matches!(loaded.document, document::Document::Organization(_)));
     let mut plans = Vec::new();
-    for loaded in &documents {
+    for loaded in ordered {
         plans.push(
-            plan::plan_with_owner(&base, loaded, owner.value(), universe_id)
+            plan::plan_with_owner(&base, loaded, owner.value(), universe_id, &declared)
                 .await
                 .with_context(|| format!("{}", loaded.path.display()))?,
         );
@@ -174,10 +192,35 @@ async fn apply(args: ApplyArgs) -> Result<()> {
 /// `lightspeed config export`.
 async fn export(args: ExportArgs) -> Result<()> {
     let base = base_connection();
+    if args.kind == ExportKind::Organization {
+        platform::require_platform(&base, "an organization")?;
+        anyhow::ensure!(
+            args.profiles_dir.is_none(),
+            "--profiles-dir applies to universe documents"
+        );
+        let organization = base
+            .selected_organization()
+            .context("no organization selected; name one with --organization")?
+            .to_owned();
+        let target = plan::connect(&base, None).await?;
+        let document = platform::export_organization(&target, &organization).await?;
+        return write_export(&args, &document);
+    }
     let universe = base
         .active_universe()
         .context("no universe selected; name one with --universe")?;
     let mut exported = export::universe(&base, &universe).await?;
+    if let (Some(profiles_dir), Some(output)) = (&args.profiles_dir, &args.output) {
+        let document_dir = output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        export::split_profiles(&mut exported, profiles_dir, document_dir)?;
+    }
+    write_export(&args, &exported)
+}
+
+fn write_export(args: &ExportArgs, exported: &impl serde::Serialize) -> Result<()> {
     let format = args.format.unwrap_or_else(|| {
         match args
             .output
@@ -189,14 +232,7 @@ async fn export(args: ExportArgs) -> Result<()> {
             _ => Format::Yaml,
         }
     });
-    if let (Some(profiles_dir), Some(output)) = (&args.profiles_dir, &args.output) {
-        let document_dir = output
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(std::path::Path::new("."));
-        export::split_profiles(&mut exported, profiles_dir, document_dir)?;
-    }
-    let text = format.render(&exported)?;
+    let text = format.render(exported)?;
     match &args.output {
         Some(output) => {
             if let Some(parent) = output
