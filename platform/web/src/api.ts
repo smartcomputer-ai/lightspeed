@@ -133,11 +133,6 @@ export interface EngineUniverse {
   lastActivityAtMs?: number | null;
 }
 
-export interface UniverseHandleSyncResult {
-  updated: number;
-  skipped: number;
-}
-
 /// Admin reconciliation: each platform row's engine status, plus engine
 /// universes no platform row links to (orphans).
 export interface UniverseReconcile {

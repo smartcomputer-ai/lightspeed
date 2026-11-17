@@ -1,6 +1,6 @@
 import { ReadError } from "@/components/read-error";
 import { useRef, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AddIcon } from "@/icons";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -27,11 +27,10 @@ import { ConfirmDangerButton } from "@/components/confirm-danger-button";
 import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
 import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceStatusBadge, ResourceTable, ResourceValue } from "@/components/resource-table";
 import type { ResourceStatusInfo } from "@/lib/resource-status";
+import { useDeploymentUsers, type DeploymentUser } from "@/lib/deployment-users";
 import { LoadingNote, PageHeader } from "@/components/page";
 
-interface UserRow extends SessionUser {
-  createdAt?: string | Date;
-}
+type UserRow = DeploymentUser;
 
 const isPlatformAdmin = (user: UserRow) => user.role?.split(",").includes("admin") === true;
 
@@ -48,18 +47,7 @@ function userStatus(user: UserRow): ResourceStatusInfo {
 /// Everyone who can sign in to the deployment; each row opens the user.
 export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
   const config = useLoginConfig();
-  const users = useQuery({
-    queryKey: ["admin", "users"],
-    queryFn: async () => {
-      const result = await authClient.admin.listUsers({
-        query: { limit: 200, sortBy: "createdAt" },
-      });
-      if (result.error) {
-        throw new Error(result.error.message ?? "failed to load users");
-      }
-      return result.data.users as UserRow[];
-    },
-  });
+  const users = useDeploymentUsers();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -182,8 +170,8 @@ function UserDetails({ user, currentUserId, passwordMode }: {
       </ResourceDetailsGrid>
       <p className="text-sm text-muted-foreground">
         {company
-          ? "Their identity and Platform role are managed by the company. Add them to organizations by user ID under Admin → organization → Members."
-          : "Add them to organizations by user ID under Admin → organization → Members."}
+          ? "Their identity and Platform role are managed by the company. Add them to organizations under Admin → organization → Members."
+          : "Add them to organizations under Admin → organization → Members."}
       </p>
       <form onSubmit={submitProfile} className="grid gap-4">
         <div className="grid gap-4 sm:grid-cols-2">

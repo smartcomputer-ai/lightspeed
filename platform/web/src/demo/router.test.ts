@@ -247,7 +247,6 @@ describe("demo router", () => {
     expect(renamed.status).toBe(200);
     expect(renamed.json).toMatchObject({ id: universe.id, lightspeedUniverseId: universe.lightspeedUniverseId, handle: "renamed" });
     expect((await call("GET", "/api/ui/universes")).json).toEqual(expect.arrayContaining([expect.objectContaining({ id: universe.id, handle: "renamed" })]));
-    expect((await call("POST", "/api/ui/universes/sync-handles", {})).json).toEqual({ updated: 0, skipped: 0 });
   });
 
   it("adopts into the explicit organization with an Owner from that organization", async () => {
@@ -540,11 +539,8 @@ describe("demo router", () => {
     expect(scoped.status).toBe(200);
     expect(scoped.json).toEqual({ platform: [{ id: selected.universe.id, organizationId: "selected", lightspeedUniverseId: selected.universe.lightspeedUniverseId, engine: "ok" }], orphans: [] });
     expect((await call("GET", "/api/ui/universes/reconcile")).json).toMatchObject({ orphans: expect.arrayContaining([unclaimed]) });
-    expect((await call("POST", "/api/ui/universes/sync-handles", { organizationId: "selected" })).json).toEqual({ updated: 0, skipped: 0 });
-    expect((await call("POST", "/api/ui/universes/sync-handles", { organizationId: "" })).status).toBe(400);
     store.currentUser.role = "user";
     expect((await call("GET", "/api/ui/universes/reconcile?organizationId=selected")).status).toBe(403);
-    expect((await call("POST", "/api/ui/universes/sync-handles", { organizationId: "selected" })).status).toBe(403);
   });
 
   it("edits native grants and preserves the final Owner", async () => {

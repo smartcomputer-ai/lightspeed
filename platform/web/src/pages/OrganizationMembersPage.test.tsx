@@ -17,6 +17,17 @@ const mocks = vi.hoisted(() => ({
   empty: false,
   personal: false,
 }));
+vi.mock("@/lib/deployment-users", () => ({
+  useDeploymentUsers: () => ({
+    isLoading: false,
+    error: null,
+    data: [
+      { id: "user", name: "Current", email: "current@example.com" },
+      { id: "dana", name: "Dana", email: "dana@example.com" },
+      { id: "erin", name: "Erin", email: "erin@example.com", banned: true },
+    ],
+  }),
+}));
 vi.mock("@/lib/platform-api", () => ({
   platformApi: mocks.api,
   useOrganizations: () => ({
@@ -217,6 +228,27 @@ it("lets a Platform Admin manage members without a direct membership", async () 
   await show("/admin/organizations/team/members", true);
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/organizations/members/list", { organizationId: "team" }));
   expect(button("Add person")).toBeDefined();
+});
+
+it("lets a Platform Admin pick the person from the deployment's users who are not members yet", async () => {
+  mocks.api.mockImplementation(async (operation: string) => {
+    if (operation.endsWith("members/list")) return { members: [{ id: "m1", userId: "user", name: "Current", email: "current@example.com", role: "member", added: true, declared: false, createdAt: "2026-11-01T00:00:00.000Z" }] };
+    if (operation.endsWith("service-users/list")) return { serviceUsers: [] };
+    return {};
+  });
+  await show("/admin/organizations/team/members", true);
+  await waitForUi(() => expect(rows("People")).toHaveLength(1));
+  await click("Add person");
+  expect(dialog().querySelector("#organization-member-id")).toBeNull();
+  const input = dialog().querySelector<HTMLInputElement>("#organization-member-user")!;
+  await act(async () => { input.focus(); input.click(); });
+  await type("#organization-member-user", "da");
+  const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+  await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+  await waitForUi(() => expect(options().map((option) => option.textContent)).toEqual(["Danadana@example.com"]));
+  await act(async () => options()[0]!.click());
+  await submit();
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/organizations/members/put", { organizationId: "team", userId: "dana", role: "member" }));
 });
 
 it.each(["missing", "team"])("refuses an unavailable or unauthorized organization without fetching: %s", async (organization) => {

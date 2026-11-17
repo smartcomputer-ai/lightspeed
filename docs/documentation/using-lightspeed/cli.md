@@ -388,10 +388,8 @@ invent a different handle on collision.
 Ordinary universe lists and reads use Platform's database without contacting
 runtime. Creation, adoption and renaming through Platform's general settings
 immediately cache the handle returned by runtime. After a CLI or direct API rename,
-a Platform administrator must use **Sync from runtime** on the **Universes**
-page to update the cached URLs. There is no periodic or background handle refresh.
-A failed sync reports an error and preserves the cache; universes missing from
-the runtime are reported as skipped for review. During runtime outages,
+Platform picks up the new handle within about 30 seconds: a background sync
+refreshes the cache every 30 seconds, and a failed sync leaves it as it was. During runtime outages,
 the cached universe list remains available for membership administration.
 All linked universes use Platform's configured runtime endpoint and have
 distinct handles within that deployment.

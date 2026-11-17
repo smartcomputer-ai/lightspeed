@@ -9,7 +9,7 @@ import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from
 import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, declaredUniverseRole, resourceScopeAllowed, type OrganizationAccess } from "../organization-access.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { deploymentClient, GateRefusal, type UniverseCaller } from "../runtime-client.js";
-import { requireAvailableCachedHandle, syncUniverseHandles } from "../universe-handles.js";
+import { requireAvailableCachedHandle } from "../universe-handles.js";
 import { parseBody, withApiErrors } from "../http.js";
 
 type ApiContext = Context<{ Variables: ApiVariables }>;
@@ -297,15 +297,6 @@ export async function renameManagedUniverse(ctx: AppContext, access: UniverseAcc
 export function universeRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.get("/", c => withApiErrors(c, async () => c.json(await listAccessibleUniverses(ctx, getAuth(c)))));
-  app.post("/sync-handles", c => withApiErrors(c, async () => {
-    if (!deploymentAllows(getAuth(c), "configureDeployment")) throw new GateRefusal(403, "deployment permission required: configureDeployment");
-    let raw: unknown;
-    try { const text = await c.req.text(); raw = text ? JSON.parse(text) : {}; }
-    catch { return c.json({ error: "invalid JSON body" }, 400); }
-    const body = z.object({ organizationId: z.string().min(1).optional() }).strict().safeParse(raw);
-    if (!body.success) return c.json({ error: "validation failed", issues: body.error.issues }, 400);
-    return c.json(await syncUniverseHandles(ctx, body.data.organizationId));
-  }));
   app.post("/", c => withApiErrors(c, async () => {
     const body = await parseBody(c, organizationUniverseCreateSchema.extend({ organizationId: z.string().min(1) }));
     if (!body.ok) return body.response;

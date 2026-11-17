@@ -4,16 +4,16 @@ import { ReadError } from "@/components/read-error";
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { AddIcon, UniversesIcon } from "@/icons";
+import { AddIcon, GoToIcon, MemberIcon, RefreshIcon, SettingsIcon, UniversesIcon } from "@/icons";
 import {
   api,
   type Universe,
   type UniverseReconcile,
-  type UniverseHandleSyncResult,
 } from "@/api";
 import { Button } from "@/components/ui/button";
 import { TableCell } from "@/components/ui/table";
 import { NewUniverseDialog } from "@/components/universe-switcher";
+import { UniverseIcon } from "@/components/universe-icon";
 import { EmptyState, LoadingNote, PageHeader } from "@/components/page";
 import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
 import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceStatusBadge, ResourceTable, ResourceValue } from "@/components/resource-table";
@@ -61,10 +61,6 @@ export function AdminUniversesPage() {
     void queryClient.invalidateQueries({ queryKey: ["universes"] });
     void queryClient.invalidateQueries({ queryKey: ["universes-reconcile"] });
   };
-  const syncHandles = useMutation({
-    mutationFn: () => api<UniverseHandleSyncResult>("POST", "/api/ui/universes/sync-handles", { organizationId }),
-    onSuccess: refresh,
-  });
   const rows = (universes.data ?? [])
     .filter((universe) => universe.organizationId === organizationId && universe.actions?.includes("administer"))
     .map((universe) => {
@@ -79,30 +75,14 @@ export function AdminUniversesPage() {
       <PageHeader
         title="Universes"
         description="Universes you administer in this organization, including archived ones and deletions in progress."
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {runtimeRepair && (
-              <Button variant="outline" disabled={syncHandles.isPending} onClick={() => syncHandles.mutate()}>
-                {syncHandles.isPending ? "Syncing…" : "Sync from runtime"}
-              </Button>
-            )}
-            {canCreate && (
-              <Button onClick={() => setCreateOpen(true)}>
-                <AddIcon data-icon="inline-start" />
-                New universe
-              </Button>
-            )}
-          </div>
-        }
+        actions={canCreate && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <AddIcon data-icon="inline-start" />
+            New universe
+          </Button>
+        )}
       />
       <NewUniverseDialog organizationId={organizationId} open={createOpen} onOpenChange={setCreateOpen} />
-      {syncHandles.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncHandles.error.message}</p>}
-      {syncHandles.data && !syncHandles.isPending && !syncHandles.error && (
-        <p role="status" className="mb-4 text-sm text-muted-foreground">
-          Synced runtime handles: {syncHandles.data.updated} updated.
-          {syncHandles.data.skipped > 0 && ` ${syncHandles.data.skipped} missing from the runtime and skipped; these require review.`}
-        </p>
-      )}
       {universes.isLoading && <LoadingNote />}
       {universes.error && <ReadError error={universes.error} loading={!universes.data} />}
       {runtimeRepair && reconcile.error && (
@@ -116,8 +96,15 @@ export function AdminUniversesPage() {
       {rows.length > 0 && (
         <ResourceTable label="Universes" columns={["Universe", "Your role", "Created", "Status"]}>
           {rows.map((universe) => (
-            <ResourceRow key={universe.id} name={universe.name} onOpen={(trigger) => { triggerRef.current = trigger; setSelectedId(universe.id); }}>
-              <ResourceIdentityCell name={universe.name} subtitle={universe.handle} mono />
+            <ResourceRow key={universe.id} name={universe.name} onOpen={(trigger) => { triggerRef.current = trigger; setSelectedId(universe.id); }}
+              action={universe.status !== "deleting" && (
+                <Button nativeButton={false} variant="outline" size="sm" aria-label={`Open ${universe.name}`} render={<Link to={universeHome(universe)} />}>
+                  <GoToIcon data-icon="inline-start" />
+                  Open
+                </Button>
+              )}>
+              <ResourceIdentityCell name={universe.name} subtitle={universe.handle} mono
+                icon={<UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-8 rounded-md" />} />
               <TableCell className="hidden sm:table-cell"><ResourceValue>{universe.role ? ROLE_LABELS[universe.role] ?? universe.role : "—"}</ResourceValue></TableCell>
               <TableCell className="hidden sm:table-cell"><ResourceValue>{new Date(universe.createdAt).toLocaleDateString()}</ResourceValue></TableCell>
               <TableCell><ResourceStatusBadge status={universeStatus(universe, engineStatus.get(universe.id))} /></TableCell>
@@ -126,7 +113,8 @@ export function AdminUniversesPage() {
         </ResourceTable>
       )}
       <ResourceDetailsDialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelectedId(null); }} finalFocus={triggerRef}
-        title={selected?.name ?? "Universe"} description={selected ? `/u/${selected.handle}` : ""}>
+        title={selected?.name ?? "Universe"} description={selected ? `/u/${selected.handle}` : ""}
+        icon={selected && <UniverseIcon icon={selected.icon} iconColor={selected.iconColor} className="size-8 rounded-md" />}>
         {selected && <UniverseDetails universe={selected} engine={engineStatus.get(selected.id)} runtimeRepair={runtimeRepair} onRepaired={refresh} />}
       </ResourceDetailsDialog>
     </>
@@ -150,6 +138,7 @@ function UniverseDetails({ universe, engine, runtimeRepair, onRepaired }: {
     <>
       <ResourceDetailsGrid>
         <ResourceDetail label="Handle" mono>{universe.handle}</ResourceDetail>
+        <ResourceDetail label="Universe ID" mono>{universe.lightspeedUniverseId}</ResourceDetail>
         <ResourceDetail label="Status"><ResourceStatus status={universeStatus(universe, engine)} /></ResourceDetail>
         <ResourceDetail label="Your role">{universe.role ? ROLE_LABELS[universe.role] ?? universe.role : "—"}</ResourceDetail>
         <ResourceDetail label="Created">{new Date(universe.createdAt).toLocaleDateString()}</ResourceDetail>
@@ -158,14 +147,15 @@ function UniverseDetails({ universe, engine, runtimeRepair, onRepaired }: {
       </ResourceDetailsGrid>
       {!deleting && (
         <div className="flex flex-wrap gap-2">
-          <Button nativeButton={false} render={<Link to={universeHome(universe)} />}>Open universe</Button>
-          <Button nativeButton={false} variant="outline" render={<Link to={`/u/${encodeURIComponent(universe.handle)}/settings/general`} />}>Settings</Button>
-          <Button nativeButton={false} variant="outline" render={<Link to={`/u/${encodeURIComponent(universe.handle)}/settings/members`} />}>Members</Button>
+          <Button nativeButton={false} render={<Link to={universeHome(universe)} />}><GoToIcon data-icon="inline-start" />Open universe</Button>
+          <Button nativeButton={false} variant="outline" render={<Link to={`/u/${encodeURIComponent(universe.handle)}/settings/general`} />}><SettingsIcon data-icon="inline-start" />Settings</Button>
+          <Button nativeButton={false} variant="outline" render={<Link to={`/u/${encodeURIComponent(universe.handle)}/settings/members`} />}><MemberIcon data-icon="inline-start" />Members</Button>
         </div>
       )}
       {runtimeRepair && engine === "missing" && !deleting && (
         <ResourceActions>
           <Button variant="outline" size="sm" disabled={recreate.isPending} onClick={() => recreate.mutate()}>
+            <RefreshIcon data-icon="inline-start" />
             {recreate.isPending ? "Recreating…" : "Recreate on engine"}
           </Button>
           <p className="text-sm text-muted-foreground">The runtime lost this universe. Recreating it starts empty.</p>

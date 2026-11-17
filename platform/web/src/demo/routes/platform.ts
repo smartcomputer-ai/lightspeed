@@ -48,15 +48,6 @@ export function platformRoutes(store: DemoStore): Hono {
     });
   });
 
-  // Demo runtime and Platform share one in-memory inventory, so its cache
-  // is already current; the explicit action still mirrors the real API.
-  app.post("/universes/sync-handles", async c => {
-    if (!demoDeploymentAllows(store, "manageUnclaimedUniverses")) return c.json({ error: "deployment permission required: manageUnclaimedUniverses" }, 403);
-    const body = await readBody<{ organizationId?: unknown }>(c);
-    if (body.organizationId !== undefined && (typeof body.organizationId !== "string" || !body.organizationId.length)) return badRequest(c, "invalid organizationId");
-    return c.json({ updated: 0, skipped: 0 });
-  });
-
   app.post("/universes/adopt", async (c) => {
     if (!demoDeploymentAllows(store, "manageUnclaimedUniverses")) return c.json({ error: "deployment permission required: manageUnclaimedUniverses" }, 403);
     const parsed = organizationUniverseAdoptSchema.extend({ organizationId: z.string().min(1) }).safeParse(await readBody(c));

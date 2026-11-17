@@ -29,16 +29,22 @@ export function ResourceTable({ label, columns, children }: {
   );
 }
 
-export function ResourceRow({ name, onOpen, children }: {
+/// A row that opens a details dialog. `action` is an optional shortcut for the
+/// row's most common action, beside the details button; it never opens the dialog.
+export function ResourceRow({ name, onOpen, action, children }: {
   name: string;
   onOpen: (trigger: HTMLButtonElement | null) => void;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   return (
-    <TableRow className="cursor-action focus-within:bg-muted/50" onClick={() => onOpen(triggerRef.current)}>
+    <TableRow className="cursor-action focus-within:bg-muted/50" onClick={(event) => {
+      if (!(event.target as HTMLElement).closest("[data-row-action]")) onOpen(triggerRef.current);
+    }}>
       {children}
       <TableActionsCell>
+        {action && <span data-row-action className="mr-1 inline-flex">{action}</span>}
         <Button ref={triggerRef} variant="ghost" size="icon-sm" className="text-muted-foreground"
           aria-label={`Details for ${name}`} aria-haspopup="dialog">
           <RowLinkIcon aria-hidden="true" className="size-4" />
@@ -79,7 +85,9 @@ export function ResourceIdentityCell({ name, subtitle, mono = false, icon, compa
   icon?: ReactNode;
   compactDescription?: string;
 }) {
-  const secondary = subtitle?.trim().toLocaleLowerCase() !== name.trim().toLocaleLowerCase() ? subtitle : undefined;
+  // A subtitle repeating the name is dropped, unless it is an identifier,
+  // which is worth showing even when it matches the name.
+  const secondary = mono || subtitle?.trim().toLocaleLowerCase() !== name.trim().toLocaleLowerCase() ? subtitle : undefined;
   return (
     <TableCell className="max-w-40 sm:max-w-72">
       <div className="flex min-w-0 items-center gap-3">

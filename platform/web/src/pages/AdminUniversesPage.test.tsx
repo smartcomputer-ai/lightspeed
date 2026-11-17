@@ -54,7 +54,6 @@ beforeEach(() => {
       if (reconcile instanceof Error) throw reconcile;
       return reconcile;
     }
-    if (method === "POST" && path === "/api/ui/universes/sync-handles") return { updated: 2, skipped: 1 };
     if (method !== "GET") return {};
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
@@ -92,14 +91,6 @@ const cells = (node: HTMLTableRowElement) => [...node.querySelectorAll("td")].ma
 const buttonIn = (scope: ParentNode, label: string) => [...scope.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label);
 const alertDialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
 const writes = () => mocks.api.mock.calls.filter(([method]) => method !== "GET");
-
-it("reports what a runtime handle sync updated and skipped", async () => {
-  await show();
-  await act(async () => buttonIn(container, "Sync from runtime")!.click());
-  await waitForUi(() => expect(container.querySelector('[role="status"]')?.textContent).toContain("Synced runtime handles: 2 updated."));
-  expect(container.querySelector('[role="status"]')?.textContent).toContain("1 missing from the runtime and skipped");
-  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/sync-handles", { organizationId: "team" });
-});
 
 it("lists engine-only universes with their size, and deletes one after confirmation", async () => {
   await show("/admin/platform/unclaimed-universes");
@@ -149,7 +140,6 @@ it("keeps a Platform Admin's inventory and reconciliation scoped to the selected
   await show("/admin/organizations/team/universes");
   expect(row("Local")).toBeDefined(); expect(row("Elsewhere")).toBeUndefined();
   expect(mocks.api).toHaveBeenCalledWith("GET", "/api/ui/universes/reconcile?organizationId=team");
-  expect(container.textContent).toContain("Sync from runtime");
   expect(container.textContent).not.toContain("core-orphan");
 });
 
@@ -160,7 +150,6 @@ it("shows only unclaimed runtime universes in Platform administration", async ()
   expect(tables()).toHaveLength(1);
   expect(container.textContent).not.toContain("Zeta");
   expect(buttonIn(container, "New universe")).toBeUndefined();
-  expect(buttonIn(container, "Sync from runtime")).toBeUndefined();
   expect(mocks.api.mock.calls.some(([, path]) => path === "/api/ui/universes")).toBe(false);
 });
 
@@ -193,18 +182,26 @@ const openRow = (name: string) => act(async () => (row(name).querySelector("td")
 const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
 const location = () => container.querySelector('[data-testid="location"]')?.textContent;
 
-it("lists the organization's universes with role and status, and nothing to press but the row", async () => {
+it("lists the organization's universes with role and status, and a shortcut into each", async () => {
   await show();
   expect(rows().map((node) => node.querySelector("td span[title]")?.getAttribute("title"))).toEqual(["Alpha", "Mid", "Zeta"]);
   expect(statusOf("Alpha")).toBe("Archived");
   expect(statusOf("Mid")).toBe("Missing on engine");
   expect(statusOf("Zeta")).toBe("Active");
   for (const node of rows()) expect(node.querySelectorAll("button")).toHaveLength(1);
+  const open = row("Zeta").querySelector<HTMLAnchorElement>('a[aria-label="Open Zeta"]')!;
+  expect(open.getAttribute("href")).toBe("/u/zeta/bots");
+  await act(async () => open.click());
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
 it("opens a universe's details with the way into it and its settings, and the engine repair when the runtime lost it", async () => {
   await show();
+  expect(row("Zeta").querySelector("[data-universe-icon]")).not.toBeNull();
+  expect(row("Zeta").textContent).toContain("zeta");
   await openRow("Zeta");
+  expect(dialog().querySelector("h2 [data-universe-icon]")).not.toBeNull();
+  expect(dialog().textContent).toContain(`Universe ID${universes.find((candidate) => candidate.name === "Zeta")!.lightspeedUniverseId}`);
   expect(dialog().querySelector('a[href="/u/zeta/bots"]')?.textContent).toBe("Open universe");
   expect(dialog().querySelector('a[href="/u/zeta/settings/general"]')?.textContent).toBe("Settings");
   expect(buttonIn(dialog(), "Recreate on engine")).toBeUndefined();
@@ -219,6 +216,7 @@ it("shows deletion progress and offers no way into a universe being deleted", as
   universes[0] = { ...universes[0]!, status: "deleting", deletion: { startedAtMs: 1, requestedBy: { kind: "local" }, step: "environments", detail: "Waiting for provider" } };
   await show();
   expect(statusOf("Zeta")).toBe("Deleting");
+  expect(row("Zeta").querySelector("a")).toBeNull();
   await openRow("Zeta");
   expect(dialog().textContent).toContain("environments: Waiting for provider");
   expect(dialog().querySelector("a")).toBeNull();
@@ -237,7 +235,6 @@ it("shows an Owner only the universes they administer, without deployment contro
   universes = universes.map((item) => item.name === "Zeta" ? item : { ...item, role: "viewer", actions: [...universeActions(["viewer"])] });
   await show();
   expect(rows()).toHaveLength(1);
-  expect(buttonIn(container, "Sync from runtime")).toBeUndefined();
   expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
   await openRow("Zeta");
   expect(location()).toBeUndefined();

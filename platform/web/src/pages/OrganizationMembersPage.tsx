@@ -139,7 +139,7 @@ function Members({ organization }: { organization: Organization }) {
           )}
         </section>
       )}
-      {adding === "person" && <AddPersonDialog organizationId={organizationId} close={() => setAdding(null)} saved={refresh} />}
+      {adding === "person" && <AddPersonDialog organizationId={organizationId} memberIds={people.data?.members.map((member) => member.userId) ?? []} close={() => setAdding(null)} saved={refresh} />}
       {adding === "serviceUser" && <NewServiceUserDialog organizationId={organizationId} close={() => setAdding(null)} saved={refresh} />}
       <PersonDetailsDialog organizationId={organizationId} personal={organization.personal} member={person} finalFocus={triggerRef}
         onOpenChange={(open) => { if (!open) setPersonId(null); }} />

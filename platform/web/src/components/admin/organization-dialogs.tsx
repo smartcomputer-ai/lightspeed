@@ -2,6 +2,9 @@ import { useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { OrganizationRole } from "@lightspeed-ai/platform-shared";
 import { platformApi } from "@/lib/platform-api";
+import { useDeploymentPermissions } from "@/lib/permissions";
+import { useDeploymentUsers } from "@/lib/deployment-users";
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -149,16 +152,20 @@ export function CreateOrganizationDialog({
   );
 }
 
-/// Adds an existing user, by user ID, with an organization role.
+/// Adds an existing user. Those who manage the deployment's users pick from
+/// them; others enter the user ID the person shares from their profile.
 export function AddPersonDialog({
   organizationId,
+  memberIds,
   close,
   saved,
 }: {
   organizationId: string;
+  memberIds: string[];
   close: () => void;
   saved: () => Promise<void>;
 }) {
+  const picksUsers = useDeploymentPermissions().can("manageUsers");
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState<OrganizationRole>("member");
   const save = useMutation({
@@ -172,21 +179,25 @@ export function AddPersonDialog({
   return (
     <OrganizationDialog
       title="Add person"
-      description="Add an existing user to this organization. Give universe roles under a universe's Settings → Members."
+      description="Add someone who already has an account on this deployment."
       close={close}
     >
       <form
         className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          save.mutate();
+          if (userId.trim()) save.mutate();
         }}
       >
-        <Field>
-          <FieldLabel htmlFor="organization-member-id">User ID</FieldLabel>
-          <Input id="organization-member-id" value={userId} onChange={(event) => setUserId(event.target.value)} required autoFocus />
-          <FieldDescription>They find it under Your profile; Platform Admins see it under Platform → Users.</FieldDescription>
-        </Field>
+        {picksUsers ? (
+          <UserPicker memberIds={memberIds} value={userId} onChange={setUserId} />
+        ) : (
+          <Field>
+            <FieldLabel htmlFor="organization-member-id">User ID</FieldLabel>
+            <Input id="organization-member-id" value={userId} onChange={(event) => setUserId(event.target.value)} required autoFocus />
+            <FieldDescription>They find it under Your profile.</FieldDescription>
+          </Field>
+        )}
         <RoleSelect value={role} onChange={setRole} />
         {save.error && (
           <p role="alert" className="text-destructive">
@@ -196,6 +207,41 @@ export function AddPersonDialog({
         <FormActions close={close} pending={save.isPending} label="Add person" />
       </form>
     </OrganizationDialog>
+  );
+}
+
+/// Searches the deployment's users who are not yet members, by name or email.
+function UserPicker({ memberIds, value, onChange }: { memberIds: string[]; value: string; onChange: (userId: string) => void }) {
+  const users = useDeploymentUsers();
+  const members = new Set(memberIds);
+  const candidates = (users.data ?? []).filter((user) => !members.has(user.id) && !user.banned);
+  const byId = new Map(candidates.map((user) => [user.id, user]));
+  const label = (id: string) => { const user = byId.get(id); return user ? `${user.name} (${user.email})` : id; };
+  return (
+    <Field>
+      <FieldLabel htmlFor="organization-member-user">Person</FieldLabel>
+      <Combobox<string> items={candidates.map((user) => user.id)} value={value || null}
+        itemToStringLabel={label}
+        filter={(id, query) => label(id).toLowerCase().includes(query.toLowerCase())}
+        onValueChange={(id) => onChange(id ?? "")}>
+        <ComboboxInput id="organization-member-user" placeholder={users.isLoading ? "Loading users…" : "Search by name or email"} autoFocus />
+        <ComboboxContent>
+          <ComboboxEmpty>No matching users who are not already members.</ComboboxEmpty>
+          <ComboboxList>{(id: string) => {
+            const user = byId.get(id)!;
+            return (
+              <ComboboxItem key={id} value={id}>
+                <span className="min-w-0">
+                  <span className="block truncate">{user.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+                </span>
+              </ComboboxItem>
+            );
+          }}</ComboboxList>
+        </ComboboxContent>
+      </Combobox>
+      {users.error && <p role="alert" className="text-sm text-destructive">Users could not be loaded: {users.error.message}</p>}
+    </Field>
   );
 }
 

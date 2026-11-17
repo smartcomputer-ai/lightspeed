@@ -53,6 +53,13 @@ it("updates linked metadata without overwriting Platform access policy or organi
   expect(updated).toMatchObject({ name: "Research", accessPolicy: universe.accessPolicy, runtimeConfiguration: { protected: true } });
   expect((await fixture.db.select().from(schema.organization))[0]?.name).toBe("Organization");
 });
+it("picks up handles renamed outside Platform, including two universes that swapped handles", async () => {
+  await link(first, "other");
+  await link(second, "research");
+  await syncDeclaredUniverses(context);
+  const rows = await fixture.db.select().from(schema.universes);
+  expect(Object.fromEntries(rows.map(row => [row.lightspeedUniverseId, row.handle]))).toEqual({ [first]: "research", [second]: "other" });
+});
 it("removes only the universe after a permanent tombstone, preserving its organization and siblings", async () => {
   const firstUniverse = await link(); const secondUniverse = await link(second, "other");
   inventory = inventory.slice(1); absentKind = "gone";

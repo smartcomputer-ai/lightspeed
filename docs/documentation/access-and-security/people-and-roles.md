@@ -112,7 +112,9 @@ company identity provider.
 In **Admin**, choose an organization in the sidebar. Organization Admins manage
 **Universes**, **Members**, **API keys**, and **Settings** there. **Members** lists the
 organization's people and service users; open one to change its role or remove
-it. **Add person** adds an existing user by user ID as Member, Creator, or Admin.
+it. **Add person** adds an existing user as Member, Creator, or Admin. Platform
+Admins search the deployment's users by name or email; Organization Admins enter
+the user ID the person copies from their profile.
 A person's details show how they joined: added by an admin, or through the
 membership policy. Only a membership an admin added can be removed there. New shared members default to Member. Only Platform Admins create shared
 organizations. There is no email invitation or SCIM workflow yet.

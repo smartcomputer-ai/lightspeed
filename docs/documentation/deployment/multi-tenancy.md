@@ -44,9 +44,8 @@ The name is suggested from the runtime display name, falling back to its handle,
 and remains editable. The runtime handle is preserved.
 
 Claimed universes stay under **Admin → organization → Universes**. Deployment
-admins also see runtime status, **Sync from runtime**, **Recreate on engine**, and
-deleted-session controls there. Sync changes only the selected organization's
-cached handles. Recreating a missing runtime universe starts empty; it cannot
+admins also see runtime status, **Recreate on engine**, and deleted-session
+controls there. Recreating a missing runtime universe starts empty; it cannot
 restore deleted sessions or files, or recreate a UUID that has been permanently
 deleted. All universes use the deployment's configured runtime endpoint.
 
