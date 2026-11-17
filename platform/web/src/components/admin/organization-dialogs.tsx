@@ -172,7 +172,7 @@ export function AddPersonDialog({
   return (
     <OrganizationDialog
       title="Add person"
-      description="Add an existing user to this organization. Grant universe roles under a universe's Access."
+      description="Add an existing user to this organization. Give universe roles under a universe's Settings → Members."
       close={close}
     >
       <form

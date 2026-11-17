@@ -82,8 +82,6 @@ const ORGANIZATION_NAV: Array<{ path: string; icon: ComponentType; label: string
 export function shellTitleTrail(pathname: string, universeName: string | undefined): string[] {
   const mode = shellMode(pathname);
   if (mode === "admin") {
-    const detail = matchPath("/admin/organizations/:organizationId/universes/:handle/:section", pathname);
-    if (detail) return [detail.params.section === "access" ? "Access" : "Settings and lifecycle", universeName ?? detail.params.handle!, "Admin"];
     const item = PLATFORM_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
     if (item) return [item.label, "Platform administration"];
     const section = pathname.split("/")[4];

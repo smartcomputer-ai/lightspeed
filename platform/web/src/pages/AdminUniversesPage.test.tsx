@@ -93,53 +93,6 @@ const buttonIn = (scope: ParentNode, label: string) => [...scope.querySelectorAl
 const alertDialog = () => document.querySelector<HTMLElement>('[role="alertdialog"]');
 const writes = () => mocks.api.mock.calls.filter(([method]) => method !== "GET");
 
-it("lists the selected organization’s universes with runtime status and role", async () => {
-  // A Platform Admin holds Owner on every universe through organization administration.
-  await show();
-  expect(rows().map((node) => cells(node).slice(0, 4))).toEqual([
-    ["Alphaalpha", "archived", "ok", "owner"],
-    ["Midmid", "active", "missing", "owner"],
-    ["Zetazeta", "active", "ok", "owner"],
-  ]);
-});
-
-it("offers deletion for active and archived universes, and repair only for missing universes", async () => {
-  await show();
-  expect(buttonIn(row("Mid"), "Recreate on engine")).toBeDefined();
-  expect(buttonIn(row("Zeta"), "Recreate on engine")).toBeUndefined();
-  expect(buttonIn(row("Zeta"), "Archive")).toBeDefined();
-  expect(buttonIn(row("Zeta"), "Delete")).toBeDefined();
-  expect(buttonIn(row("Alpha"), "Archive")).toBeUndefined();
-  expect(buttonIn(row("Alpha"), "Restore")).toBeDefined();
-  expect(buttonIn(row("Alpha"), "Delete")).toBeDefined();
-
-  await act(async () => buttonIn(row("Mid"), "Recreate on engine")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/mid/engine", {}));
-  await act(async () => buttonIn(row("Zeta"), "Archive")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/zeta", { status: "archived" }));
-  await act(async () => buttonIn(row("Alpha"), "Restore")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/alpha", { status: "active" }));
-});
-
-it("deletes an active universe only after typing its exact handle", async () => {
-  await show();
-  await act(async () => buttonIn(row("Zeta"), "Delete")!.click());
-  await waitForUi(() => expect(alertDialog()?.textContent).toContain("Permanently delete Zeta?"));
-  expect(writes()).toHaveLength(0);
-  expect(buttonIn(alertDialog()!, "Delete permanently")!.disabled).toBe(true);
-  await type("#delete-zeta", "wrong");
-  expect(buttonIn(alertDialog()!, "Delete permanently")!.disabled).toBe(true);
-  await type("#delete-zeta", "zeta");
-  await act(async () => buttonIn(alertDialog()!, "Delete permanently")!.click());
-  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("DELETE", "/api/ui/universes/zeta", { handle: "zeta" }));
-});
-
-it("opens a universe at its landing page", async () => {
-  await show();
-  await act(async () => buttonIn(row("Mid"), "Open")!.click());
-  await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/u/mid/sessions"));
-});
-
 it("reports what a runtime handle sync updated and skipped", async () => {
   await show();
   await act(async () => buttonIn(container, "Sync from runtime")!.click());
@@ -183,15 +136,6 @@ it("adopts an orphan under the runtime handle it already has", async () => {
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/adopt", { lightspeedUniverseId: "core-orphan", name: "Kept", organizationId: "organization", initialOwner: { kind: "user", id: "user" } }));
 });
 
-it("keeps the inventory when engine reconciliation is unavailable", async () => {
-  reconcile = new Error("engine unreachable");
-  await show();
-  await waitForUi(() => expect(container.textContent).toContain("Engine reconciliation unavailable: engine unreachable"));
-  expect(rows()).toHaveLength(3);
-  expect(cells(row("Mid"))[2]).toBe("—");
-  expect(tables()).toHaveLength(1);
-});
-
 async function type(selector: string, value: string) {
   const node = document.querySelector<HTMLInputElement>(selector)!;
   await act(async () => {
@@ -199,36 +143,6 @@ async function type(selector: string, value: string) {
     node.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-
-it("shows deletion progress without offering actions against the deleting universe", async () => {
-  universes[0] = { ...universes[0]!, status: "deleting", deletion: { startedAtMs: 1, requestedBy: { kind: "local" }, step: "environments", detail: "Waiting for provider" } };
-  await show();
-  expect(row("Zeta").textContent).toContain("environments: Waiting for provider");
-  expect(buttonIn(row("Zeta"), "Open")).toBeUndefined();
-  expect(buttonIn(row("Zeta"), "Restore")).toBeUndefined();
-  expect(buttonIn(row("Zeta"), "Delete")).toBeUndefined();
-});
-
-
-it("keeps protected universes unavailable for direct administrative deletion", async () => {
-  universes[0]!.protected = true;
-  await show();
-  expect(buttonIn(row("Zeta"), "Delete")?.disabled).toBe(true);
-});
-
-
-it("shows only manageable universes and avoids deployment endpoints for an Owner", async () => {
-  mocks.platformAdmin = false;
-  universes = universes.map((item) => item.name === "Zeta" ? item : { ...item, role: "viewer", actions: [...universeActions(["viewer"])] });
-  await show();
-  expect(rows()).toHaveLength(1);
-  expect(row("Zeta")).toBeDefined();
-  expect(buttonIn(container, "Sync from runtime")).toBeUndefined();
-  expect(buttonIn(row("Zeta"), "Deleted sessions")).toBeUndefined();
-  expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
-  await act(async () => buttonIn(row("Zeta"), "Manage")!.click());
-  await waitForUi(() => expect(container.querySelector('[data-testid="location"]')?.textContent).toBe("/admin/organizations/team/universes/zeta/access"));
-});
 
 it("keeps a Platform Admin's inventory and reconciliation scoped to the selected organization", async () => {
   universes = [universe("local", { name: "Local", role: "owner", actions: [...universeActions(["owner"])], organizationId: "team" }), universe("elsewhere", { name: "Elsewhere", role: "owner", actions: [...universeActions(["owner"])], organizationId: "other" })];
@@ -272,4 +186,60 @@ it("reports unavailable runtime inventory without claiming it is empty", async (
   await show("/admin/platform/unclaimed-universes");
   expect(container.textContent).toContain("Runtime inventory unavailable: runtime unreachable");
   expect(container.textContent).not.toContain("No unclaimed universes.");
+});
+
+const statusOf = (name: string) => cells(row(name)).at(-2);
+const openRow = (name: string) => act(async () => (row(name).querySelector("td") as HTMLElement).click());
+const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
+const location = () => container.querySelector('[data-testid="location"]')?.textContent;
+
+it("lists the organization's universes with role and status, and nothing to press but the row", async () => {
+  await show();
+  expect(rows().map((node) => node.querySelector("td span[title]")?.getAttribute("title"))).toEqual(["Alpha", "Mid", "Zeta"]);
+  expect(statusOf("Alpha")).toBe("Archived");
+  expect(statusOf("Mid")).toBe("Missing on engine");
+  expect(statusOf("Zeta")).toBe("Active");
+  for (const node of rows()) expect(node.querySelectorAll("button")).toHaveLength(1);
+});
+
+it("opens a universe's details with the way into it and its settings, and the engine repair when the runtime lost it", async () => {
+  await show();
+  await openRow("Zeta");
+  expect(dialog().querySelector('a[href="/u/zeta/bots"]')?.textContent).toBe("Open universe");
+  expect(dialog().querySelector('a[href="/u/zeta/settings/general"]')?.textContent).toBe("Settings");
+  expect(buttonIn(dialog(), "Recreate on engine")).toBeUndefined();
+  await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await waitForUi(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  await openRow("Mid");
+  await act(async () => buttonIn(dialog(), "Recreate on engine")!.click());
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("POST", "/api/ui/universes/mid/engine", {}));
+});
+
+it("shows deletion progress and offers no way into a universe being deleted", async () => {
+  universes[0] = { ...universes[0]!, status: "deleting", deletion: { startedAtMs: 1, requestedBy: { kind: "local" }, step: "environments", detail: "Waiting for provider" } };
+  await show();
+  expect(statusOf("Zeta")).toBe("Deleting");
+  await openRow("Zeta");
+  expect(dialog().textContent).toContain("environments: Waiting for provider");
+  expect(dialog().querySelector("a")).toBeNull();
+});
+
+it("keeps the inventory when engine reconciliation is unavailable", async () => {
+  reconcile = new Error("engine unreachable");
+  await show();
+  await waitForUi(() => expect(container.textContent).toContain("Engine reconciliation unavailable: engine unreachable"));
+  expect(rows()).toHaveLength(3);
+  expect(statusOf("Mid")).toBe("Active");
+});
+
+it("shows an Owner only the universes they administer, without deployment controls", async () => {
+  mocks.platformAdmin = false;
+  universes = universes.map((item) => item.name === "Zeta" ? item : { ...item, role: "viewer", actions: [...universeActions(["viewer"])] });
+  await show();
+  expect(rows()).toHaveLength(1);
+  expect(buttonIn(container, "Sync from runtime")).toBeUndefined();
+  expect(mocks.api.mock.calls.some(([, path]) => path.includes("reconcile"))).toBe(false);
+  await openRow("Zeta");
+  expect(location()).toBeUndefined();
+  expect(dialog().querySelector('a[href="/u/zeta/settings/members"]')).not.toBeNull();
 });

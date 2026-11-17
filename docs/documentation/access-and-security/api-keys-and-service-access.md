@@ -51,7 +51,7 @@ organizations** explicitly for broader use. Service-user keys remain confined
 to their organization. Choose universes by name under **Restrict access**.
 Operation IDs are an advanced restriction. The existing-key list shows status,
 expiry, and restrictions. A universe-specific key still belongs to its user or
-service user; **Admin → organization → Universes → Access** manages universe roles, not keys. Universe
+service user; the universe's **Settings → Members** manages universe roles, not keys. Universe
 **Setup → Credentials** holds outbound secrets for agents connecting to external
 services, separate from keys for accessing Lightspeed.
 

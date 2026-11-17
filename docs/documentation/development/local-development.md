@@ -99,7 +99,7 @@ share password `lightspeed-local-password`:
 | `sso-admin` | Platform admin, with only the admin entitlement |
 | `sso-denied` | No application entitlement; sign-in is refused |
 
-Add `sso-user` to a universe through **Admin → Universes → Access** after its first sign-in.
+Add `sso-user` to a universe through the universe's **Settings → Members** after its first sign-in.
 For the existing bootstrap admin, open `http://localhost:5173/app/login`
 directly and choose **Admins**. The fixture credentials and HTTP configuration are for local use only.
 

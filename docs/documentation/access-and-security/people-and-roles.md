@@ -123,15 +123,20 @@ directly between universes does not require first switching organizations.
 Members see every universe their organization's default universe access
 reaches; with it set to None, they see only universes they are granted.
 
-Under **Admin → organization → Universes → select universe → Access**, assign
-existing organization users or service users one of the four universe roles.
-Changes apply to the next admitted request. Requests already admitted and work
+A universe's own **Settings** hold its **General** settings (name, handle,
+features, appearance, protection, and in a danger zone archive, delete and, for
+Platform Admins, deleted sessions) and its **Members**. Members shows who gets in
+through the organization's default universe access, and lists the roles given
+in this universe; **Add member** gives an organization member or service user
+one of the four universe roles. Changes apply to the next admitted request. Requests already admitted and work
 already running can continue; cancel that work separately if necessary.
 
 The **Admin** area sits above working universes. Each page appears only to
-those who may use it. Universe Owners can select the organization containing
-their universe but only administer their owned universes. They do not gain
-organization-wide People, Service users, API keys, or Settings pages. Organization Admins administer all universes in their
+those who may use it. An organization's **Universes** list shows the universes
+you administer; each opens to its details, with links into the universe and its
+settings. Universe Owners can select the organization containing their universe
+but only administer their owned universes. They do not gain
+organization-wide Members, API keys, or Settings pages. Organization Admins administer all universes in their
 organization. **Platform** is a separate sidebar section for organization
 inventory, sign-in users, unclaimed runtime universes, infrastructure,
 connectors, and audit. Its pages show **Platform administration** and are

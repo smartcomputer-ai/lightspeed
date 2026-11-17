@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { NewUniverseDialog } from "./universe-switcher";
 import { AdoptDialog } from "@/pages/UnclaimedUniversesPage";
-import { HandleCard } from "@/pages/AdminUniverseSettingsPage";
+import { HandleCard } from "@/pages/UniverseGeneralSettingsPage";
 import type { Universe } from "@/api";
 import { universeHandleFromName, universeHandleSchema } from "@lightspeed-ai/platform-shared";
 
@@ -105,7 +105,7 @@ it("uses the returned handle for the cached universe and navigates to its new UR
   await render(<><HandleCard universe={universe} /><Location /></>);
   await input("universe-handle", "new-handle");
   await submit();
-  await vi.waitFor(() => expect(container.querySelector("[data-location]")?.textContent).toBe("/admin/organizations/team/universes/new-handle/settings"));
+  await vi.waitFor(() => expect(container.querySelector("[data-location]")?.textContent).toBe("/u/new-handle/settings/general"));
   expect(api).toHaveBeenCalledWith("PUT", "/api/ui/universes/platform-id/handle", { handle: "new-handle" });
   expect(client.getQueryData<Universe[]>(["universes"])?.[0]).toMatchObject({ id: "platform-id", lightspeedUniverseId: "runtime-id", handle: "new-handle" });
 });

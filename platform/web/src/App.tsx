@@ -25,13 +25,14 @@ import { BotsPage } from "@/pages/BotsPage";
 import { ChannelsPage } from "@/pages/ChannelsPage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
-import { AdminUniverseSettingsPage } from "@/pages/AdminUniverseSettingsPage";
+import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
 import { HomeRedirect } from "@/pages/HomeRedirect";
 import { LoginPage } from "@/pages/LoginPage";
 import { DevicePage } from "@/pages/DevicePage";
 import { deviceLoginPath, loginReturnPath } from "@/lib/login-return";
 import { McpServersPage } from "@/pages/McpServersPage";
-import { AdminUniverseAccessPage } from "@/pages/AdminUniverseAccessPage";
+import { UniverseMembersPage } from "@/pages/UniverseMembersPage";
+import { UniverseRedirect } from "@/components/universe-redirect";
 import { ModelsPage } from "@/pages/ModelsPage";
 import { PreferencesPage } from "@/pages/PreferencesPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
@@ -160,6 +161,8 @@ export function App() {
         <Route path="u/:handle/mcp-servers" element={<McpServersPage />} />
         <Route path="u/:handle/credentials" element={<CredentialsPage />} />
         <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
+        <Route path="u/:handle/settings/general" element={<UniverseGeneralSettingsPage />} />
+        <Route path="u/:handle/settings/members" element={<UniverseMembersPage />} />
         <Route
           path="u/:handle/settings/channels"
           element={<FeatureGate feature="channels"><ChannelsPage /></FeatureGate>}
@@ -172,9 +175,10 @@ export function App() {
           <Route path="admin" element={<AdminIndexRedirect />} />
           <Route element={<AdminGate universes />}>
             <Route path="admin/organizations/:organizationId/universes" element={<AdminUniversesPage />} />
-            <Route path="admin/organizations/:organizationId/universes/:handle" element={<Navigate to="access" replace />} />
-            <Route path="admin/organizations/:organizationId/universes/:handle/access" element={<AdminUniverseAccessPage />} />
-            <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<AdminUniverseSettingsPage />} />
+            {/* A universe's settings and members live in the universe itself. */}
+            <Route path="admin/organizations/:organizationId/universes/:handle" element={<UniverseRedirect to="settings/general" />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/access" element={<UniverseRedirect to="settings/members" />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<UniverseRedirect to="settings/general" />} />
           </Route>
           <Route element={<AdminGate organizationAction="manageMembers" />}>
             <Route path="admin/organizations/:organizationId/members" element={<OrganizationMembersPage />} />

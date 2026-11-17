@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Universe } from "@/api";
 import { DEFAULT_UNIVERSE_ICON, RETIRED_UNIVERSE_ICONS, UNIVERSE_ICON_REPLACEMENTS, UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { AdminUniverseSettingsPage } from "@/pages/AdminUniverseSettingsPage";
+import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
 import { UniverseAppearanceCard, label } from "./universe-appearance-card";
 import { UNIVERSE_ILLUSTRATIONS, offeredUniverseIcon } from "./universe-illustrations";
 import { waitForUi } from "@/test/wait-for-ui";
@@ -129,7 +129,7 @@ it("saves without a save or reset button, and not for the current choice", async
 it.each(["viewer", "contributor", "operator"] as const)("hides General settings from a %s", async role => {
   mocks.universe.role = role;
   mocks.universe.actions = [...universeActions([role])];
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><AdminUniverseSettingsPage /></PermissionIdentityProvider>);
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><UniverseGeneralSettingsPage /></PermissionIdentityProvider>);
   expect(container.textContent).not.toContain("Appearance");
   expect(container.querySelector("form")).toBeNull();
 });
@@ -138,7 +138,7 @@ it.each([false, true])("offers appearance on General settings for an authorized 
   // The server gives a Platform Admin Owner through organization administration.
   mocks.universe.role = "owner";
   mocks.universe.actions = [...universeActions(["owner"])];
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><AdminUniverseSettingsPage /></PermissionIdentityProvider>);
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><UniverseGeneralSettingsPage /></PermissionIdentityProvider>);
   expect(container.textContent).toContain("Appearance");
   expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`)).toBeDefined();
 });

@@ -130,7 +130,7 @@ function DefaultUniverseAccessCard({ organization }: { organization: Organizatio
         <CardTitle id="default-universe-access-label">Default universe access</CardTitle>
         <CardDescription>
           The role every member holds in every universe of this organization. Roles granted under a
-          universe's Access add to it. Service users get only what they are granted.
+          universe's Members add to it. Service users get only what they are granted.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">

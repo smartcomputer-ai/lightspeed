@@ -166,7 +166,7 @@ Before opening access, test the actual provider registration:
 1. Sign in with ordinary access, admin access alone, and neither entitlement.
    The first two succeed with the corresponding Platform role; the third is
    refused. An ordinary user starts without universe memberships.
-2. Add the ordinary user to a universe on **Admin → organization → Universes → Access**, change their role, and
+2. Add the ordinary user to a universe on the universe's **Settings → Members**, change their role, and
    sign in again. The local role applies on the next request and survives
    company sign-in.
 3. Verify internal sign-in and any supported external credentials/MFA flow.
@@ -203,5 +203,5 @@ without an application entitlement is still refused. An email already used by
 a local account must be resolved explicitly; email-based linking is disabled.
 
 If login succeeds but the expected universe does not appear, confirm the person
-belongs to its organization under **Admin → organization → Members**, then grant a role under **Admin → organization → Universes → Access**. Sign-in admission alone does not grant access to shared universes. A local suspension must
+belongs to its organization under **Admin → organization → Members**, then grant a role under the universe's **Settings → Members**. Sign-in admission alone does not grant access to shared universes. A local suspension must
 be lifted by a Platform admin even after the provider restores access.

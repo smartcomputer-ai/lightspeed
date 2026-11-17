@@ -24,11 +24,11 @@ For sign-in and membership, see [People and roles](../access-and-security/people
 Creators and Organization Admins create universes using **New universe**, selecting
 an organization and an initial Owner. Platform Admins can provision for any organization
 with an explicit initial Owner. Creation observes the organization quota and
-protection policy. Owners grant existing organization members access on **Admin → organization → Universes → Access**.
+protection policy. Owners grant existing organization members access on the universe's **Settings → Members**.
 Creating a runtime universe directly through the API or server CLI creates
 only the runtime record; use **Adopt** to connect it to the Platform. Adoption
 keeps the universe's handle. The handle is chosen at creation, or derived from
-the UUID when none is given, and is renamed afterwards under **Admin → organization → Universes → Settings and lifecycle** or with `lightspeed universe set-handle`.
+the UUID when none is given, and is renamed afterwards under the universe's **Settings → General** or with `lightspeed universe set-handle`.
 
 ## Keep Platform and runtime records aligned
 

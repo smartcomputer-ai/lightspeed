@@ -7,7 +7,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Universe } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
-import { AdminUniverseSettingsPage } from "./AdminUniverseSettingsPage";
+import { UniverseGeneralSettingsPage } from "./UniverseGeneralSettingsPage";
 import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -45,11 +45,11 @@ afterEach(async () => {
 function Location() {
   return <p data-testid="location">{useLocation().pathname}</p>;
 }
-async function show(path = "/admin/organizations/team/universes/factory/settings") {
+async function show(path = "/u/factory/settings/general") {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/admin/organizations/team/universes/:handle/settings" element={<><AdminUniverseSettingsPage /><Location /></>} />
+        <Route path="/u/:handle/settings/general" element={<><UniverseGeneralSettingsPage /><Location /></>} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
@@ -101,7 +101,7 @@ it("holds an invalid handle and follows a saved handle to its new URL", async ()
   await type("universe-handle", " plant ");
   expect(button("Save handle")!.disabled).toBe(false);
   await act(async () => input("universe-handle").closest("form")!.requestSubmit());
-  await waitForUi(() => expect(location()).toBe("/admin/organizations/team/universes/plant/settings"));
+  await waitForUi(() => expect(location()).toBe("/u/plant/settings/general"));
   expect(mocks.api).toHaveBeenCalledWith("PUT", "/api/ui/universes/platform-id/handle", { handle: "plant" });
 });
 
@@ -114,17 +114,22 @@ it("shows a refused handle change and stays put", async () => {
   await type("universe-handle", "taken");
   await act(async () => input("universe-handle").closest("form")!.requestSubmit());
   await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("handle already in use"));
-  expect(location()).toBe("/admin/organizations/team/universes/factory/settings");
+  expect(location()).toBe("/u/factory/settings/general");
 });
 
-it("archives only after confirmation, then leaves the universe", async () => {
+it("archives only after confirmation and stays on the universe's settings", async () => {
   await show();
   await act(async () => button("Archive universe")!.click());
   await waitForUi(() => expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Archive Factory?"));
   expect(writes()).toHaveLength(0);
   await act(async () => button("Archive")!.click());
-  await waitForUi(() => expect(location()).toBe("/admin/organizations/team/universes"));
-  expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "archived" });
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "archived" }));
+  expect(location()).toBe("/u/factory/settings/general");
+});
+
+it("keeps delete and the deleted-sessions purge in the danger zone", async () => {
+  await show();
+  expect(button("Delete universe") ?? [...document.querySelectorAll("button")].find((node) => node.textContent?.includes("Delete"))).toBeDefined();
 });
 
 it("restores an archived universe without a confirmation", async () => {
@@ -133,7 +138,7 @@ it("restores an archived universe without a confirmation", async () => {
   expect(button("Archive universe")).toBeUndefined();
   await act(async () => button("Restore universe")!.click());
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/ui/universes/platform-id", { status: "active" }));
-  expect(location()).toBe("/admin/organizations/team/universes/factory/settings");
+  expect(location()).toBe("/u/factory/settings/general");
 });
 
 

@@ -169,7 +169,7 @@ function ServiceUserDetails({ organizationId, serviceUser, onDeleted }: { organi
           <RoleField id="service-user-role" value={role} onChange={setRole} />
           <SaveButton type="submit" dirty={dirty} saving={save.isPending} error={save.isError} />
         </div>
-        <p className="text-sm text-muted-foreground">Service users get only the universe roles granted under a universe's Access, not the default universe access.</p>
+        <p className="text-sm text-muted-foreground">Service users get only the universe roles granted under a universe's Settings → Members, not the default universe access.</p>
         {save.error && <p role="alert" className="text-sm text-destructive">{save.error.message}</p>}
       </form>
       <ApiKeysSection owner={{ kind: "serviceUser", organizationId, serviceUserId: serviceUser.id, name: serviceUser.name, enabled: serviceUser.enabled }}

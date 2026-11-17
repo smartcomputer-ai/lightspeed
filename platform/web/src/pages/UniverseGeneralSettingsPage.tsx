@@ -1,5 +1,5 @@
 import { platformApi } from "@/lib/platform-api";
-import { useActionPermissions } from "@/lib/permissions";
+import { useActionPermissions, useDeploymentPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { LoadingNote, UniverseNotFound } from "@/components/page";
+import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { Switch } from "@/components/ui/switch";
 import {
   universeHandleSchema,
@@ -36,11 +36,14 @@ import {
   type FeatureKey,
 } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
-import { AdminUniverseHeader } from "@/components/admin/universe-header";
 import { DeleteUniverseDialog } from "@/components/admin/delete-universe-dialog";
 import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
+import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
+import { organizationAdminPath } from "@/lib/admin-access";
 
-export function AdminUniverseSettingsPage() {
+/// A universe's own settings, each edited where it is shown, with its
+/// lifecycle in the danger zone at the end.
+export function UniverseGeneralSettingsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
@@ -53,7 +56,7 @@ export function AdminUniverseSettingsPage() {
 
   return (
     <>
-      <AdminUniverseHeader universe={universe} section="settings" />
+      <PageHeader title="General" description={`Name, handle, features and lifecycle of ${universe.name}.`} />
       <div className="grid gap-6">
         <RenameCard universe={universe} />
         <HandleCard
@@ -146,9 +149,7 @@ export function HandleCard({ universe }: { universe: Universe }) {
         rows?.map((row) => (row.id === updated.id ? updated : row)),
       );
       setHandle(updated.handle);
-      navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes/${updated.handle}/settings`, {
-        replace: true,
-      });
+      navigate(`/u/${updated.handle}/settings/general`, { replace: true });
       void queryClient.invalidateQueries({ queryKey: ["universes"] });
     },
   });
@@ -288,19 +289,25 @@ function IdentifiersCard({ universe }: { universe: Universe }) {
   );
 }
 
+/// Archive, delete, and for deployment administrators the purge of deleted
+/// sessions: everything that removes or hides the universe's work.
 function DangerZone({ universe }: { universe: Universe }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const archived = universe.status === "archived";
+  const mayPurge = useDeploymentPermissions().can("purgeSessions");
+  const [deletedSessionsOpen, setDeletedSessionsOpen] = useState(false);
 
   const setStatus = useMutation({
     mutationFn: (status: "active" | "archived") =>
       api<Universe>("PATCH", `/api/ui/universes/${universe.id}`, { status }),
-    onSuccess: async (_, status) => {
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["universes"] }),
+  });
+  const remove = useMutation({
+    mutationFn: () => api("DELETE", `/api/ui/universes/${universe.id}`, { handle: universe.handle }),
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
-      if (status === "archived") {
-        navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes`);
-      }
+      navigate(`${organizationAdminPath(universe.organizationId!)}/universes`);
     },
   });
 
@@ -309,20 +316,18 @@ function DangerZone({ universe }: { universe: Universe }) {
       <CardHeader>
         <CardTitle className="text-destructive">Danger zone</CardTitle>
         <CardDescription>
-          Archiving hides this universe from the switcher and keeps its data.
-          Bots, chats, and API access remain active until you stop them
-          separately.
+          Archiving hides this universe from the switcher and keeps everything; bots, chats and API access keep
+          running until you stop them. Deleting removes the universe and its data for good.
         </CardDescription>
       </CardHeader>
-      <CardFooter className="flex flex-col items-start gap-3">
-        {setStatus.error && <p role="alert" className="text-sm text-destructive">{setStatus.error.message}</p>}
+      <CardFooter className="flex flex-wrap items-center gap-3">
         {archived ? (
           <Button variant="outline" disabled={setStatus.isPending} onClick={() => setStatus.mutate("active")}>
             Restore universe
           </Button>
         ) : (
           <AlertDialog>
-            <AlertDialogTrigger render={<Button variant="destructive" />}>
+            <AlertDialogTrigger render={<Button variant="outline" className="text-destructive" />}>
               Archive universe
             </AlertDialogTrigger>
             <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
@@ -346,14 +351,22 @@ function DangerZone({ universe }: { universe: Universe }) {
             </AlertDialogContent>
           </AlertDialog>
         )}
+        <DeleteUniverseDialog name={universe.name} handle={universe.handle} protected={universe.protected}
+          pending={remove.isPending} onDelete={() => remove.mutate()} />
+        {mayPurge && (
+          <Button variant="ghost" onClick={() => setDeletedSessionsOpen(true)}>Deleted sessions</Button>
+        )}
+        {[setStatus.error, remove.error].filter(Boolean).map((error, index) => (
+          <p key={index} role="alert" className="basis-full text-sm text-destructive">{error?.message}</p>
+        ))}
       </CardFooter>
+      {mayPurge && <DeletedSessionsDialog universe={deletedSessionsOpen ? universe : null} onClose={() => setDeletedSessionsOpen(false)} />}
     </Card>
   );
 }
 
 function ProtectionCard({ universe }: { universe: Universe }) {
   const client = useQueryClient();
-  const navigate = useNavigate();
   const [expiry, setExpiry] = useState(
     universe.expiresAtMs ? new Date(universe.expiresAtMs).toISOString() : "",
   );
@@ -365,16 +378,6 @@ function ProtectionCard({ universe }: { universe: Universe }) {
         ...input,
       }),
     onSuccess: () => client.invalidateQueries({ queryKey: ["universes"] }),
-  });
-  const remove = useMutation({
-    mutationFn: () =>
-      api("DELETE", `/api/ui/universes/${universe.id}`, {
-        handle: universe.handle,
-      }),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["universes"] });
-      navigate(`/admin/organizations/${encodeURIComponent(universe.organizationId!)}/universes`);
-    },
   });
   return (
     <Card>
@@ -445,16 +448,7 @@ function ProtectionCard({ universe }: { universe: Universe }) {
             Save expiry
           </Button>
         </form>
-        <div>
-          <DeleteUniverseDialog
-            name={universe.name}
-            handle={universe.handle}
-            protected={universe.protected}
-            pending={remove.isPending}
-            onDelete={() => remove.mutate()}
-          />
-        </div>
-        {[update.error, remove.error].filter(Boolean).map((error, i) => (
+        {[update.error].filter(Boolean).map((error, i) => (
           <p role="alert" className="text-destructive" key={i}>
             {error?.message}
           </p>

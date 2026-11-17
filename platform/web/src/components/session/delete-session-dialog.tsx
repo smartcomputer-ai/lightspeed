@@ -64,7 +64,7 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
         </span>
       </label>}
       {deletion.error && <div role="alert" className="text-sm text-destructive">
-        {softDeleted && <p>The session is already soft-deleted. You can retry permanent deletion here or later from Platform → Universes → Deleted sessions.</p>}
+        {softDeleted && <p>The session is already soft-deleted. You can retry permanent deletion here or later from the universe's Settings → General → Deleted sessions.</p>}
         <p>{deletion.error.message}</p>
       </div>}
       <AlertDialogFooter>

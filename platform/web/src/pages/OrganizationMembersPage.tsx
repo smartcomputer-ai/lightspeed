@@ -67,7 +67,7 @@ function Members({ organization }: { organization: Organization }) {
         title="Members"
         description={organization.personal
           ? `${organization.name} · A personal organization has only its owner as a member. It can still have service users.`
-          : `${organization.name} · Organization roles apply across its universes. Grant universe roles under a universe's Access.`}
+          : `${organization.name} · Organization roles apply across its universes. Give universe roles under a universe's Settings → Members.`}
         actions={(canAddPeople || managesServiceUsers) && (
           <div className="flex flex-wrap gap-2">
             {managesServiceUsers && (

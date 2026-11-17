@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FeatureGate } from "./feature-gate";
-import { AdminUniverseSettingsPage } from "@/pages/AdminUniverseSettingsPage";
+import { UniverseGeneralSettingsPage } from "@/pages/UniverseGeneralSettingsPage";
 import { TriggerKindPicker } from "@/components/bot/triggers";
 
 const mocks = vi.hoisted(() => ({
@@ -71,7 +71,7 @@ it("tells an admin where a switched-off feature is turned on", async () => {
   await render(<FeatureGate feature="bots"><p>Bot list</p></FeatureGate>);
   expect(container.textContent).toContain("Bots are turned off in this universe");
   expect(container.textContent).not.toContain("Bot list");
-  expect(container.querySelector("a")?.getAttribute("href")).toBe("/admin/organizations/team/universes/test/settings");
+  expect(container.querySelector("a")?.getAttribute("href")).toBe("/u/test/settings/general");
 });
 
 it("tells a member an admin can turn it on", async () => {
@@ -85,7 +85,7 @@ it("tells a member an admin can turn it on", async () => {
 
 it("switches a feature from General settings, and holds a feature whose requirement is off", async () => {
   mocks.features = { bots: false, channels: false };
-  await render(<AdminUniverseSettingsPage />);
+  await render(<UniverseGeneralSettingsPage />);
   // Each switch keeps a hidden checkbox under its id, beside the switch itself.
   expect(container.querySelector<HTMLInputElement>("#feature-channels")!.disabled).toBe(true);
   expect(container.querySelector<HTMLInputElement>("#feature-bots")!.disabled).toBe(false);
