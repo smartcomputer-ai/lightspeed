@@ -1,4 +1,5 @@
 import { userSubject } from "../../test/subject-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { decodeHttpRequest } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,7 +11,7 @@ vi.mock("./universes.js", () => ({
     universe: { lightspeedUniverseId: "universe" },
     handle: "test",
     role: "operator",
-    caller: { actorId: "operator", role: "operator" },
+    actions: universeActions(["operator" as UniverseRole]), caller: { actorId: "operator", actions: universeActions(["operator" as UniverseRole]) },
   })),
 }));
 

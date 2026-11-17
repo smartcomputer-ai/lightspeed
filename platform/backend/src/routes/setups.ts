@@ -5,7 +5,7 @@ import { schema } from "@lightspeed-ai/platform-db";
 import type { OperationId } from "@lightspeed-ai/sdk";
 import type { AppContext, ApiVariables } from "../context.js";
 import { getAuth, requireCredentialManagement } from "../auth-context.js";
-import { requireOrganizationAdmin } from "../organization-access.js";
+import { requireOrganizationAction } from "../organization-access.js";
 import { createServiceUserCredential, revokeServiceUserCredential } from "../credential-routes.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { withApiErrors } from "../http.js";
@@ -52,10 +52,11 @@ export function setupRoutes(ctx: AppContext) {
   app.post("/:id/setups/configurator/install", async c => {
     const access = await universeForRequest(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
-    if (access.role !== "owner") return c.json({ error: "universe owner required" }, 403);
+    if (!access.actions.has("administer")) return c.json({ error: "universe permission required: administer" }, 403);
     const auth = getAuth(c);
     requireCredentialManagement(auth);
-    await requireOrganizationAdmin(ctx, auth, access.organization.id);
+    // Installation creates a service user and its key in the organization.
+    await requireOrganizationAction(ctx, auth, access.organization.id, "manageServiceUsers");
     if (!ctx.env.configuratorMcpUrl) return c.json({ error: "Configurator endpoint is not configured" }, 503);
     const installation = await ctx.db.transaction(async tx => {
       // Shared organization lock serializes installation reservation with service

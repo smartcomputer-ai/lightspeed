@@ -1,4 +1,5 @@
 import { userSubject } from "../../test/subject-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -9,7 +10,7 @@ import { sessionAdminRoutes } from "./session-admin.js";
 const auth = vi.hoisted(() => ({ role: "owner", platformAdmin: false }));
 vi.mock("./universes.js", () => ({ universeForRequest: vi.fn(async () => ({
   universe: { id: "universe", lightspeedUniverseId: "runtime-universe" },
-  handle: "test", role: auth.role, caller: { actorId: "member", role: auth.role },
+  handle: "test", role: auth.role, actions: universeActions([auth.role as UniverseRole]), caller: { actorId: "member", actions: universeActions([auth.role as UniverseRole]) },
 })) }));
 beforeEach(() => { auth.role = "owner"; auth.platformAdmin = false; });
 afterEach(() => vi.unstubAllGlobals());

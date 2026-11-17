@@ -96,7 +96,6 @@ async function show() {
           <SidebarProvider>
             <UniverseSwitcher
               active={fixtures.universes[0] as Universe}
-              admin={false}
             />
             <Location />
           </SidebarProvider>

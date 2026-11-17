@@ -274,8 +274,27 @@ class Organization1(TypedDict):
     slug: str
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
+    """
+    The highest organization role the caller holds, for display.
+    """
+    actions: list[
+        Literal[
+            'createUniverse',
+            'administerUniverses',
+            'manageMembers',
+            'manageServiceUsers',
+            'managePolicy',
+        ]
+    ]
+    """
+    What the caller may do in the organization: the union of every role it holds there.
+    """
     universeQuota: int
     universeCount: NotRequired[int]
+    baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
+    """
+    The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+    """
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy]
@@ -292,6 +311,9 @@ class PlatformOrganizationsCreateParams(TypedDict):
     slug: str
     initialAdminUserId: NotRequired[str]
     universeQuota: NotRequired[int]
+    baseUniverseRole: NotRequired[
+        Literal['viewer', 'contributor', 'operator', 'owner'] | None
+    ]
     defaultProtected: NotRequired[bool]
     requireProtected: NotRequired[bool]
 
@@ -318,8 +340,27 @@ class Organization2(TypedDict):
     slug: str
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
+    """
+    The highest organization role the caller holds, for display.
+    """
+    actions: list[
+        Literal[
+            'createUniverse',
+            'administerUniverses',
+            'manageMembers',
+            'manageServiceUsers',
+            'managePolicy',
+        ]
+    ]
+    """
+    What the caller may do in the organization: the union of every role it holds there.
+    """
     universeQuota: int
     universeCount: NotRequired[int]
+    baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
+    """
+    The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+    """
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy1]
@@ -356,8 +397,27 @@ class Organization3(TypedDict):
     slug: str
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
+    """
+    The highest organization role the caller holds, for display.
+    """
+    actions: list[
+        Literal[
+            'createUniverse',
+            'administerUniverses',
+            'manageMembers',
+            'manageServiceUsers',
+            'managePolicy',
+        ]
+    ]
+    """
+    What the caller may do in the organization: the union of every role it holds there.
+    """
     universeQuota: int
     universeCount: NotRequired[int]
+    baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
+    """
+    The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+    """
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy2]
@@ -387,6 +447,9 @@ class MembershipPolicy3(TypedDict):
 class PlatformOrganizationsUpdateParams(TypedDict):
     name: NotRequired[str]
     universeQuota: NotRequired[int]
+    baseUniverseRole: NotRequired[
+        Literal['viewer', 'contributor', 'operator', 'owner'] | None
+    ]
     defaultProtected: NotRequired[bool]
     requireProtected: NotRequired[bool]
     membershipPolicy: NotRequired[MembershipPolicy3]
@@ -415,8 +478,27 @@ class Organization4(TypedDict):
     slug: str
     personal: bool
     role: Literal['member', 'creator', 'admin'] | None
+    """
+    The highest organization role the caller holds, for display.
+    """
+    actions: list[
+        Literal[
+            'createUniverse',
+            'administerUniverses',
+            'manageMembers',
+            'manageServiceUsers',
+            'managePolicy',
+        ]
+    ]
+    """
+    What the caller may do in the organization: the union of every role it holds there.
+    """
     universeQuota: int
     universeCount: NotRequired[int]
+    baseUniverseRole: Literal['viewer', 'contributor', 'operator', 'owner'] | None
+    """
+    The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+    """
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy4]

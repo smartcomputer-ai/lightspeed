@@ -1,4 +1,5 @@
 import { userSubject } from "../test/subject-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
@@ -14,7 +15,7 @@ vi.mock("./organization-access.js", () => ({ listOrganizationsForPrincipal: vi.f
 const runtimeUniverse = "00000000-0000-0000-0000-000000000001";
 const token = "platform-test-token-12345678901234567890";
 const connection = { runtime: "runtime", contractRevision: "1", caller: { single: false, tokenName: "platform" }, serverInfo: { name: "Lightspeed", version: "1" } };
-const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, features: {} }, handle: "acme", role, caller: { actorId: "alice", role } });
+const access = (role = "owner") => ({ universe: { id: "platform-id", lightspeedUniverseId: runtimeUniverse, features: {} }, handle: "acme", role, actions: universeActions([role as UniverseRole]), caller: { actorId: "alice", actions: universeActions([role as UniverseRole]) } });
 
 function app(role = "owner", endpoint = "https://runtime.test/api/v1", platformAdmin = false, options: { auth?: AuthContext; organizationRole?: "admin" | "creator" | "member" } = {}) {
   const auth = options.auth ?? userSubject("alice", platformAdmin);
@@ -55,7 +56,7 @@ describe("shared resource API admission", () => {
     const response = await app("viewer").request(path("/profiles/main"), { method: "PUT", body: "{}" });
     expect(response.status).toBe(403);
     expect(response.headers.get("content-type")).toBe("application/problem+json");
-    expect(await response.json()).toMatchObject({ status: 403, kind: "forbidden", detail: "operator role required" });
+    expect(await response.json()).toMatchObject({ status: 403, kind: "forbidden", detail: "universe permission required: manageProfile" });
     expect(calls).toHaveLength(1);
   });
   it("streams opaque bodies unchanged, preserves a configured prefix and replaces caller identity", async () => {
@@ -136,7 +137,7 @@ describe("shared resource API admission", () => {
         ...(method === "PUT" ? { body: '{"enabled":true}', headers: { "content-type": "application/json" } } : {}),
       });
       expect(response.status).toBe(403);
-      expect(await response.json()).toMatchObject({ kind: "forbidden", detail: "platform admin required" });
+      expect(await response.json()).toMatchObject({ kind: "forbidden", detail: "deployment permission required: configureDeployment" });
     }
     expect(mocks.access).not.toHaveBeenCalled();
     expect(calls.every(call => call.url.pathname.endsWith("/connection"))).toBe(true);

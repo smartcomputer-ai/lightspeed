@@ -4,8 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { UNIVERSE_ROLES } from "@lightspeed-ai/platform-shared";
-import { allowsAction, PermissionIdentityProvider, useActionPermissions, type PermissionAction } from "./permissions";
+import { UNIVERSE_ROLES, universeActions, universeRoleAllows, type UniverseAction, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { PermissionIdentityProvider, useActionPermissions } from "./permissions";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/api", () => ({ api: mocks.api }));
@@ -44,10 +44,12 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const universes = (role: string | null) => mocks.api.mockReset().mockResolvedValue([{ id: "universe", handle: "test", role }]);
+/// The server sends the caller's highest role and the actions it holds.
+const universes = (role: UniverseRole | null, actions: readonly UniverseAction[] = role ? [...universeActions([role])] : []) =>
+  mocks.api.mockReset().mockResolvedValue([{ id: "universe", handle: "test", role, actions }]);
 
 it("gives each role what the one below has, plus its own", () => {
-  const offered = (action: PermissionAction) => UNIVERSE_ROLES.filter((role) => allowsAction(role, action));
+  const offered = (action: UniverseAction) => UNIVERSE_ROLES.filter((role) => universeRoleAllows(role, action));
   expect(offered("read")).toEqual(["viewer", "contributor", "operator", "owner"]);
   expect(offered("controlSession")).toEqual(["contributor", "operator", "owner"]);
   expect(offered("configureSession")).toEqual(["operator", "owner"]);
@@ -59,8 +61,10 @@ it("gives each role what the one below has, plus its own", () => {
   expect(offered("createWorkspace")).toEqual(["operator", "owner"]);
   expect(offered("useResource")).toEqual(["contributor", "operator", "owner"]);
   expect(offered("createProfile")).toEqual(["operator", "owner"]);
-  expect(offered("manageAccess")).toEqual(["owner"]);
-  expect(allowsAction(null, "read")).toBe(false);
+  expect(offered("administer")).toEqual(["owner"]);
+  expect(offered("accessPrivateSessions")).toEqual(["owner"]);
+  expect(offered("closeSharedSessions")).toEqual(["operator", "owner"]);
+  expect(universeRoleAllows(null, "read")).toBe(false);
 });
 
 it("reads the member's role in the universe on screen", async () => {
@@ -71,11 +75,13 @@ it("reads the member's role in the universe on screen", async () => {
   expect(current.can("configureResource")).toBe(false);
 });
 
-it("treats a platform admin as an admin of every universe", async () => {
-  universes(null);
-  await show(true);
-  expect(current.role).toBe("owner");
-  expect(current.can("manageAccess")).toBe(true);
+it("decides on the actions the server sent, not on the role name", async () => {
+  // A Viewer granted one more action holds exactly that union.
+  universes("viewer", [...universeActions(["viewer"]), "invokeBot"]);
+  await show();
+  expect(current.role).toBe("viewer");
+  expect(current.can("invokeBot")).toBe(true);
+  expect(current.can("createSession")).toBe(false);
 });
 
 it("offers nothing for another universe or before the universe loads", async () => {

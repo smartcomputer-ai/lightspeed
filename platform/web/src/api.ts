@@ -1,4 +1,4 @@
-import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
+import type { FeatureStates, OrganizationAction, UniverseAction, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
 export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/sdk";
 import type {
   SessionSummaryView as WireSessionSummary,
@@ -109,9 +109,12 @@ export interface Universe {
   status: "active" | "archived" | "deleting";
   deletion?: import("@lightspeed-ai/sdk").DeploymentUniverseView["deletion"];
   createdAt: string;
-  /// Own membership role; null for platform admins browsing a universe
-  /// they are not a member of.
+  /// The highest universe role the caller holds, for display.
   role?: UniverseRole | null;
+  /// What the caller may do here: the union of every role it holds,
+  /// computed by the server. Screens decide on these, never on `role`.
+  actions?: UniverseAction[];
+  organizationActions?: OrganizationAction[];
   /// What is switched on in this universe, requirements applied.
   features: FeatureStates;
 }

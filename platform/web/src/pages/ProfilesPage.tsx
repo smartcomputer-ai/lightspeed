@@ -62,7 +62,7 @@ import { ListPane, ListPaneBody, ListPaneHeader, ListPaneState, ListRow, ListRow
 /// with a reusable SessionConfig editor and a permanent Edit-as-JSON tab.
 /// Saves keep the profiles/put +
 /// expectedRevision flow — a stale editor gets a 409, not a clobber.
-export function ProfilesPage(_props: { admin: boolean }) {
+export function ProfilesPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const { profileId } = useParams<{ profileId: string }>();
   const canCreate = useActionPermissions(universe?.id).can("createProfile");

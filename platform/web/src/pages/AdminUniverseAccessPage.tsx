@@ -56,12 +56,12 @@ const roleLabels: Record<UniverseRole, string> = {
   viewer: "Viewer",
 };
 
-export function AdminUniverseAccessPage({ admin }: { admin: boolean }) {
+export function AdminUniverseAccessPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
   if (!universe) return <UniverseNotFound handle={handle} />;
-  if (!permissions.can("manageAccess"))
+  if (!permissions.can("administer"))
     return (
       <>
         <PageHeader title="Access" />
@@ -77,7 +77,7 @@ export function AdminUniverseAccessPage({ admin }: { admin: boolean }) {
       record={universe}
       universe={universe.lightspeedUniverseId}
       organizationId={universe.organizationId}
-      organizationAdmin={admin || universe.organizationRole === "admin"}
+      organizationAdmin={universe.organizationActions?.includes("manageMembers") === true}
     />
   );
 }

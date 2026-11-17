@@ -7,7 +7,7 @@ let fixture: Awaited<ReturnType<typeof organizationFixture>>;
 beforeEach(async () => { fixture = await organizationFixture(); }, 30000);
 afterEach(async () => { await fixture?.postgres.close(); });
 
-type Listed = { organizations: Array<{ id: string; name: string; personal: boolean; universeCount?: number; universeQuota: number }> };
+type Listed = { organizations: Array<{ id: string; name: string; role: string; actions: string[]; personal: boolean; universeCount?: number; universeQuota: number }> };
 const list = async () => (await (await fixture.request("/organizations")).json()) as Listed;
 
 it("counts each organization's universes against its quota in one inventory read", async () => {
@@ -68,4 +68,27 @@ it("presents a personal organization under its owner's current name", async () =
   await fixture.asUser("other");
   expect((await list()).organizations.find(organization => organization.id === "personal-other")).toMatchObject({ name: "Ada Lovelace", personal: true });
   expect(await (await fixture.request("/organizations/personal-other")).json()).toMatchObject({ organization: { name: "Ada Lovelace" } });
+});
+
+it("lets only a deployment administrator create an organization, with Viewer as the member default", async () => {
+  await fixture.asUser("organization-admin");
+  expect((await fixture.request("/organizations", "POST", { name: "Research", slug: "research" })).status).toBe(403);
+  await fixture.asUser("platform-admin", true);
+  const response = await fixture.request("/organizations", "POST", { name: "Research", slug: "research", initialAdminUserId: "creator" });
+  expect(await response.json()).toMatchObject({ organization: { baseUniverseRole: "viewer", role: "admin", actions: expect.arrayContaining(["managePolicy", "administerUniverses"]) } });
+});
+
+it("lets an Organization Admin set what every member holds on its universes", async () => {
+  await fixture.asUser("organization-admin");
+  const response = await fixture.request("/organizations/organization-a", "PATCH", { baseUniverseRole: null });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ organization: { baseUniverseRole: null } });
+  await fixture.asUser("creator");
+  expect((await fixture.request("/organizations/organization-a", "PATCH", { baseUniverseRole: "contributor" })).status).toBe(403);
+});
+
+it("tells each caller what it may do in each organization", async () => {
+  await fixture.asUser("creator");
+  const [organization] = (await list()).organizations;
+  expect(organization).toMatchObject({ id: "organization-a", role: "creator", actions: ["createUniverse"] });
 });

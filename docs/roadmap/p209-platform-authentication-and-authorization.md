@@ -9,6 +9,13 @@ remain follow-ups. Platform uses Better Auth organization records, each
 containing multiple universes, and shares one authorization gate across browser
 sessions, CLI sessions, and personal/service-user API keys.
 
+Revised 2026-11-17: authorization decides on actions, with roles as bundles,
+and organizations give members a default universe access, as specified in
+[action-based authorization](p210-action-based-authorization.md). Organization
+kinds and organization suspension are removed; personal organizations admit
+only their owner; universe quotas and organization creation are Platform Admin
+decisions.
+
 [Runtime access simplification](p208-runtime-access-simplification.md) leaves
 trusted component authentication in the runtime and puts caller authorization
 in Platform. [The resource HTTP API](p208b-resource-http-api.md) supplies the
@@ -24,7 +31,11 @@ Platform gate serves browser, CLI, SDK and integration requests.
 - A Better Auth **organization is the administrative boundary**, not a universe.
 - Every universe belongs to exactly one organization. The organization is its durable
   home; deleting or disabling its creator does not orphan it.
-- Organizations can be personal or shared. They use the same underlying model.
+- Organizations are personal or shared. A personal organization belongs to one
+  user: it has no other members, membership policy or rename, so its universes
+  cannot be shared. A shared organization is everything else.
+- Every check asks for an action; roles are fixed bundles of actions and a
+  principal's authority is the union of the roles it holds (P210).
 - Platform Admin is rare, deployment-wide authority. Ordinary universe
   creation is an organization capability, not a deployment-administration role.
 - Organization roles are **Admin, Creator, Member**. The name Creator replaces
@@ -57,7 +68,8 @@ Membership in one organization does not grant access to another.
 Deployment policy controls these independently:
 
 - Signup and sign-in admission.
-- Personal-organization provisioning and who may create shared organizations.
+- Personal-organization provisioning. Shared organizations are created by
+  Platform Admins.
 - Organization membership and organization-role assignment, including company-group
   mappings.
 - Universe-creation quotas and defaults or requirements for deletion
@@ -71,11 +83,12 @@ The first-release defaults are listed below; deployment configuration can
 change them independently. There is no mandatory public-versus-enterprise
 mode that fixes all of them.
 
-Organization membership alone does not reveal or grant access to every universe.
-Creators and Members see universes to which they have access. Organization Admins
-administer and can access all universes in their organization; Platform Admins can
-access all organizations and universes. Resource privacy must not imply protection
-from those administrative roles.
+Organization membership gives a member person the organization's default
+universe access on every universe in it: Viewer by default, any universe role,
+or none, which limits members to the universes they are granted (P210). Service users hold only
+their grants. Organization Admins administer and can access all universes in
+their organization; Platform Admins can access all organizations and universes.
+Resource privacy must not imply protection from those administrative roles.
 
 ## Roles and universe lifecycle
 
@@ -91,8 +104,8 @@ credential used by an administrator still applies its restrictions.
 | Role | Authority |
 | --- | --- |
 | Admin | Administer organization membership and service users, organization policy and universes; recover universe administration. |
-| Creator | Create universes in this organization and become an Owner of each one created; no automatic access to other universes. |
-| Member | Access assigned universes; cannot create universes merely by belonging to the organization. |
+| Creator | Everything a Member has, plus creating universes in this organization and becoming an Owner of each one created. |
+| Member | The organization's default universe access on every universe, plus assigned universe roles; cannot create universes merely by belonging to the organization. |
 
 Higher organization authority includes creation. Creator is organization-scoped: a
 person may be a Creator in one organization and a Member in another.
@@ -484,12 +497,13 @@ hard-coded role distinctions.
 | --- | --- |
 | Public self-signup | Disabled unless explicitly enabled; preserve configured company admission. |
 | Personal organizations | Provision one for each admitted user; deployments may disable this. The user is its Organization Admin. |
-| Shared-organization creation | Platform Admins provision them initially; broader self-service can be enabled explicitly. |
+| Shared-organization creation | Platform Admins only. |
+| Default universe access | Viewer on every universe of a shared organization; organizations may set any universe role or none. |
 | New shared-organization members | Member; Creator and Organization Admin require explicit grants or configured company-group mappings. |
 | Local development | One shared development organization; admitted developers are Creators. |
 | Service-user management | Organization Admins create/manage service users and their keys and grant their scoped roles. Personal-organization users can do this as their own Organization Admin. |
-| Universe quota | 25 active universes per personal organization; 100 per shared organization, with deployment and organization overrides. |
-| Interactive/API-created protection | Off for personal organizations; on by default for shared organizations. Development organizations default off. Organizations may change the default or require protection. |
+| Universe quota | 25 active universes per personal organization; 100 per shared organization, with deployment overrides and per-organization changes by Platform Admins. |
+| Interactive/API-created protection | Off for personal organizations; on by default for shared organizations. The seeded local development organization is off. Organizations may change the default or require protection. |
 | Document-created protection | On when omitted; existing universes retain their current value when omitted, as specified in P207. |
 | Personal and service-user API-key expiry | 365 days by default and as the default maximum; deployments can choose a different maximum. Shorter expiry is selectable; keys are revocable at any time. |
 | API-key rotation | Issue another key for the same principal, move consumers, then revoke the old key. Overlap is explicit; do not silently invalidate a working key on new-key creation. |

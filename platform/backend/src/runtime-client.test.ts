@@ -1,9 +1,10 @@
 import { decodeHttpRequest, problemResponse } from "../../test/http-fixture.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LightspeedApiError, OPERATIONS } from "@lightspeed-ai/sdk";
-import type { UniverseRole } from "@lightspeed-ai/platform-shared";
+import { readFileSync } from "node:fs";
+import { UNIVERSE_ROLES, universeActions, universeRoleAllows, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { deploymentClient, GateRefusal, universeClient } from "./runtime-client.js";
-import { METHOD_ROLES, UNMEMBERED_OPERATIONS } from "./routes/method-roles.js";
+import { METHOD_ACTIONS, UNMEMBERED_OPERATIONS } from "./routes/method-actions.js";
 import type { ServerEnv } from "./env.js";
 
 const env = { lightspeedApiUrl: "https://core.example/api/v1", lightspeedApiToken: "lsr_fixture" } as ServerEnv;
@@ -32,14 +33,14 @@ function core(sessions: Record<string, Access> = {}) {
   return calls;
 }
 
-const as = (role: UniverseRole, actorId = "alice") => universeClient(env, universe, { actorId, role });
+const as = (role: UniverseRole, actorId = "alice") => universeClient(env, universe, { actorId, actions: universeActions([role]) });
 const refusal = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => error);
 
-describe("method roles", () => {
+describe("method actions", () => {
   it("classify every core method exactly once", () => {
     for (const method of OPERATIONS) {
-      expect([method in METHOD_ROLES, UNMEMBERED_OPERATIONS.has(method)], method).toContain(true);
-      expect(method in METHOD_ROLES && UNMEMBERED_OPERATIONS.has(method), method).toBe(false);
+      expect([method in METHOD_ACTIONS, UNMEMBERED_OPERATIONS.has(method)], method).toContain(true);
+      expect(method in METHOD_ACTIONS && UNMEMBERED_OPERATIONS.has(method), method).toBe(false);
     }
   });
 
@@ -157,7 +158,7 @@ describe("lists and transport", () => {
   it("requires a configured runtime token and refuses credentials in its URL", () => {
     expect(() => deploymentClient({ ...env, lightspeedApiUrl: "https://user:password@core.example/api/v1" })).toThrow("runtime endpoint");
     expect(() => deploymentClient({ ...env, lightspeedApiToken: null })).toThrow("runtime endpoint");
-    expect(() => universeClient({ ...env, lightspeedApiToken: null }, universe, { actorId: "alice", role: "owner" })).toThrow("runtime endpoint");
+    expect(() => universeClient({ ...env, lightspeedApiToken: null }, universe, { actorId: "alice", actions: universeActions(["owner"]) })).toThrow("runtime endpoint");
   });
 
 });
@@ -166,7 +167,7 @@ describe("lists and transport", () => {
 describe("prepared contributor sessions", () => {
   it("names the operator role when refusing an integration", async () => {
     const error = await refusal(as("contributor").call("session/start", { integration } as never));
-    expect((error as GateRefusal).message).toBe("operator role required to create integrated sessions");
+    expect((error as GateRefusal).message).toBe("universe permission required to create integrated sessions: configureSession");
   });
 
   it("lets an operator start an integrated session", async () => {
@@ -283,9 +284,9 @@ describe("session lifecycle permissions", () => {
 
 describe("feature switches", () => {
   const within = (features: unknown, role: UniverseRole = "owner") =>
-    universeClient(env, { ...universe, features }, { actorId: "alice", role });
+    universeClient(env, { ...universe, features }, { actorId: "alice", actions: universeActions([role]) });
   const featureMethods = (prefix: string) =>
-    (Object.keys(METHOD_ROLES) as (typeof OPERATIONS)[number][]).filter((method) => method.startsWith(prefix));
+    (Object.keys(METHOD_ACTIONS) as (typeof OPERATIONS)[number][]).filter((method) => method.startsWith(prefix));
 
   it("refuse every bot and channel method, for an admin too, in a universe that stored no switch", async () => {
     const calls = core();
@@ -340,7 +341,7 @@ describe("feature switches", () => {
   it("still hold a member to the method's role once the feature is on", async () => {
     const calls = core();
     const error = await refusal(within({ bots: true, channels: true }, "viewer").call("bots/create", {} as never));
-    expect((error as GateRefusal).message).toBe("operator role required");
+    expect((error as GateRefusal).message).toBe("universe permission required: createBot");
     await within({ bots: true }, "viewer").call("bots/list", {});
     expect(calls.map((call) => call.method)).toEqual(["bots/list"]);
   });
@@ -355,7 +356,7 @@ describe("feature switches", () => {
 
 describe("trigger secrets", () => {
   const within = (role: UniverseRole) =>
-    universeClient(env, { ...universe, features: { bots: true, channels: true } }, { actorId: "alice", role });
+    universeClient(env, { ...universe, features: { bots: true, channels: true } }, { actorId: "alice", actions: universeActions([role]) });
   const target = { botId: "triage", triggerId: "github" };
 
   it("let every member read a trigger and only operators read its secrets", async () => {
@@ -366,7 +367,7 @@ describe("trigger secrets", () => {
       const error = await refusal(within(role).call("bots/triggers/secrets/read", target));
       expect(error, role).toBeInstanceOf(GateRefusal);
       expect((error as GateRefusal).status, role).toBe(403);
-      expect((error as GateRefusal).message, role).toBe("operator role required");
+      expect((error as GateRefusal).message, role).toBe("universe permission required: manageBot");
     }
     expect(calls.map((call) => call.method)).not.toContain("bots/triggers/secrets/read");
     for (const role of ["operator", "owner"] as const) {
@@ -376,11 +377,21 @@ describe("trigger secrets", () => {
   });
 
   it("hold the methods that answer with secrets to the operator role too", () => {
-    expect(METHOD_ROLES["bots/triggers/secrets/read"]).toBe("operator");
-    expect(METHOD_ROLES["bots/triggers/put"]).toBe("operator");
-    expect(METHOD_ROLES["bots/create"]).toBe("operator");
-    expect(METHOD_ROLES["bots/triggers/read"]).toBe("viewer");
-    expect(METHOD_ROLES["bots/triggers/list"]).toBe("viewer");
+    const leastRole = (method: string) => UNIVERSE_ROLES.find((role) => universeRoleAllows(role, METHOD_ACTIONS[method]!));
+    expect(leastRole("bots/triggers/secrets/read")).toBe("operator");
+    expect(leastRole("bots/triggers/put")).toBe("operator");
+    expect(leastRole("bots/create")).toBe("operator");
+    expect(leastRole("bots/triggers/read")).toBe("viewer");
+    expect(leastRole("bots/triggers/list")).toBe("viewer");
+  });
+
+  it("give every method's action first to the role core recommends for it", () => {
+    const manifest = JSON.parse(readFileSync(new URL("../../../crates/api/contract/http.json", import.meta.url), "utf8")) as { operations: Array<{ operationId: string; role?: UniverseRole; access?: { kind: string; action?: string } }> };
+    for (const spec of manifest.operations.filter((operation) => operation.access?.kind === "universe")) {
+      const action = METHOD_ACTIONS[spec.operationId]!;
+      expect(action, spec.operationId).toBe(spec.access!.action);
+      expect(UNIVERSE_ROLES.find((role) => universeRoleAllows(role, action)), spec.operationId).toBe(spec.role);
+    }
   });
 });
 
@@ -391,9 +402,9 @@ it("gates watch collections and forces the member's session visibility", async (
     calls.push({ params: decodeHttpRequest(_url as string | Request | URL, init).params, headers: new Headers(init.headers) });
     return new Response("event: watch/reset\ndata: {}\n\n", { headers: { "content-type": "text/event-stream" } });
   }));
-  const viewer = universeClient(env, { ...universe, features: { bots: false } }, { actorId: "alice", role: "viewer" });
+  const viewer = universeClient(env, { ...universe, features: { bots: false } }, { actorId: "alice", actions: universeActions(["viewer"]) });
   await (await viewer.openWatch({ visibleTo: "bob" })).body!.cancel();
-  await (await universeClient(env, { ...universe, features: { bots: true } }, { actorId: "carol", role: "owner" }).openWatch()).body!.cancel();
+  await (await universeClient(env, { ...universe, features: { bots: true } }, { actorId: "carol", actions: universeActions(["owner"]) }).openWatch()).body!.cancel();
   expect(calls[0]!.params).toEqual({ kinds: ["session", "environment", "workspace"], visibleTo: "alice" });
   expect(calls[1]!.params).toEqual({ kinds: ["session", "bot", "environment", "workspace"] });
   expect(calls[0]!.headers.get("x-lightspeed-actor")).toBe("alice");

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { organizationFixture } from "../../test/organization-fixture.js";
-import { userSubject } from "../../test/subject-fixture.js";
+import { serviceUserSubject, userSubject } from "../../test/subject-fixture.js";
 import { universeForPrincipal } from "./universes.js";
 
 let fixture: Awaited<ReturnType<typeof organizationFixture>>;
@@ -26,7 +26,10 @@ it("keeps the last explicit Owner even for an organization admin", async () => {
 it("supports several Owners and removes the creator's authority when its grant is removed", async () => {
   expect((await fixture.request(grants(), "PUT", { principal: { kind: "user", id: "creator" }, role: "owner" })).status).toBe(200);
   expect((await fixture.request(`${grants()}/${fixture.ownerGrant.id}`, "DELETE")).status).toBe(200);
-  expect(await universeForPrincipal(fixture.context, userSubject("owner"), fixture.universe.id)).toBeNull();
+  // The creator keeps only what every member of the organization holds.
+  const remaining = await universeForPrincipal(fixture.context, userSubject("owner"), fixture.universe.id);
+  expect(remaining?.role).toBe("viewer");
+  expect(remaining?.actions.has("administer")).toBe(false);
   expect((await fixture.db.select().from(schema.universes))[0]?.createdBy).toBe("owner");
 });
 it("requires organization membership before granting a universe role", async () => {
@@ -39,8 +42,35 @@ it("immediately disables universe access on organization membership removal with
   expect(await fixture.db.select().from(schema.universes)).toHaveLength(1);
   expect(await fixture.db.select().from(schema.universeGrants).where(eq(schema.universeGrants.id, fixture.ownerGrant.id))).toHaveLength(1);
 });
-it("does not grant a Creator access to unrelated universes", async () => {
+it("gives a Creator only the organization's base role on universes it did not create", async () => {
+  const access = await universeForPrincipal(fixture.context, userSubject("creator"), fixture.universe.id);
+  expect(access?.role).toBe("viewer");
+  expect([...access!.actions]).toEqual(["read"]);
+  await fixture.db.update(schema.organization).set({ baseUniverseRole: null }).where(eq(schema.organization.id, "organization-a"));
   expect(await universeForPrincipal(fixture.context, userSubject("creator"), fixture.universe.id)).toBeNull();
+});
+it("adds the organization's base role to a member's explicit grant", async () => {
+  await fixture.db.update(schema.organization).set({ baseUniverseRole: "contributor" }).where(eq(schema.organization.id, "organization-a"));
+  expect((await universeForPrincipal(fixture.context, userSubject("creator"), fixture.universe.id))?.role).toBe("contributor");
+  // An explicit grant above the base role wins; one below it adds nothing.
+  expect((await universeForPrincipal(fixture.context, userSubject("viewer"), fixture.universe.id))?.role).toBe("contributor");
+  expect((await universeForPrincipal(fixture.context, userSubject("owner"), fixture.universe.id))?.role).toBe("owner");
+});
+it("can make every member an Owner of every universe", async () => {
+  await fixture.db.update(schema.organization).set({ baseUniverseRole: "owner" }).where(eq(schema.organization.id, "organization-a"));
+  const access = await universeForPrincipal(fixture.context, userSubject("creator"), fixture.universe.id);
+  expect(access?.role).toBe("owner");
+  expect(access?.actions.has("administer")).toBe(true);
+  expect(access?.actions.has("accessPrivateSessions")).toBe(true);
+});
+it("keeps service users to their explicit grants", async () => {
+  const [robot] = await fixture.db.insert(schema.serviceUsers).values({ organizationId: "organization-a", name: "CI", role: "member" }).returning();
+  expect(await universeForPrincipal(fixture.context, serviceUserSubject(robot!), fixture.universe.id)).toBeNull();
+});
+it("does not extend the base role to a Platform Admin outside the organization", async () => {
+  const access = await universeForPrincipal(fixture.context, userSubject("other", true), fixture.universe.id);
+  expect(access?.role).toBe("owner");
+  expect(access?.organizationRole).toBe("admin");
 });
 it("limits Owner directory access to principals in the containing organization", async () => {
   const response = await fixture.request("/organizations/organization-a/members");

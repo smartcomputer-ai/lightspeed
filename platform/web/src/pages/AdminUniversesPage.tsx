@@ -1,5 +1,5 @@
 import { DeleteUniverseDialog } from "@/components/admin/delete-universe-dialog";
-import { usePlatformAdmin } from "@/lib/permissions";
+import { organizationAllows, useDeploymentPermissions } from "@/lib/permissions";
 import { useOrganizations } from "@/lib/platform-api";
 import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
 import { ReadError } from "@/components/read-error";
@@ -33,13 +33,14 @@ import { universeHome, useUniverses } from "@/lib/universes";
 /// Organization-scoped inventory, with runtime repair controls for deployment admins.
 export function AdminUniversesPage() {
   const universes = useUniverses();
-  const platformAdmin = usePlatformAdmin();
+  // Runtime inventory and repair controls are deployment administration.
+  const runtimeRepair = useDeploymentPermissions().can("manageUnclaimedUniverses");
   const { organizationId } = useParams();
   const organizations = useOrganizations();
   const canCreate = organizations.data?.organizations.some(
     (organization) =>
       organization.id === organizationId &&
-      (organization.role === "admin" || organization.role === "creator"),
+      organizationAllows(organization, "createUniverse"),
   );
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -48,7 +49,7 @@ export function AdminUniversesPage() {
 
   const reconcile = useQuery({
     queryKey: ["universes-reconcile", organizationId],
-    enabled: platformAdmin && !!organizationId,
+    enabled: runtimeRepair && !!organizationId,
     queryFn: () =>
       api<UniverseReconcile>(
         "GET",
@@ -99,7 +100,7 @@ export function AdminUniversesPage() {
     .filter(
       (universe) =>
         universe.organizationId === organizationId &&
-        (platformAdmin || universe.role === "owner"),
+        universe.actions?.includes("administer"),
     )
     .map((universe) => {
       const deletion =
@@ -118,7 +119,7 @@ export function AdminUniversesPage() {
         description="Universes you administer in the selected organization, including archived universes and deletions in progress."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {platformAdmin && (
+            {runtimeRepair && (
               <Button
                 variant="outline"
                 disabled={syncHandles.isPending}
@@ -136,7 +137,7 @@ export function AdminUniversesPage() {
           </div>
         }
       />
-      {platformAdmin && (
+      {runtimeRepair && (
         <DeletedSessionsDialog
           universe={deletedUniverse}
           onClose={() => setDeletedUniverse(null)}
@@ -168,7 +169,7 @@ export function AdminUniversesPage() {
       {universes.error && (
         <ReadError error={universes.error} loading={!universes.data} />
       )}
-      {platformAdmin && reconcile.error && (
+      {runtimeRepair && reconcile.error && (
         <ReadError
           error={reconcile.error}
           loading={!reconcile.data}
@@ -188,7 +189,7 @@ export function AdminUniversesPage() {
               <TableRow>
                 <TableHead>Universe</TableHead>
                 <TableHead>Status</TableHead>
-                {platformAdmin && <TableHead>Engine</TableHead>}
+                {runtimeRepair && <TableHead>Engine</TableHead>}
                 <TableHead>Your role</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-0" />
@@ -218,7 +219,7 @@ export function AdminUniversesPage() {
                       </p>
                     )}
                   </TableCell>
-                  {platformAdmin && (
+                  {runtimeRepair && (
                     <TableCell>
                       <EngineBadge status={engineStatus.get(universe.id)} />
                     </TableCell>
@@ -243,7 +244,7 @@ export function AdminUniversesPage() {
                         >
                           Manage
                         </Button>
-                        {platformAdmin && (
+                        {runtimeRepair && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -252,7 +253,7 @@ export function AdminUniversesPage() {
                             Deleted sessions
                           </Button>
                         )}
-                        {platformAdmin &&
+                        {runtimeRepair &&
                           engineStatus.get(universe.id) === "missing" && (
                             <Button
                               variant="ghost"

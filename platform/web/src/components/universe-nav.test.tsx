@@ -4,7 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { PermissionIdentityProvider, type PermissionAction } from "@/lib/permissions";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
+import type { UniverseAction } from "@lightspeed-ai/platform-shared";
+import { PermissionIdentityProvider } from "@/lib/permissions";
 import { SettingsIndexRedirect, settingsIndexPath } from "./universe-nav";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
@@ -12,14 +14,14 @@ const ALL_ON = vi.hoisted(() => ({ bots: true, channels: true }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role, features: ALL_ON }, handle: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", handle: "test", name: "Test", role: mocks.role, actions: [...universeActions([mocks.role as never])], features: ALL_ON }, handle: "test", isLoading: false }),
 }));
 
-const ROLE_ACTIONS: Record<string, PermissionAction[]> = {
+const ROLE_ACTIONS: Record<string, UniverseAction[]> = {
   viewer: ["read"],
   contributor: ["read", "createSession", "useResource"],
   operator: ["read", "createSession", "useResource", "configureResource"],
-  owner: ["read", "createSession", "useResource", "configureResource", "manageAccess"],
+  owner: ["read", "createSession", "useResource", "configureResource", "administer"],
 };
 const DESTINATIONS: [string, string][] = [
   ["viewer", "/u/test/bots"],
@@ -33,17 +35,17 @@ it.each(DESTINATIONS)("resolves bare settings for a %s to %s", (role, path) => {
 });
 
 it("treats a universe that names no feature states as having every feature off", () => {
-  const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
+  const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
   expect(settingsIndexPath({ handle: "test" }, operator)).toBe("/u/test/settings/templates");
-  const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
+  const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
   expect(settingsIndexPath({ handle: "test" }, viewer)).toBe("/u/test/sessions");
 });
 
 it("skips a switched-off settings page, and lands on sessions when bots are off", () => {
-  const operator = (action: PermissionAction) => ROLE_ACTIONS.operator!.includes(action);
+  const operator = (action: UniverseAction) => ROLE_ACTIONS.operator!.includes(action);
   expect(settingsIndexPath({ handle: "test", features: { bots: true, channels: false } }, operator))
     .toBe("/u/test/settings/templates");
-  const viewer = (action: PermissionAction) => ROLE_ACTIONS.viewer!.includes(action);
+  const viewer = (action: UniverseAction) => ROLE_ACTIONS.viewer!.includes(action);
   expect(settingsIndexPath({ handle: "test", features: { bots: false, channels: false } }, viewer))
     .toBe("/u/test/sessions");
 });

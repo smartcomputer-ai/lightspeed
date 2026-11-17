@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
-import { usePlatformAdmin } from "@/lib/permissions";
+import { useDeploymentPermissions } from "@/lib/permissions";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
@@ -12,7 +12,7 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
   onCancel: () => void;
   onDeleted: () => void | Promise<void>;
 }) {
-  const platformAdmin = usePlatformAdmin();
+  const mayPurge = useDeploymentPermissions().can("purgeSessions");
   const queryClient = useQueryClient();
   const [cascade, setCascade] = useState(false);
   const [permanent, setPermanent] = useState(false);
@@ -20,7 +20,7 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
   const deletion = useMutation({
     meta: { blocking: true },
     mutationFn: async () => {
-      if (permanent && !platformAdmin) throw new Error("Platform admin access is required for permanent deletion.");
+      if (permanent && !mayPurge) throw new Error("Permanent deletion requires the purgeSessions deployment permission.");
       if (!softDeleted) {
         await api("DELETE", `/api/ui/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}${cascade ? "?cascade=true" : ""}`);
         setSoftDeleted(true);
@@ -56,7 +56,7 @@ export function DeleteSessionDialog({ universeId, sessionId, onCancel, onDeleted
           <span className="block text-xs text-muted-foreground">Required if the session has delegated children. Every selected session must already be closed.</span>
         </span>
       </label>
-      {platformAdmin && <label className="flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm">
+      {mayPurge && <label className="flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm">
         <Checkbox checked={permanent} onCheckedChange={(checked) => setPermanent(checked === true)} disabled={deletion.isPending || softDeleted} />
         <span className="min-w-0">
           <span className="block font-medium">Also permanently delete retained history</span>

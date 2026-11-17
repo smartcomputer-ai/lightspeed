@@ -118,74 +118,86 @@ export function App() {
       <Route element={
         <UserPreferencesProvider userId={user.id}>
           <PermissionIdentityProvider userId={user.id} platformAdmin={admin}>
-            <UniverseWatchProvider><AppShell user={user} admin={admin} /></UniverseWatchProvider>
+            <UniverseWatchProvider><AppShell user={user} /></UniverseWatchProvider>
           </PermissionIdentityProvider>
         </UserPreferencesProvider>
       }>
-        <Route index element={<HomeRedirect admin={admin} />} />
+        <Route index element={<HomeRedirect />} />
         <Route path="u/:handle" element={<UniverseIndexRedirect />} />
-        <Route path="u/:handle/sessions" element={<SessionsPage admin={admin} />} />
+        <Route path="u/:handle/sessions" element={<SessionsPage />} />
         <Route
           path="u/:handle/sessions/:sessionId"
-          element={<SessionsPage admin={admin} />}
+          element={<SessionsPage />}
         />
-        <Route path="u/:handle/workspaces" element={<WorkspacesPage admin={admin} />} />
+        <Route path="u/:handle/workspaces" element={<WorkspacesPage />} />
         <Route
           path="u/:handle/workspaces/:workspaceId"
-          element={<WorkspacesPage admin={admin} />}
+          element={<WorkspacesPage />}
         />
         <Route
           path="u/:handle/workspaces/:workspaceId/files/*"
-          element={<WorkspacesPage admin={admin} />}
+          element={<WorkspacesPage />}
         />
-        <Route path="u/:handle/bots" element={<FeatureGate feature="bots"><BotsPage admin={admin} /></FeatureGate>} />
-        <Route path="u/:handle/bots/:botId" element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>} />
+        <Route path="u/:handle/bots" element={<FeatureGate feature="bots"><BotsPage /></FeatureGate>} />
+        <Route path="u/:handle/bots/:botId" element={<FeatureGate feature="bots"><BotsPage view="chat" /></FeatureGate>} />
         <Route
           path="u/:handle/bots/:botId/chat/:sessionId"
-          element={<FeatureGate feature="bots"><BotsPage admin={admin} view="chat" /></FeatureGate>}
+          element={<FeatureGate feature="bots"><BotsPage view="chat" /></FeatureGate>}
         />
         <Route
           path="u/:handle/bots/:botId/activity"
-          element={<FeatureGate feature="bots"><BotsPage admin={admin} view="activity" /></FeatureGate>}
+          element={<FeatureGate feature="bots"><BotsPage view="activity" /></FeatureGate>}
         />
-        <Route path="u/:handle/blobs/:digest" element={<BlobPage admin={admin} />} />
-        <Route path="u/:handle/profiles" element={<ProfilesPage admin={admin} />} />
+        <Route path="u/:handle/blobs/:digest" element={<BlobPage />} />
+        <Route path="u/:handle/profiles" element={<ProfilesPage />} />
         <Route
           path="u/:handle/profiles/:profileId"
-          element={<ProfilesPage admin={admin} />}
+          element={<ProfilesPage />}
         />
-        <Route path="u/:handle/models" element={<ModelsPage admin={admin} />} />
-        <Route path="u/:handle/environments" element={<EnvironmentsPage admin={admin} />} />
-        <Route path="u/:handle/mcp-servers" element={<McpServersPage admin={admin} />} />
-        <Route path="u/:handle/credentials" element={<CredentialsPage admin={admin} />} />
+        <Route path="u/:handle/models" element={<ModelsPage />} />
+        <Route path="u/:handle/environments" element={<EnvironmentsPage />} />
+        <Route path="u/:handle/mcp-servers" element={<McpServersPage />} />
+        <Route path="u/:handle/credentials" element={<CredentialsPage />} />
         <Route path="u/:handle/settings" element={<SettingsIndexRedirect />} />
         <Route
           path="u/:handle/settings/channels"
-          element={<FeatureGate feature="channels"><ChannelsPage admin={admin} /></FeatureGate>}
+          element={<FeatureGate feature="channels"><ChannelsPage /></FeatureGate>}
         />
         <Route
           path="u/:handle/settings/templates"
-          element={<SetupsPage admin={admin} />}
+          element={<SetupsPage />}
         />
         <Route element={<AdminGate />}>
           <Route path="admin" element={<AdminIndexRedirect />} />
-          <Route element={<AdminGate scope="universes" />}>
+          <Route element={<AdminGate universes />}>
             <Route path="admin/organizations/:organizationId/universes" element={<AdminUniversesPage />} />
             <Route path="admin/organizations/:organizationId/universes/:handle" element={<Navigate to="access" replace />} />
-            <Route path="admin/organizations/:organizationId/universes/:handle/access" element={<AdminUniverseAccessPage admin={admin} />} />
-            <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<AdminUniverseSettingsPage admin={admin} />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/access" element={<AdminUniverseAccessPage />} />
+            <Route path="admin/organizations/:organizationId/universes/:handle/settings" element={<AdminUniverseSettingsPage />} />
           </Route>
-          <Route element={<AdminGate scope="organizations" />}>
+          <Route element={<AdminGate organizationAction="manageMembers" />}>
             <Route path="admin/organizations/:organizationId/people" element={<OrganizationsPage section="people" />} />
+          </Route>
+          <Route element={<AdminGate organizationAction="manageServiceUsers" />}>
             <Route path="admin/organizations/:organizationId/service-users" element={<OrganizationsPage section="service-users" />} />
-            <Route path="admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} />
             <Route path="admin/organizations/:organizationId/api-keys" element={<AdminApiKeysPage />} />
           </Route>
-          <Route element={<AdminGate scope="platform" />}>
+          <Route element={<AdminGate organizationAction="managePolicy" />}>
+            <Route path="admin/organizations/:organizationId/settings" element={<OrganizationsPage section="settings" />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="administerOrganizations" />}>
             <Route path="admin/platform/organizations" element={<PlatformOrganizationsPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="manageUnclaimedUniverses" />}>
             <Route path="admin/platform/unclaimed-universes" element={<UnclaimedUniversesPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="readAudit" />}>
             <Route path="admin/platform/audit" element={<AdminAuditPage />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="manageUsers" />}>
             <Route path="admin/platform/users" element={<AdminUsersPage currentUser={user} />} />
+          </Route>
+          <Route element={<AdminGate deploymentAction="configureDeployment" />}>
             <Route path="admin/platform/channels" element={<AdminChannelsPage />} />
             <Route path="admin/platform/environment-providers" element={<AdminEnvironmentProvidersPage />} />
           </Route>

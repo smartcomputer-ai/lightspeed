@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { platformApi, useOrganizations } from "@/lib/platform-api";
-import { usePlatformAdmin } from "@/lib/permissions";
+import { organizationAllows } from "@/lib/permissions";
 import { ApiKeyRevokeDialog } from "@/components/api-key-revoke-dialog";
 import { ApiKeysCard } from "@/components/api-keys-card";
 import { PageHeader, LoadingNote } from "@/components/page";
@@ -37,11 +37,10 @@ import { AddIcon } from "@/icons";
 /** Organization selection bounds directory and key requests; opening a deep link never falls back to another owner. */
 export function AdminApiKeysPage() {
   const organizations = useOrganizations();
-  const platformAdmin = usePlatformAdmin();
   const { organizationId = "" } = useParams();
   const managed =
     organizations.data?.organizations.filter(
-      (organization) => platformAdmin || organization.role === "admin",
+      (organization) => organizationAllows(organization, "manageServiceUsers"),
     ) ?? [];
   const organization = managed.find((organization) => organization.id === organizationId);
   return (

@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { BotCreateDialog } from "./BotCreatePage";
 import { waitForUi } from "@/test/wait-for-ui";
@@ -12,7 +13,7 @@ const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", async (original) => ({
   ...await original<typeof import("@/lib/universes")>(),
-  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "factory", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])] }, handle: "factory", isLoading: false }),
   useFeature: () => true,
 }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));

@@ -38,7 +38,6 @@ import {
   messageInputItems,
   messageRunConfig,
   modelDefaultsPutSchema,
-  roleAtLeast,
   sessionMessageSchema,
   sessionSteerSchema,
   slugify,
@@ -694,8 +693,8 @@ export function gatewayRoutes(ctx: AppContext) {
       return body.response;
     }
     const input = body.data;
-    if (input.access?.visibility === "universe" && !roleAtLeast(access.role, "operator")) {
-      return c.json({ error: "operator role required to start shared work" }, 403);
+    if (input.access?.visibility === "universe" && !access.actions.has("configureSession")) {
+      return c.json({ error: "universe permission required to start shared work: configureSession" }, 403);
     }
     return withApiErrors(c, async () => {
       const client = universeClient(ctx.env, access.universe, access.caller);
@@ -2149,8 +2148,8 @@ export function gatewayRoutes(ctx: AppContext) {
     withApiErrors(c, async () => {
       const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "operator"))
-        throw new GateRefusal(403, "operator role required");
+      if (!access.actions.has("configureResource"))
+        throw new GateRefusal(403, "universe permission required: configureResource");
       const body = await parseBody(c, workspaceRenameSchema);
       if (!body.ok) return body.response;
       const client = universeClient(ctx.env, access.universe, access.caller);
@@ -2172,8 +2171,8 @@ export function gatewayRoutes(ctx: AppContext) {
     withApiErrors(c, async () => {
       const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "operator"))
-        throw new GateRefusal(403, "operator role required");
+      if (!access.actions.has("configureResource"))
+        throw new GateRefusal(403, "universe permission required: configureResource");
       const response = await universeClient(ctx.env, access.universe, access.caller).call("vfs/workspaces/delete", {
         workspaceId: c.req.param("workspaceId"),
       });
@@ -2219,8 +2218,8 @@ export function gatewayRoutes(ctx: AppContext) {
       withApiErrors(c, async () => {
         const access = await universeForRequest(ctx, c, c.req.param("id"));
         if (!access) return c.json({ error: "not found" }, 404);
-        if (!roleAtLeast(access.role, "contributor"))
-          throw new GateRefusal(403, "contributor role required");
+        if (!access.actions.has("useResource"))
+          throw new GateRefusal(403, "universe permission required: useResource");
         const body = await parseBody(c, uploadSchema);
         if (!body.ok) return body.response;
         const client = universeClient(ctx.env, access.universe, access.caller);
@@ -2265,8 +2264,8 @@ export function gatewayRoutes(ctx: AppContext) {
     withApiErrors(c, async () => {
       const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "contributor"))
-        throw new GateRefusal(403, "contributor role required");
+      if (!access.actions.has("useResource"))
+        throw new GateRefusal(403, "universe permission required: useResource");
       const body = await parseBody(c, workspaceEntryRenameSchema);
       if (!body.ok) return body.response;
       const client = universeClient(ctx.env, access.universe, access.caller);
@@ -2295,8 +2294,8 @@ export function gatewayRoutes(ctx: AppContext) {
     withApiErrors(c, async () => {
       const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "contributor"))
-        throw new GateRefusal(403, "contributor role required");
+      if (!access.actions.has("useResource"))
+        throw new GateRefusal(403, "universe permission required: useResource");
       const body = await parseBody(c, workspaceEntryMoveSchema);
       if (!body.ok) return body.response;
       const client = universeClient(ctx.env, access.universe, access.caller);
@@ -2325,8 +2324,8 @@ export function gatewayRoutes(ctx: AppContext) {
     withApiErrors(c, async () => {
       const access = await universeForRequest(ctx, c, c.req.param("id"));
       if (!access) return c.json({ error: "not found" }, 404);
-      if (!roleAtLeast(access.role, "contributor"))
-        throw new GateRefusal(403, "contributor role required");
+      if (!access.actions.has("useResource"))
+        throw new GateRefusal(403, "universe permission required: useResource");
       const parsed = workspaceEntryDeleteSchema.safeParse({
         path: c.req.query("path"),
         expectedRevision: c.req.query("expectedRevision")

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,7 +24,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "account", name: "Personal", role: "creator" }] };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "account", name: "Personal", role: "creator", actions: [...organizationActions(["creator"])] }] };
     if (path === "/api/ui/me") return { user: { id: "user" } };
     if (path === "/api/v1/platform/organizations/account/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "POST" && path === "/api/v1/platform/organizations/account/universes") return { universe: { handle: "chosen", features: {} } };
@@ -112,8 +113,8 @@ it("uses the returned handle for the cached universe and navigates to its new UR
 it("fixes the creation destination in organization administration", async () => {
   const original = api.getMockImplementation()!;
   api.mockImplementation(async (...args) => args[1] === "/api/v1/platform/organizations" ? { organizations: [
-    { id: "first", name: "First", role: "creator" },
-    { id: "destination", name: "Destination", role: "creator" },
+    { id: "first", name: "First", role: "creator", actions: [...organizationActions(["creator"])] },
+    { id: "destination", name: "Destination", role: "creator", actions: [...organizationActions(["creator"])] },
   ] } : original(...args));
   await render(<NewUniverseDialog organizationId="destination" open onOpenChange={() => {}} />);
   await vi.waitFor(() => expect(container.querySelector<HTMLButtonElement>("#universe-organization")?.querySelector('[data-slot="select-value"]')?.textContent).toBe("Destination"));
@@ -124,8 +125,8 @@ it("fixes the creation destination in organization administration", async () => 
 it("refreshes the current working organization's creation default on each opening", async () => {
   const original = api.getMockImplementation()!;
   api.mockImplementation(async (...args) => args[1] === "/api/v1/platform/organizations" ? { organizations: [
-    { id: "first", name: "First", role: "creator" },
-    { id: "second", name: "Second", role: "creator" },
+    { id: "first", name: "First", role: "creator", actions: [...organizationActions(["creator"])] },
+    { id: "second", name: "Second", role: "creator", actions: [...organizationActions(["creator"])] },
   ] } : original(...args));
   await render(<NewUniverseDialog open defaultOrganizationId="first" onOpenChange={() => {}} />);
   const destination = () => container.querySelector<HTMLButtonElement>("#universe-organization")!;

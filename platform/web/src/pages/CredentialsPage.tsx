@@ -89,7 +89,7 @@ export function isReusableCredential(
     && grant.providerId !== "telegram";
 }
 
-export function CredentialsPage({ admin: _admin }: { admin: boolean }) {
+export function CredentialsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 

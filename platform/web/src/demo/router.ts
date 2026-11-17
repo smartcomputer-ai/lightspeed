@@ -1,4 +1,5 @@
 import { auditQuerySchema, type AuditPage } from "@lightspeed-ai/platform-shared";
+import { demoDeploymentAllows } from "./access";
 import { organizationRoutes } from "./routes/organizations";
 import { watchRoutes } from "./routes/watch";
 /// The in-browser stand-in for the platform backend: one Hono app the fetch
@@ -23,7 +24,7 @@ export function createDemoRouter(store: DemoStore): Hono {
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
   app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
   app.get("/api/ui/admin/audit", (c) => {
-    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    if (!demoDeploymentAllows(store, "readAudit")) return c.json({ error: "deployment permission required: readAudit" }, 403);
     const query = auditQuerySchema.safeParse(c.req.query());
     if (!query.success) return c.json({ error: "invalid audit pagination" }, 400);
     const { limit, cursor } = query.data;
@@ -36,7 +37,7 @@ export function createDemoRouter(store: DemoStore): Hono {
     return c.json(page);
   });
   app.get("/api/ui/admin/universes/:id/deleted-sessions", (c) => {
-    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    if (!demoDeploymentAllows(store, "purgeSessions")) return c.json({ error: "deployment permission required: purgeSessions" }, 403);
     const prefix = `${c.req.param("id")}:`;
     const sessions = [...store.deletedSessions.entries()].filter(([key]) => key.startsWith(prefix))
       .map(([, { record, deletedAtMs }]) => ({ sessionId: record.view.id, displayName: record.view.displayName ?? null, deletedAtMs }))
@@ -44,7 +45,7 @@ export function createDemoRouter(store: DemoStore): Hono {
     return c.json({ sessions: sessions.slice(0, 100), nextAfter: sessions.length > 100 ? sessions[99]!.sessionId : null });
   });
   app.post("/api/ui/admin/universes/:id/sessions/:sessionId/purge", (c) => {
-    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    if (!demoDeploymentAllows(store, "purgeSessions")) return c.json({ error: "deployment permission required: purgeSessions" }, 403);
     const universeId = c.req.param("id");
     const sessionId = c.req.param("sessionId");
     if (store.universes.get(universeId)?.sessions.has(sessionId)) return c.json({ error: "session must be soft-deleted first" }, 409);

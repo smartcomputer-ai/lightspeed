@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { selectOption } from "@/test/select-option";
 import { AdminUniverseAccessPage } from "./AdminUniverseAccessPage";
@@ -19,8 +20,9 @@ vi.mock("@/lib/universes", () => ({
       lightspeedUniverseId: "runtime-id",
 
       handle: "test", organizationId: "team",
-      role: mocks.role,
+      role: mocks.role, actions: [...universeActions([mocks.role as never])],
       organizationRole: mocks.organizationRole,
+      organizationActions: [...organizationActions([mocks.organizationRole as never])],
     },
     isLoading: false,
   }),
@@ -62,7 +64,7 @@ async function show() {
       <MemoryRouter>
         <QueryClientProvider client={client}>
           <PermissionIdentityProvider userId="alice" platformAdmin={false}>
-            <AdminUniverseAccessPage admin={false} />
+            <AdminUniverseAccessPage />
           </PermissionIdentityProvider>
         </QueryClientProvider>
       </MemoryRouter>,

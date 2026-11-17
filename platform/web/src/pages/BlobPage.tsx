@@ -18,7 +18,7 @@ import { useDocumentTitle } from "@/lib/document-title";
 /// One stored blob, addressed by its digest within the universe: stored
 /// text, instructions, catalogs, and media the model was shown. Links carry
 /// a name, a type, and their source session or workspace as display hints.
-export function BlobPage({ admin: _admin }: { admin: boolean }) {
+export function BlobPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   const { digest } = useParams<{ digest: string }>();

@@ -4,13 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { ModelsPage } from "./ModelsPage";
 import { ApiError, type ModelDefaults } from "@/api";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])], handle: "test", name: "Test" }, handle: "test", isLoading: false }) }));
 
 const legacy = {
   providerId: "anthropic", credentialId: "anthropic", usableForModels: false, providerKind: "modelApiKey",
@@ -70,7 +71,7 @@ afterEach(async () => {
 async function show(path = "/") {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
-      <ModelsPage admin={false} />
+      <ModelsPage />
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });

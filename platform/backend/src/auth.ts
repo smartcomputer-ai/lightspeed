@@ -15,6 +15,8 @@ import type { ServerEnv } from "./env.js";
 import { admitCompanyIdentity, companyClaimsReader, companyProviderId, type LoginIdentity } from "./company-identity.js";
 import { canUsePassword, passwordMode, principalAllowed, sessionAllowed } from "./auth-access.js";
 import { auditIdentity } from "./identity-audit.js";
+import { hasPlatformAdminRole } from "./context.js";
+import { deploymentActions } from "@lightspeed-ai/platform-shared";
 import { CLI_CLIENT_ID, DEVICE_AUTH_PATHS, deviceAuthorizationPlugin, deviceProtocolError, readDeviceBody } from "./device-authorization.js";
 
 interface AuthRequest {
@@ -203,7 +205,7 @@ export function createAuth(db: Db, env: ServerEnv) {
       const origin = request.headers.get("origin");
       if (origin && ![env.baseUrl, ...env.trustedOrigins].includes(origin)) return errorResponse("Untrusted origin");
     }
-    if (path.startsWith("/admin/") && !current?.user.role?.split(",").includes("admin")) return errorResponse("Platform admin required");
+    if (path.startsWith("/admin/") && !(current && deploymentActions(hasPlatformAdminRole(current.user)).has("manageUsers"))) return errorResponse("Deployment permission required: manageUsers");
     if (path === "/sign-in/email") {
       if (typeof body.email !== "string") return errorResponse("Invalid sign-in", 401);
       const [user] = await db.select().from(schema.user).where(eq(schema.user.email, body.email.toLowerCase()));

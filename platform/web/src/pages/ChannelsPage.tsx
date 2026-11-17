@@ -66,7 +66,7 @@ import {
 import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { useActiveUniverse } from "@/lib/universes";
 
-export function ChannelsPage({ admin: _admin }: { admin: boolean }) {
+export function ChannelsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;

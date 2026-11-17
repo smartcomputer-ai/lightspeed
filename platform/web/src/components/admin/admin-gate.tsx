@@ -1,14 +1,18 @@
 import { Navigate, Outlet, useSearchParams } from "react-router-dom";
 import { LoadingNote, PageHeader } from "@/components/page";
+import type { DeploymentAction, OrganizationAction } from "@lightspeed-ai/platform-shared";
 import { organizationAdminPath, useAdminAccess } from "@/lib/admin-access";
 
-export function AdminGate({
-  scope = "any",
-}: {
-  scope?: "any" | "organizations" | "universes" | "keys" | "platform";
-}) {
+/// An admin area opens when the caller holds what it needs: an action in the
+/// organization on screen, a deployment action, or (for an organization's
+/// universe list) administration of one of its universes.
+export function AdminGate(props: { organizationAction?: OrganizationAction; deploymentAction?: DeploymentAction; universes?: boolean }) {
   const access = useAdminAccess();
-  if (access[scope]) return <Outlet />;
+  const allowed = props.organizationAction ? access.organization(props.organizationAction)
+    : props.deploymentAction ? access.deployment(props.deploymentAction)
+    : props.universes ? access.universes
+    : access.any;
+  if (allowed) return <Outlet />;
   if (access.isLoading) return <LoadingNote />;
   return (
     <>
@@ -35,7 +39,7 @@ export function AdminIndexRedirect() {
         replace
       />
     );
-  if (access.platform)
+  if (access.deployment("administerOrganizations"))
     return <Navigate to="/admin/platform/organizations" replace />;
   return (
     <PageHeader

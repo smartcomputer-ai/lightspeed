@@ -317,9 +317,20 @@ export interface PlatformOrganizationsListResult {
     name: string;
     slug: string;
     personal: boolean;
+    /**
+     * The highest organization role the caller holds, for display.
+     */
     role: ("member" | "creator" | "admin") | null;
+    /**
+     * What the caller may do in the organization: the union of every role it holds there.
+     */
+    actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
     universeQuota: number;
     universeCount?: number;
+    /**
+     * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+     */
+    baseUniverseRole: ("viewer" | "contributor" | "operator" | "owner") | null;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {
@@ -359,6 +370,7 @@ export interface PlatformOrganizationsCreateParams {
   slug: string;
   initialAdminUserId?: string;
   universeQuota?: number;
+  baseUniverseRole?: ("viewer" | "contributor" | "operator" | "owner") | null;
   defaultProtected?: boolean;
   requireProtected?: boolean;
 }
@@ -372,9 +384,20 @@ export interface PlatformOrganizationsCreateResult {
     name: string;
     slug: string;
     personal: boolean;
+    /**
+     * The highest organization role the caller holds, for display.
+     */
     role: ("member" | "creator" | "admin") | null;
+    /**
+     * What the caller may do in the organization: the union of every role it holds there.
+     */
+    actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
     universeQuota: number;
     universeCount?: number;
+    /**
+     * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+     */
+    baseUniverseRole: ("viewer" | "contributor" | "operator" | "owner") | null;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {
@@ -421,9 +444,20 @@ export interface PlatformOrganizationsReadResult {
     name: string;
     slug: string;
     personal: boolean;
+    /**
+     * The highest organization role the caller holds, for display.
+     */
     role: ("member" | "creator" | "admin") | null;
+    /**
+     * What the caller may do in the organization: the union of every role it holds there.
+     */
+    actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
     universeQuota: number;
     universeCount?: number;
+    /**
+     * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+     */
+    baseUniverseRole: ("viewer" | "contributor" | "operator" | "owner") | null;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {
@@ -460,6 +494,7 @@ export interface PlatformOrganizationsReadResult {
 export interface PlatformOrganizationsUpdateParams {
   name?: string;
   universeQuota?: number;
+  baseUniverseRole?: ("viewer" | "contributor" | "operator" | "owner") | null;
   defaultProtected?: boolean;
   requireProtected?: boolean;
   membershipPolicy?: {
@@ -498,9 +533,20 @@ export interface PlatformOrganizationsUpdateResult {
     name: string;
     slug: string;
     personal: boolean;
+    /**
+     * The highest organization role the caller holds, for display.
+     */
     role: ("member" | "creator" | "admin") | null;
+    /**
+     * What the caller may do in the organization: the union of every role it holds there.
+     */
+    actions: ("createUniverse" | "administerUniverses" | "manageMembers" | "manageServiceUsers" | "managePolicy")[];
     universeQuota: number;
     universeCount?: number;
+    /**
+     * The universe role every member person holds on every universe in the organization; null gives members access only through grants.
+     */
+    baseUniverseRole: ("viewer" | "contributor" | "operator" | "owner") | null;
     defaultProtected: boolean;
     requireProtected: boolean;
     membershipPolicy?: {

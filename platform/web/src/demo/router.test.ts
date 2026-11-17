@@ -197,6 +197,8 @@ describe("demo router", () => {
     store.currentUser.role = "user";
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     universe.universe.role = "viewer";
+    // Organization administration would hold Owner on every universe.
+    universe.universe.organizationRole = "member";
     const path = `/api/ui/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/models/defaults`;
     expect((await call("GET", path)).status).toBe(200);
     expect((await call("PUT", path, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision })).status).toBe(403);
@@ -565,6 +567,8 @@ describe("demo router", () => {
     const { store, call } = await boot();
     const state = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
     const base = `/api/ui/universes/${state.universe.id}/setups`;
+    store.currentUser.role = "user";
+    state.universe.organizationRole = "member";
     for (const role of ["viewer", "contributor"] as const) {
       state.universe.role = role;
       expect((await call("GET", base)).status, role).toBe(404);
@@ -573,7 +577,6 @@ describe("demo router", () => {
     expect((await call("GET", base)).json).toMatchObject([{ id: "configurator" }]);
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
     state.universe.role = "owner";
-    store.currentUser.role = "user";
     state.universe.organizationRole = "creator";
     expect((await call("POST", `${base}/configurator/install`)).status).toBe(403);
     state.universe.organizationRole = "admin";

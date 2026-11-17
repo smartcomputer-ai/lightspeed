@@ -2,6 +2,7 @@
 /// configuration. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
+import { demoDeploymentAllows, demoUniverseView } from "../access";
 import { effectiveFeatures, featureOverridesSchema, mergeFeatureOverrides, organizationUniverseAdoptSchema, universeHandleFromName, universeHandleSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
 import { z } from "zod";
 import type { EngineUniverse, Universe } from "@/api";
@@ -17,7 +18,7 @@ export function platformRoutes(store: DemoStore): Hono {
     c.json([...store.users.values()].map(({ id, name, email }) => ({ id, name, email }))),
   );
 
-  app.get("/universes", (c) => c.json([...store.universes.values()].map((state) => state.universe)));
+  app.get("/universes", (c) => c.json([...store.universes.values()].map((state) => demoUniverseView(store, state))));
 
   app.post("/universes", async (c) => {
     const body = await readBody<{ name?: string; handle?: string }>(c);
@@ -27,13 +28,13 @@ export function platformRoutes(store: DemoStore): Hono {
     if (!universeHandleSchema.safeParse(handle).success) return badRequest(c, "invalid universe handle");
     if (store.universeByHandle(handle) || store.orphanEngineUniverses.some(o => o.handle === handle)) return conflict(c, "universe handle is already in use");
     const state = store.addUniverse({ handle, name, role: "owner" });
-    return c.json(state.universe, 201);
+    return c.json(demoUniverseView(store, state), 201);
   });
 
   /// Admin reconciliation: every platform row against the engine inventory,
   /// plus engine universes nothing links to.
   app.get("/universes/reconcile", (c) => {
-    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    if (!demoDeploymentAllows(store, "manageUnclaimedUniverses")) return c.json({ error: "deployment permission required: manageUnclaimedUniverses" }, 403);
     const organizationId = c.req.query("organizationId");
     if (organizationId === "") return badRequest(c, "organizationId must not be empty");
     return c.json({
@@ -50,14 +51,14 @@ export function platformRoutes(store: DemoStore): Hono {
   // Demo runtime and Platform share one in-memory inventory, so its cache
   // is already current; the explicit action still mirrors the real API.
   app.post("/universes/sync-handles", async c => {
-    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    if (!demoDeploymentAllows(store, "manageUnclaimedUniverses")) return c.json({ error: "deployment permission required: manageUnclaimedUniverses" }, 403);
     const body = await readBody<{ organizationId?: unknown }>(c);
     if (body.organizationId !== undefined && (typeof body.organizationId !== "string" || !body.organizationId.length)) return badRequest(c, "invalid organizationId");
     return c.json({ updated: 0, skipped: 0 });
   });
 
   app.post("/universes/adopt", async (c) => {
-    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    if (!demoDeploymentAllows(store, "manageUnclaimedUniverses")) return c.json({ error: "deployment permission required: manageUnclaimedUniverses" }, 403);
     const parsed = organizationUniverseAdoptSchema.extend({ organizationId: z.string().min(1) }).safeParse(await readBody(c));
     if (!parsed.success) return badRequest(c, "Invalid universe adoption");
     const { organizationId, lightspeedUniverseId: engineId, name, initialOwner } = parsed.data;
@@ -90,7 +91,7 @@ export function platformRoutes(store: DemoStore): Hono {
     state.members = initialOwner.kind === "user" ? [{ id: grant.id, userId: initialOwner.id, name: grant.name, role: grant.role, createdAt: grant.createdAt }] : [];
     if (initialOwner.kind === "serviceUser") store.serviceUserGrants.set(state.universe.id, [grant]);
     store.auditEvents.push({ id: crypto.randomUUID(), createdAt: nowIso(), actorId: store.currentUser.id, targetId: engineId, universeId: state.universe.id, action: "universe.adopt", outcome: "success", details: { organizationId } });
-    return c.json(state.universe, 201);
+    return c.json(demoUniverseView(store, state), 201);
   });
 
   app.delete("/universes/engine/:lightspeedUniverseId", async (c) => {
@@ -118,7 +119,7 @@ export function platformRoutes(store: DemoStore): Hono {
 
   app.get("/universes/:id", (c) => {
     const state = universeFor(store, c);
-    return state ? c.json(state.universe) : notFound(c);
+    return state ? c.json(demoUniverseView(store, state)) : notFound(c);
   });
 
   app.put("/universes/:id/handle", async c => {
@@ -131,7 +132,7 @@ export function platformRoutes(store: DemoStore): Hono {
     const existing = store.universeByHandle(handle);
     if ((existing && existing !== state) || store.orphanEngineUniverses.some(orphan => orphan.handle === handle)) return conflict(c, "universe handle is already in use");
     state.universe.handle = handle;
-    return c.json(state.universe);
+    return c.json(demoUniverseView(store, state));
   });
 
   app.patch("/universes/:id", async (c) => {
@@ -150,7 +151,7 @@ export function platformRoutes(store: DemoStore): Hono {
     }
     if (typeof body.name === "string" && body.name.trim()) state.universe.name = body.name.trim();
     if (body.status === "active" || body.status === "archived") state.universe.status = body.status;
-    return c.json(state.universe);
+    return c.json(demoUniverseView(store, state));
   });
 
   app.delete("/universes/:id", async (c) => {

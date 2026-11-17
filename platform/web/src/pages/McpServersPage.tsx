@@ -61,7 +61,7 @@ const MCP_CREATE_STEPS = [
 /// U5a: the universe's MCP server registry — what the profile editor's
 /// server picker links against. Full-document saves mirror the engine's
 /// put-with-revision catalog semantics.
-export function McpServersPage({ admin: _admin }: { admin: boolean }) {
+export function McpServersPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 

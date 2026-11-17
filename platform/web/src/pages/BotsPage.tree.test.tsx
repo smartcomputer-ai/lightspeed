@@ -83,8 +83,8 @@ afterEach(async () => {
 async function show(path: string) {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}><Routes>
-      <Route path="/u/:handle/bots/:botId" element={<BotsPage admin={false} />} />
-      <Route path="/u/:handle/bots/:botId/chat/:sessionId" element={<BotsPage admin={false} />} />
+      <Route path="/u/:handle/bots/:botId" element={<BotsPage />} />
+      <Route path="/u/:handle/bots/:botId/chat/:sessionId" element={<BotsPage />} />
     </Routes></MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
   ));
   for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10); });

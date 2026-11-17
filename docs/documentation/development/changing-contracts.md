@@ -117,7 +117,7 @@ npm run generate:platform-contract
 npm run generate --workspace @lightspeed-ai/sdk
 npm run generate --workspace @lightspeed-ai/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
-node platform/scripts/generate-method-roles.mjs
+node platform/scripts/generate-method-actions.mjs
 (cd clients/python && uv sync --locked && uv run python scripts/generate.py)
 ```
 
@@ -156,9 +156,11 @@ API and workflow exports and the same helper table, and writes `types.py`,
 `clients/python/src/lightspeed_ai/`. A new helper belongs in the Python client's
 README too, which its tests check.
 
-The method-role generator updates `platform/backend/src/routes/method-roles.ts`:
-minimum member roles, session-target checks, and methods unavailable to member
-calls. Keep this generated policy map with the API change.
+The method-action generator updates `platform/backend/src/routes/method-actions.ts`:
+the universe action each method requires, session-target checks, and methods
+unavailable to member calls. A new core action fails the Platform build until
+`platform/shared/src/access.ts` places it in a role. Keep this generated policy
+map with the API change.
 
 Keep the generated diff with the authored change. Then check the exported
 contract and consumers:

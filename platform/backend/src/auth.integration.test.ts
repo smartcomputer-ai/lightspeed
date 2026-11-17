@@ -251,7 +251,8 @@ it("keeps account membership and universe grants distinct on existing sessions",
     expect(listed.find(item => item.role === "operator")).toBeDefined();
   }
   expect((await fixture.request(`${base}/${granted.id}`, undefined, adminCookie, "DELETE")).status).toBe(200);
-  expect(await (await fixture.request("/api/ui/universes", undefined, cookie)).json()).toEqual([]);
+  // Without the grant, the member keeps the organization's base role.
+  expect((await (await fixture.request("/api/ui/universes", undefined, cookie)).json() as Array<{ role: string }>).map(item => item.role)).toEqual(["viewer"]);
   expect((await fixture.request("/api/ui/admin/audit", undefined, cookie)).status).toBe(403);
   await fixture.db.delete(schema.user).where(eq(schema.user.id, company.id));
   const { events } = await (await fixture.request("/api/ui/admin/audit", undefined, adminCookie)).json() as { events: Array<{ targetId: string; action: string }> };

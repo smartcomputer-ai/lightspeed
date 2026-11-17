@@ -1,5 +1,6 @@
 import { OrganizationSwitcher } from "@/components/admin/organization-switcher";
 import { organizationAdminPath, useAdminAccess } from "@/lib/admin-access";
+import type { DeploymentAction, OrganizationAction } from "@lightspeed-ai/platform-shared";
 import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
@@ -57,22 +58,24 @@ function shellMode(pathname: string): ShellMode {
   return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
 }
 
-const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string }> = [
-  { to: "/admin/platform/organizations", icon: UserIcon, label: "All Organizations" },
-  { to: "/admin/platform/users", icon: UserAdminIcon, label: "Users" },
-  { to: "/admin/platform/channels", icon: ChannelIcon, label: "Channels" },
-  { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log" },
-  { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers" },
-  { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes" },
+/// Each admin entry shows when the caller holds the action its page needs.
+const PLATFORM_NAV: Array<{ to: string; icon: ComponentType; label: string; action: DeploymentAction }> = [
+  { to: "/admin/platform/organizations", icon: UserIcon, label: "All Organizations", action: "administerOrganizations" },
+  { to: "/admin/platform/users", icon: UserAdminIcon, label: "Users", action: "manageUsers" },
+  { to: "/admin/platform/channels", icon: ChannelIcon, label: "Channels", action: "configureDeployment" },
+  { to: "/admin/platform/audit", icon: AuditLogIcon, label: "Audit log", action: "readAudit" },
+  { to: "/admin/platform/environment-providers", icon: EnvironmentProviderIcon, label: "Environment providers", action: "configureDeployment" },
+  { to: "/admin/platform/unclaimed-universes", icon: UniversesIcon, label: "Unclaimed Universes", action: "manageUnclaimedUniverses" },
 ];
 /// `shared` sections do not apply to a personal organization, whose owner
-/// is its only member.
-const ORGANIZATION_NAV = [
-  { path: "universes", icon: UniversesIcon, label: "Universes", administrator: false },
-  { path: "people", icon: UserIcon, label: "People", administrator: true, shared: true },
-  { path: "service-users", icon: UserAdminIcon, label: "Service users", administrator: true },
-  { path: "api-keys", icon: SecurityIcon, label: "API keys", administrator: true },
-  { path: "settings", icon: SecurityIcon, label: "Settings", administrator: true },
+/// is its only member. Universes has no action of its own: it opens for the
+/// organization's administrators and for Owners of any of its universes.
+const ORGANIZATION_NAV: Array<{ path: string; icon: ComponentType; label: string; action?: OrganizationAction; shared?: boolean }> = [
+  { path: "universes", icon: UniversesIcon, label: "Universes" },
+  { path: "people", icon: UserIcon, label: "People", action: "manageMembers", shared: true },
+  { path: "service-users", icon: UserAdminIcon, label: "Service users", action: "manageServiceUsers" },
+  { path: "api-keys", icon: SecurityIcon, label: "API keys", action: "manageServiceUsers" },
+  { path: "settings", icon: SecurityIcon, label: "Settings", action: "managePolicy" },
 ];
 
 /// The part of the page title the route alone determines, most specific
@@ -163,9 +166,10 @@ function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-export function AppShell({ user, admin }: { user: SessionUser; admin: boolean }) {
+export function AppShell({ user }: { user: SessionUser }) {
   const universes = useUniverses();
   const adminAccess = useAdminAccess();
+  const platformNav = PLATFORM_NAV.filter(item => adminAccess.deployment(item.action));
   const match = useMatch("/u/:handle/*");
   const adminMatch = useMatch("/admin/organizations/:organizationId/universes/:handle/*");
   const activeHandle = match?.params.handle ?? adminMatch?.params.handle;
@@ -233,7 +237,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
         {/* Admin stacks Back, the Organizations heading, and its selector. */}
         <SidebarHeader className={cn("relative shrink-0 justify-center p-(--sidebar-header-padding)", mode !== "admin" && "h-(--pane-bar-height)")}>
           {mode === "universe" ? (
-            <UniverseSwitcher active={active} admin={admin} />
+            <UniverseSwitcher active={active} />
           ) : mode === "admin" ? <OrganizationSwitcher /> : (
             <ModeHeader title={MODE_TITLE[mode]} />
           )}
@@ -262,10 +266,10 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
           })}
           {mode === "admin" && <>
             {adminAccess.selected && <SidebarGroup><SidebarGroupContent><SidebarMenu>
-              {ORGANIZATION_NAV.filter(item => (!item.administrator || adminAccess.organizations) && !(item.shared && adminAccess.selected?.personal)).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
+              {ORGANIZATION_NAV.filter(item => (item.action ? adminAccess.organization(item.action) : adminAccess.universes) && !(item.shared && adminAccess.selected?.personal)).map(item => <NavItem key={item.path} to={`${organizationAdminPath(adminAccess.selected!.id)}/${item.path}`} icon={item.icon} label={item.label} />)}
             </SidebarMenu></SidebarGroupContent></SidebarGroup>}
-            {adminAccess.platform && <><SidebarSeparator /><SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
-              {PLATFORM_NAV.map(item => <NavItem key={item.to} {...item} />)}
+            {platformNav.length > 0 && <><SidebarSeparator /><SidebarGroup><SidebarGroupLabel>Platform</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>
+              {platformNav.map(({ action: _action, ...item }) => <NavItem key={item.to} {...item} />)}
             </SidebarMenu></SidebarGroupContent></SidebarGroup></>}
           </>}
           {(mode === "account" || mode === "preferences") && (

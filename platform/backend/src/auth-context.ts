@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import type { schema } from "@lightspeed-ai/platform-db";
 import type { CredentialRestrictions } from "@lightspeed-ai/platform-db/schema";
 import type { ApiVariables } from "./context.js";
+import { deploymentActions, type DeploymentAction } from "@lightspeed-ai/platform-shared";
 
 export type { CredentialRestrictions };
 export type Principal = {
@@ -66,4 +67,9 @@ export function requireCredentialManagement(auth: AuthContext): void {
   if (auth.principal.kind !== "user" || !["session", "cliSession"].includes(auth.credential.kind)) {
     throw new AuthorizationRefusal(403, "Manage credentials from an authenticated human session");
   }
+}
+
+/** Whether the principal holds a deployment action. Credential restrictions are enforced separately. */
+export function deploymentAllows(auth: AuthContext, action: DeploymentAction): boolean {
+  return deploymentActions(auth.principal.platformAdmin).has(action);
 }

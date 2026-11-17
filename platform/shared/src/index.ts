@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { universeIconSchema, universeIconColorSchema } from "./universe-appearance.js";
+import { universeRoleSchema } from "./access.js";
+export * from "./access.js";
 export * from "./universe-appearance.js";
 export * from "./workspace-transfers.js";
 
@@ -24,16 +26,6 @@ export const universeUpdateSchema = z.object({
   features: z.lazy(() => featureOverridesSchema).optional(),
 });
 export type UniverseUpdateInput = z.infer<typeof universeUpdateSchema>;
-
-/// Member roles, least to most. Explicit grants assign these roles within an organization.
-export const UNIVERSE_ROLES = ["viewer", "contributor", "operator", "owner"] as const;
-export const universeRoleSchema = z.enum(UNIVERSE_ROLES);
-export type UniverseRole = z.infer<typeof universeRoleSchema>;
-
-/// Whether `role` meets `required`.
-export function roleAtLeast(role: UniverseRole, required: UniverseRole): boolean {
-  return UNIVERSE_ROLES.indexOf(role) >= UNIVERSE_ROLES.indexOf(required);
-}
 
 export const memberUpdateSchema = z.object({
   role: universeRoleSchema,
@@ -207,17 +199,6 @@ export {
   type MessageAttachment,
   type MessageRunOptions,
 } from "./messages.js";
-
-/** Closing shared work is an operator responsibility, even for its creator. */
-export function canCloseSession(role: UniverseRole | null | undefined, creator: boolean, shared: boolean): boolean {
-  return role === "owner" || (role === "operator" && (creator || shared)) ||
-    (role === "contributor" && creator && !shared);
-}
-
-/** Operators may remove shared sessions; private sessions require an admin. */
-export function canDeleteSession(role: UniverseRole | null | undefined, shared: boolean): boolean {
-  return role === "owner" || (role === "operator" && shared);
-}
 
 export * from "./platform-api.js";
 export * from "./credential-api.js";

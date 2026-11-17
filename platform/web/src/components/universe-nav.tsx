@@ -2,7 +2,8 @@ import type { ComponentType } from "react";
 import { BotIcon, ChannelIcon, CredentialIcon, EnvironmentIcon, McpServerIcon, ModelIcon, ProfileIcon, SessionIcon, TemplateIcon, WorkspaceIcon } from "@/icons";
 import { Navigate } from "react-router-dom";
 import type { FeatureKey, FeatureStates } from "@lightspeed-ai/platform-shared";
-import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
+import type { UniverseAction } from "@lightspeed-ai/platform-shared";
+import { useActionPermissions } from "@/lib/permissions";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
 
 /// One universe page in the sidebar. The item shows when the caller holds
@@ -13,13 +14,13 @@ export interface UniverseNavItem {
   path: string;
   label: string;
   icon: ComponentType;
-  action: PermissionAction;
+  action: UniverseAction;
   feature?: FeatureKey;
 }
 
 export function navItemVisible(
   item: UniverseNavItem,
-  can: (action: PermissionAction) => boolean,
+  can: (action: UniverseAction) => boolean,
   features: FeatureStates | undefined,
 ): boolean {
   return can(item.action) && (!item.feature || features?.[item.feature] === true);
@@ -83,7 +84,7 @@ export function universeSectionTrail(path: string): string[] {
 /// universe's home.
 export function settingsIndexPath(
   universe: { handle: string; features?: FeatureStates },
-  can: (action: PermissionAction) => boolean,
+  can: (action: UniverseAction) => boolean,
 ): string {
   const first = SETTINGS_NAV.find((item) => navItemVisible(item, can, universe.features));
   return first ? `/u/${universe.handle}/${first.path}` : universeHome(universe);

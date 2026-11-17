@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { ApiVariables, AppContext } from "../context.js";
-import { isPlatformAdmin } from "../context.js";
+import { sessionAllows } from "../context.js";
 import { auditIdentity } from "../identity-audit.js";
 import { withApiErrors } from "../http.js";
 import { deploymentClient } from "../runtime-client.js";
@@ -11,7 +11,7 @@ import { deploymentClient } from "../runtime-client.js";
 export function sessionAdminRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.use("*", async (c, next) => {
-    if (!isPlatformAdmin(c.get("session"))) return c.json({ error: "platform admin required" }, 403);
+    if (!sessionAllows(c.get("session"), "purgeSessions")) return c.json({ error: "deployment permission required: purgeSessions" }, 403);
     await next();
   });
   app.get("/universes/:id/deleted-sessions", (c) => withApiErrors(c, async () => {

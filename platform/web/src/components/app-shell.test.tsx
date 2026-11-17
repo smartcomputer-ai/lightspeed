@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import type { SessionUser } from "@/auth";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
@@ -48,15 +49,19 @@ afterEach(async () => {
 async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false, adminPath?: string, organizationRole?: string): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "team", name: "Team", personal: personalOrganization, role: organizationRole ?? "member" }], canCreate: false };
-    if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: mocks.role, features }];
+    if (path === "/api/v1/platform/organizations") {
+      // The server's view: the caller's own role, plus Admin's actions for a Platform Admin.
+      const roles = [organizationRole ?? "member", ...(platformAdmin ? ["admin"] : [])] as never[];
+      return { organizations: [{ id: "team", name: "Team", personal: personalOrganization, role: organizationRole ?? "member", actions: [...organizationActions(roles)] }], canCreate: false };
+    }
+    if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: mocks.role, actions: [...universeActions([mocks.role as never])], features }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}>
       <MemoryRouter initialEntries={[adminPath ?? (platformAdmin ? "/admin/platform/audit" : "/u/test/bots")]}>
         <Routes>
-          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={platformAdmin} />}>
+          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} />}>
             <Route path="/admin/organizations/:organizationId/*" element={null} /><Route path="*" element={null} />
           </Route>
         </Routes>
@@ -150,14 +155,14 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
   const key = "lightspeed:user-preferences:user";
   localStorage.setItem(key, JSON.stringify({ sidebarCollapsed: true }));
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
-    if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: "viewer" }];
+    if (path === "/api/ui/universes") return [{ id: "universe", organizationId: "team", handle: "test", name: "Test", status: "active", role: "viewer", actions: [...universeActions(["viewer"])] }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
     <QueryClientProvider client={client}><UserPreferencesProvider userId="user"><PermissionIdentityProvider userId="user" platformAdmin={false}>
       <MemoryRouter initialEntries={["/u/test/bots"]}>
         <Routes>
-          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={false} />}>
+          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} />}>
             <Route path="/admin/organizations/:organizationId/*" element={null} /><Route path="*" element={null} />
           </Route>
         </Routes>
@@ -203,7 +208,7 @@ it("opens a personal-key deep link and keeps profile section links navigable", a
     await act(async () => root.render(
       <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
         <MemoryRouter initialEntries={["/account#api-keys"]}><Routes>
-          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={false} />}>
+          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} />}>
             <Route path="account" element={<><div id="profile" /><div id="security" /><div id="api-keys" /></>} />
           </Route>
         </Routes></MemoryRouter>

@@ -3,17 +3,18 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { waitForUi } from "@/test/wait-for-ui";
 import { SetupsPage } from "./SetupsPage";
-const mocks = vi.hoisted(() => ({ api: vi.fn(), organizationRole: "admin", owner: true }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), organizationRole: "admin", platformAdmin: false, owner: true }));
 vi.mock("@/api", () => ({ api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "u", organizationRole: mocks.organizationRole }, handle: "test", isLoading: false }) }));
-vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: (action: string) => action !== "manageAccess" || mocks.owner }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "u", organizationRole: mocks.organizationRole, organizationActions: [...organizationActions(mocks.platformAdmin ? [mocks.organizationRole as never, "admin"] : [mocks.organizationRole as never])] }, handle: "test", isLoading: false }) }));
+vi.mock("@/lib/permissions", () => ({ useActionPermissions: () => ({ can: (action: string) => action !== "administer" || mocks.owner }) }));
 let element: HTMLDivElement; let root: Root; let client: QueryClient;
 let status: "available" | "ready";
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  mocks.organizationRole = "admin"; mocks.owner = true; status = "available";
+  mocks.organizationRole = "admin"; mocks.platformAdmin = false; mocks.owner = true; status = "available";
   mocks.api.mockReset().mockImplementation(async (method: string) => {
     if (method === "POST") status = "ready";
     const setup = { id: "configurator", name: "Configurator", description: "Configure this universe", version: 6, available: true, status, resources: status === "ready" ? { serverId: "configurator" } : undefined };
@@ -23,8 +24,10 @@ beforeEach(() => {
   element = document.createElement("div"); document.body.append(element); root = createRoot(element);
 });
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); element.remove(); vi.unstubAllGlobals(); });
-async function show(admin = false) {
-  await act(async () => root.render(<QueryClientProvider client={client}><SetupsPage admin={admin} /></QueryClientProvider>));
+async function show(platformAdmin = false) {
+  // A Platform Admin administers every organization: the server sends Admin's actions.
+  mocks.platformAdmin = platformAdmin;
+  await act(async () => root.render(<QueryClientProvider client={client}><SetupsPage /></QueryClientProvider>));
   await waitForUi(() => expect(element.querySelector("button")).not.toBeNull());
 }
 it("installs and rotates a managed service-user credential without asking for a key", async () => {

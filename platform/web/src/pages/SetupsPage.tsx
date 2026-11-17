@@ -8,12 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function SetupsPage({ admin }: { admin: boolean }) {
+export function SetupsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
   if (!universe || !permissions.can("configureResource")) return <UniverseNotFound handle={handle} />;
-  const installable = permissions.can("manageAccess") && (admin || universe.organizationRole === "admin");
+  // Installation creates a service user and its key in the organization.
+  const installable = permissions.can("administer") && universe.organizationActions?.includes("manageServiceUsers") === true;
   return <SetupList universeId={universe.id} installable={installable} />;
 }
 

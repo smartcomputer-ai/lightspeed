@@ -124,6 +124,10 @@ export const organization = pgTable(
     metadata: text("metadata"),
     personalUserId: text("personal_user_id").unique().references(() => user.id, { onDelete: "set null" }),
     universeQuota: integer("universe_quota").default(100).notNull(),
+    /// The default universe access: the universe role every member person
+    /// holds on each universe of the organization; null limits members to
+    /// their explicit grants.
+    baseUniverseRole: text("base_universe_role", { enum: ["viewer", "contributor", "operator", "owner"] }).default("viewer"),
     defaultProtected: boolean("default_protected").default(true).notNull(),
     requireProtected: boolean("require_protected").default(false).notNull(),
     membershipPolicy: jsonb("membership_policy").$type<{

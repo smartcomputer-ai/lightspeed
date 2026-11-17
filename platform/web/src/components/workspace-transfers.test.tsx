@@ -454,7 +454,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
           <Routes>
             <Route
               path="/u/:handle/workspaces/:workspaceId/files/*"
-              element={<WorkspacesPage admin={false} />}
+              element={<WorkspacesPage />}
             />
           </Routes>
         </MemoryRouter>
@@ -571,11 +571,11 @@ it.each([true, false])(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
               <Route
                 path="/u/:handle/workspaces/:workspaceId?"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1006,7 +1006,7 @@ it("offers the open file’s actions in its detail header and on its row’s rig
           <Routes>
             <Route
               path="/u/:handle/workspaces/:workspaceId/files/*"
-              element={<WorkspacesPage admin={false} />}
+              element={<WorkspacesPage />}
             />
           </Routes>
         </MemoryRouter>
@@ -1108,7 +1108,7 @@ it.each(["", "docs"])(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1212,7 +1212,7 @@ it.each(["file", "folder", "move-file", "move-folder"])(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1300,7 +1300,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1377,7 +1377,7 @@ it.each([
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1444,7 +1444,7 @@ it.each([
             <Routes>
               <Route
                 path="/u/:handle/workspaces/:workspaceId/files/*"
-                element={<WorkspacesPage admin={false} />}
+                element={<WorkspacesPage />}
               />
             </Routes>
           </MemoryRouter>
@@ -1649,7 +1649,7 @@ it.each(["changed", "deleted"])("preserves a dirty draft when its file is extern
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/u/test/workspaces/ws/files/docs/a%20%23%3F.txt"]}>
-        <Routes><Route path="/u/:handle/workspaces/:workspaceId/files/*" element={<WorkspacesPage admin={false} />} /></Routes>
+        <Routes><Route path="/u/:handle/workspaces/:workspaceId/files/*" element={<WorkspacesPage />} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   ));

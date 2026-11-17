@@ -1,5 +1,6 @@
 /** Demo organization state stays in memory; it cannot issue usable credentials. */
 import { Hono } from "hono";
+import { demoDeploymentAllows, demoOrganizationActions, demoUniverseView } from "../access";
 import { organizationCreateSchema, organizationUpdateSchema, organizationMemberPutSchema, serviceUserCreateSchema, serviceUserUpdateSchema, organizationUniverseCreateSchema, universeGrantPutSchema, universeLifecycleUpdateSchema, type PlatformOperationResult } from "@lightspeed-ai/platform-shared";
 import type { DemoStore } from "../store";
 type Organization = PlatformOperationResult<"platform/organizations/read">["organization"];
@@ -9,20 +10,20 @@ export function organizationRoutes(store: DemoStore) {
   const app = new Hono();
   const { organizations, organizationMemberships: memberships, serviceUsers, serviceUserGrants } = store;
   if (!organizations.has("demo-organization")) {
-    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", universeQuota: 100, defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
+    organizations.set("demo-organization", { id: "demo-organization", name: "Demo", slug: "demo", personal: false, role: "admin", actions: [], universeQuota: 100, baseUniverseRole: "viewer", defaultProtected: false, requireProtected: false, createdAt: new Date().toISOString() });
     memberships.set("demo-organization", new Map([...store.users.values()].map(u => [u.id, u.id === store.currentUser.id ? "admin" : "member"])));
   }
   const stateFor = (id: string) => [...store.universes.values()].find(s => s.universe.lightspeedUniverseId === id || s.universe.id === id || s.universe.handle === id);
   app.use("/organizations/:organizationId/*", async (c, next) => { if (!organizations.has(c.req.param("organizationId")!)) return c.json({ error: "Organization not found" }, 404); await next(); });
-  const view = (organization: Organization): Organization => ({ ...organization, universeCount: [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length });
-  app.get("/organizations", c => c.json({ organizations: [...organizations.values()].map(view), canCreate: store.currentUser.role === "admin" }));
+  const view = (organization: Organization): Organization => ({ ...organization, actions: [...demoOrganizationActions(store, organization.role)], universeCount: [...store.universes.values()].filter(state => state.universe.organizationId === organization.id).length });
+  app.get("/organizations", c => c.json({ organizations: [...organizations.values()].map(view), canCreate: demoDeploymentAllows(store, "createOrganization") }));
   app.post("/organizations", async c => {
     const parsed = organizationCreateSchema.safeParse(await c.req.json()); if (!parsed.success) return c.json({ error: "Invalid organization" }, 400);
     if ([...organizations.values()].some(a => a.slug === parsed.data.slug)) return c.json({ error: "Organization handle already exists" }, 409);
     const { initialAdminUserId = store.currentUser.id, ...input } = parsed.data;
     if (!store.users.has(initialAdminUserId)) return c.json({ error: "User not found" }, 404);
-    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", universeQuota: input.universeQuota ?? 100, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
-    organizations.set(organization.id, organization); memberships.set(organization.id, new Map([[initialAdminUserId, "admin"]])); return c.json({ organization }, 201);
+    const organization: Organization = { ...input, id: crypto.randomUUID(), personal: false, role: "admin", actions: [], universeQuota: input.universeQuota ?? 100, baseUniverseRole: input.baseUniverseRole === undefined ? "viewer" : input.baseUniverseRole, defaultProtected: input.defaultProtected ?? true, requireProtected: input.requireProtected ?? false, createdAt: new Date().toISOString() };
+    organizations.set(organization.id, organization); memberships.set(organization.id, new Map([[initialAdminUserId, "admin"]])); return c.json({ organization: view(organization) }, 201);
   });
   app.get("/organizations/:organizationId", c => { const organization = organizations.get(c.req.param("organizationId")); return organization ? c.json({ organization: view(organization) }) : c.json({ error: "Organization not found" }, 404); });
   app.get("/organizations/:organizationId/members", c => c.json({ members: [...(memberships.get(c.req.param("organizationId")) ?? [])].flatMap(([userId, role]) => { const u = store.users.get(userId); return u ? [{ id: userId, userId, name: u.name, email: u.email, role, createdAt: organizations.get(c.req.param("organizationId"))!.createdAt }] : []; }) }));
@@ -72,7 +73,7 @@ export function organizationRoutes(store: DemoStore) {
     const createdAt = new Date().toISOString(); const id = store.nextId("grant");
     if (owner.kind === "user") state.members.push({ id, userId: owner.id, name: ownerUser!.name, role: "owner", createdAt });
     else serviceUserGrants.set(state.universe.id, [{ id, principal: owner, universeId: state.universe.id, name: ownerApp!.name, role: "owner", createdAt }]);
-    return c.json({ universe: state.universe }, 201);
+    return c.json({ universe: demoUniverseView(store, state) }, 201);
   });
   app.patch("/universes/:universe", async c => {
     const state = stateFor(c.req.param("universe")); if (!state) return c.json({ error: "Universe not found" }, 404);
@@ -81,7 +82,7 @@ export function organizationRoutes(store: DemoStore) {
     if ((parsed.data.protected ?? state.universe.protected) && expiry != null) return c.json({ error: "Protected universes cannot expire" }, 409);
     if (organizations.get(state.universe.organizationId!)?.requireProtected && parsed.data.protected === false) return c.json({ error: "Organization requires protection" }, 403);
     if (parsed.data.expiresAtMs != null && parsed.data.expiresAtMs <= Date.now()) return c.json({ error: "Expiry must be in the future" }, 400);
-    Object.assign(state.universe, parsed.data); return c.json({ universe: state.universe });
+    Object.assign(state.universe, parsed.data); return c.json({ universe: demoUniverseView(store, state) });
   });
   const grantsFor = (state: NonNullable<ReturnType<typeof stateFor>>): Grant[] => [...state.members.map(m => ({ id: m.id, universeId: state.universe.id, principal: { kind: "user" as const, id: m.userId }, role: m.role, name: m.name, createdAt: m.createdAt })), ...(serviceUserGrants.get(state.universe.id) ?? [])];
   app.get("/universes/:universe/grants", c => { const state = stateFor(c.req.param("universe")); return state ? c.json({ grants: grantsFor(state) }) : c.json({ error: "Universe not found" }, 404); });

@@ -1,5 +1,5 @@
 import { platformApi } from "@/lib/platform-api";
-import { useActionPermissions, usePlatformAdmin } from "@/lib/permissions";
+import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -40,18 +40,14 @@ import { AdminUniverseHeader } from "@/components/admin/universe-header";
 import { DeleteUniverseDialog } from "@/components/admin/delete-universe-dialog";
 import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
 
-export function AdminUniverseSettingsPage({
-  admin: _admin,
-}: {
-  admin: boolean;
-}) {
+export function AdminUniverseSettingsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 
   if (isLoading) {
     return <LoadingNote />;
   }
-  if (!universe || !permissions.can("manageAccess")) {
+  if (!universe || !permissions.can("administer")) {
     return <UniverseNotFound handle={handle} />;
   }
 
@@ -356,13 +352,12 @@ function DangerZone({ universe }: { universe: Universe }) {
 }
 
 function ProtectionCard({ universe }: { universe: Universe }) {
-  const platformAdmin = usePlatformAdmin();
   const client = useQueryClient();
   const navigate = useNavigate();
   const [expiry, setExpiry] = useState(
     universe.expiresAtMs ? new Date(universe.expiresAtMs).toISOString() : "",
   );
-  const mayUnprotect = platformAdmin || universe.organizationRole === "admin";
+  const mayUnprotect = universe.organizationActions?.includes("administerUniverses") === true;
   const update = useMutation({
     mutationFn: (input: { protected?: boolean; expiresAtMs?: number | null }) =>
       platformApi("platform/universes/update", {

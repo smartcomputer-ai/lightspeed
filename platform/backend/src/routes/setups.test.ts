@@ -1,7 +1,7 @@
 import { userSubject } from "../../test/subject-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
-import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ApiVariables, AppContext } from "../context.js";
 import { CONFIGURATOR_OPERATIONS, setupRoutes } from "./setups.js";
 import { universeForRequest } from "./universes.js";
@@ -14,7 +14,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 function routes(role: UniverseRole) {
   const universe = { id: "platform-universe", lightspeedUniverseId: "33333333-3333-4333-8333-333333333333" };
   vi.mocked(universeForRequest).mockResolvedValue({
-    universe, handle: "test", role, caller: { actorId: "platform-user", role },
+    universe, handle: "test", role, actions: universeActions([role as UniverseRole]), caller: { actorId: "platform-user", actions: universeActions([role as UniverseRole]) },
   } as unknown as Awaited<ReturnType<typeof universeForRequest>>);
   const runtime = vi.fn();
   vi.stubGlobal("fetch", runtime);

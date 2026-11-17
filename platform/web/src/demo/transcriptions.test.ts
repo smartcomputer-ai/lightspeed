@@ -43,5 +43,6 @@ it("enforces viewer mutation and requester read restrictions", async () => {
   expect((await call("GET", `/${job.transcriptionId}`)).status).toBe(404);
   store.currentUser.role = "user";
   universe.universe.role = "viewer";
+  universe.universe.organizationRole = "member";
   expect((await call("POST", "/audio", { bytesBase64: btoa("audio") })).status).toBe(403);
 });

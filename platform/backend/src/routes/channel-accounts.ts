@@ -16,7 +16,7 @@ import {
 import { readChannelsStatus } from "../channels-status.js";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody, withApiErrors } from "../http.js";
-import { isPlatformAdmin } from "../context.js";
+import { sessionAllows } from "../context.js";
 import { featureRefusal } from "../runtime-client.js";
 import { universeClient, deploymentClient } from "../runtime-client.js";
 import { universeForRequest } from "./universes.js";
@@ -61,8 +61,8 @@ export function channelAccountAdminRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.get("/", async (c) => {
-    if (!isPlatformAdmin(c.get("session"))) {
-      return c.json({ error: "platform admin required" }, 403);
+    if (!sessionAllows(c.get("session"), "configureDeployment")) {
+      return c.json({ error: "deployment permission required: configureDeployment" }, 403);
     }
     return withApiErrors(c, async () => {
       const client = deploymentClient(ctx.env);

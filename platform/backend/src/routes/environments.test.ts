@@ -1,4 +1,5 @@
 import { userSubject } from "../../test/subject-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,7 +12,7 @@ vi.mock("./universes.js", () => ({
   universeForRequest: vi.fn(async () => ({
     universe: { lightspeedUniverseId: "universe" },
     role: "operator",
-    caller: { actorId: "user", role: "operator" },
+    actions: universeActions(["operator" as UniverseRole]), caller: { actorId: "user", actions: universeActions(["operator" as UniverseRole]) },
   })),
 }));
 
@@ -255,7 +256,8 @@ it.each([
   vi.mocked(universeForRequest).mockResolvedValueOnce({
     ...access,
     role: "contributor",
-    caller: { ...access.caller, role: "contributor" },
+    actions: universeActions(["contributor"]),
+    caller: { ...access.caller, actions: universeActions(["contributor"]) },
   });
   const response = await request(method, path, body);
   expect(response.status).toBe(403);

@@ -2,11 +2,11 @@ import { Hono, type Context } from "hono";
 import { and, count, eq, inArray, or, sql } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { LightspeedApiError } from "@lightspeed-ai/sdk";
-import { organizationUniverseAdoptSchema, organizationUniverseCreateSchema, effectiveFeatures, mergeFeatureOverrides, universeHandleFromName, universeHandleSchema, universeUpdateSchema, type OrganizationRole, type PrincipalRef, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { UNIVERSE_ROLES, ORGANIZATION_ROLES, highestRole, universeActions, organizationUniverseAdoptSchema, organizationUniverseCreateSchema, effectiveFeatures, mergeFeatureOverrides, universeHandleFromName, universeHandleSchema, universeUpdateSchema, type OrganizationAction, type OrganizationRole, type PrincipalRef, type UniverseAction, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { z } from "zod";
 import type { AppContext, ApiVariables } from "../context.js";
-import { enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
-import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, declaredUniverseRole, resourceScopeAllowed } from "../organization-access.js";
+import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
+import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, declaredUniverseRole, resourceScopeAllowed, type OrganizationAccess } from "../organization-access.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { deploymentClient, GateRefusal, type UniverseCaller } from "../runtime-client.js";
 import { requireAvailableCachedHandle, syncUniverseHandles } from "../universe-handles.js";
@@ -17,8 +17,11 @@ type UniverseRow = typeof schema.universes.$inferSelect;
 export interface UniverseAccess {
   universe: UniverseRow;
   handle: string;
+  /** The highest universe role held, for display. Decisions use `actions`. */
   role: UniverseRole;
+  actions: ReadonlySet<UniverseAction>;
   organizationRole: OrganizationRole;
+  organizationActions: ReadonlySet<OrganizationAction>;
   organization: typeof schema.organization.$inferSelect;
   auth: AuthContext;
   caller: UniverseCaller;
@@ -29,10 +32,11 @@ export function universeView(access: UniverseAccess) {
   const configuration = universe.runtimeConfiguration;
   return { id: universe.id, organizationId: universe.organizationId, lightspeedUniverseId: universe.lightspeedUniverseId,
     name: universe.name, handle: access.handle, role, organizationRole, status: universe.status,
+    actions: [...access.actions], organizationActions: [...access.organizationActions],
     protected: configuration.protected === true, expiresAtMs: typeof configuration.expiresAtMs === "number" ? configuration.expiresAtMs : null,
     createdBy: universe.createdBy, deletion: configuration.deletion, features: effectiveFeatures(universe.features),
     icon: universe.icon, iconColor: universe.iconColor, createdAt: universe.createdAt, updatedAt: universe.updatedAt,
-    runtimeConfiguration: role === "owner" ? configuration : { displayName: configuration.displayName, protected: configuration.protected, expiresAtMs: configuration.expiresAtMs },
+    runtimeConfiguration: access.actions.has("administer") ? configuration : { displayName: configuration.displayName, protected: configuration.protected, expiresAtMs: configuration.expiresAtMs },
   };
 }
 
@@ -45,20 +49,33 @@ export async function universeForPrincipal(ctx: AppContext, auth: AuthContext, r
     || !resourceScopeAllowed(auth, universe.organizationId, universe.lightspeedUniverseId)) return null;
   const organization = await organizationForPrincipal(ctx, auth, universe.organizationId);
   if (!organization) return null;
-  let role: UniverseRole | undefined;
-  if (organization.role === "admin") role = "owner";
-  else {
-    const [grant] = await ctx.db.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, universe.id), auth.principal.kind === "user" ? eq(schema.universeGrants.userId, auth.principal.id) : eq(schema.universeGrants.serviceUserId, auth.principal.id))).limit(1);
-    role = grant?.role;
-    if (auth.principal.kind === "user") role = declaredUniverseRole(universe.accessPolicy, auth.principal.user, role);
+  const [grant] = await ctx.db.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, universe.id), auth.principal.kind === "user" ? eq(schema.universeGrants.userId, auth.principal.id) : eq(schema.universeGrants.serviceUserId, auth.principal.id))).limit(1);
+  return universeAccess(auth, universe, organization, grant?.role);
+}
+
+/** A principal's universe authority is the union of every role it holds
+ * there: its explicit grant, the universe's declared access policy, the
+ * organization's base role for a member person, and Owner through
+ * organization administration. */
+function universeAccess(auth: AuthContext, universe: UniverseRow, organization: OrganizationAccess, granted: UniverseRole | undefined): UniverseAccess | null {
+  const roles: UniverseRole[] = granted ? [granted] : [];
+  if (auth.principal.kind === "user") {
+    const declared = declaredUniverseRole(universe.accessPolicy, auth.principal.user);
+    if (declared) roles.push(declared);
+    const base = organization.organization.baseUniverseRole;
+    if (organization.member && base) roles.push(base);
   }
+  if (organization.actions.has("administerUniverses")) roles.push("owner");
+  const role = highestRole(UNIVERSE_ROLES, roles);
   if (!role) return null;
-  return { universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, organizationRole: organization.role, organization: organization.organization, auth, caller: { actorId: auth.actorId, role } };
+  const actions = universeActions(roles);
+  return { universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, actions, organizationRole: organization.role, organizationActions: organization.actions, organization: organization.organization, auth, caller: { actorId: auth.actorId, actions } };
 }
 export async function universeForRequest(ctx: AppContext, c: ApiContext, reference: string, allowDeleting = false) { return universeForPrincipal(ctx, getAuth(c), reference, allowDeleting); }
 
 /** Organizations, candidates and explicit grants are each loaded once, regardless of
- * deployment size. A Creator's organization membership alone never exposes rows. */
+ * deployment size. Membership exposes a universe only through the organization's
+ * base role; a Creator's authority to create never does. */
 export async function listUniverseAccesses(ctx: AppContext, auth: AuthContext, allowInactive = false): Promise<UniverseAccess[]> {
   const organizations = await listOrganizationsForPrincipal(ctx, auth);
   if (!organizations.length) return [];
@@ -70,11 +87,8 @@ export async function listUniverseAccesses(ctx: AppContext, auth: AuthContext, a
   const grantRoles = new Map(grants.map(grant => [grant.universeId, grant.role]));
   return rows.flatMap(universe => {
     if (!allowInactive && universe.status !== "active" && universe.status !== "archived") return [];
-    const organization = organizationMap.get(universe.organizationId)!;
-    let role: UniverseRole | undefined = organization.role === "admin" ? "owner" : grantRoles.get(universe.id);
-    if (organization.role !== "admin" && auth.principal.kind === "user") role = declaredUniverseRole(universe.accessPolicy, auth.principal.user, role);
-    if (!role) return [];
-    return [{ universe, handle: typeof universe.runtimeConfiguration.deletionHandle === "string" ? universe.runtimeConfiguration.deletionHandle : universe.handle, role, organizationRole: organization.role, organization: organization.organization, auth, caller: { actorId: auth.actorId, role } }];
+    const access = universeAccess(auth, universe, organizationMap.get(universe.organizationId)!, grantRoles.get(universe.id));
+    return access ? [access] : [];
   });
 }
 export async function listAccessibleUniverses(ctx: AppContext, auth: AuthContext) { return (await listUniverseAccesses(ctx, auth, true)).map(universeView); }
@@ -92,7 +106,7 @@ export async function requireOrganizationPrincipal(ctx: AppContext, organization
   if (!user || user.banned) throw new GateRefusal(400, "user must be active in the containing organization");
   const [membership] = await ctx.db.select().from(schema.member).where(and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, user.id))).limit(1);
   // Organization declarations count as membership, just like manually assigned roles.
-  if (!membership && !declaredPrincipalRole(organization.membershipPolicy, user, ["member", "creator", "admin"] as const)) throw new GateRefusal(400, "principal must first join the containing organization");
+  if (!membership && !declaredPrincipalRole(organization.membershipPolicy, user, ORGANIZATION_ROLES)) throw new GateRefusal(400, "principal must first join the containing organization");
   return { name: user.name };
 }
 
@@ -100,10 +114,11 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
   enforceRestrictions(auth, { operation: "platform/universes/create", organizationId, write: true, createUniverse: true });
   const access = await organizationForPrincipal(ctx, auth, organizationId);
   if (!access) throw new GateRefusal(404, "organization not found");
-  if (access.role === "member") throw new GateRefusal(403, "organization creator role required");
-  if (auth.principal.platformAdmin && !input.initialOwner) throw new GateRefusal(400, "provisioning requires an explicit initial Owner");
+  if (!access.actions.has("createUniverse")) throw new GateRefusal(403, "organization permission required: createUniverse");
+  // An administrator acting from outside the organization cannot be its Owner.
+  if (!access.member && !input.initialOwner) throw new GateRefusal(400, "provisioning requires an explicit initial Owner");
   const owner = input.initialOwner ?? { kind: auth.principal.kind, id: auth.principal.id };
-  if ((owner.kind !== auth.principal.kind || owner.id !== auth.principal.id) && access.role !== "admin") throw new GateRefusal(403, "organization admin required to appoint another initial Owner");
+  if ((owner.kind !== auth.principal.kind || owner.id !== auth.principal.id) && !access.actions.has("administerUniverses")) throw new GateRefusal(403, "organization permission required to appoint another initial Owner: administerUniverses");
   await requireOrganizationPrincipal(ctx, organizationId, owner);
   const protectedValue = input.protected ?? (access.organization.requireProtected || access.organization.defaultProtected);
   if (access.organization.requireProtected && !protectedValue) throw new GateRefusal(403, "organization policy requires deletion protection");
@@ -126,7 +141,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
     if (reservationProtected && input.expiresAtMs != null) throw new GateRefusal(409, "protected universes cannot expire");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     const currentAccess = await organizationForPrincipal(scopedContext, auth, organizationId);
-    if (!currentAccess || currentAccess.role === "member") throw new GateRefusal(403, "organization creation authority was revoked");
+    if (!currentAccess?.actions.has("createUniverse")) throw new GateRefusal(403, "organization creation authority was revoked");
     await requireOrganizationPrincipal(scopedContext, organizationId, owner);
     const [reserved] = await tx.select().from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, runtimeId)).limit(1);
     if (reserved) {
@@ -147,7 +162,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
     if (!reservation) throw new GateRefusal(409, "creation reservation no longer exists");
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     const currentAccess = await organizationForPrincipal(scopedContext, auth, organizationId);
-    if (!currentAccess || currentAccess.role === "member") throw new GateRefusal(403, "organization creation authority was revoked");
+    if (!currentAccess?.actions.has("createUniverse")) throw new GateRefusal(403, "organization creation authority was revoked");
     const owners = await tx.select().from(schema.universeGrants).where(and(eq(schema.universeGrants.universeId, row.id), eq(schema.universeGrants.role, "owner")));
     let activeOwner = false;
     for (const grant of owners) {
@@ -171,7 +186,7 @@ export async function createManagedUniverse(ctx: AppContext, auth: AuthContext, 
 
 export async function adoptManagedUniverse(ctx: AppContext, auth: AuthContext, organizationId: string, input: z.infer<typeof organizationUniverseAdoptSchema>) {
   enforceRestrictions(auth, { operation: "platform/universes/adopt", organizationId, universeId: input.lightspeedUniverseId, write: true, createUniverse: true });
-  if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required to adopt an unlinked runtime universe");
+  if (!deploymentAllows(auth, "manageUnclaimedUniverses")) throw new GateRefusal(403, "deployment permission required: manageUnclaimedUniverses");
   const organization = await organizationForPrincipal(ctx, auth, organizationId);
   if (!organization) throw new GateRefusal(404, "organization not found");
   await requireOrganizationPrincipal(ctx, organizationId, input.initialOwner);
@@ -205,8 +220,8 @@ export async function updateUniverseLifecycle(ctx: AppContext, access: UniverseA
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     const currentAccess = await universeForPrincipal(scopedContext, access.auth, access.universe.id);
     if (!organization || !currentAccess) throw new GateRefusal(404, "universe not found");
-    if (currentAccess.role !== "owner") throw new GateRefusal(403, "universe Owner required");
-    if (input.protected === false && (currentAccess.organizationRole !== "admin" || organization.requireProtected)) throw new GateRefusal(403, organization.requireProtected ? "organization policy requires deletion protection" : "only an organization admin can clear deletion protection");
+    if (!currentAccess.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
+    if (input.protected === false && (!currentAccess.organizationActions.has("administerUniverses") || organization.requireProtected)) throw new GateRefusal(403, organization.requireProtected ? "organization policy requires deletion protection" : "only an organization admin can clear deletion protection");
     const client = deploymentClient(ctx.env);
     const options = { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) };
     const current = await client.call("deployment/universes/read", { universe: access.universe.lightspeedUniverseId }, options);
@@ -230,7 +245,7 @@ export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAcc
     const scopedContext = { ...ctx, db: tx as unknown as AppContext["db"] };
     const current = await universeForPrincipal(scopedContext, access.auth, access.universe.id, true);
     if (!current || !organization) throw new GateRefusal(404, "universe not found");
-    if (current.role !== "owner") throw new GateRefusal(403, "universe Owner required");
+    if (!current.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
     const client = deploymentClient(ctx.env);
     if (current.universe.status === "provisioning") {
       try { await client.call("deployment/universes/read", { universe: current.universe.lightspeedUniverseId }, { signal: AbortSignal.timeout(30000) }); }
@@ -252,7 +267,7 @@ export async function deleteManagedUniverse(ctx: AppContext, access: UniverseAcc
 
 export async function renameManagedUniverse(ctx: AppContext, access: UniverseAccess, handle: string) {
   enforceRestrictions(access.auth, { operation: "deployment/universes/handle/put", organizationId: access.organization.id, universeId: access.universe.lightspeedUniverseId, write: true });
-  if (access.role !== "owner") throw new GateRefusal(403, "universe Owner required");
+  if (!access.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
   await requireAvailableCachedHandle(ctx, handle, access.universe.id);
   const result = await deploymentClient(ctx.env).call("deployment/universes/handle/put", { universe: access.universe.lightspeedUniverseId, handle }, { headers: { "x-lightspeed-actor": access.auth.actorId }, signal: AbortSignal.timeout(30000) });
   const [updated] = await ctx.db.update(schema.universes).set({ handle: result.universe.handle }).where(eq(schema.universes.id, access.universe.id)).returning();
@@ -265,7 +280,7 @@ export function universeRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.get("/", c => withApiErrors(c, async () => c.json(await listAccessibleUniverses(ctx, getAuth(c)))));
   app.post("/sync-handles", c => withApiErrors(c, async () => {
-    if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+    if (!deploymentAllows(getAuth(c), "configureDeployment")) throw new GateRefusal(403, "deployment permission required: configureDeployment");
     let raw: unknown;
     try { const text = await c.req.text(); raw = text ? JSON.parse(text) : {}; }
     catch { return c.json({ error: "invalid JSON body" }, 400); }
@@ -279,7 +294,7 @@ export function universeRoutes(ctx: AppContext) {
     return c.json(await createManagedUniverse(ctx, getAuth(c), body.data.organizationId, body.data), 201);
   }));
   app.get("/reconcile", c => withApiErrors(c, async () => {
-    if (!getAuth(c).principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+    if (!deploymentAllows(getAuth(c), "manageUnclaimedUniverses")) throw new GateRefusal(403, "deployment permission required: manageUnclaimedUniverses");
     const organizationId = c.req.query("organizationId");
     if (organizationId === "") return c.json({ error: "organizationId must not be empty" }, 400);
     const rows = await ctx.db.select().from(schema.universes);
@@ -294,7 +309,7 @@ export function universeRoutes(ctx: AppContext) {
     return c.json(await adoptManagedUniverse(ctx, getAuth(c), body.data.organizationId, body.data), 201);
   }));
   app.post("/:id/engine", c => withApiErrors(c, async () => {
-    const auth = getAuth(c); if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+    const auth = getAuth(c); if (!deploymentAllows(auth, "manageUnclaimedUniverses")) throw new GateRefusal(403, "deployment permission required: manageUnclaimedUniverses");
     const access = await universeForRequest(ctx, c, c.req.param("id"), true); if (!access) throw new GateRefusal(404, "universe not found");
     return ctx.db.transaction(async tx => {
       await tx.select({ id: schema.organization.id }).from(schema.organization).where(eq(schema.organization.id, access.organization.id)).for("update");
@@ -313,7 +328,7 @@ export function universeRoutes(ctx: AppContext) {
     });
   }));
   app.delete("/engine/:lightspeedUniverseId", c => withApiErrors(c, async () => {
-    const auth = getAuth(c); if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+    const auth = getAuth(c); if (!deploymentAllows(auth, "manageUnclaimedUniverses")) throw new GateRefusal(403, "deployment permission required: manageUnclaimedUniverses");
     const runtimeId = c.req.param("lightspeedUniverseId");
     const [linked] = await ctx.db.select({ id: schema.universes.id }).from(schema.universes).where(eq(schema.universes.lightspeedUniverseId, runtimeId)).limit(1);
     if (linked) throw new GateRefusal(409, "delete linked universes through their organization");
@@ -329,7 +344,7 @@ export function universeRoutes(ctx: AppContext) {
   app.put("/:id/handle", c => withApiErrors(c, async () => { const access = await universeForRequest(ctx, c, c.req.param("id")); if (!access) throw new GateRefusal(404, "universe not found"); const body = await c.req.json() as { handle?: unknown }; const handle = universeHandleSchema.parse(body.handle); return c.json((await renameManagedUniverse(ctx, access, handle)).view); }));
   app.patch("/:id", c => withApiErrors(c, async () => {
     const access = await universeForRequest(ctx, c, c.req.param("id")); if (!access) throw new GateRefusal(404, "universe not found");
-    if (access.role !== "owner") throw new GateRefusal(403, "universe Owner required");
+    if (!access.actions.has("administer")) throw new GateRefusal(403, "universe permission required: administer");
     const body = await parseBody(c, universeUpdateSchema); if (!body.ok) return body.response;
     const { name, ...fields } = body.data;
     if (name !== undefined) await updateUniverseLifecycle(ctx, access, { name });

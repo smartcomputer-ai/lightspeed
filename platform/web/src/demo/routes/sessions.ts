@@ -1,4 +1,5 @@
 import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAttached } from "@/lib/sessions/resource-features";
+import { demoUniverseActions } from "../access";
 import { modelFromConfig } from "@/lib/model-defaults";
 /// Session routes over the engine simulation: the sessions browser, the
 /// transcript's long-poll tail, run control, and the settings sheet. Shapes
@@ -8,7 +9,6 @@ import { Hono, type Context } from "hono";
 import {
   MAX_ATTACHMENT_BYTES,
   attachmentUploadSchema,
-  roleAtLeast,
   canCloseSession,
   canDeleteSession,
   sessionMessageSchema,
@@ -126,8 +126,8 @@ export function sessionRoutes(store: DemoStore): Hono {
     }>(c);
     if (Object.hasOwn(body, "environment")) return badRequest(c, "environment is not a session creation field; configure environment attachments instead");
     if (!body.profile) return badRequest(c, "profile is required");
-    const admin = store.currentUser.role === "admin" || universe.universe.role === "owner";
-    if (!admin && body.deleteAfterCloseMs != null) return c.json({ error: "Owner role required for deletion retention" }, 403);
+    const actions = demoUniverseActions(store, universe);
+    if (!actions.has("setSessionRetention") && body.deleteAfterCloseMs != null) return c.json({ error: "universe permission required for deletion retention: setSessionRetention" }, 403);
     const profile = resolveProfile(universe, body.profile);
     if (!profile) return notFound(c, "not found in engine");
     const config = sessionConfig(profile.config, universe.modelDefaults.agentRun);
@@ -139,7 +139,7 @@ export function sessionRoutes(store: DemoStore): Hono {
       id: sessionId,
       displayName: body.displayName?.trim() || null,
       metadata: { ...profile.metadata, ...(body.metadata ?? {}) },
-      deleteAfterCloseMs: !admin ? null : Object.hasOwn(body, "deleteAfterCloseMs")
+      deleteAfterCloseMs: !actions.has("setSessionRetention") ? null : Object.hasOwn(body, "deleteAfterCloseMs")
         ? body.deleteAfterCloseMs
         : profile.retention?.deleteAfterCloseMs,
       config,
@@ -183,7 +183,7 @@ export function sessionRoutes(store: DemoStore): Hono {
   app.put("/:id/sessions/:sessionId/retention", async (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
-    if (!canDeleteSession(store.currentUser.role === "admin" ? "owner" : found.universe.universe.role, found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
+    if (!canDeleteSession(demoUniverseActions(store, found.universe), found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
     const { session } = found;
     if (session.view.retention.rootSessionId !== session.view.id) {
       return conflict(
@@ -225,9 +225,8 @@ export function sessionRoutes(store: DemoStore): Hono {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
     const { session } = found;
-    const role = store.currentUser.role === "admin" ? "owner" : found.universe.universe.role;
     const access = session.view.access;
-    if (!canCloseSession(role, access.createdBy?.kind === "actor" && access.createdBy.id === store.currentUser.id, access.visibility === "universe")) {
+    if (!canCloseSession(demoUniverseActions(store, found.universe), access.createdBy?.kind === "actor" && access.createdBy.id === store.currentUser.id, access.visibility === "universe")) {
       return c.json({ error: "not permitted to close this session" }, 403);
     }
     const body = await readBody<{ force?: boolean }>(c);
@@ -249,7 +248,7 @@ export function sessionRoutes(store: DemoStore): Hono {
   app.delete("/:id/sessions/:sessionId", (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
-    if (!canDeleteSession(store.currentUser.role === "admin" ? "owner" : found.universe.universe.role, found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
+    if (!canDeleteSession(demoUniverseActions(store, found.universe), found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
     const { universe, session } = found;
     if (session.view.lifecycleStatus !== "closed") {
       return conflict(c, "engine conflict: only closed sessions can be deleted");
@@ -263,8 +262,8 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (selected.some((candidate) => candidate.view.lifecycleStatus !== "closed")) {
       return conflict(c, "engine conflict: every session in the subtree must be closed");
     }
-    const role = store.currentUser.role === "admin" ? "owner" : universe.universe.role;
-    if (selected.some((candidate) => !canDeleteSession(role, candidate.view.access.visibility === "universe"))) {
+    const actions = demoUniverseActions(store, universe);
+    if (selected.some((candidate) => !canDeleteSession(actions, candidate.view.access.visibility === "universe"))) {
       return c.json({ error: "not permitted to delete this session subtree" }, 403);
     }
     const deletedAtMs = Date.now();
@@ -422,8 +421,8 @@ export function sessionRoutes(store: DemoStore): Hono {
   app.post("/:id/attachments", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (store.currentUser.role !== "admin" && !roleAtLeast(universe.universe.role ?? "viewer", "contributor")) {
-      return c.json({ error: "contributor role required" }, 403);
+    if (!demoUniverseActions(store, universe).has("useResource")) {
+      return c.json({ error: "universe permission required: useResource" }, 403);
     }
     const body = attachmentUploadSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, "Invalid attachment upload");

@@ -24,7 +24,7 @@ export function FeatureGate({ feature, children }: { feature: FeatureKey; childr
   return (
     <div className="p-6">
       <EmptyState icon={FeatureOffIcon} title={`${label} are turned off in this universe`}>
-        {permissions.can("manageAccess") ? (
+        {permissions.can("administer") ? (
           <>
             <Link to={`/admin/organizations/${encodeURIComponent(universe!.organizationId!)}/universes/${handle}/settings`} className="font-medium text-foreground underline">
               Turn them on in Admin

@@ -58,7 +58,7 @@ import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea, useWorkspa
 /// file provider (components/file-providers). Writes run the full VFS dance
 /// server-side (blob → manifest → snapshot → head advance) guarded by the
 /// workspace revision the tree was loaded at.
-export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
+export function WorkspacesPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const navigate = useNavigate();
   const permissions = useActionPermissions(universe?.id);

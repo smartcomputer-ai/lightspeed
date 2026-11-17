@@ -84,7 +84,7 @@ import { useActiveUniverse } from "@/lib/universes";
 
 /// Universe environments are provisioned from the templates offered by the
 /// universe's enabled providers. Physical provider registration stays admin-only.
-export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
+export function EnvironmentsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
 

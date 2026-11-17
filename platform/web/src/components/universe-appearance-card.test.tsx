@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -26,7 +27,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.universe = { id: "universe", lightspeedUniverseId: "runtime", name: "Test", handle: "test",
-    status: "active", createdAt: "2026-01-01", role: "owner",
+    status: "active", createdAt: "2026-01-01", role: "owner", actions: [...universeActions(["owner"])],
     features: { bots: true, channels: true }, icon: "orbit", iconColor: "default" };
   mocks.api.mockReset().mockImplementation(async (_method, _path, fields) => ({ ...mocks.universe, ...fields }));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -127,14 +128,17 @@ it("saves without a save or reset button, and not for the current choice", async
 
 it.each(["viewer", "contributor", "operator"] as const)("hides General settings from a %s", async role => {
   mocks.universe.role = role;
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><AdminUniverseSettingsPage admin={false} /></PermissionIdentityProvider>);
+  mocks.universe.actions = [...universeActions([role])];
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={false}><AdminUniverseSettingsPage /></PermissionIdentityProvider>);
   expect(container.textContent).not.toContain("Appearance");
   expect(container.querySelector("form")).toBeNull();
 });
 
 it.each([false, true])("offers appearance on General settings for an authorized admin (platform admin: %s)", async platformAdmin => {
-  mocks.universe.role = platformAdmin ? null : "owner";
-  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><AdminUniverseSettingsPage admin={platformAdmin} /></PermissionIdentityProvider>);
+  // The server gives a Platform Admin Owner through organization administration.
+  mocks.universe.role = "owner";
+  mocks.universe.actions = [...universeActions(["owner"])];
+  await render(<PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}><AdminUniverseSettingsPage /></PermissionIdentityProvider>);
   expect(container.textContent).toContain("Appearance");
   expect(button(`${label(DEFAULT_UNIVERSE_ICON)} icon`)).toBeDefined();
 });

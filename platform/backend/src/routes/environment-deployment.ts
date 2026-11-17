@@ -6,7 +6,7 @@ import type {
 } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
-import { isPlatformAdmin } from "../context.js";
+import { sessionAllows } from "../context.js";
 import { parseBody, withApiErrors } from "../http.js";
 import { deploymentClient } from "../runtime-client.js";
 
@@ -42,8 +42,8 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
   app.use("*", async (c, next) => {
-    if (!isPlatformAdmin(c.get("session"))) {
-      return c.json({ error: "platform admin required" }, 403);
+    if (!sessionAllows(c.get("session"), "configureDeployment")) {
+      return c.json({ error: "deployment permission required: configureDeployment" }, 403);
     }
     await next();
   });

@@ -4,7 +4,7 @@ import { Hono, type Context } from "hono";
 import { LightspeedApiError, type ConnectionResponse, type UniverseWatchParams } from "@lightspeed-ai/sdk";
 import { HTTP_CONTRACT_REVISION, HTTP_OPERATIONS } from "@lightspeed-ai/sdk/server";
 import type { AppContext, ApiVariables } from "./context.js";
-import { enforceRestrictions, getAuth } from "./auth-context.js";
+import { deploymentAllows, enforceRestrictions, getAuth } from "./auth-context.js";
 import { HTTPException } from "hono/http-exception";
 import { clientOptions, deploymentClient, GateRefusal, universeClient } from "./runtime-client.js";
 import { ADMIN_OPERATIONS, MEMBER_OPERATIONS, NATIVE_OPERATIONS } from "./runtime-admission.js";
@@ -83,7 +83,7 @@ export function runtimeHttpRoutes(ctx: AppContext) {
         url.search = incoming.search;
         return forward(c.req.raw, url, options.headers, body, spec.transfer === "sse");
       }
-      if (!auth.principal.platformAdmin) throw new GateRefusal(403, "platform admin required");
+      if (!deploymentAllows(auth, "configureDeployment")) throw new GateRefusal(403, "deployment permission required: configureDeployment");
       if (!reference) enforceRestrictions(auth, { operation: spec.operationId, write: spec.method !== "GET" });
       if (!reference && (auth.credential.restrictions.organizationIds || auth.credential.restrictions.universeIds)) throw new GateRefusal(403, "deployment operation is outside credential resource scope");
       // Deployment routes with a universe still resolve a Platform-owned resource.

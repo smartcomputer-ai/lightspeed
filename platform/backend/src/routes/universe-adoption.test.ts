@@ -134,6 +134,7 @@ it("archives and restores the Platform presentation without deleting runtime dat
     expect(await fixture.db.select().from(schema.universeGrants)).toEqual(grants);
   }
   expect(requests.some(request => request.operation === "deployment/universes/delete")).toBe(false);
+  // A Creator sees the universe through the organization's base role, without administering it.
   await fixture.asUser("creator");
-  expect((await fixture.request(`/universes/${id}`, "PATCH", { status: "archived" })).status).toBe(404);
+  expect((await fixture.request(`/universes/${id}`, "PATCH", { status: "archived" })).status).toBe(403);
 });

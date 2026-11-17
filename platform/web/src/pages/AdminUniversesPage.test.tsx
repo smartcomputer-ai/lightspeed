@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -10,12 +11,15 @@ import { UnclaimedUniversesPage } from "./UnclaimedUniversesPage";
 import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), platformAdmin: true }));
-vi.mock("@/lib/permissions", () => ({ usePlatformAdmin: () => mocks.platformAdmin }));
+vi.mock("@/lib/permissions", () => ({
+  useDeploymentPermissions: () => ({ can: () => mocks.platformAdmin }),
+  organizationAllows: (view: { actions?: string[] } | undefined, action: string) => view?.actions?.includes(action) ?? false,
+}));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 
 const universe = (id: string, overrides: Partial<Universe> = {}): Universe => ({
   id, organizationId: "team", lightspeedUniverseId: `core-${id}`, name: id, handle: id, status: "active",
-  createdAt: "2026-01-01T00:00:00Z", role: null, features: { bots: true, channels: true }, ...overrides,
+  createdAt: "2026-01-01T00:00:00Z", role: "owner", actions: [...universeActions(["owner"])], features: { bots: true, channels: true }, ...overrides,
 });
 const orphan = (universeId: string, overrides: Partial<EngineUniverse> = {}): EngineUniverse => ({
   universeId, handle: `u-${universeId}`, sessions: 3, workspaces: 1, profiles: 2, blobBytes: 2048, createdAtMs: 0, ...overrides,
@@ -30,7 +34,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.platformAdmin = true;
   universes = [
-    universe("zeta", { name: "Zeta", role: "owner" }),
+    universe("zeta", { name: "Zeta", role: "owner", actions: [...universeActions(["owner"])] }),
     universe("alpha", { name: "Alpha", status: "archived" }),
     universe("mid", { name: "Mid", features: { bots: false, channels: false } }),
   ];
@@ -43,7 +47,7 @@ beforeEach(() => {
     orphans: [orphan("core-orphan", { handle: "kept" }), orphan("core-bare", { blobBytes: 5 * 1024 * 1024 })],
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "organization", name: "Team", role: "admin" }] };
+    if (path === "/api/v1/platform/organizations") return { organizations: [{ id: "organization", name: "Team", role: "admin", actions: [...organizationActions(["admin"])] }] };
     if (path === "/api/v1/platform/organizations/organization/members") return { members: [{ userId: "user", name: "User" }] };
     if (method === "GET" && path === "/api/ui/universes") return universes;
     if (method === "GET" && path.startsWith("/api/ui/universes/reconcile")) {
@@ -90,10 +94,11 @@ const alertDialog = () => document.querySelector<HTMLElement>('[role="alertdialo
 const writes = () => mocks.api.mock.calls.filter(([method]) => method !== "GET");
 
 it("lists the selected organization’s universes with runtime status and role", async () => {
+  // A Platform Admin holds Owner on every universe through organization administration.
   await show();
   expect(rows().map((node) => cells(node).slice(0, 4))).toEqual([
-    ["Alphaalpha", "archived", "ok", "—"],
-    ["Midmid", "active", "missing", "—"],
+    ["Alphaalpha", "archived", "ok", "owner"],
+    ["Midmid", "active", "missing", "owner"],
     ["Zetazeta", "active", "ok", "owner"],
   ]);
 });
@@ -214,6 +219,7 @@ it("keeps protected universes unavailable for direct administrative deletion", a
 
 it("shows only manageable universes and avoids deployment endpoints for an Owner", async () => {
   mocks.platformAdmin = false;
+  universes = universes.map((item) => item.name === "Zeta" ? item : { ...item, role: "viewer", actions: [...universeActions(["viewer"])] });
   await show();
   expect(rows()).toHaveLength(1);
   expect(row("Zeta")).toBeDefined();
@@ -225,7 +231,7 @@ it("shows only manageable universes and avoids deployment endpoints for an Owner
 });
 
 it("keeps a Platform Admin's inventory and reconciliation scoped to the selected organization", async () => {
-  universes = [universe("local", { name: "Local", role: "owner", organizationId: "team" }), universe("elsewhere", { name: "Elsewhere", role: "owner", organizationId: "other" })];
+  universes = [universe("local", { name: "Local", role: "owner", actions: [...universeActions(["owner"])], organizationId: "team" }), universe("elsewhere", { name: "Elsewhere", role: "owner", actions: [...universeActions(["owner"])], organizationId: "other" })];
   await show("/admin/organizations/team/universes");
   expect(row("Local")).toBeDefined(); expect(row("Elsewhere")).toBeUndefined();
   expect(mocks.api).toHaveBeenCalledWith("GET", "/api/ui/universes/reconcile?organizationId=team");

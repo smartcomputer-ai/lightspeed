@@ -54,7 +54,7 @@ export function OrganizationSwitcher() {
               <div className="grid flex-1 text-left leading-tight">
                 <span className="truncate text-sm font-medium">
                   {access.selected
-                      ? organizationLabel(access.selected, access.platform)
+                      ? organizationLabel(access.selected, access.deployment("administerOrganizations"))
                       : "Select organization"}
                 </span>
               </div>
@@ -73,7 +73,7 @@ export function OrganizationSwitcher() {
                     )
                   }
                 >
-                  {organizationLabel(organization, access.platform)}
+                  {organizationLabel(organization, access.deployment("administerOrganizations"))}
                 </DropdownMenuItem>
               ))}
               {access.canCreate && (

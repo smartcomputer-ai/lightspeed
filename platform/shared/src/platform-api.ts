@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { CREDENTIAL_OPERATIONS, credentialRestrictionsSchema } from "./credential-api.js";
 import { SESSION_OPERATIONS, platformSessionViewSchema } from "./session-api.js";
+import { baseUniverseRoleSchema, organizationActionSchema, organizationRoleSchema, universeRoleSchema } from "./access.js";
 
-export const organizationRoleSchema = z.enum(["member", "creator", "admin"]);
-export type OrganizationRole = z.infer<typeof organizationRoleSchema>;
 /** Platform's extension to common connection discovery; core owns the common fields. */
 export const platformConnectionDetailsSchema = z.object({
   principal: platformSessionViewSchema.shape.principal.omit({ email: true }).extend({
@@ -16,7 +15,7 @@ export const platformConnectionDetailsSchema = z.object({
 export type PlatformConnectionDetails = z.infer<typeof platformConnectionDetailsSchema>;
 export const principalRefSchema = z.object({ kind: z.enum(["user", "serviceUser"]), id: z.string().min(1) }).strict();
 export type PrincipalRef = z.infer<typeof principalRefSchema>;
-const universeRole = z.enum(["viewer", "contributor", "operator", "owner"]);
+const universeRole = universeRoleSchema;
 const id = z.string().min(1);
 const name = z.string().trim().min(1).max(120);
 const handle = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/);
@@ -32,9 +31,9 @@ export const universeAccessPolicySchema = z.object({
   members: z.array(declaredMemberSchema(universeRole)).max(1000).optional(),
   directoryGroupMappings: z.array(z.object({ issuer: z.string().url(), group: id, role: universeRole }).strict()).max(1000).optional(),
 }).strict();
-export const organizationViewSchema = z.object({ id, name, slug: id, personal: z.boolean(), role: organizationRoleSchema.nullable(), universeQuota: z.number().int().nonnegative(), universeCount: z.number().int().nonnegative().optional(), defaultProtected: z.boolean(), requireProtected: z.boolean(), membershipPolicy: organizationPolicy.optional(), createdAt: timestamp });
-export const organizationCreateSchema = z.object({ name, slug: handle, initialAdminUserId: id.optional(), universeQuota: z.number().int().min(0).max(100000).optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional() }).strict();
-export const organizationUpdateSchema = z.object({ name: name.optional(), universeQuota: z.number().int().min(0).max(100000).optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional(), membershipPolicy: organizationPolicy.optional() }).strict();
+export const organizationViewSchema = z.object({ id, name, slug: id, personal: z.boolean(), role: organizationRoleSchema.nullable().describe("The highest organization role the caller holds, for display."), actions: z.array(organizationActionSchema).describe("What the caller may do in the organization: the union of every role it holds there."), universeQuota: z.number().int().nonnegative(), universeCount: z.number().int().nonnegative().optional(), baseUniverseRole: baseUniverseRoleSchema.nullable().describe("The universe role every member person holds on every universe in the organization; null gives members access only through grants."), defaultProtected: z.boolean(), requireProtected: z.boolean(), membershipPolicy: organizationPolicy.optional(), createdAt: timestamp });
+export const organizationCreateSchema = z.object({ name, slug: handle, initialAdminUserId: id.optional(), universeQuota: z.number().int().min(0).max(100000).optional(), baseUniverseRole: baseUniverseRoleSchema.nullable().optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional() }).strict();
+export const organizationUpdateSchema = z.object({ name: name.optional(), universeQuota: z.number().int().min(0).max(100000).optional(), baseUniverseRole: baseUniverseRoleSchema.nullable().optional(), defaultProtected: z.boolean().optional(), requireProtected: z.boolean().optional(), membershipPolicy: organizationPolicy.optional() }).strict();
 export const organizationMemberPutSchema = z.object({ userId: id, role: organizationRoleSchema.default("member") }).strict();
 export const organizationMemberViewSchema = z.object({ id, userId: id, name: z.string(), email: z.string(), role: organizationRoleSchema, createdAt: timestamp });
 export const serviceUserViewSchema = z.object({ id, organizationId: id, name, enabled: z.boolean(), role: organizationRoleSchema, createdAt: timestamp });

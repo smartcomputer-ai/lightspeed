@@ -40,7 +40,6 @@ export interface ServerEnv {
   browserSessionIdleDays?: number;
   browserSessionMaxDays?: number;
   personalOrganizations?: boolean;
-  allowSharedOrganizationCreation?: boolean;
   personalOrganizationUniverseQuota?: number;
   sharedOrganizationUniverseQuota?: number;
   apiKeyDefaultExpiryDays?: number;
@@ -118,7 +117,6 @@ export function loadEnv(): ServerEnv {
     browserSessionIdleDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS", 30, 1, 365),
     browserSessionMaxDays: integerEnv("LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS", 90, 1, 3650),
     personalOrganizations: booleanEnv("LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS", true),
-    allowSharedOrganizationCreation: booleanEnv("LIGHTSPEED_PLATFORM_SHARED_ORGANIZATION_CREATION", false),
     personalOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA", 25, 0, 1000000),
     sharedOrganizationUniverseQuota: integerEnv("LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA", 100, 0, 1000000),
     apiKeyDefaultExpiryDays: integerEnv("LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS", 365, 1, 3650),

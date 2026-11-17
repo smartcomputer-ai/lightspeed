@@ -42,7 +42,7 @@ import { botMetaItems } from "@/components/bot/bot-meta";
 const ROSTER_REFRESH_MS = 5_000;
 
 /// Bots: a roster on the left and one bot's conversations or activity on the right.
-export function BotsPage({ view = "chat" }: { admin: boolean; view?: BotTab }) {
+export function BotsPage({ view = "chat" }: { view?: BotTab }) {
   const { universe, handle, isLoading } = useActiveUniverse();
   const { botId, sessionId } = useParams<{ botId?: string; sessionId?: string }>();
   const permissions = useActionPermissions(universe?.id);

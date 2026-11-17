@@ -1,4 +1,5 @@
 import type { ServerEnv } from "./env.js";
+import { hasPlatformAdminRole } from "./context.js";
 
 export interface AccessSession {
   user: {
@@ -16,7 +17,7 @@ export function passwordMode(env: ServerEnv) {
 
 export function canUsePassword(user: AccessSession["user"], env: ServerEnv): boolean {
   if (user.identitySource === "company" || user.banned || passwordMode(env) === "off") return false;
-  return passwordMode(env) === "local" || (user.emergencyAdmin === true && user.role?.split(",").includes("admin") === true);
+  return passwordMode(env) === "local" || (user.emergencyAdmin === true && hasPlatformAdminRole(user));
 }
 
 export function sessionAllowed(session: AccessSession, env: ServerEnv, now = Date.now()): boolean {

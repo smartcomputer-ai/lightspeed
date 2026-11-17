@@ -39,8 +39,8 @@ function RoleSelect({ value, onChange }: { value: OrganizationRole; onChange: (r
         </SelectContent>
       </Select>
       <FieldDescription>
-        Members need universe access. Creators can create universes. Admins manage the organization and all its
-        universes.
+        Members get the organization's default universe access on every universe, plus any universe roles they are granted.
+        Creators can also create universes. Admins manage the organization and all its universes.
       </FieldDescription>
     </Field>
   );
@@ -283,88 +283,6 @@ export function ServiceUserDialog({
           pending={save.isPending}
           label={serviceUser ? "Save changes" : "Create service user"}
         />
-      </form>
-    </OrganizationDialog>
-  );
-}
-
-/// Protection policy for Organization Admins; the universe quota is a
-/// Platform Admin limit, so only they see that field.
-export function PolicyDialog({
-  organization,
-  canEditQuota,
-  close,
-  saved,
-}: {
-  organization: Organization;
-  canEditQuota: boolean;
-  close: () => void;
-  saved: () => Promise<void>;
-}) {
-  const [quota, setQuota] = useState(String(organization.universeQuota));
-  const [defaultProtected, setDefaultProtected] = useState(organization.defaultProtected);
-  const [requireProtected, setRequireProtected] = useState(organization.requireProtected);
-  const save = useMutation({
-    mutationFn: () =>
-      platformApi("platform/organizations/update", {
-        organizationId: organization.id,
-        ...(canEditQuota ? { universeQuota: Number(quota) } : {}),
-        defaultProtected,
-        requireProtected,
-      }),
-    onSuccess: async () => {
-      await saved();
-      close();
-    },
-  });
-  return (
-    <OrganizationDialog
-      title="Edit organization policy"
-      description={`Policy for ${organization.name}. Requiring protection applies to every universe in this organization.`}
-      close={close}
-    >
-      <form
-        className="grid gap-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          save.mutate();
-        }}
-      >
-        {canEditQuota && <Field>
-          <FieldLabel htmlFor="organization-quota">Universe quota</FieldLabel>
-          <Input
-            id="organization-quota"
-            type="number"
-            value={quota}
-            onChange={(event) => setQuota(event.target.value)}
-            min={0}
-            max={100000}
-            step={1}
-            required
-          />
-        </Field>}
-        <label className="flex gap-2">
-          <input
-            type="checkbox"
-            checked={defaultProtected}
-            onChange={(event) => setDefaultProtected(event.target.checked)}
-          />
-          Protect new universes by default
-        </label>
-        <label className="flex gap-2">
-          <input
-            type="checkbox"
-            checked={requireProtected}
-            onChange={(event) => setRequireProtected(event.target.checked)}
-          />
-          Require universe protection
-        </label>
-        {save.error && (
-          <p role="alert" className="text-destructive">
-            {save.error.message}
-          </p>
-        )}
-        <FormActions close={close} pending={save.isPending} label="Save policy" />
       </form>
     </OrganizationDialog>
   );

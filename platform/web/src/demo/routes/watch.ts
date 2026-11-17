@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { demoUniverseActions } from "../access";
 import type { AgentNotification } from "@lightspeed-ai/sdk";
 import { sessionSummary, type DemoStore, type UniverseState } from "../store";
 import { listItemOf } from "./bots";
@@ -65,7 +66,7 @@ export function watchRoutes(store: DemoStore): Hono {
 function snapshot(store: DemoStore, universe: UniverseState) {
   const rows = new Map<string, { event: AgentNotification; serialized: string }>();
   const add = (key: string, event: AgentNotification) => rows.set(key, { event, serialized: JSON.stringify(event) });
-  const admin = store.currentUser.role === "admin" || universe.universe.role === "owner";
+  const admin = demoUniverseActions(store, universe).has("accessPrivateSessions");
   for (const record of universe.sessions.values()) {
     const root = universe.sessions.get(record.view.origin?.rootSessionId ?? record.view.id) ?? record;
     const access = root.view.access;

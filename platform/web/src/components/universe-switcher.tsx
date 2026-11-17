@@ -1,4 +1,4 @@
-import { usePlatformAdmin } from "@/lib/permissions";
+import { organizationAllows, useDeploymentPermissions } from "@/lib/permissions";
 import { organizationLabel } from "@/lib/admin-access";
 import { platformApi, useOrganizations } from "@/lib/platform-api";
 import {
@@ -97,29 +97,26 @@ export function HeaderStarscape({
 /// All accessible active universes, grouped by their organization.
 export function UniverseSwitcher({
   active,
-  admin,
 }: {
   active: Universe | undefined;
-  admin: boolean;
 }) {
+  const distinguishPersonal = useDeploymentPermissions().can("administerOrganizations");
   const universes = useUniverses();
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const mine = memberships(universes.data);
   const [search, setSearch] = useState("");
   const organizations = useOrganizations();
-  const canCreate =
-    admin ||
-    organizations.data?.organizations.some(
-      (a) => a.role === "admin" || a.role === "creator",
-    );
+  const canCreate = organizations.data?.organizations.some((organization) =>
+    organizationAllows(organization, "createUniverse"),
+  );
   const iconRef = useRef<HTMLSpanElement>(null);
   const organizationName = (id?: string) => {
     const organization = organizations.data?.organizations.find(
       (item) => item.id === id,
     );
     return organization
-      ? organizationLabel(organization, admin)
+      ? organizationLabel(organization, distinguishPersonal)
       : "Organization";
   };
   const visible = mine.filter((universe) =>
@@ -322,13 +319,13 @@ export function NewUniverseDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const platformAdmin = usePlatformAdmin();
+  const distinguishPersonal = useDeploymentPermissions().can("administerOrganizations");
   const navigate = useNavigate();
   const organizations = useOrganizations();
   const eligible = (organizations.data?.organizations ?? []).filter(
     (a) =>
       (!fixedOrganizationId || a.id === fixedOrganizationId) &&
-      (a.role === "admin" || a.role === "creator"),
+      organizationAllows(a, "createUniverse"),
   );
   const [selectedOrganization, setSelectedOrganization] = useState(
     defaultOrganizationId ?? "",
@@ -345,7 +342,7 @@ export function NewUniverseDialog({
   const organization =
     eligible.find((a) => a.id === selectedOrganization) ?? eligible[0];
   const organizationId = organization?.id ?? "";
-  const mayAppointOwner = organization?.role === "admin";
+  const mayAppointOwner = organizationAllows(organization, "administerUniverses");
   const owners = useQuery({
     queryKey: ["organization-members", organizationId],
     enabled: open && !!organizationId && mayAppointOwner,
@@ -446,7 +443,7 @@ export function NewUniverseDialog({
               <SelectContent>
                 {eligible.map((organization) => (
                   <SelectItem key={organization.id} value={organization.id}>
-                    {organizationLabel(organization, platformAdmin)}
+                    {organizationLabel(organization, distinguishPersonal)}
                   </SelectItem>
                 ))}
               </SelectContent>

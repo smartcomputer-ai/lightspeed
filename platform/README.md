@@ -147,10 +147,20 @@ credentials and cancel work separately when needed.
 
 **Organizations and roles.** Better Auth provides organization and membership records. An organization
 contains many universes, members, and service users. Personal organizations are
-provisioned for admitted users by default; shared and development organizations use
-the same permission model. Organization roles are Admin, Creator, and Member.
-Creators create universes and become Owners without gaining access to other
-universes. Organization Admins administer every universe in their organization.
+provisioned for admitted users by default; a personal organization has only its
+owner as a member. Organization roles are Admin, Creator, and Member. Each shared
+organization gives its member people a default universe access (Viewer by
+default, any universe role, or none) on every universe. Creators also create universes and
+become Owners of them. Organization Admins administer every universe in their
+organization.
+
+**Actions.** Every check asks whether the principal holds an action; no check
+compares role names. `shared/src/access.ts` defines the universe, organization
+and deployment actions and the roles that bundle them. A principal's authority
+at a scope is the union of the bundles of every role it holds there (grant,
+declared policy, default universe access, administration inherited from above);
+grants only add. Universe and organization views carry the caller's computed
+`actions`, which the web uses for its hints.
 
 Universe roles are Viewer, Contributor, Operator, and Owner. Multiple Owners
 are supported; ordinary grant changes cannot remove the last explicit Owner.
@@ -169,29 +179,31 @@ The raw organization and API-key plugin management endpoints are not public.
 a route makes for a member goes through one client
 (`backend/src/runtime-client.ts`), which:
 
-- requires the member's role to meet the method's role, from
-  `backend/src/routes/method-roles.ts`. That table is generated from the core
-  method manifest by `node platform/scripts/generate-method-roles.mjs`, and
-  `npm run check` fails when it is stale;
-- limits contributor creation to ordinary sessions with universe defaults or a
-  named profile, without setup overrides; integrated creation and run configuration
-  overrides require an operator;
-- for a method that names a session, unless the member is an owner, requires the
-  session to be shared with the universe or created by the member; sharing
-  requires its creator;
-- limits closing to contributors' own unshared sessions, operators' own or
-  shared sessions, or any session for owners; soft deletion requires a closed
-  session and an owner, or an operator for shared sessions;
+- requires the caller to hold the universe action core declares on the method,
+  from `backend/src/routes/method-actions.ts`. That table is generated from the
+  core method manifest by `node platform/scripts/generate-method-actions.mjs`,
+  and `npm run check` fails when it is stale;
+- without `configureSession`, limits session creation to ordinary sessions with
+  universe defaults or a named profile, without setup overrides, and refuses
+  integrated creation and run configuration overrides;
+- for a method that names a session, unless the caller holds
+  `accessPrivateSessions`, requires the session to be shared with the universe or
+  created by the caller; sharing requires its creator;
+- closes an unshared session for its creator or a holder of
+  `accessPrivateSessions`, and a shared one only with `closeSharedSessions`; soft
+  deletion requires a closed session, `deleteSession`, and for an unshared session
+  `accessPrivateSessions`;
 - narrows a member's session list to shared work and their own;
-- permits transcription reads and cancellation only for their creator, including
-  when the caller is an owner; and
+- permits transcription reads and cancellation only for their creator, whatever
+  else the caller holds; and
 - calls core with the Platform's runtime token, naming the universe and the
   member as the actor.
 
 The Platform's own refusals are 403 and 404. Core refusing the Platform is a
 server fault (500 or 502), since the member was already admitted. The web's
-permission hints come from the same role and never replace these checks.
-Only platform admins can permanently delete soft-deleted session history,
+permission hints come from the same actions and never replace these checks.
+Only holders of the `purgeSessions` deployment action (Platform Admins) can
+permanently delete soft-deleted session history,
 through the audited Platform purge route. See the
 [session lifecycle guide](../docs/documentation/using-lightspeed/sessions-and-runs.md#close-and-retain-a-session).
 

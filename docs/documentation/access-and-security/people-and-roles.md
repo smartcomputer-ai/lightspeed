@@ -15,14 +15,39 @@ local development deployment seeds one shared organization for its developers.
 Organizations are siblings, without nesting. Organization Admins can see
 and administer all universes in their organization, including private sessions.
 
+## How authority is decided
+
+Every check asks whether a person or service user may take one action, such as
+creating a session, configuring an MCP server, or managing an organization's
+members. Roles are fixed, named sets of those actions at three levels: the
+deployment, an organization, and a universe.
+
+Someone can hold several roles in the same place at once: a universe grant,
+their organization's default universe access, a role from declared policy or a company
+group, and administration inherited from above. What they may do there is
+everything any of those roles allows. Grants only add; nothing takes an
+action away. A key's restrictions still narrow what the key can be used for.
+
+Administration flows downward. A Platform Admin holds Organization Admin
+authority in every organization, and an Organization Admin holds Owner
+authority on every universe in their organization.
+
 ## Organization and deployment roles
 
 | Role | Authority |
 | --- | --- |
 | **Platform Admin** | Rare deployment-wide administration, including all organizations and universes. |
 | **Organization Admin** | Organization policy, members, service users, and every universe in that organization. |
-| **Creator** | Create universes within the organization's quota and policy. Receives Owner on universes they create, without gaining access to other universes. |
-| **Member** | Access only to universes explicitly assigned to them or granted through organization policy. |
+| **Creator** | Everything a Member has, plus creating universes within the organization's quota and policy. Receives Owner on universes they create, and the default universe access on others. |
+| **Member** | The organization's default universe access on every universe, plus any universe roles they are granted. |
+
+Each shared organization sets its **default universe access**: the universe
+role every member person holds on every universe in it. It is **Viewer** by
+default and can be any universe role, or **None** so members see only the
+universes they are granted. With **Owner**, every member manages every
+universe and can read others' unshared sessions. Change it under **Admin →
+organization → Settings → Default universe access**. Service users never
+receive it; they hold only their grants.
 
 Organization membership is required for an ordinary user's universe grant to take
 effect. Losing organization membership disables those grants; it does not destroy
@@ -80,9 +105,8 @@ company identity provider.
 In **Admin**, choose an organization in the sidebar. Organization Admins manage
 **Universes**, **People**, **Service users**, **API keys**, and **Settings** there.
 People lists existing users: add them by user ID and assign Member, Creator, or
-Admin. New shared members default to Member. Shared organization creation is
-restricted to Platform Admins by default; deployments may allow admitted users
-to create their own. There is no email invitation or SCIM workflow yet.
+Admin. New shared members default to Member. Only Platform Admins create shared
+organizations. There is no email invitation or SCIM workflow yet.
 
 **New universe** selects an organization where the caller is a Creator or Admin.
 Creating from an organization's Admin page fixes that destination. The initial
@@ -94,18 +118,18 @@ Organization policy may change that default or require protection. Handles remai
 The working universe switcher groups accessible active universes by organization
 and supports search. A personal organization is labeled **Personal**. Switching
 directly between universes does not require first switching organizations.
-Organization membership alone does not make every universe visible: explicit
-grants, declared policy, or administrator authority still determine access.
+Members see every universe their organization's default universe access
+reaches; with it set to None, they see only universes they are granted.
 
 Under **Admin → organization → Universes → select universe → Access**, assign
 existing organization users or service users one of the four universe roles.
 Changes apply to the next admitted request. Requests already admitted and work
 already running can continue; cancel that work separately if necessary.
 
-The **Admin** area sits above working universes. Universe Owners can select the
-organization containing their universe but only administer their owned
-universes. They do not gain organization-wide People, Service users, API keys,
-or Settings pages. Organization Admins administer all universes in their
+The **Admin** area sits above working universes. Each page appears only to
+those who may use it. Universe Owners can select the organization containing
+their universe but only administer their owned universes. They do not gain
+organization-wide People, Service users, API keys, or Settings pages. Organization Admins administer all universes in their
 organization. **Platform** is a separate sidebar section for organization
 inventory, sign-in users, unclaimed runtime universes, infrastructure,
 connectors, and audit. Its pages show **Platform administration** and are
@@ -123,8 +147,9 @@ and universe access checks still run on the server.
 ## Service users and API keys
 
 Service users are nonhuman identities belonging to one organization, with their
-own organization role and universe grants. They have no fake email address or
-human session. Organization Admins manage them under **Admin → organization →
+own organization role and universe grants. Unlike people, they do not receive
+the organization's default universe access. They have no fake email address or human
+session. Organization Admins manage them under **Admin → organization →
 Service users** and their credentials under **API keys**. Disabling a service
 user blocks its keys without deleting its universes.
 

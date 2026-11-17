@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -21,7 +22,7 @@ beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
   universe = {
     id: "platform-id", organizationId: "team", lightspeedUniverseId: "core-id", name: "Factory", handle: "factory",
-    status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", features: { bots: true, channels: true },
+    status: "active", createdAt: "2026-01-01T00:00:00Z", role: "owner", actions: [...universeActions(["owner"])], features: { bots: true, channels: true },
   };
   mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Record<string, unknown>) => {
     if (method === "GET" && path === "/api/ui/universes") return [universe];
@@ -48,7 +49,7 @@ async function show(path = "/admin/organizations/team/universes/factory/settings
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}><MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/admin/organizations/team/universes/:handle/settings" element={<><AdminUniverseSettingsPage admin={false} /><Location /></>} />
+        <Route path="/admin/organizations/team/universes/:handle/settings" element={<><AdminUniverseSettingsPage /><Location /></>} />
         <Route path="*" element={<Location />} />
       </Routes>
     </MemoryRouter></PermissionIdentityProvider></QueryClientProvider>,
@@ -69,6 +70,7 @@ const writes = () => mocks.api.mock.calls.filter(([method]) => method !== "GET")
 
 it("hides settings from a member who cannot manage access", async () => {
   universe.role = "operator";
+  universe.actions = [...universeActions(["operator"])];
   await show();
   expect(container.querySelector("#universe-name")).toBeNull();
   expect(container.textContent).not.toContain("Danger zone");
@@ -147,6 +149,7 @@ it("allows an Owner to rename a universe with a runtime displayName", async () =
 it("requires an organization administrator to clear protection", async () => {
   universe.protected = true;
   universe.organizationRole = "member";
+  universe.organizationActions = [...organizationActions(["member"])];
   await show();
   const protection = container.querySelector<HTMLElement>('[aria-label="Deletion protection"]')!;
   expect(protection.getAttribute("aria-disabled")).toBe("true");
@@ -158,6 +161,7 @@ it("requires an organization administrator to clear protection", async () => {
 it("allows an Organization Admin to clear protection as a separate lifecycle update", async () => {
   universe.protected = true;
   universe.organizationRole = "admin";
+  universe.organizationActions = [...organizationActions(["admin"])];
   const implementation = mocks.api.getMockImplementation()!;
   mocks.api.mockImplementation(async (method, path, body) => path === "/api/v1/platform/universes/core-id" ? { universe: { ...universe, ...body } } : implementation(method, path, body));
   await show();

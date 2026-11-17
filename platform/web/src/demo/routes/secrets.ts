@@ -3,6 +3,7 @@
 /// installation. Secret values are accepted and dropped; only the non-secret
 /// views the real gateway returns are kept.
 import { Hono } from "hono";
+import { demoOrganizationActions, demoUniverseActions } from "../access";
 import { modelDefaultsPutSchema } from "@lightspeed-ai/platform-shared";
 import type {
   GitHubApp,
@@ -645,7 +646,7 @@ export function secretRoutes(store: DemoStore): Hono {
   app.put("/:id/models/defaults", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (store.currentUser.role !== "admin" && !["operator", "owner"].includes(universe.universe.role ?? "")) return c.json({ error: "operator role required" }, 403);
+    if (!demoUniverseActions(store, universe).has("configureResource")) return c.json({ error: "universe permission required: configureResource" }, 403);
     const body = modelDefaultsPutSchema.safeParse(await readBody(c));
     if (!body.success) return badRequest(c, body.error.issues[0]?.message ?? "Invalid defaults update");
     if (body.data.expectedRevision !== universe.modelDefaults.revision) return conflict(c, "Model defaults changed elsewhere.");
@@ -656,15 +657,14 @@ export function secretRoutes(store: DemoStore): Hono {
   /// Operators may inspect setup state; organization administrators manage its credential.
   app.get("/:id/setups", (c) => {
     const universe = universeFor(store, c);
-    const role = universe?.universe.role;
-    if (!universe || (role !== "owner" && role !== "operator")) return notFound(c);
+    if (!universe || !demoUniverseActions(store, universe).has("configureResource")) return notFound(c);
     return c.json(universe.setups.length ? universe.setups : [{ ...CONFIGURATOR_SETUP, status: "available" }]);
   });
   app.post("/:id/setups/configurator/install", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    if (universe.universe.role !== "owner") return c.json({ error: "universe Owner required" }, 403);
-    if (store.currentUser.role !== "admin" && universe.universe.organizationRole !== "admin") return c.json({ error: "organization admin required" }, 403);
+    if (!demoUniverseActions(store, universe).has("administer")) return c.json({ error: "universe permission required: administer" }, 403);
+    if (!demoOrganizationActions(store, universe.universe.organizationRole).has("manageServiceUsers")) return c.json({ error: "organization permission required: manageServiceUsers" }, 403);
     const previous = universe.setups.find(setup => setup.id === CONFIGURATOR_SETUP.id);
     const grant = mintGrant(store, universe, { providerId: "static-token", providerKind: "staticToken", displayName: "Configurator Platform credential" });
     const now = Date.now();

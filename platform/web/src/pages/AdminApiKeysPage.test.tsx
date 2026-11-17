@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { selectOption } from "@/test/select-option";
 import { AdminApiKeysPage } from "./AdminApiKeysPage";
 import { waitForUi } from "@/test/wait-for-ui";
@@ -14,16 +15,14 @@ const mocks = vi.hoisted(() => ({
   platformAdmin: false,
   role: "admin",
 }));
-vi.mock("@/lib/permissions", () => ({
-  usePlatformAdmin: () => mocks.platformAdmin,
-}));
 vi.mock("@/lib/platform-api", () => ({
   platformApi: mocks.api,
   useOrganizations: () => ({
     data: {
       organizations: [
-        { id: "team", name: "Research", role: mocks.role },
-        { id: "other", name: "Operations", role: "member" },
+        { id: "team", name: "Research", role: mocks.role, actions: [...organizationActions([mocks.role as never])] },
+        // A Platform Admin administers every organization: the server sends Admin's actions.
+        { id: "other", name: "Operations", role: mocks.platformAdmin ? "admin" : "member", actions: [...organizationActions([mocks.platformAdmin ? "admin" : "member"])] },
       ],
     },
   }),

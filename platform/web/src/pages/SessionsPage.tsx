@@ -177,7 +177,7 @@ const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]
   missing: "This session's workflow no longer exists.",
 };
 
-export function SessionsPage({ admin }: { admin: boolean }) {
+export function SessionsPage() {
   const { universe, handle, isLoading } = useActiveUniverse();
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
@@ -290,8 +290,8 @@ function SessionList({
   const mayClose = useSessionClosePermission(universeId);
   const mayDelete = useSessionDeletePermission(universeId);
   const canCreate = permissions.can("createSession");
-  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.lifecycleControlled || permissions.role === "owner") && mayClose(session.access));
-  const selectedOpen = selectedSessions.filter((session) => (!session.lifecycleControlled || permissions.role === "owner") && session.lifecycleStatus !== "closed" && mayClose(session.access));
+  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.lifecycleControlled || permissions.can("administer")) && mayClose(session.access));
+  const selectedOpen = selectedSessions.filter((session) => (!session.lifecycleControlled || permissions.can("administer")) && session.lifecycleStatus !== "closed" && mayClose(session.access));
   const selectedClosed = selectedSessions.filter((session) => session.lifecycleStatus === "closed" && mayDelete(session.access));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   // Only metadata filters count; which sessions the list includes is its scope.
@@ -2133,7 +2133,7 @@ export function SessionDetail({
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
               compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
-              lifecycle={((!controlled || permissions.role === "owner") && canClose && !closed) || (canDelete && closed) ? (
+              lifecycle={((!controlled || permissions.can("administer")) && canClose && !closed) || (canDelete && closed) ? (
                 closed ? (
                   <DropdownMenuItem
                     variant="destructive"

@@ -19,7 +19,7 @@ import { gatewayRoutes } from "./routes/gateway.js";
 import { setupRoutes } from "./routes/setups.js";
 import { universeRoutes } from "./routes/universes.js";
 import { registerWebApp } from "./static.js";
-import { isPlatformAdmin } from "./context.js";
+import { sessionAllows } from "./context.js";
 import { readChannelsStatus } from "./channels-status.js";
 import { publicAuthConfig } from "./auth.js";
 
@@ -77,14 +77,14 @@ export function buildApp(ctx: AppContext) {
   });
 
   api.get("/status/channels", async (c) => {
-    if (!isPlatformAdmin(c.get("session"))) {
-      return c.json({ error: "platform admin required" }, 403);
+    if (!sessionAllows(c.get("session"), "configureDeployment")) {
+      return c.json({ error: "deployment permission required: configureDeployment" }, 403);
     }
     return c.json({ connectors: await readChannelsStatus(ctx.env.channelsHealthUrls) });
   });
 
   api.get("/admin/audit", async (c) => {
-    if (!isPlatformAdmin(c.get("session"))) return c.json({ error: "platform admin required" }, 403);
+    if (!sessionAllows(c.get("session"), "readAudit")) return c.json({ error: "deployment permission required: readAudit" }, 403);
     const query = auditQuerySchema.safeParse(c.req.query());
     if (!query.success) return c.json({ error: "invalid audit pagination" }, 400);
     const { limit, cursor } = query.data;

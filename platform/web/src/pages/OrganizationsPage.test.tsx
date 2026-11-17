@@ -4,12 +4,14 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { OrganizationsPage } from "./OrganizationsPage";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { waitForUi } from "@/test/wait-for-ui";
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   role: "member",
+  platformAdmin: false,
   canCreate: false,
   loading: false,
   empty: false,
@@ -30,7 +32,7 @@ vi.mock("@/lib/platform-api", () => ({
                   id: "team",
                   name: "Team",
                   personal: mocks.personal,
-                  role: mocks.role,
+                  role: mocks.role, actions: [...organizationActions(mocks.platformAdmin ? [mocks.role as never, "admin"] : [mocks.role as never])], baseUniverseRole: "viewer",
                   universeQuota: 100,
                   universeCount: 3,
                   defaultProtected: true,
@@ -40,7 +42,7 @@ vi.mock("@/lib/platform-api", () => ({
                   id: "other",
                   name: "Other Team",
                   personal: false,
-                  role: mocks.role,
+                  role: mocks.role, actions: [...organizationActions(mocks.platformAdmin ? [mocks.role as never, "admin"] : [mocks.role as never])], baseUniverseRole: "viewer",
                   universeQuota: 200,
                   defaultProtected: false,
                   requireProtected: false,
@@ -91,6 +93,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 async function show(path: string, platformAdmin = false) {
+  mocks.platformAdmin = platformAdmin;
   await act(async () =>
     root.render(
       <MemoryRouter initialEntries={[path]}>
@@ -219,22 +222,6 @@ it("links service user keys to unified administration and confirms disabling a s
   );
 });
 
-it("keeps policy changes as a draft until explicitly saved", async () => {
-  await show("/admin/organizations/team/settings", true);
-  await click("Edit policy");
-  await type("#organization-quota", "50");
-  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/update")).toBe(false);
-  await submit();
-  await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", {
-      organizationId: "team",
-      universeQuota: 50,
-      defaultProtected: true,
-      requireProtected: false,
-    }),
-  );
-});
-
 it("keeps an unsuccessful add operation in its dialog with the entered values", async () => {
   mocks.role = "admin";
   mocks.api.mockImplementation(async (operation) => {
@@ -250,27 +237,6 @@ it("keeps an unsuccessful add operation in its dialog with the entered values", 
   expect(dialog().querySelector<HTMLInputElement>("#organization-member-id")!.value).toBe("unknown-user");
 });
 
-it("shows universe usage in organization settings", async () => {
-  mocks.role = "admin";
-  await show("/admin/organizations/team/settings");
-  expect(container.textContent).toContain("Universes: 3 of 100");
-});
-
-it("leaves the universe quota to Platform Admins", async () => {
-  mocks.role = "admin";
-  await show("/admin/organizations/team/settings");
-  await click("Edit policy");
-  expect(dialog().querySelector("#organization-quota")).toBeNull();
-  await submit();
-  await waitForUi(() =>
-    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", {
-      organizationId: "team",
-      defaultProtected: true,
-      requireProtected: false,
-    }),
-  );
-});
-
 it("explains that a personal organization has no other members", async () => {
   mocks.role = "admin";
   mocks.personal = true;
@@ -278,4 +244,52 @@ it("explains that a personal organization has no other members", async () => {
   expect(container.textContent).toContain("only its owner as a member");
   expect(button("Add member")).toBeUndefined();
   expect(mocks.api).not.toHaveBeenCalled();
+});
+
+it("saves a changed universe quota only when its own Save is pressed", async () => {
+  await show("/admin/organizations/team/settings", true);
+  expect(container.textContent).toContain("3 of 100 used");
+  await type("#organization-quota", "50");
+  expect(mocks.api.mock.calls.some(([operation]) => operation === "platform/organizations/update")).toBe(false);
+  await act(async () => container.querySelector<HTMLFormElement>("#organization-quota")!.form!.requestSubmit());
+  await waitForUi(() =>
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", universeQuota: 50 }),
+  );
+});
+
+it("shows an Organization Admin the usage but leaves the quota to Platform Admins", async () => {
+  mocks.role = "admin";
+  await show("/admin/organizations/team/settings");
+  expect(container.textContent).toContain("3 of 100 used");
+  expect(container.textContent).toContain("A Platform Admin sets the quota.");
+  expect(container.querySelector("#organization-quota")).toBeNull();
+});
+
+it("saves default universe access and protection as soon as they change", async () => {
+  mocks.role = "admin";
+  await show("/admin/organizations/team/settings");
+  expect(button("Viewer").getAttribute("aria-pressed")).toBe("true");
+  const note = container.querySelector<HTMLElement>('[data-slot="info-box"]')!;
+  expect(note.dataset.tone).toBe("info");
+  expect(note.textContent).toContain("Unshared sessions stay private");
+  await click("Operator");
+  await waitForUi(() =>
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", baseUniverseRole: "operator" }),
+  );
+  await click("None");
+  await waitForUi(() =>
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", baseUniverseRole: null }),
+  );
+  await act(async () => container.querySelector<HTMLButtonElement>("#organization-requireProtected")!.click());
+  await waitForUi(() =>
+    expect(mocks.api).toHaveBeenCalledWith("platform/organizations/update", { organizationId: "team", requireProtected: true }),
+  );
+});
+
+it("leaves name and default universe access out of a personal organization's settings", async () => {
+  mocks.role = "admin";
+  mocks.personal = true;
+  await show("/admin/organizations/team/settings");
+  expect(container.querySelector("#organization-name")).toBeNull();
+  expect(container.textContent).not.toContain("Default universe access");
 });

@@ -115,7 +115,7 @@ async function render(file = name, ready: () => Element | null = () => container
           <Routes>
             <Route
               path="/u/:handle/workspaces/:workspaceId/files/*"
-              element={<WorkspacesPage admin={false} />}
+              element={<WorkspacesPage />}
             />
           </Routes>
         </MemoryRouter>

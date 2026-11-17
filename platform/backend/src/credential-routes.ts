@@ -7,7 +7,7 @@ import { CREDENTIAL_OPERATIONS, credentialCreateSchema, credentialRestrictionsSc
 import { z } from "zod";
 import type { ApiVariables, AppContext } from "./context.js";
 import { getAuth, requireCredentialManagement, type AuthContext } from "./auth-context.js";
-import { requireOrganizationAdmin } from "./organization-access.js";
+import { requireOrganizationAction } from "./organization-access.js";
 import { PERSONAL_KEY_CONFIG, SERVICE_USER_KEY_CONFIG } from "./api-key-config.js";
 import { auditIdentity } from "./identity-audit.js";
 
@@ -94,7 +94,7 @@ export async function revokeServiceUserCredential(ctx: AppContext, auth: AuthCon
 }
 async function serviceUserOwner(ctx: AppContext, auth: AuthContext, organizationId: string, serviceUserId: string): Promise<Owner> {
   requireCredentialManagement(auth);
-  await requireOrganizationAdmin(ctx, auth, organizationId);
+  await requireOrganizationAction(ctx, auth, organizationId, "manageServiceUsers");
   if (!z.string().uuid().safeParse(serviceUserId).success) throw new HTTPException(400, { message: "Invalid service user identifier" });
   const [app] = await ctx.db.select().from(schema.serviceUsers)
     .where(and(eq(schema.serviceUsers.id, serviceUserId), eq(schema.serviceUsers.organizationId, organizationId)));

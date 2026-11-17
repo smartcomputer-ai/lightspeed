@@ -21,6 +21,7 @@ export const deviceCodeFields = {
 export const organizationFields = {
   personalUserId: { type: "string", required: false, input: false },
   universeQuota: { type: "number", required: false, defaultValue: 100, input: false },
+  baseUniverseRole: { type: "string", required: false, input: false },
   defaultProtected: { type: "boolean", required: false, defaultValue: true, input: false },
   requireProtected: { type: "boolean", required: false, defaultValue: false, input: false },
   membershipPolicy: { type: "json", required: false, input: false },

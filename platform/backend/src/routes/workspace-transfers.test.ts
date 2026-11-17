@@ -1,4 +1,5 @@
 import { decodeHttpRequest, problemResponse } from "../../../test/http-fixture.js";
+import { universeActions, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { Hono } from "hono";
 import { unzipSync } from "fflate";
 import {
@@ -20,7 +21,7 @@ vi.mock("./universes.js", () => ({
     },
     handle: "test",
     role: identity.role,
-    caller: { actorId: "member", role: identity.role },
+    actions: universeActions([identity.role as UniverseRole]), caller: { actorId: "member", actions: universeActions([identity.role as UniverseRole]) },
   })),
 }));
 

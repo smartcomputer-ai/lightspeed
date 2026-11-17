@@ -6,14 +6,14 @@ import type {
   PlatformOperationResult,
 } from "@lightspeed-ai/platform-shared";
 import { platformApi, useOrganizations } from "@/lib/platform-api";
-import { usePlatformAdmin } from "@/lib/permissions";
+import { organizationAllows } from "@/lib/permissions";
+import { OrganizationSettings } from "@/components/admin/organization-settings";
+import type { OrganizationAction } from "@lightspeed-ai/platform-shared";
 import { AddIcon, EditIcon } from "@/icons";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   MemberDialog,
   ServiceUserDialog,
-  PolicyDialog,
   ConfirmDialog,
 } from "@/components/admin/organization-dialogs";
 import {
@@ -45,17 +45,21 @@ const sectionTitles: Record<Section, string> = {
   "service-users": "Service users",
   settings: "Organization settings",
 };
+const sectionActions: Record<Section, OrganizationAction> = {
+  people: "manageMembers",
+  "service-users": "manageServiceUsers",
+  settings: "managePolicy",
+};
 
 /// One organization's administration sections. The Platform inventory of
 /// every organization is PlatformOrganizationsPage.
 export function OrganizationsPage({ section }: { section: Section }) {
   const organizations = useOrganizations();
-  const admin = usePlatformAdmin();
   const { organizationId } = useParams();
   const organization = organizations.data?.organizations.find(
     (organization) =>
       organization.id === organizationId &&
-      (admin || organization.role === "admin"),
+      organizationAllows(organization, sectionActions[section]),
   );
   if (organizations.isLoading) return <LoadingNote />;
   if (organizations.error)
@@ -91,13 +95,11 @@ function OrganizationDetails({
   section: Section;
 }) {
   const client = useQueryClient();
-  const admin = usePlatformAdmin();
   const organizationId = organization.id;
   const [member, setMember] = useState<Member | "new" | null>(null);
   const [serviceUser, setServiceUser] = useState<ServiceUser | "new" | null>(
     null,
   );
-  const [policyOpen, setPolicyOpen] = useState(false);
   const [remove, setRemove] = useState<Member | null>(null);
   const [toggleApp, setToggleApp] = useState<ServiceUser | null>(null);
   const members = useQuery({
@@ -138,40 +140,8 @@ function OrganizationDetails({
                 ? `${organization.name} · A personal organization: its owner is its only member.`
                 : `${organization.name} · Organization Admins manage every universe here.`
             }
-            actions={
-              <Button variant="outline" onClick={() => setPolicyOpen(true)}>
-                <EditIcon data-icon="inline-start" />
-                Edit policy
-              </Button>
-            }
           />
-          <Card>
-            <CardContent className="grid gap-2 text-sm">
-              <p>
-                Universes:{" "}
-                <strong className="tabular-nums">
-                  {organization.universeCount ?? 0} of{" "}
-                  {organization.universeQuota}
-                </strong>
-              </p>
-              <p>
-                New universes:{" "}
-                <strong>
-                  {organization.defaultProtected
-                    ? "Protected by default"
-                    : "Not protected by default"}
-                </strong>
-              </p>
-              <p>
-                Protection requirement:{" "}
-                <strong>
-                  {organization.requireProtected
-                    ? "Required for all universes"
-                    : "Optional"}
-                </strong>
-              </p>
-            </CardContent>
-          </Card>
+          <OrganizationSettings organization={organization} />
         </section>
       )}
       {section === "people" && organization.personal && (
@@ -349,14 +319,6 @@ function OrganizationDetails({
         </Link>
         .
       </p>
-      {policyOpen && (
-        <PolicyDialog
-          organization={organization}
-          canEditQuota={admin}
-          close={() => setPolicyOpen(false)}
-          saved={refresh}
-        />
-      )}
       {member && (
         <MemberDialog
           organizationId={organizationId}

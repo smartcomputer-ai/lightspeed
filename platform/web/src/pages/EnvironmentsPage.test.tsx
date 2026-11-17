@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const { organizationActions, universeActions } = await vi.hoisted(() => import("@lightspeed-ai/platform-shared"));
 import { ApiError, type Environment, type EnvironmentRegistrationKey, type EnvironmentTemplate } from "@/api";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { EnvironmentsPage } from "./EnvironmentsPage";
@@ -10,7 +11,7 @@ import { EnvironmentsPage } from "./EnvironmentsPage";
 const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "viewer" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({
-  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, handle: "test", isLoading: false }),
+  useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, actions: [...universeActions([mocks.role as never])] }, handle: "test", isLoading: false }),
 }));
 
 function environment(
@@ -99,7 +100,7 @@ async function settle() {
 async function show() {
   await act(async () => root.render(
     <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
-      <EnvironmentsPage admin={false} />
+      <EnvironmentsPage />
     </PermissionIdentityProvider></QueryClientProvider>,
   ));
   await settle();

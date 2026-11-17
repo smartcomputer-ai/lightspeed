@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/permissions", async (original) => ({
   ...await original<typeof import("@/lib/permissions")>(),
-  useActionPermissions: () => ({ can: (action: string) => action !== "manageAccess" || mocks.admin, isLoading: false }),
+  useActionPermissions: () => ({ can: (action: string) => action !== "administer" || mocks.admin, isLoading: false }),
 }));
 vi.mock("@/lib/universes", async (original) => {
   const universe = () => ({
@@ -85,7 +85,7 @@ it("tells a member an admin can turn it on", async () => {
 
 it("switches a feature from General settings, and holds a feature whose requirement is off", async () => {
   mocks.features = { bots: false, channels: false };
-  await render(<AdminUniverseSettingsPage admin={false} />);
+  await render(<AdminUniverseSettingsPage />);
   // Each switch keeps a hidden checkbox under its id, beside the switch itself.
   expect(container.querySelector<HTMLInputElement>("#feature-channels")!.disabled).toBe(true);
   expect(container.querySelector<HTMLInputElement>("#feature-bots")!.disabled).toBe(false);

@@ -1,4 +1,5 @@
 import { useOrganizations } from "@/lib/platform-api";
+import { organizationAllows } from "@/lib/permissions";
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { AddIcon } from "@/icons";
@@ -9,10 +10,10 @@ import { lastUniverse, memberships, universeHome, useUniverses } from "@/lib/uni
 
 /// `/` → the last-visited universe when it still exists, else the first
 /// membership, else an empty state.
-export function HomeRedirect({ admin }: { admin: boolean }) {
+export function HomeRedirect() {
   const universes = useUniverses();
   const organizations = useOrganizations();
-  const canCreate = admin || organizations.data?.organizations.some(a => a.role === "admin" || a.role === "creator");
+  const canCreate = organizations.data?.organizations.some(organization => organizationAllows(organization, "createUniverse"));
   const [createOpen, setCreateOpen] = useState(false);
 
   if (universes.isLoading) {

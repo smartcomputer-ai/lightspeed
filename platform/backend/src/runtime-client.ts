@@ -16,13 +16,12 @@ import {
   canDeleteSession,
   effectiveFeatures,
   featureOfMethod,
-  roleAtLeast,
   type FeatureKey,
   type FeatureStates,
-  type UniverseRole,
+  type UniverseAction,
 } from "@lightspeed-ai/platform-shared";
 import type { ServerEnv } from "./env.js";
-import { METHOD_ROLES, SESSION_TARGET_OPERATIONS } from "./routes/method-roles.js";
+import { METHOD_ACTIONS, SESSION_TARGET_OPERATIONS } from "./routes/method-actions.js";
 
 export class RuntimeUnconfigured extends Error {
   constructor() { super("runtime endpoint and Platform runtime token required"); }
@@ -33,11 +32,12 @@ export class GateRefusal extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string) { super(message); }
 }
 
-/// The admitted human or service user actor and its effective universe role.
-/// Organization and Platform administrators receive the Owner role here.
+/// The admitted human or service user actor and the universe actions it
+/// holds: the union of every role it has there, including Owner through
+/// organization or deployment administration.
 export interface UniverseCaller {
   actorId: string;
-  role: UniverseRole;
+  actions: ReadonlySet<UniverseAction>;
 }
 
 /// Methods only a session's creator or a universe Owner may call.
@@ -90,9 +90,10 @@ export function clientOptions(env: ServerEnv, headers: Record<string, string>) {
   };
 }
 
-/// Admission checks feature switches, the effective universe role, and session
-/// visibility. Owners may access all sessions; other callers see their own or
-/// shared sessions, with creator-only operations restricted to the creator.
+/// Admission checks feature switches, the method's universe action, and
+/// session visibility. A caller holding `accessPrivateSessions` reaches every
+/// session; others see their own or shared sessions, with creator-only
+/// operations restricted to the creator.
 export class UniverseClient extends LightspeedClient {
   constructor(
     options: ConstructorParameters<typeof LightspeedClient>[0],
@@ -103,13 +104,13 @@ export class UniverseClient extends LightspeedClient {
   }
 
   authorizeWatch(params: UniverseWatchParams = {}): UniverseWatchParams {
-    if (!roleAtLeast(this.caller.role, "viewer")) throw new GateRefusal(403, "viewer role required");
+    if (!this.can("read")) throw new GateRefusal(403, "universe permission required: read");
     const requested = params.kinds ?? ["session", "bot", "environment", "workspace"];
     const kinds: WatchKind[] = requested.filter(kind => kind !== "bot" || this.features.bots);
     if (!kinds.length) throw new GateRefusal(403, "no enabled collections requested");
     return {
       kinds,
-      ...(this.caller.role === "owner" ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.caller.actorId }),
+      ...(this.can("accessPrivateSessions") ? (params.visibleTo ? { visibleTo: params.visibleTo } : {}) : { visibleTo: this.caller.actorId }),
     };
   }
 
@@ -117,9 +118,13 @@ export class UniverseClient extends LightspeedClient {
     return super.openWatch(this.authorizeWatch(params), options);
   }
 
+  private can(action: UniverseAction): boolean {
+    return this.caller.actions.has(action);
+  }
+
   needsPolicyBody(operation: string): boolean {
-    return (operation === "session/start" && this.caller.role !== "owner")
-      || (operation === "session/runs/start" && !roleAtLeast(this.caller.role, "operator"));
+    return (operation === "session/start" && !(this.can("setSessionRetention") && this.can("configureSession")))
+      || (operation === "session/runs/start" && !this.can("configureSession"));
   }
 
   override async openDownload(operation: "blobs/read" | "vfs/workspaces/files/read", params: OperationParams<typeof operation>, options: CallOptions = {}): Promise<Response> {
@@ -134,16 +139,16 @@ export class UniverseClient extends LightspeedClient {
   }
 
   async authorizeOperation(method: string, params: Record<string, unknown>, options: CallOptions = {}): Promise<{ params: Record<string, unknown>; response?: OperationResult<"transcriptions/read"> }> {
-    const required = METHOD_ROLES[method];
+    const required = METHOD_ACTIONS[method];
     if (!required) throw new GateRefusal(403, `${method} is not a universe operation`);
     const feature = featureOfMethod(method);
     const off = feature && featureOff(this.features, feature);
     if (off) throw off;
-    if (!roleAtLeast(this.caller.role, required)) throw new GateRefusal(403, `${required} role required`);
-    if (!roleAtLeast(this.caller.role, "operator")) {
+    if (!this.can(required)) throw new GateRefusal(403, `universe permission required: ${required}`);
+    if (!this.can("configureSession")) {
       if (method === "session/start") requirePreparedSession(params as unknown as OperationParams<"session/start">);
       if (method === "session/runs/start" && (params as unknown as OperationParams<"session/runs/start">).config != null) {
-        throw new GateRefusal(403, "operator role required for run configuration overrides");
+        throw new GateRefusal(403, "universe permission required for run configuration overrides: configureSession");
       }
     }
     // Draft transcriptions belong only to their creator, including for Owners.
@@ -156,21 +161,21 @@ export class UniverseClient extends LightspeedClient {
       }
       if (method === "transcriptions/read") return { params, response };
     }
-    const owner = this.caller.role === "owner";
+    const privileged = this.can("accessPrivateSessions");
     if (method === "session/delete") {
       // Permanent deletion must use the separately authorized, audited purge route.
-      params = { ...params, softDelete: true, ...(!owner ? { sharedOnly: true } : {}) };
+      params = { ...params, softDelete: true, ...(!privileged ? { sharedOnly: true } : {}) };
     }
-    if (!owner && CREATION_OPERATIONS.has(method)) {
+    if (!this.can("setSessionRetention") && CREATION_OPERATIONS.has(method)) {
       const start = params as { deleteAfterCloseMs?: number | null };
-      if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "Owner role required for deletion retention");
+      if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "universe permission required for deletion retention: setSessionRetention");
       // Explicit null also overrides profile-derived deletion schedules.
       params = { ...params, deleteAfterCloseMs: null };
     }
-    if (!owner && SESSION_TARGET_OPERATIONS.has(method)) {
+    if (!privileged && SESSION_TARGET_OPERATIONS.has(method)) {
       await this.requireSession(method, (params as { sessionId?: string }).sessionId);
     }
-    if (!owner && method === "session/list") {
+    if (!privileged && method === "session/list") {
       params = { ...params, visibleTo: this.caller.actorId };
     }
     return { params };
@@ -191,19 +196,20 @@ export class UniverseClient extends LightspeedClient {
     const creator = access.createdBy?.kind === "actor" && access.createdBy.id === this.caller.actorId;
     const visible = CREATOR_OPERATIONS.has(method) ? creator : creator || access.visibility === "universe";
     if (!visible) throw new GateRefusal(404, "session not found");
-    if (method === "session/delete" && !canDeleteSession(this.caller.role, access.visibility === "universe")) {
-      throw new GateRefusal(403, "operators may only delete shared sessions");
+    if (method === "session/delete" && !canDeleteSession(this.caller.actions, access.visibility === "universe")) {
+      throw new GateRefusal(403, "deleting an unshared session requires accessPrivateSessions");
     }
-    if (method === "session/close" && !canCloseSession(this.caller.role, creator, access.visibility === "universe")) {
-      throw new GateRefusal(403, "contributors may close only their own unshared sessions");
+    if (method === "session/close" && !canCloseSession(this.caller.actions, creator, access.visibility === "universe")) {
+      throw new GateRefusal(403, "closing a shared session requires closeSharedSessions");
     }
   }
 }
 
-/** Contributors choose a saved profile or the universe defaults, without overrides. */
+/** Without configureSession, a session starts from a saved profile or the
+ * universe defaults, without overrides, and unshared. */
 function requirePreparedSession(params: OperationParams<"session/start">): void {
   if (params.integration !== undefined) {
-    throw new GateRefusal(403, "operator role required to create integrated sessions");
+    throw new GateRefusal(403, "universe permission required to create integrated sessions: configureSession");
   }
   const profile = params.profile;
   const defaultProfile = profile == null || (profile.kind === "inline"
@@ -216,6 +222,6 @@ function requirePreparedSession(params: OperationParams<"session/start">): void 
     !allowedFields.has(key) && value !== undefined,
   );
   if ((!defaultProfile && !namedProfile) || overrides || params.access?.visibility === "universe") {
-    throw new GateRefusal(403, "contributors may create only default sessions or use an existing profile without overrides");
+    throw new GateRefusal(403, "without configureSession, a session may only use the universe defaults or an existing profile, without overrides");
   }
 }

@@ -916,7 +916,22 @@
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "The highest organization role the caller holds, for display."
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "createUniverse",
+                    "administerUniverses",
+                    "manageMembers",
+                    "manageServiceUsers",
+                    "managePolicy"
+                  ]
+                },
+                "description": "What the caller may do in the organization: the union of every role it holds there."
               },
               "universeQuota": {
                 "type": "integer",
@@ -927,6 +942,23 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "baseUniverseRole": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "contributor",
+                      "operator",
+                      "owner"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
               },
               "defaultProtected": {
                 "type": "boolean"
@@ -1041,7 +1073,9 @@
               "slug",
               "personal",
               "role",
+              "actions",
               "universeQuota",
+              "baseUniverseRole",
               "defaultProtected",
               "requireProtected",
               "createdAt"
@@ -1079,6 +1113,22 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100000
+        },
+        "baseUniverseRole": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "defaultProtected": {
           "type": "boolean"
@@ -1128,7 +1178,22 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "The highest organization role the caller holds, for display."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "createUniverse",
+                  "administerUniverses",
+                  "manageMembers",
+                  "manageServiceUsers",
+                  "managePolicy"
+                ]
+              },
+              "description": "What the caller may do in the organization: the union of every role it holds there."
             },
             "universeQuota": {
               "type": "integer",
@@ -1139,6 +1204,23 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "baseUniverseRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "viewer",
+                    "contributor",
+                    "operator",
+                    "owner"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
             },
             "defaultProtected": {
               "type": "boolean"
@@ -1253,7 +1335,9 @@
             "slug",
             "personal",
             "role",
+            "actions",
             "universeQuota",
+            "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
             "createdAt"
@@ -1314,7 +1398,22 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "The highest organization role the caller holds, for display."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "createUniverse",
+                  "administerUniverses",
+                  "manageMembers",
+                  "manageServiceUsers",
+                  "managePolicy"
+                ]
+              },
+              "description": "What the caller may do in the organization: the union of every role it holds there."
             },
             "universeQuota": {
               "type": "integer",
@@ -1325,6 +1424,23 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "baseUniverseRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "viewer",
+                    "contributor",
+                    "operator",
+                    "owner"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
             },
             "defaultProtected": {
               "type": "boolean"
@@ -1439,7 +1555,9 @@
             "slug",
             "personal",
             "role",
+            "actions",
             "universeQuota",
+            "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
             "createdAt"
@@ -1464,6 +1582,22 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100000
+        },
+        "baseUniverseRole": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "contributor",
+                "operator",
+                "owner"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "defaultProtected": {
           "type": "boolean"
@@ -1611,7 +1745,22 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "The highest organization role the caller holds, for display."
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "createUniverse",
+                  "administerUniverses",
+                  "manageMembers",
+                  "manageServiceUsers",
+                  "managePolicy"
+                ]
+              },
+              "description": "What the caller may do in the organization: the union of every role it holds there."
             },
             "universeQuota": {
               "type": "integer",
@@ -1622,6 +1771,23 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "baseUniverseRole": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "viewer",
+                    "contributor",
+                    "operator",
+                    "owner"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The universe role every member person holds on every universe in the organization; null gives members access only through grants."
             },
             "defaultProtected": {
               "type": "boolean"
@@ -1736,7 +1902,9 @@
             "slug",
             "personal",
             "role",
+            "actions",
             "universeQuota",
+            "baseUniverseRole",
             "defaultProtected",
             "requireProtected",
             "createdAt"

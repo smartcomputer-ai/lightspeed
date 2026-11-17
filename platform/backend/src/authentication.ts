@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
-import type { AppContext } from "./context.js";
+import { hasPlatformAdminRole, type AppContext } from "./context.js";
 import type { Session } from "./auth.js";
 import type { AuthContext } from "./auth-context.js";
 import { principalAllowed, sessionAllowed } from "./auth-access.js";
@@ -38,7 +38,7 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
       if (!session || session.session.sessionKind !== "cli" || !sessionAllowed(session, ctx.env)) return null;
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, session.user.id));
       if (!user || !principalAllowed(user, ctx.env) || !sessionAllowed({ user, session: session.session }, ctx.env)) return null;
-      return { auth: { principal: { kind: "user", id: user.id, user, platformAdmin: user.role?.split(",").includes("admin") === true },
+      return { auth: { principal: { kind: "user", id: user.id, user, platformAdmin: hasPlatformAdminRole(user) },
         actorId: user.id, credential: { kind: "cliSession", id: session.session.id, restrictions: {} },
         session: { id: session.session.id, createdAt: session.session.createdAt, expiresAt: effectiveSessionExpiry(session, ctx.env) } },
         ...(renewed.headers.get("set-auth-token") ? { renewedToken: renewed.headers.get("set-auth-token")! } : {}) };
@@ -60,7 +60,7 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
       const [user] = await ctx.db.select().from(schema.user).where(eq(schema.user.id, binding.userId));
       if (!user || !principalAllowed(user, ctx.env)) return null;
       return { auth: {
-        principal: { kind: "user", id: user.id, user, platformAdmin: user.role?.split(",").includes("admin") === true },
+        principal: { kind: "user", id: user.id, user, platformAdmin: hasPlatformAdminRole(user) },
         credential: { kind: "personalKey", id: key.id, restrictions: limits.data }, actorId: user.id,
       } };
     }
@@ -80,7 +80,7 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
   if (!user || !principalAllowed(user, ctx.env) || !sessionAllowed({ user, session: session.session }, ctx.env)) return null;
   await ensurePersonalOrganization(ctx.db, ctx.env, user.id);
   return { session, auth: {
-    principal: { kind: "user", id: user.id, user, platformAdmin: user.role?.split(",").includes("admin") === true },
+    principal: { kind: "user", id: user.id, user, platformAdmin: hasPlatformAdminRole(user) },
     credential: { kind: "session", id: session.session.id, restrictions: {} }, actorId: user.id,
     session: { id: session.session.id, createdAt: session.session.createdAt, expiresAt: effectiveSessionExpiry(session, ctx.env) },
   } };

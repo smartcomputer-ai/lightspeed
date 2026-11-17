@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from "react";
+import { organizationActions, universeActions } from "@lightspeed-ai/platform-shared";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -14,7 +15,7 @@ vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")
 
 const universe = (handle: string, overrides: Record<string, unknown> = {}) => ({
   id: `id-${handle}`, lightspeedUniverseId: `core-${handle}`, name: handle, handle, status: "active",
-  createdAt: "2026-01-01T00:00:00Z", role: "viewer", features: { bots: true, channels: true }, ...overrides,
+  createdAt: "2026-01-01T00:00:00Z", role: "viewer", actions: [...universeActions(["viewer"])], features: { bots: true, channels: true }, ...overrides,
 });
 
 let root: Root;
@@ -46,7 +47,7 @@ async function show(admin: boolean) {
   await act(async () => root.render(
     <QueryClientProvider client={client}><MemoryRouter initialEntries={["/"]}>
       <Routes>
-        <Route path="/" element={<HomeRedirect admin={admin} />} />
+        <Route path="/" element={<HomeRedirect />} />
         <Route path="*" element={<Landed />} />
       </Routes>
     </MemoryRouter></QueryClientProvider>,
@@ -75,6 +76,7 @@ it("falls back to the first active membership when the last universe is gone or 
 
 it("offers an admin a first universe when there is none", async () => {
   mocks.api.mockResolvedValue([universe("browsed", { role: null })]);
+  client.setQueryData(["organizations"], { organizations: [{ id: "team", name: "Team", role: "admin", actions: [...organizationActions(["admin"])] }] });
   await show(true);
   await waitForUi(() => expect(container.textContent).toContain("No universes yet"));
   expect(container.textContent).toContain("Create your first universe");
