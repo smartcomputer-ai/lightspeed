@@ -103,14 +103,17 @@ at sign-in. See [Company sign-in](single-sign-on.md).
 Without company sign-in, public signup is disabled. A Platform Admin creates
 users under **Admin → Users**. The first administrator comes from
 [the self-hosting setup](../deployment/self-hosting.md#configure-the-two-applications).
-Users manage their profile, sign-in settings, and personal keys under **Your profile**.
+Users manage their profile, sign-in, personal API keys and appearance under
+**Settings** in the account menu.
 The read-only **User ID** there can be shared with an organization admin when joining
 an organization. Platform Admins can also copy it from the user under **Platform → Users**.
 Company-managed users change their identity and password with their
 company identity provider.
 
 In **Admin**, choose an organization in the sidebar. Organization Admins manage
-**Universes**, **Members**, **API keys**, and **Settings** there. **Members** lists the
+**Universes**, **Members**, **API keys**, and **Settings** there. Personal
+organizations are not listed for their owners, who use the universe switcher and
+**Settings** instead; Platform Admins can still administer them. **Members** lists the
 organization's people and service users; open one to change its role or remove
 it. **Add person** adds an existing user as Member, Creator, or Admin. Platform
 Admins search the deployment's users by name or email; Organization Admins enter
@@ -174,7 +177,7 @@ API keys, and **Disable**. Disabling a service user blocks its keys until it is
 enabled again; its universe roles and the universes it created stay.
 
 A user key represents the signed-in person; a service-user key represents the
-service user. User keys live under **Your profile → Your API keys**. The web form for a new user
+service user. User keys live under **Settings → API keys**. The web form for a new user
 key defaults to one organization; selecting **All my organizations**
 explicitly permits broader use. That choice still grants only the user's
 current permissions. Service-user keys always belong to their identity's one

@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { AdminIcon, DarkThemeIcon, LightThemeIcon, SecurityIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon, UserIcon } from "@/icons";
+import { AdminIcon, DarkThemeIcon, LightThemeIcon, SettingsIcon, SignOutIcon, SwitcherIcon, SystemThemeIcon } from "@/icons";
 import type { SessionUser } from "@/auth";
 import { authClient } from "@/auth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -67,17 +67,9 @@ export function UserMenu({ user, canAdmin, organizationId }: { user: SessionUser
             <DropdownMenuGroup>
               <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
             </DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => navigate("/account")}>
-              <UserIcon />
-              Your profile
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/account#api-keys")}>
-              <SecurityIcon />
-              Your API keys
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/preferences")}>
+            <DropdownMenuItem onClick={() => navigate("/settings")}>
               <SettingsIcon />
-              Preferences
+              Settings
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>

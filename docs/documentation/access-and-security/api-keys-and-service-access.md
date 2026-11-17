@@ -7,7 +7,7 @@ standalone runtime needs its own trusted gateway or a trusted network.
 
 ## Platform API keys
 
-Create user keys under **Your profile → Your API keys**. Create service-user
+Create user keys under **Settings → API keys**. Create service-user
 keys from the service user itself: **Admin → organization → Members**, open the
 service user, then **New key**. Each key opens to show what it may reach, when
 it was last used, and **Revoke key**. Organization Admins see every key that can

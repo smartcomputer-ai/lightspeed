@@ -71,10 +71,12 @@ function Members({ universe }: { universe: Universe }) {
       <PageHeader title="Universe Members"
         description={(
           <>
-            {base
-              ? `Everyone in ${organizationName} can use this universe as a ${ROLE_LABELS[base]}, and its admins as Owners. Add members here to set permissions explicitly.`
-              : `Only the members below can use this universe, plus ${organizationName}'s admins as Owners.`}
-            {organization && organizationAllows(organization, "managePolicy") && (
+            {organization?.personal
+              ? "This universe is in a personal organization: its owner and the service users added here can use it."
+              : base
+                ? `Everyone in ${organizationName} can use this universe as a ${ROLE_LABELS[base]}, and its admins as Owners. Add members here to set permissions explicitly.`
+                : `Only the members below can use this universe, plus ${organizationName}'s admins as Owners.`}
+            {organization && !organization.personal && organizationAllows(organization, "managePolicy") && (
               <> <Link className="underline" to={`${organizationAdminPath(organizationId)}/settings`}>Change the default</Link></>
             )}
           </>

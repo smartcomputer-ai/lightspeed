@@ -1,4 +1,3 @@
-import { PageHeader } from "@/components/page";
 import { DemoModeNote } from "@/components/onboarding/demo-mode-note";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -23,18 +22,14 @@ import {
   SystemThemeIcon,
 } from "@/icons";
 
-/// The signed-in person's own preferences, above any universe like the
-/// account page.
-export function PreferencesPage() {
+/// How Lightspeed looks and moves, kept in this browser.
+export function AppearanceSettings() {
   return (
-    <>
-      <PageHeader title="Preferences" description="How Lightspeed looks and works for you." />
-      <div className="grid gap-6">
-        <AppearanceCard />
-        <AccessibilityCard />
-        <DemoDataCard />
-      </div>
-    </>
+    <div className="grid gap-6">
+      <AppearanceCard />
+      <AccessibilityCard />
+      <DemoDataCard />
+    </div>
   );
 }
 
@@ -72,6 +67,7 @@ function AppearanceCard() {
     <Card id="appearance" className="scroll-mt-6">
       <CardHeader>
         <CardTitle>Appearance</CardTitle>
+        <CardDescription>Saved in this browser.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
         <section aria-labelledby="theme-label" className="grid gap-2">
@@ -109,6 +105,7 @@ function AccessibilityCard() {
     <Card id="accessibility" className="scroll-mt-6">
       <CardHeader>
         <CardTitle>Accessibility</CardTitle>
+        <CardDescription>Saved in this browser.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
         <div>

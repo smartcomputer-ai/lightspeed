@@ -51,7 +51,7 @@ function ApiKeyDetails({ owner, apiKey, onRevoked }: { owner: ApiKeyOwner; apiKe
       </ResourceDetailsGrid>
       {apiKey.enabled && owner.kind !== "person" && <RevokeAction owner={owner} apiKey={apiKey} onRevoked={onRevoked} />}
       {owner.kind === "person" && (
-        <p className="text-sm text-muted-foreground">Only {owner.name} can revoke this key, from their profile.</p>
+        <p className="text-sm text-muted-foreground">Only {owner.name} can revoke this key, in their Settings.</p>
       )}
     </>
   );

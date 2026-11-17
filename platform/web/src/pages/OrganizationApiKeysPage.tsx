@@ -41,7 +41,7 @@ export function OrganizationApiKeysPage() {
       <PageHeader title="API keys" description={`${organization.name} · Every key that can sign in to this organization, and whose it is.`} />
       <p className="mb-6 max-w-3xl text-sm text-muted-foreground">
         Keys are created by their owners. People create keys that act as themselves under{" "}
-        <Link className="underline" to="/account#api-keys">Your profile → Your API keys</Link>. Service-user keys are created from
+        <Link className="underline" to="/settings#api-keys">Settings → API keys</Link>. Service-user keys are created from
         the service user under{" "}
         <Link className="underline" to={`${organizationAdminPath(organizationId)}/members`}>Members</Link>, where they can also be revoked.
       </p>

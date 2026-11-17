@@ -1,4 +1,4 @@
-import { platformApi } from "@/lib/platform-api";
+import { platformApi, useOrganizations } from "@/lib/platform-api";
 import { useActionPermissions, useDeploymentPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -292,6 +292,7 @@ function IdentifiersCard({ universe }: { universe: Universe }) {
 /// Archive, delete, and for deployment administrators the purge of deleted
 /// sessions: everything that removes or hides the universe's work.
 function DangerZone({ universe }: { universe: Universe }) {
+  const personal = useOrganizations().data?.organizations?.find((organization) => organization.id === universe.organizationId)?.personal ?? false;
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const archived = universe.status === "archived";
@@ -307,7 +308,8 @@ function DangerZone({ universe }: { universe: Universe }) {
     mutationFn: () => api("DELETE", `/api/ui/universes/${universe.id}`, { handle: universe.handle }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["universes"] });
-      navigate(`${organizationAdminPath(universe.organizationId!)}/universes`);
+      // A personal organization has no admin pages for its owner: back to the app.
+      navigate(personal ? "/" : `${organizationAdminPath(universe.organizationId!)}/universes`);
     },
   });
 

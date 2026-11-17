@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { LoginConfig, SessionUser } from "@/auth";
-import { AccountPage } from "./AccountPage";
+import { AccountSettings } from "./account-settings";
 import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({
@@ -42,7 +42,7 @@ afterEach(async () => {
 
 async function show(user: SessionUser = local) {
   await act(async () => root.render(
-    <QueryClientProvider client={client}><AccountPage user={user} /></QueryClientProvider>,
+    <QueryClientProvider client={client}><AccountSettings user={user} /></QueryClientProvider>,
   ));
 }
 const input = (id: string) => container.querySelector<HTMLInputElement>(`#${id}`);
@@ -140,4 +140,14 @@ it("exposes a selectable user ID for organization membership without making it e
   await act(async () => id.focus());
   expect(id.selectionStart).toBe(0);
   expect(id.selectionEnd).toBe(local.id.length);
+});
+
+it("copies the user ID with its button", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  await show();
+  const copy = container.querySelector<HTMLButtonElement>('button[aria-label="Copy user ID"]')!;
+  await act(async () => copy.click());
+  expect(writeText).toHaveBeenCalledWith("user");
+  await waitForUi(() => expect(container.querySelector('button[aria-label="Copied user ID"]')).not.toBeNull());
 });

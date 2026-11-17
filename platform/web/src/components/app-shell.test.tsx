@@ -130,9 +130,8 @@ it.each([
   ["/u/test/blobs/abc", ["Test"]],
   ["/admin/platform/audit", ["Audit log", "Platform administration"]],
   ["/admin/platform/environment-providers", ["Environment providers", "Platform administration"]],
-  ["/account", ["Your profile"]],
+  ["/settings", ["Settings"]],
   ["/admin/organizations/team/settings", ["Settings", "Admin"]],
-  ["/preferences", ["Preferences"]],
   ["/accounts-elsewhere", []],
   ["/", []],
 ])("names %s from the menu", (path, trail) => {
@@ -201,7 +200,7 @@ it("puts Back and the Organizations heading above the organization selector", as
   expect(heading.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
-it("opens a personal-key deep link and keeps profile section links navigable", async () => {
+it("opens a Settings section deep link and keeps its section links navigable", async () => {
   mocks.api.mockReset().mockImplementation(async (_method, path) => path === "/api/v1/platform/organizations" ? { organizations: [] } : []);
   const scroll = vi.fn();
   const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
@@ -209,15 +208,15 @@ it("opens a personal-key deep link and keeps profile section links navigable", a
   try {
     await act(async () => root.render(
       <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
-        <MemoryRouter initialEntries={["/account#api-keys"]}><Routes>
+        <MemoryRouter initialEntries={["/settings#api-keys"]}><Routes>
           <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} />}>
-            <Route path="account" element={<><div id="profile" /><div id="security" /><div id="api-keys" /></>} />
+            <Route path="settings" element={<><div id="profile" /><div id="security" /><div id="api-keys" /></>} />
           </Route>
         </Routes></MemoryRouter>
       </PermissionIdentityProvider></QueryClientProvider>,
     ));
     expect(scroll.mock.contexts).toContain(container.querySelector("#api-keys"));
-    const signIn = container.querySelector<HTMLAnchorElement>('a[href="/account#security"]')!;
+    const signIn = container.querySelector<HTMLAnchorElement>('a[href="/settings#security"]')!;
     expect(signIn.textContent).toBe("Sign-in");
     await act(async () => signIn.click());
     expect(scroll.mock.contexts.at(-1)).toBe(container.querySelector("#security"));
@@ -234,9 +233,14 @@ it("shows only universe administration to a universe Owner", async () => {
   expect(container.querySelector('[data-sidebar="separator"]')).toBeNull();
 });
 
-it("shows a personal organization the same administration sections", async () => {
+it("offers a personal organization's owner no administration", async () => {
   personalOrganization = true;
-  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({ "": ["Universes", "Members", "API keys", "Settings"] });
+  expect(await sidebarFor("viewer", undefined, false, "/admin/organizations/team/settings", "admin")).toEqual({});
+});
+
+it("still shows a Platform Admin a personal organization's administration", async () => {
+  personalOrganization = true;
+  expect(await sidebarFor("viewer", undefined, true, "/admin/organizations/team/settings", "admin")).toMatchObject({ "": ["Universes", "Members", "API keys", "Settings"] });
 });
 
 it("shows organization administration without deployment controls to an Organization Admin", async () => {

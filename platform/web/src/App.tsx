@@ -15,7 +15,6 @@ import { authClient, isPlatformAdmin, useLoginConfig } from "./auth.js";
 import { AppShell } from "@/components/app-shell";
 import { SettingsIndexRedirect } from "@/components/universe-nav";
 import { universeHome, useActiveUniverse } from "@/lib/universes";
-import { AccountPage } from "@/pages/AccountPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
 import { UnclaimedUniversesPage } from "@/pages/UnclaimedUniversesPage";
 import { AdminAuditPage } from "@/pages/AdminAuditPage";
@@ -35,7 +34,7 @@ import { McpServersPage } from "@/pages/McpServersPage";
 import { UniverseMembersPage } from "@/pages/UniverseMembersPage";
 import { UniverseRedirect } from "@/components/universe-redirect";
 import { ModelsPage } from "@/pages/ModelsPage";
-import { PreferencesPage } from "@/pages/PreferencesPage";
+import { SettingsPage, SettingsRedirect } from "@/pages/SettingsPage";
 import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SessionsPage } from "@/pages/SessionsPage";
 import { SetupsPage } from "@/pages/SetupsPage";
@@ -209,8 +208,9 @@ export function App() {
             <Route path="admin/platform/settings" element={<PlatformSettingsPage />} />
           </Route>
         </Route>
-        <Route path="account" element={<AccountPage user={user} />} />
-        <Route path="preferences" element={<PreferencesPage />} />
+        <Route path="settings" element={<SettingsPage user={user} />} />
+        <Route path="account" element={<SettingsRedirect />} />
+        <Route path="preferences" element={<SettingsRedirect />} />
         <Route path="login" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

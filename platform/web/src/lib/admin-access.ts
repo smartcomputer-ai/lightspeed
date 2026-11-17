@@ -28,10 +28,15 @@ export function useAdminAccess() {
   const { organizationId } = useParams();
   const administersUniverseIn = (id: string) =>
     universes.data?.some((universe) => universe.organizationId === id && universe.actions?.includes("administer")) === true;
+  // A personal organization has nothing to administer for its owner: its
+  // universes are in the switcher and its keys in Settings. Platform Admins
+  // still reach every organization.
+  const administersOrganizations = deployment.can("administerOrganizations");
   const manageable = (organizations.data?.organizations ?? []).filter(
     (organization) =>
-      ADMINISTRATIVE_ACTIONS.some((action) => organizationAllows(organization, action)) ||
-      administersUniverseIn(organization.id),
+      (!organization.personal || administersOrganizations) &&
+      (ADMINISTRATIVE_ACTIONS.some((action) => organizationAllows(organization, action)) ||
+        administersUniverseIn(organization.id)),
   );
   const selected = manageable.find((organization) => organization.id === organizationId);
   const deploymentArea = PLATFORM_AREA_ACTIONS.some((action) => deployment.can(action));

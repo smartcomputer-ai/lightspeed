@@ -5,7 +5,7 @@ import { useActionPermissions } from "@/lib/permissions";
 import { LightspeedMark } from "@/components/brand/lightspeed-logo";
 import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, matchPath, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
-import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ChannelIcon, EnvironmentProviderIcon, MemberIcon, SecurityIcon, SettingsIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
+import { ApiKeyIcon, AppearanceIcon, AuditLogIcon, BackIcon, ResetIcon, ReducedMotionOnIcon, ChannelIcon, EnvironmentProviderIcon, MemberIcon, SignInIcon, SettingsIcon, UniversesIcon, UserAdminIcon, UserIcon } from "@/icons";
 import {
   Sidebar,
   SidebarContent,
@@ -39,23 +39,18 @@ import { rememberUniverse, useUniverses } from "@/lib/universes";
 
 /// Working universes and organization administration have explicit context switchers.
 /// Platform controls are a separate deployment-wide section inside Admin.
-type ShellMode = "universe" | "admin" | "account" | "preferences";
-
-const ADMIN_TITLE = "Admin";
-const ACCOUNT_TITLE = "Your profile";
-const PREFERENCES_TITLE = "Preferences";
+type ShellMode = "universe" | "admin" | "settings";
 
 const MODE_TITLE: Record<Exclude<ShellMode, "universe">, string> = {
-  admin: ADMIN_TITLE,
-  account: ACCOUNT_TITLE,
-  preferences: PREFERENCES_TITLE,
+  admin: "Admin",
+  settings: "Settings",
 };
 
 /// The mode a path belongs to: its first segment, for the modes above the
 /// universes.
 function shellMode(pathname: string): ShellMode {
   const first = pathname.split("/")[1];
-  return first === "admin" || first === "account" || first === "preferences" ? first : "universe";
+  return first === "admin" || first === "settings" ? first : "universe";
 }
 
 /// Each admin entry shows when the caller holds the action its page needs.
@@ -86,7 +81,7 @@ export function shellTitleTrail(pathname: string, universeName: string | undefin
     const item = PLATFORM_NAV.find(({ to }) => pathname === to || pathname.startsWith(`${to}/`));
     if (item) return [item.label, "Platform administration"];
     const section = pathname.split("/")[4];
-    return [ORGANIZATION_NAV.find(item => item.path === section)?.label ?? ADMIN_TITLE, ADMIN_TITLE];
+    return [ORGANIZATION_NAV.find(item => item.path === section)?.label ?? MODE_TITLE.admin, MODE_TITLE.admin];
   }
   if (mode !== "universe") return [MODE_TITLE[mode]];
   const universe = matchPath("/u/:handle/*", pathname);
@@ -124,7 +119,7 @@ function NavItem({
   );
 }
 
-/// Header slot for profile and preferences: whole row navigates back to the
+/// Header slot for Settings: whole row navigates back to the
 /// app (HomeRedirect resolves the last-visited universe or the empty
 /// state); the mode title marks where you are.
 function ModeHeader({ title }: { title: string }) {
@@ -145,19 +140,20 @@ function ModeHeader({ title }: { title: string }) {
   );
 }
 
-/// The account and preferences pages' cards, by element id, as the
-/// sidebar's links to them; `shown` leaves out a card the page leaves out.
-const PAGE_SECTIONS: Record<"account" | "preferences", Array<{ id: string; label: string; icon: ComponentType; shown?: () => boolean }>> = {
-  account: [
+/// The Settings page's cards, by element id, as the sidebar's links to
+/// them, in the page's groups; `shown` leaves out a card the page leaves out.
+const SETTINGS_SECTIONS: Array<{ label: string; items: Array<{ id: string; label: string; icon: ComponentType; shown?: () => boolean }> }> = [
+  { label: "Account", items: [
     { id: "profile", label: "Profile", icon: UserIcon },
-    { id: "security", label: "Sign-in", icon: SecurityIcon },
-    { id: "api-keys", label: "Your API keys", icon: ApiKeyIcon },
-  ],
-  preferences: [
-    { id: "appearance", label: "Appearance", icon: AppearanceIcon },
+    { id: "security", label: "Sign-in", icon: SignInIcon },
+    { id: "api-keys", label: "API keys", icon: ApiKeyIcon },
+  ] },
+  { label: "Appearance", items: [
+    { id: "appearance", label: "Theme", icon: AppearanceIcon },
+    { id: "accessibility", label: "Accessibility", icon: ReducedMotionOnIcon },
     { id: "demo-data", label: "Demo data", icon: ResetIcon, shown: () => demoMode() !== null },
-  ],
-};
+  ] },
+];
 
 function scrollToSection(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -177,8 +173,8 @@ export function AppShell({ user }: { user: SessionUser }) {
   const location = useLocation();
   const mode = shellMode(location.pathname);
   useEffect(() => {
-    if (mode !== "account" && mode !== "preferences") return;
-    const section = PAGE_SECTIONS[mode].find((item) => `#${item.id}` === location.hash);
+    if (mode !== "settings") return;
+    const section = SETTINGS_SECTIONS.flatMap((group) => group.items).find((item) => `#${item.id}` === location.hash);
     if (section) scrollToSection(section.id);
   }, [location.hash, location.pathname, mode]);
   // Creating dialogs open on a starscape drawn ahead, after the page has loaded.
@@ -207,12 +203,7 @@ export function AppShell({ user }: { user: SessionUser }) {
     onCommit: setSidebarWidth,
   });
 
-  const mobileTitle =
-    mode === "universe"
-      ? (active?.name ?? "Lightspeed")
-      : mode === "account"
-        ? "Your profile"
-        : MODE_TITLE[mode];
+  const mobileTitle = mode === "universe" ? (active?.name ?? "Lightspeed") : MODE_TITLE[mode];
 
   return (
     <SidebarProvider
@@ -269,12 +260,12 @@ export function AppShell({ user }: { user: SessionUser }) {
               {platformNav.map(({ action: _action, ...item }) => <NavItem key={item.to} {...item} />)}
             </SidebarMenu></SidebarGroupContent></SidebarGroup></>}
           </>}
-          {(mode === "account" || mode === "preferences") && (
-            <SidebarGroup>
-              <SidebarGroupLabel>{MODE_TITLE[mode]}</SidebarGroupLabel>
+          {mode === "settings" && SETTINGS_SECTIONS.map((group) => (
+            <SidebarGroup key={group.label}>
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {PAGE_SECTIONS[mode].filter((section) => section.shown?.() ?? true).map((section) => (
+                  {group.items.filter((section) => section.shown?.() ?? true).map((section) => (
                     <SidebarMenuItem key={section.id}>
                       <SidebarMenuButton
                         render={<Link to={`#${section.id}`} />}
@@ -290,7 +281,7 @@ export function AppShell({ user }: { user: SessionUser }) {
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-          )}
+          ))}
         </SidebarContent>
         <SidebarFooter>
           <UserMenu user={user} canAdmin={adminAccess.any} organizationId={active?.organizationId} />

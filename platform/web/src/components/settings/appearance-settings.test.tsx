@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { enableDemoMode } from "@/lib/demo-mode";
 import { ThemeProvider } from "@/lib/theme";
-import { PreferencesPage } from "./PreferencesPage";
+import { AppearanceSettings } from "./appearance-settings";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -25,7 +25,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const show = () => act(async () => root.render(<ThemeProvider><PreferencesPage /></ThemeProvider>));
+const show = () => act(async () => root.render(<ThemeProvider><AppearanceSettings /></ThemeProvider>));
 const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === label);
 
 it("remembers the chosen theme and applies it", async () => {

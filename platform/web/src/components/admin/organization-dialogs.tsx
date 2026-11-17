@@ -153,7 +153,7 @@ export function CreateOrganizationDialog({
 }
 
 /// Adds an existing user. Those who manage the deployment's users pick from
-/// them; others enter the user ID the person shares from their profile.
+/// them; others enter the user ID the person copies from their Settings.
 export function AddPersonDialog({
   organizationId,
   memberIds,
@@ -195,7 +195,7 @@ export function AddPersonDialog({
           <Field>
             <FieldLabel htmlFor="organization-member-id">User ID</FieldLabel>
             <Input id="organization-member-id" value={userId} onChange={(event) => setUserId(event.target.value)} required autoFocus />
-            <FieldDescription>They find it under Your profile.</FieldDescription>
+            <FieldDescription>They find it under Settings → Profile.</FieldDescription>
           </Field>
         )}
         <RoleSelect value={role} onChange={setRole} />

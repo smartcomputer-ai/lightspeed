@@ -152,7 +152,7 @@ function CredentialList({ universeId, handle }: { universeId: string; handle: st
     <>
       <PageHeader
         title="Credentials"
-        description="Tokens and secrets that agents in this universe use to connect to external services. Manage keys for accessing Lightspeed under Your profile → Your API keys, or Admin → organization → API keys. A brokered credential stays in Lightspeed; a retrievable credential can also be assigned to an environment or leased by trusted services."
+        description="Tokens and secrets that agents in this universe use to connect to external services. Manage keys for accessing Lightspeed under Settings → API keys, or Admin → organization → API keys. A brokered credential stays in Lightspeed; a retrievable credential can also be assigned to an environment or leased by trusted services."
         actions={
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button />}>

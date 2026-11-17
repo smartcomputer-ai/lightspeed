@@ -12,13 +12,15 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { PageHeader } from "@/components/page";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { CopiedIcon, CopyIcon } from "@/icons";
 
-export function AccountPage({ user }: { user: SessionUser }) {
+/// Settings kept with the account: who you are, how you sign in, and the
+/// API keys that act as you.
+export function AccountSettings({ user }: { user: SessionUser }) {
   const config = useLoginConfig();
   return (
     <>
-      <PageHeader title="Your profile" description="Your identity, sign-in settings, and API keys." />
       <div className="grid gap-6">
         <ProfileCard user={user} />
         {user.identitySource !== "company" && config.data && config.data.password !== "off" && (!config.data.sso || user.emergencyAdmin) ? <PasswordCard /> : (
@@ -27,7 +29,7 @@ export function AccountPage({ user }: { user: SessionUser }) {
               <CardTitle>Sign-in</CardTitle>
               <CardDescription>
                 {user.identitySource === "company"
-                  ? "Your profile and sign-in are managed by your company. Change your password with your identity provider."
+                  ? "Your name, email and sign-in are managed by your company. Change your password with your identity provider."
                   : config.error
                     ? "Sign-in settings could not be loaded. Reload this page to try again."
                     : !config.data
@@ -38,7 +40,7 @@ export function AccountPage({ user }: { user: SessionUser }) {
           </Card>
         )}
         <div id="api-keys" className="scroll-mt-6">
-          <ApiKeysSection owner={{ kind: "personal" }} title="Your API keys"
+          <ApiKeysSection owner={{ kind: "personal" }} title="API keys"
             description="Keys act as you, with your current roles. Restrictions only narrow that access." />
         </div>
       </div>
@@ -89,7 +91,7 @@ function ProfileCard({ user }: { user: SessionUser }) {
           </Field>
           <Field>
             <FieldLabel htmlFor="account-user-id">User ID</FieldLabel>
-            <Input id="account-user-id" value={user.id} readOnly onFocus={(event) => event.currentTarget.select()} />
+            <CopyableId id="account-user-id" value={user.id} label="user ID" />
             <FieldDescription>Share this ID with an organization admin when they add you to an organization.</FieldDescription>
           </Field>
           {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
@@ -199,5 +201,21 @@ function PasswordCard() {
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/// A read-only identifier with a button that copies it.
+function CopyableId({ id, value, label }: { id: string; value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <InputGroup>
+      <InputGroupInput id={id} value={value} readOnly className="font-mono" onFocus={(event) => event.currentTarget.select()} />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton size="icon-xs" aria-label={copied ? `Copied ${label}` : `Copy ${label}`} title={copied ? "Copied" : "Copy"}
+          onClick={() => void navigator.clipboard.writeText(value).then(() => setCopied(true)).catch(() => undefined)}>
+          {copied ? <CopiedIcon /> : <CopyIcon />}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   );
 }
