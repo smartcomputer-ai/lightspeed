@@ -48,7 +48,7 @@ to configure it.
 ## Development logins
 
 The default authenticated `./dev.sh` (full profile) ensures a **Test** universe
-in a shared **Development** account and these users on every startup:
+in a shared **Development** organization and these users on every startup:
 
 | Role in Test | Login |
 | --- | --- |
@@ -59,7 +59,7 @@ in a shared **Development** account and these users on every startup:
 
 New accounts share `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD`, defaulting to
 `lightspeed-dev-password`. Admin keeps its Platform administrator role and is
-the Development account admin. The other users are account Creators, so they can
+the Development Organization Admin. The other users are organization Creators, so they can
 create their own universes, and receive the listed role in Test. Startup reuses
 existing users and the Test universe, restores these roles, and preserves
 existing passwords and content. Changing the password variable does not reset
@@ -68,7 +68,7 @@ existing logins.
 Set `LIGHTSPEED_PLATFORM_DEV_SEED=false` to disable these fixtures. Ordinary
 Platform startup and other launcher profiles leave them disabled. Seeding creates
 the runtime universe through the Platform's runtime token, then records the
-accounts and memberships in the Platform database. A supplied runtime token has full authority for seeding and runtime calls.
+organization and memberships in the Platform database.
 
 ## Company sign-in with local Keycloak
 
@@ -169,11 +169,11 @@ variants, to supply them. Migrations and universe setup still run. Explicit
 `LIGHTSPEED_AUTH_MODE=single ./dev.sh runtime` remains available for private local
 access. See [Use Lightspeed from the terminal](../using-lightspeed/cli.md).
 
-The full and platform profiles start Configurator against Platform. Organization
-Admins install its restricted service-user credential from a universe template.
-Channel connectors remain disabled; `LIGHTSPEED_CHANNELS_CONNECTORS` must be
-empty. The launcher never gives full-authority runtime tokens to an agent. Bots and Channels core remain inside
-the runtime.
+The full and platform profiles start Configurator against Platform. An
+Organization Admin can install it from a universe template, which gives it a
+restricted service-user credential. To test chat channels, start the
+[connector host](../integrating-and-extending/channel-connectors.md)
+separately.
 
 The runtime starts three HTTP listeners in the full and runtime profiles:
 

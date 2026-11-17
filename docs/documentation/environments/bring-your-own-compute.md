@@ -5,11 +5,10 @@ can become available to a Lightspeed session. The daemon connects outward to
 the environment gateway, so the machine can sit behind NAT without exposing an
 inbound daemon port.
 
-This walkthrough connects a machine, selects it for a session, and runs `pwd`
-to verify the connection. It uses persistent registration so that restarting
-the daemon brings back the same environment. To run daemons as services, in
-Kubernetes or under systemd, continue with
-[Run registered daemons](registered-daemons.md) afterwards.
+This walkthrough connects a Linux or macOS machine, selects it for a session,
+and runs `pwd` to verify the connection. It uses persistent registration so
+the machine keeps its environment across restarts. For Kubernetes and
+systemd, see [Run registered daemons](registered-daemons.md).
 
 ## Prepare the machine
 
@@ -25,18 +24,16 @@ does not confine those commands; use an appropriate VM, container, or OS user
 when the work needs isolation. Install Bash for the shell tools used by the
 default OpenAI configuration.
 
-Build the daemon from the same source revision as your runtime. In the
-Lightspeed checkout:
+Lightspeed releases include daemon binaries for x86_64 Linux and Windows.
+Use the build for your machine from the same release as your runtime, or
+build it from the matching source revision:
 
 ```bash
 cargo build --locked -p environment-daemon
 ```
 
-The repository builds the daemon for Linux x86_64 and checks native
-development builds on Apple Silicon macOS. Build on the target platform rather
-than copying a binary between operating systems or architectures.
-
-Record its absolute path before leaving the checkout:
+If you built from source, record the binary's path before leaving the
+checkout:
 
 ```bash
 LIGHTSPEED_ENVD_BIN="$(pwd)/target/debug/lightspeed-envd"
@@ -52,15 +49,9 @@ cd "$HOME/lightspeed-machine"
 umask 077
 ```
 
-The daemon takes its settings from its command line and its process
-environment only. It does not load a `.env` file, so a file an agent writes
-into the working tree cannot change where the daemon connects or what it
-serves at the next start. To keep settings in a file, have the service
-manager read it, as the systemd unit in
-[Run registered daemons](registered-daemons.md#run-a-systemd-unit-on-a-vm)
-does. The `--cwd` option below controls where agent commands start. The
-commands also inherit the daemon user's process environment, without the
-daemon's own `LIGHTSPEED_ENVD_*` variables.
+Pass settings on the command line or through the daemon's process
+environment. For settings stored in a file, have your [service
+manager](registered-daemons.md#run-a-systemd-unit-on-a-vm) read it.
 
 ## Admit the machine to a universe
 
@@ -100,29 +91,16 @@ For the local quickstart, run:
   --state-dir "$HOME/lightspeed-machine/state"
 ```
 
-For a remote installation, replace the gateway URL with its public endpoint,
-for example `wss://lightspeed.example.com/environments/connect`. Use
-the host of the deployment's public base URL, or another registration URL
-the operator configured: the daemon signs the origin it dials, and the
-gateway refuses any other. Plain `ws://` is accepted only for loopback
-connections unless the daemon is started with `--allow-insecure-gateway`,
-which is meant for a trusted private network. Leave the daemon running in
-this terminal.
+For a remote installation, use the gateway URL the operator supplied, such
+as `wss://lightspeed.example.com/environments/connect`. The daemon signs
+that origin. See [Networking and ingress](networking-and-ingress.md) for
+accepted URLs and plain `ws://` on a trusted network. Leave the daemon running
+in this terminal.
 
-The daemon opens an outbound control connection. When a worker needs a data
-connection, the daemon opens another outbound connection for that route.
-This command does not start a passive listener on the machine.
-
-Wait for `receipt.json` to appear, then reload the **Environments** page and
-confirm **My workstation** is ready. The receipt records the assigned
-environment and daemon identifiers, the control connection, the identity
-mode, and whether this admission created the environment or reconnected to
-it. It never contains the registration secret. Keep the state
-directory: it contains the daemon's private identity key.
-
-The daemon sends the registration key only until its first admission. After
-that it reconnects with its identity alone, even if the key is still
-configured.
+Wait for `receipt.json`, then reload **Environments** and confirm that **My
+workstation** is ready. The receipt records the environment ID. Keep the
+state directory, which holds the daemon's private identity key. The daemon
+uses that identity alone after its first admission.
 
 Once registration succeeds, you can remove the admission secret from this
 machine in another terminal:
@@ -160,12 +138,10 @@ the directory printed by `pwd`.
 
 ## Stop and reconnect
 
-Press Ctrl+C in the daemon terminal. The daemon tells the gateway it is
-stopping and exits with status 0. With persistent registration, the
-environment stays open and shows as disconnected; reload **Environments** to
-inspect it. A tool call that needs it meanwhile waits up to two minutes for
-the daemon to return, then fails. To reconnect, use the same state
-directory and omit the deleted registration-key file:
+Press Ctrl+C in the daemon terminal. With persistent registration, the
+environment stays open and shows as disconnected. A tool call waits up to two
+minutes for it to return. To reconnect, use the same state directory and omit
+the deleted registration-key file:
 
 ```bash
 "$LIGHTSPEED_ENVD_BIN" \
@@ -180,18 +156,9 @@ new shell, set `LIGHTSPEED_ENVD_BIN` to the binary's absolute path again. The
 environment returns under its existing identity. Reload **Environments** and
 repeat the `pwd` request to verify access.
 
-For short-lived machines, a registration key can instead use an ephemeral
-identity mode. Those environments close as soon as their daemon stops, or
-after the key's disconnect grace period when the connection is lost, and
-tools never wait for them to return. Once an environment is closed, its
-daemon identity cannot register again: a running daemon is told so and exits
-with status 4, or parks until it is stopped when started with
-`--on-closed=park`. A replacement needs a fresh state directory and a valid
-registration key.
-
-Run one daemon per state directory. When a second process connects with the
-same identity, the newer connection wins and the older daemon exits with
-status 5, naming the shared identity in its log.
+Run one daemon per state directory. A second connection with the same
+identity replaces the first. For ephemeral machines and different restart
+policies, see [Run registered daemons](registered-daemons.md).
 
 ## Finish the walkthrough
 
@@ -204,14 +171,9 @@ Revoking a key alone blocks new identities. Already admitted environments
 can continue reconnecting until you close them. Closing a registered
 environment does not shut down or delete the underlying computer.
 
-A key's **Edit** dialog changes its group name, active environment limit,
-disconnect grace, **Close when offline for** setting, and expiry; its
-identity mode is fixed. **Rotate** replaces a leaked or expiring secret: the
-old secret stops working at once, the new one is shown once, and the key
-keeps its group, policy, and admitted environments. Daemons already
-registered are unaffected because they never present the key again. Use
-**Rename…** on an environment to change the display name its daemon first
-reported.
+Use **Rotate** if the registration secret is exposed. The new secret is
+shown once, and the previous secret stops admitting new machines. Daemons
+already registered keep reconnecting with their own identities.
 
 ## Direct attachment for local development
 

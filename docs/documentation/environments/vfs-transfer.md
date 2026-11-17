@@ -21,9 +21,9 @@ vfs_capture(
 ```
 
 Each destination is exact: the source's basename is not appended. In this
-example, the contents of `./output` become `/workspace/results`, not
-`/workspace/results/output`. Binary files, empty directories, and executable
-flags are preserved on supported Linux and macOS filesystems.
+example, the contents of `./output` land directly in `/workspace/results`.
+Transfers preserve binary files and empty directories, along with executable
+flags on supported Unix filesystems.
 
 ## Prepare the attachments
 
@@ -68,23 +68,15 @@ overwriting the other writer's changes.
 
 ## Content reuse and large files
 
-Transfers compare file-content digests and send only missing bytes. A repeated
-copy or rename can therefore reuse content already present at the destination
-or in Lightspeed storage. Files still need local verification and sometimes
-copying, so reused bytes do not mean the operation has no disk cost.
+Transfers compare file-content digests and send only missing bytes. Repeating a
+copy can reuse content from the destination or Lightspeed storage, while still
+using disk space for verification and staging. Allow space for the existing
+tree and its replacement.
 
-Large files move in bounded chunks rather than one large tool argument or
-response. The daemon's default limits are 100,000 entries, depth 64, one TiB
-per file and selected tree, and 24 hours per operation. There are also inventory
-size and concurrency limits. Allow enough machine disk for the existing tree,
-missing uploads, and the staged replacement. Overlapping materialization
-destinations are rejected.
-
-The tool result reports references and counts rather than file payloads. Each
-daemon advertises its exact transfer limits when a client connects; the
+Large files move in chunks. The daemon advertises its size, inventory, time,
+and concurrency limits when a client connects. The
 [transfer types](../../../crates/environment-protocol/src/data/transfer.rs)
-define them, and the [transfer implementation](../../../crates/tools/src/transfer.rs)
-describes content reuse and workspace publication.
+define the available limits.
 
 ## What a capture selects
 
@@ -99,32 +91,10 @@ Names that are not UTF-8 are skipped and counted in the result.
 
 ## Environment data-plane API
 
-Clients implementing their own transfers use the `transfer/*` methods of the
-[environment protocol](../reference/environment-protocol.md#files-and-transfers).
-Every daemon serves them as part of its filesystem family. The daemon
-interface handles machine files; the Lightspeed tools above connect it to VFS
-and content-addressed storage.
-
-| Methods | Purpose |
-| --- | --- |
-| `transfer/begin`, `transfer/advance` | Start an operation and advance scanning or staging. |
-| `transfer/readInventory`, `transfer/append`, `transfer/listMissing` | Exchange inventory pages and list content the daemon still needs. |
-| `transfer/read`, `transfer/write` | Transfer bounded content chunks by digest. |
-| `transfer/commit` | Release a capture or publish the staged replacement. |
-| `transfer/getStatus`, `transfer/abort` | Inspect progress or a receipt, or abandon incomplete work. |
-
-Keep the same operation ID and input when retrying. The first failure moves an
-operation to `failed` with its error, every later call reports that error, and
-nothing is committed; start a new operation to try again. A finished
-operation's receipt is kept for 24 hours after it finished, across daemon
-restarts, so a repeated commit does not overwrite subsequent local edits. An
-operation that was in progress when the daemon restarted reports as failed and
-its staging is discarded.
-
-Captures, materializations, and single-file writes use separate selections of
-one operation type. The
-[transfer module](../../../crates/environment-protocol/src/data/transfer.rs)
-defines the phases, pagination, retry, and chunk semantics.
+Clients implementing their own transfers can use `transfer/*` to exchange
+inventories, move chunks, and publish or release a result. See
+[Files and transfers](../reference/environment-protocol.md#files-and-transfers)
+for the request sequence, limits, and retry rules.
 
 ## Generic filesystem scans
 
@@ -134,15 +104,10 @@ content, or SHA-256 digests. This is the lower-level operation used to discover
 files such as prompts and skills. A scan observes the environment without
 counting as use, so discovery does not keep an idle machine awake.
 
-Each root is reported on its own: complete, missing, or failed with its error.
-Entries the scan cannot include, such as an oversized file or a symlink
-leaving the filesystem root, are skipped and listed with a reason without
-failing the root. A complete root can return a fingerprint for conditional
-`ifNoneMatch` requests. A metadata-only fingerprint covers metadata, not file
-bytes. Scans have small response and time limits; use transfers for large
-inventories and content. The
-[scan types](../../../crates/environment-protocol/src/data/scan.rs)
-define those request fields and responses.
+Check each root's result for missing or skipped paths. Use transfers for
+large inventories and content. See the
+[scan types](../../../crates/environment-protocol/src/data/scan.rs) for
+details on responses and conditional reads.
 
 ## Filesystem boundary and consistency
 
@@ -151,11 +116,11 @@ inside the daemon's filesystem root, a symlink is followed only while its
 target stays inside the root, and the daemon's state directory, its
 registration key file, and on Linux the `/proc` and `/sys` filesystems are
 never addressed. A capture or replacement whose tree contains the state
-directory or the key file is refused. Replacement uses atomic filesystem operations on Linux and macOS;
-unsupported filesystems fail instead of exposing a partly replaced tree.
-Windows execution support is not implemented. Platform-specific details live
-beside the
-[daemon transfer code](../../../crates/environment-daemon/src/filesystem/transfer/mod.rs).
+directory or the key file is refused. On Linux and macOS, replacing a
+directory requires filesystem support for atomic replacement. On Windows,
+use a new destination when materializing a directory tree. See the
+[daemon transfer code](../../../crates/environment-daemon/src/filesystem/transfer/mod.rs)
+for filesystem-specific rules.
 
 Capture observes a live filesystem. It verifies metadata and content while
 reading and fails on detected changes, but it is not an operating-system

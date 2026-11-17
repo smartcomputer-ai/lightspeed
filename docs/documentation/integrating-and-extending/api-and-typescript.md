@@ -1,187 +1,63 @@
 # Build with the API and TypeScript client
 
-An application submits work to a Lightspeed session and observes it until the
-run finishes. The session owns the durable conversation and configuration;
-the application owns its business operation, the identifiers used to retry
-it, and what to do with the result. Stable identifiers let the application
-recover from a lost HTTP response without creating duplicate work.
+An application submits work to a Lightspeed session, follows the run, and uses
+its result. Lightspeed keeps the session and run history. Your application
+keeps the job ID and the Lightspeed IDs it needs to recover that work if a
+response is lost.
 
-The TypeScript client supplies typed HTTP calls and helpers for starting
-runs and waiting for them to finish. Its runtime types come from the Rust API contract; Platform-native types come
-from the shared Platform contract.
-Build against this client and the public contract so runtime implementation
-changes do not become dependencies of your application. A
-[Python client](../../../clients/python/README.md) covers the same API; what this
-page says about identifiers, events, and lifecycle applies to it too.
+The TypeScript and Python SDKs use the same resource HTTP API. This walkthrough
+uses TypeScript and continues the release-notes example from
+[Build your first agent](../getting-started/first-agent.md).
+See the [Python SDK guide](../../../clients/python/README.md) for Python examples.
 
 ## Platform access
 
-Use a personal or service-user API key against the Platform `/api/v1` base URL
-for scoped access. Runtime resource routes use the same generated catalog as
-direct runtime access. Platform resolves the principal, checks current organization
-and universe roles, and intersects those roles with credential restrictions.
-It forwards admitted requests with its own infrastructure token and trusted
-actor attribution. Clients must not supply actor headers to impersonate users.
+Connect to your Platform origin or its `/api/v1` base URL. Use a service-user
+API key for an unattended job or a personal API key for work under your own
+account. Platform checks the identity's current permissions, the key's
+restrictions, and the target resource. Select a universe UUID or handle on
+the client. Platform supplies the actor identity from the credential.
 
-Platform-native organization, service-user, grant, and credential routes live under
-`/api/v1/platform`. Their schemas and route descriptors are authored once in
-`platform/shared/src/platform-api.ts` and generated into both SDKs. Use
-`client.call(operation, params)` in either SDK for both runtime operation IDs,
-such as `profiles/list`, and native Platform IDs, such as
-`platform/organizations/read`. Generated `client.platform` helpers expose the same
-native operations with typed parameter objects: TypeScript
-`client.platform.readOrganization({ organizationId })` and Python
-`client.platform.read_organization({"organizationId": organization_id})`. Native operations
-require a Platform connection; direct runtimes do not serve them.
-Personal and service-user keys are managed from the web UI or
-`lightspeed platform api-key`. Use `lightspeed connect login --url DEPLOYMENT_URL`
-for browser-approved CLI access. See [People and roles](../access-and-security/people-and-roles.md).
+A role determines which actions the identity can perform. A key can narrow
+those actions to particular organizations, universes, or operation IDs. For
+example, a service user with Contributor access can start sessions from a saved
+profile. The same user's read-only key can inspect visible sessions but cannot
+start one. See [People and roles](../access-and-security/people-and-roles.md)
+and [API keys and service access](../access-and-security/api-keys-and-service-access.md).
 
-## Reuse a saved CLI connection
-
-For a local script, first select the connection and resources with the CLI:
-
-```bash
-lightspeed connect login --url https://lightspeed.example --name work
-lightspeed platform organization use ORGANIZATION_ID
-lightspeed universe use my-universe
-```
-
-The SDK factories load the same named connection, pinned endpoint, credential
-file, and selected organization/universe. Omit the name to use the CLI's selected
-connection. They do not open a browser or start a login flow.
-
-In Node.js, import the factory from the Node-only entry point:
-
-```ts
-import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
-
-const client = await createClientFromConnection({ name: "work" });
-if (!client.organizationId) throw new Error("Select an organization with lightspeed platform organization use");
-const { organization } = await client.platform.readOrganization({ organizationId: client.organizationId });
-const profiles = await client.call("profiles/list", {});
-console.log(organization.name, profiles);
-```
-
-In Python, use the asynchronous factory:
-
-```python
-import asyncio
-from lightspeed_ai import AsyncLightspeedClient
-
-async def main():
-    async with await AsyncLightspeedClient.from_connection("work") as client:
-        if client.organization_id is None:
-            raise RuntimeError("Select an organization with lightspeed platform organization use")
-        organization = await client.platform.read_organization({"organizationId": client.organization_id})
-        profiles = await client.call("profiles/list", {})
-        print(organization, profiles)
-
-asyncio.run(main())
-```
-
-Both factories reread the credential for each request and handle renewal of
-CLI-owned session credentials. They do not overwrite externally managed secret
-files. A revoked or expired login requires an explicit `lightspeed connect login`;
-there is no automatic login or separate SDK refresh-token protocol. API keys
-retain their own expiry and restrictions. See
-[CLI connections](../using-lightspeed/cli.md#connect-to-platform).
-
-The selected organization is exposed as `client.organizationId` / `client.organization_id`.
-Pass it explicitly in native helper parameter objects; selection does not
-silently fill organization fields or grant access. The main TypeScript import stays
-browser-compatible and does not read local CLI files.
-
-## Resource HTTP API
-
-The private runtime listener serves the resource API under `/api/v1`.
-Its [OpenAPI contract](../../../crates/api/contract/openapi.json) and
-[routing catalog](../../../crates/api/contract/http.json) are generated from
-the same Rust declarations as its handlers. The SDKs and Platform use this
-contract for routing, types, and operation policy metadata.
-
-Authenticate with the same configured bearer token. Select the universe in
-the URL, using its UUID or handle, and omit `x-lightspeed-universe`:
-
-```bash
-curl --fail-with-body \
-  -H "Authorization: Bearer $LIGHTSPEED_API_TOKEN" \
-  http://localhost:18080/api/v1/connection
-
-curl --fail-with-body \
-  -H "Authorization: Bearer $LIGHTSPEED_API_TOKEN" \
-  "http://localhost:18080/api/v1/universes/$LIGHTSPEED_UNIVERSE/sessions?limit=20"
-```
-
-Resource responses contain the declared DTO directly. Failures use an HTTP
-status and `application/problem+json`, including the stable `kind` field and
-structured details such as a retry's `submissionId`. A request timeout does
-not prove that a submitted command was rejected; keep its submission identity
-when retrying.
-
-Path identifiers are authoritative: do not repeat them in a write body,
-including inside nested records. Query arrays use repeated parameters;
-structured cursor/filter values use URL-encoded JSON where the operation
-declares that encoding. Unknown or duplicate scalar parameters are rejected.
-
-`GET /api/v1/universes/{universe}/events` serves the universe watch with
-`Accept: text/event-stream`. It retains reset/refetch semantics and is not a
-durable replay log. Blob reads return binary bytes; single binary uploads use
-`PUT /api/v1/universes/{universe}/blobs/{blobRef}/content` with
-`Content-Type: application/octet-stream` and `Content-Length`. Uploads spool
-to a temporary file to verify the digest and length before storage admission.
-The batch blob upload remains a separate JSON operation. Range requests are
-not supported by these initial HTTP bindings.
-
-Server integrations can import generated `HTTP_OPERATIONS` and
-`HTTP_CONTRACT_REVISION` from `@lightspeed-ai/sdk/server`; the package also
-ships `schema/http.json` and `schema/openapi.json`. These describe routes and
-policy targets without adding a second runtime body validator. They do not
-provide the Platform's authentication or resource authorization.
+A trusted infrastructure service can connect directly to a private runtime.
+A runtime token has full authority across the deployment. Keep it on the
+server. If your application makes direct runtime calls on behalf of people,
+enforce their access in your application. Any runtime token can set an actor
+for attribution. See [Serve a browser UI](#serve-a-browser-ui).
 
 ## Prepare an endpoint and a profile
 
-For this example, provide an authenticated runtime URL ending in `/api/v1`, a
-configured runtime token, and the target universe's UUID or handle. This is a
-direct connection with full authority over every method and universe. Follow
-[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
-to configure it.
+Set up the `release-editor` profile and the `release-notes` workspace from
+[Build your first agent](../getting-started/first-agent.md). Confirm that the
+profile can write to the workspace at `/workspace`.
 
-Run this integration on a trusted application server. A runtime token can read
-private sessions and change resources in every universe; keep it out of browser
-code, agents, and untrusted applications. An application serving people must
-authenticate them and enforce its own access policy before forwarding requests.
-The Platform already does this for its web app. `client.withActor(userId)` records
-who asked; every runtime token may set an actor, and attribution grants no
-permissions. See [Serve a browser UI](#serve-a-browser-ui) for the gateway boundary.
+Give the service user at least Contributor access to the universe and
+create a key for it. If you use an operation allowlist on the key, include
+`session/start`, `session/runs/start`, `session/events/read`, `session/read`, and
+`session/runs/read` for the walkthrough.
 
-Create the `release-editor` profile and `release-notes` workspace from
-[Build your first agent](../getting-started/first-agent.md), including
-`changes.md` and a working model connection. The example reuses that setup
-to prepare the Acorn 1.2 notes from an application.
-
-Use Node.js 24 or newer. Tagged releases publish `@lightspeed-ai/sdk`, and inside this
-repository the package is also available as a workspace dependency. We recommend pinning
-the version that matches your deployed Lightspeed release, because the client's types
-follow that release's API:
+Use Node.js 24 or newer. Pin the SDK version that matches your deployment,
+replacing `<release-version>` with its version.
 
 ```bash
 npm install --save-exact "@lightspeed-ai/sdk@<release-version>"
 ```
 
-Replace `<release-version>` with the actual package version, or run
-`npm install @lightspeed-ai/sdk` for the latest release. Supply
-`LIGHTSPEED_API_URL`, `LIGHTSPEED_API_TOKEN`, and `LIGHTSPEED_UNIVERSE` through the
-application's protected configuration. The `universe` option names the UUID or
-handle in resource paths; connection and deployment operations do not use
-that selection. The example also reads `ACORN_RELEASE_JOB_ID`, an
-application-defined operation ID such as `acorn-1.2-draft-001`. Keep it unchanged
-when retrying that operation.
+Supply `LIGHTSPEED_API_URL`, `LIGHTSPEED_API_TOKEN`, and `LIGHTSPEED_UNIVERSE`
+through your application's protected configuration. For this example they
+hold the Platform URL, API key, and universe UUID or handle. Set
+`ACORN_RELEASE_JOB_ID` to an application job identifier such as
+`acorn-1.2-draft-001`. Use the same identifier every time you retry that job.
 
 ## Submit and observe one task
 
-Save this as `release-notes.mts`. The session and submission IDs
-allow the same script to find the same work after a network failure:
+Save this as `release-notes.mts`.
 
 ```ts
 import { LightspeedClient } from "@lightspeed-ai/sdk";
@@ -202,22 +78,18 @@ const client = new LightspeedClient({
 const { session } = await client.startSession({
   sessionId: `release-${jobId}`,
   displayName: "Acorn 1.2 release notes",
-  access: { visibility: "universe" },
   profile: { kind: "named", profileId: "release-editor" },
-  metadata: { application: "release-pipeline", jobId },
 });
-const sessionId = session.id;
 
-const started = await client.startRun(
-  sessionId,
-  "Read changes.md in the release-notes workspace, write the Acorn 1.2 " +
-    "release-notes.md draft, and return a short summary of what you wrote.",
+const { run: started } = await client.startRun(
+  session.id,
+  "Read /workspace/changes.md, write the Acorn 1.2 release notes to " +
+    "/workspace/release-notes.md, and return a short summary.",
   { submissionId: `draft-${jobId}` },
 );
-const runId = started.run.id;
-console.log({ sessionId, runId, status: started.run.status });
+console.log({ sessionId: session.id, runId: started.id });
 
-const { run } = await client.awaitRun(sessionId, runId, {
+const { run } = await client.awaitRun(session.id, started.id, {
   signal: AbortSignal.timeout(5 * 60_000),
   onEvent(event) {
     console.log(event.cursor.seq, event.kind.type);
@@ -225,401 +97,240 @@ const { run } = await client.awaitRun(sessionId, runId, {
 });
 
 if (run.status !== "completed") {
-  throw new Error(`Run ${runId} ended with status ${run.status}: ${run.failure?.message}`);
+  throw new Error(`Run ${run.id} ${run.status}: ${run.failure?.message ?? "no details"}`);
 }
 console.log(run.outputText ?? "Completed without a text output");
 ```
 
-Run it with the configured environment:
+Run `node release-notes.mts`. The start response confirms that Lightspeed has
+accepted the run. `awaitRun` waits for a completed, failed, or cancelled
+result. The timeout ends the client's wait. To stop running work, call
+`cancelRun`.
 
-```bash
-node release-notes.mts
-```
-
-The start response means the run was admitted. It can be queued behind
-existing work or already running; it does not mean generation finished.
-`awaitRun` follows session events until the requested run completes, fails, or is
-canceled, then returns that run's projection, including its complete visible
-terminal text in `outputText` when present, and a `failure` with `kind` and
-`message` when it failed.
-
-The example creates a session shared with the universe so teammates can inspect
-it in the Platform. Omitting `access` creates private work; because this client
-names no user, only admins can see that session through the Platform.
-Open the session and inspect `release-notes.md` to verify the workspace change.
-The run's final message and a file it wrote are different outputs. Reuse the
-session for a follow-up conversation, or create another session ID for
-independent work.
-
-## Use helpers or `call`
-
-Every public runtime and native Platform operation has a typed named helper in
-both SDKs. Runtime helpers live directly on `client`; `client.platform` supplies
-native organization, service-user, credential and access helpers such as
-`client.platform.readOrganization({ organizationId })`. Python uses matching snake_case
-names. The generators check complete coverage against both operation catalogs.
-
-Prefer named helpers for application code. `client.call(operation, params)`
-remains a typed alternative for code that selects operations by ID. Runtime
-helpers take target IDs first and the remaining settings in an options object;
-generated `client.platform` helpers take one typed parameter object. Both return
-the operation's data. Python runtime helpers use keyword arguments for settings.
-
-A few helpers add behavior: `startRun` and `steerRun` accept plain text and
-generate a submission ID, and `startRun` also accepts every structured run source
-and terminal notification setting. `awaitRun` combines several operations.
-`watch` streams events, blob downloads return bytes, and `uploadBlob` accepts a
-binary body. `putBlobs` exposes batch blob storage, while `putBlob` stores one
-value and returns its reference. These helpers keep the same server permissions
-and endpoint availability as their underlying operations. Platform admission
-still controls which runtime operations are available and applies organization and
-universe policy; organization-qualified universe creation uses
-`client.platform.createUniverse`. The
-[client README](../../../clients/typescript/README.md#helpers-and-call) lists them all.
-
-## Transcribe audio before submitting session input
-
-Run start, context append, and steering reject raw audio media. Transcribe
-audio separately, then submit ordinary `text` or `textRef` input:
-
-1. Upload the audio to the universe's content store with `blobs/put`.
-2. Call `transcriptions/start` with a stable `idempotencyKey` and an `audio`
-   object containing `blobRef`, `mime`, and `name`. Supply a complete `model`
-   route, or omit it to resolve the universe's **Speech-to-text** default.
-   The API kind must be `openai:audio-transcriptions`.
-3. Save the returned `transcriptionId` and poll `transcriptions/read` until
-   `status` is terminal. `succeeded` supplies plain UTF-8 `text` and
-   `transcriptRef`. Handle `failed`, `cancelled`, and `expired` explicitly;
-   `failure` provides details when present.
-4. Submit the prepared text through the ordinary session API. For unchanged
-   transcripts, an optional `provenanceRef` can point to the source audio blob
-   in the same universe. Admission checks that the source exists and retains
-   it with the session content.
-
-Transcription creates no session or run. A direct runtime token can call all
-of these methods in the selected universe.
-Use `transcriptions/cancel` to request cancellation; abandoning an HTTP wait
-does not cancel the job.
-
-Matching retries with the same requester, idempotency key, audio, and options
-rejoin the original job even if the universe default has changed. Reusing the
-key with changed input conflicts. This identity lasts for the Temporal
-namespace's workflow-history retention period. The resolved model is fixed
-at admission. The Platform allows people to read and cancel only their own
-drafts. Direct runtime access applies no actor-based ownership check; an
-application gateway must enforce that rule itself.
-
-Unsubmitted audio and transcripts use ordinary CAS collection grace and can
-expire. Persist or admit the result when it is needed beyond that period.
-When users edit a transcript, send their reviewed text as an ordinary message;
-do not present the edited words as the unchanged transcription.
+Open `release-notes.md` in the workspace to verify the file. The session starts
+unshared and belongs to the service user. A universe Owner can inspect its run
+in Platform. Anyone with access to the workspace can inspect the file there.
+See [Private and shared work](../access-and-security/private-and-shared-work.md).
 
 ## Keep retry identity with the business operation
 
-Persist the session ID, submission ID, request input/configuration, and returned
-run ID with your application's job record. The example derives stable IDs
-from that record's job ID. If the response is lost, repeat the same request
-with the same identifiers and contents.
+Save the session ID, submission ID, request contents, and returned run ID with
+the application job. If a run request's response is lost, resubmit the same
+request with the same submission ID. While Lightspeed remembers that
+submission, it returns the original run and rejects changed inputs under the
+same ID. Call `readRun` once you know the run ID. The run-submission cache is
+bounded, so use the saved run ID for recovery after long delays.
 
-`session/start` with an existing ID returns that session. It does not reapply
-the creation profile or replace its configuration. Reusing a session ID for a
-different business operation can therefore reconnect to old state. Creation
-retries can still validate supplied profile/configuration references, so an
-invalid or deleted referenced profile can prevent a retry. A retry also
-[restarts a stopped workflow execution](../deployment/upgrades-and-recovery.md#restart-a-stopped-session)
-from the log, except for a session created with an `integration`: that retry reports
-`sessionExecutionStopped`. Once IDs are saved, read the known session/run directly during recovery
-instead of unnecessarily repeating creation. If a start fails during setup, a
-server-allocated ID is closed and a client-supplied one reports the same error on retry.
+A repeated session ID identifies the existing session. To change its setup,
+update that session or use a new ID. `startRun` and `steerRun` generate
+submission IDs when omitted. Pass your own IDs when work must survive a client
+restart. `awaitRun` retries its reads; application code owns mutation retries.
 
-`session/runs/start` deduplicates by submission ID within the session. The
-same ID and source/configuration/terminal notification return the original
-run. Reusing the ID with changed inputs is rejected. Allocate a new submission
-ID when asking for another run. The session remembers the last 256 finished runs for
-this, so a retry much later than that starts a new run. `session/runs/steer` takes a
-`submissionId` too, and remembers the active run's last 64 steering batches.
+## Reuse a saved CLI connection
 
-The `startRun` helper generates an ID if you omit one, but calling the helper
-again generates another ID. That default does not provide retry safety across
-application restarts. HTTP requests themselves do not identify durable work;
-they do not replace submission IDs. Apart from the reads inside `awaitRun`, the
-client does not retry failed HTTP calls.
+For a local script, sign in with the CLI and select an organization and
+universe.
 
-A timeout or aborted HTTP wait also does not cancel the durable run. The
-five-minute timeout above bounds this client's waiting time. On recovery,
-read the known run first: if it is terminal, use its result; otherwise resume
-observation or request cancellation.
+```bash
+lightspeed connect login --url https://lightspeed.example --name work
+lightspeed platform organization use ORGANIZATION_ID
+lightspeed universe use my-universe
+```
+
+Use the saved connection from Node.js.
+
+```ts
+import { createClientFromConnection } from "@lightspeed-ai/sdk/node";
+
+const client = await createClientFromConnection({ name: "work" });
+const profiles = await client.listProfiles();
+console.log(profiles);
+```
+
+Or use the asynchronous Python client.
+
+```python
+import asyncio
+from lightspeed_ai import AsyncLightspeedClient
+
+async def main():
+    async with await AsyncLightspeedClient.from_connection("work") as client:
+        print(await client.call("profiles/list", {}))
+
+asyncio.run(main())
+```
+
+Omit the connection name to use the current CLI selection. The factories use
+the saved endpoint, resource selections, and credential file. They renew
+CLI-owned sessions while the server allows renewal. If the login expires or is
+revoked, run `lightspeed connect login` again. See
+[Connect to Platform](../using-lightspeed/cli.md#connect-to-platform).
+
+## Resource HTTP API
+
+The same operations can be called over HTTP. This example reads connection
+information and lists sessions through Platform. If the key has an operation
+allowlist, grant it `initialize` and `session/list` for these calls.
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $LIGHTSPEED_API_TOKEN" \
+  "$LIGHTSPEED_API_URL/api/v1/connection"
+
+curl --fail-with-body \
+  -H "Authorization: Bearer $LIGHTSPEED_API_TOKEN" \
+  "$LIGHTSPEED_API_URL/api/v1/universes/$LIGHTSPEED_UNIVERSE/sessions?limit=20"
+```
+
+Set `LIGHTSPEED_API_URL` to the Platform origin for these commands. The universe
+is part of the route. Put path identifiers only in the URL, and use the
+operation's declared encoding for any query filters or cursors. Successful
+JSON responses contain the declared record. API failures use an HTTP error
+status and a problem document with a stable `kind`.
+
+Consult the [API reference](../../../crates/api/contract/api-reference.md)
+for runtime routes, request fields, and results. The
+[OpenAPI document](../../../crates/api/contract/openapi.json) describes the
+same resource paths. Platform serves the routes it authorizes and exposes its
+own organization, service-user, grant, and key operations under
+`/api/v1/platform`. See the
+[Platform SDK operations](../../../clients/typescript/README.md#helpers-and-call).
+
+## Use helpers or `call`
+
+Use named SDK helpers when you know the operation, or
+`client.call(operation, params)` when selecting it by ID. Both use the same
+credential and permissions.
+
+```ts
+const { session } = await client.readSession(sessionId, { runLimit: 5 });
+const result = await client.call("session/read", { sessionId, runLimit: 5 });
+```
+
+Runtime helpers accept target IDs followed by operation options. Platform
+helpers live under `client.platform` and take a parameter object. Pass the
+organization ID explicitly, even when the saved CLI connection has selected it.
+
+```ts
+const { organization } = await client.platform.readOrganization({ organizationId });
+```
+
+Use `client.platform.createUniverse` when creating a universe in a Platform
+organization. Creation requires an eligible organization role, a credential
+that permits creation, and room under the applicable universe limit. The
+runtime's deployment operation is for creating universes directly on a
+private runtime.
 
 ## Follow events and reconnect
 
-`readEvents(sessionId, { after, limit, waitMs })` reads chronological event
-pages. `after` is an exclusive sequence cursor. With `waitMs`, an empty tail
-read waits for events or the long-poll timeout and then returns an ordinary
-page. An empty page is not a run completion.
+Use `readEvents(sessionId, { after, limit, waitMs })` for paginated session
+history and forward long polling. Save the continuation cursor after processing
+a page. On a restart, resume after that cursor and make repeated processing
+safe in your application. An empty page means there is nothing new to read yet.
+Use the run's status to determine whether it finished.
 
-Process a page's events before saving its continuation cursor. Persist the
-cursor with the effects your application derives from those events, or make
-those effects idempotent, so a restart can safely repeat a partially processed
-page. Preserve event joins such as `runId` when several runs share a session.
+`awaitRun` accepts a saved `after` cursor. Its `onEvent` callback receives
+events for the requested run, and `onPage` receives every event on each
+session page. For a transcript, page backward with `before` and
+`nextCursor`, then follow live events from the initial page's `headCursor`.
 
-`awaitRun` provides `onEvent`, `onPage`, and `heartbeat` callbacks and accepts
-an `after` cursor. `onEvent` receives the run's own events, while `onPage` receives
-every event in the session. The example omits `after`, so it reads the retained
-stream from the beginning; pass the `cursor` from an earlier wait when a session has
-a long history. When a read finds no new events, the helper checks the run's state,
-so a run that finished behind its cursor returns at once, and a session whose
-workflow has stopped rejects with `sessionExecutionStopped`. Reads are repeated
-through network failures and stalled connections for about 30 seconds before the
-wait rejects.
-
-`complete` means the requested direction has no more events at the instant
-of the read; it does not mean the session is closed.
-
-For a transcript UI, `session/events/read` also supports backward pagination.
-Use `nextCursor` as `before` to load older history, and use the initial page's
-`headCursor` as `after` for the forward live stream. Keep those two cursor
-directions separate. Pages can split a run or tool batch, so retain enough
-projection state to join their pieces.
-
-## Build transcript authors and times
-
-The TypeScript SDK exports `transcriptMetadata` and `transcriptAuthor`. They are
-pure helpers over the existing public event types: no requests, stored timestamps,
-React state or rendering decisions. The Platform web already imports this SDK;
-its transcript fold can use these helpers when adding author and time display.
-
-```ts
-import { transcriptMetadata } from "@lightspeed-ai/sdk";
-
-// loadedEvents is the union of history pages and live SessionEventView events.
-const metadataByEntryId = transcriptMetadata(sessionId, loadedEvents);
-
-// Reuse the projection for every displayed message.
-const metadata = metadataByEntryId.get(entry.id);
-```
-
-Pass the union of the loaded history pages and live events, then look up each
-message by its context entry ID. The helper ignores other sessions and handles
-unsorted, overlapping pages. Recompute when older history or live events arrive;
-it does not retain previous calls. It performs one indexing pass and one pass over
-message entries. The returned map supplies metadata, not transcript order.
-
-| Result field | Meaning |
-| --- | --- |
-| `sentAtMs` | Server acceptance time for run or steering input, otherwise the earliest loaded context event carrying the message. |
-| `timeSource` | `runAccepted`, `runSteeringAccepted`, or `contextEvent`. The last is provisional for input whose acceptance event is not loaded. |
-| `author` | An actor `{ kind: "actor", id, source }`, a bot delivery `{ kind: "event" }`, or `null`. Assistant messages have no user author. |
-| `requestedBy` | Full attribution from the matching acceptance event, or `null`; preserves actor, token, local and internal cases. |
-
-If input is accepted at 10:00 and enters context at 10:02 after waiting in the
-queue, its `sentAtMs` is 10:00. Steering joins by both run ID and steering ID;
-assistant output and context edits do not borrow a run's acceptance time. When
-an older page supplies the missing acceptance, recomputing corrects the time and
-author. Repeated context entries use their earliest loaded sequence, even if a
-later event's wall clock is lower. A queued message not yet applied to context has
-no entry ID and is not returned; its acceptance event still contains its input.
-
-For user messages, an authenticated `requestedBy` actor takes precedence over a
-`user:<id>` origin. The author's `source` distinguishes those cases. Other
-attribution kinds are not converted into people, and `origin=event` stays a bot
-delivery. `transcriptAuthor(origin, requestedBy?)` exposes the author rule alone,
-which also works for a user-role list preview. Origin is display metadata, never
-proof of identity or permission.
-
-Platform sets `user:<id>` from the signed-in user on message and steering input.
-Its event endpoint preserves the runtime fields, and
-`GET /api/ui/universes/:id/members` supplies IDs, current names and roles; only
-admins receive emails. Resolve actor IDs through that data in the application.
-An unmatched ID may be a former member or an external application's actor, so do
-not assume it identifies a former Platform member. Names, labels, date formatting
-and which authors to show remain presentation decisions.
-
-For optimistic sends, keep a stable local render key and attach backend IDs as
-acknowledgements arrive. Run acceptance exposes `submissionId`; steering acceptance
-exposes it in `joins.submissionId`, alongside `kind.steeringId`. Context entries carry
-the matching run/steering source. Use those IDs for reconciliation, not message text.
-A POST receipt can precede the corresponding transcript events, including when it
-already reports completion; retain the local message until the event reader catches
-up. These render identities belong to the current view, not durable session state.
-
-## Keep session and resource lists current
-
-The Platform browser calls its cookie-authenticated `/api/v1` routes. Platform
-checks membership and session visibility, then calls the Rust runtime through the
-SDK with its runtime token and the member's actor ID. The browser uses SDK types
-and pure helpers without holding that token.
-
-| View | Available data and refresh path |
-| --- | --- |
-| Session list | `SessionSummaryView` from `session/list` and `session/changed`: activity, `activityPhase`, `activitySinceMs`, last run, execution failure, message preview/role/origin/time, attached resource IDs and revision. |
-| Bot roster | `BotListItem` from `bots/list` and `bots/changed`: status, activity and counts. Detailed controller state still uses `bots/state/read`. |
-| Environments | `EnvironmentView` from `environments/list` and `environments/changed`. |
-| Workspaces | `VfsWorkspaceView` from `vfs/workspaces/list` and `workspaces/changed`: name, revision, head snapshot and totals. Refresh an open tree when its head changes; load files by immutable blob reference. |
-| Transcript | Paginated `session/events/read` plus its forward long-poll tail. List notifications do not replace transcript events. |
-
-Session summaries are materialized with store writes; callers do not reconstruct
-activity or preview text by replaying history. `lastMessageAtMs` is when that
-preview entered context, so it can differ from input acceptance time. Use
-`lastMessageRole` before interpreting `lastMessageOrigin` as a user author. An
-empty or unavailable message can leave the previous preview intact. Display
-elapsed activity time locally from `activitySinceMs`.
-
-`universe/watch` is `GET /api/v1/universes/{universe}/events` with `Accept: text/event-stream`;
-the TypeScript and Python SDKs expose watch iterators. Platform offers
-the same resource route. The current web provider shares one connection
-across pages in the active universe of each tab. It receives all authorized
-session rows, including ones excluded by the current list filters. Ordinary list
-reads still perform filtering and pagination on the server; clients apply the
-same view filters when updating cached rows.
-
-Replace changed rows by ID, remove rows on `removed`, and refetch visible queries
-on `watch/reset`, including the reset that starts each connection. Restricted
-streams receive reset rather than a deleted session ID whose access is no longer
-known. Session and workspace revisions reject older updates. If a change overlaps
-an HTTP fetch, preserve it until that response has been applied; the current web
-watch cache already handles this. Keep slow fallback reads because signals are
-lossy and have no replay cursor. Platform rotates connections after 60 seconds to
-recheck membership and feature access; direct runtime streams last at most 15
-minutes. These streams carry resource rows, not model tokens.
-
-## Read content through the public projection
-
-`session/read` returns stored session state and a bounded recent run-summary page,
-and needs no worker. `lifecycleStatus` is `new`, `open` or `closed`, `activity` says what
-the session is doing, and `executionFailure` appears when an open session's workflow
-has stopped. Follow its run cursor through `session/runs/list` for older summaries;
-those come from the log and have no usage figure. `session/runs/read` provides one
-run's detail. A run past the detail limit keeps its opening and latest whole turns and
-sets `earlierEventsOmitted`, and `session/events/read` serves the rest.
-
-Run start, cancel, steer and decide all return a run summary, including `failure` when
-there is one, so a caller rarely needs a second read.
-
-Use `outputText` for visible terminal text. A `ContentRefView` retains the
-authoritative content reference, media type, and provider kind. To retrieve
-the bytes of a known reference:
-
-```ts
-const output = run.output;
-if (output) {
-  const bytes = await client.readBlobBytes(output.blobRef);
-  console.log({ bytes: bytes.length, mime: output.mime,
-    providerKind: output.providerKind });
-}
-```
-
-This fragment continues the earlier script. Do not assume those bytes are
-plain text: model output can be provider-native JSON or media. Tool and catalog
-previews are bounded, while their full bodies remain available by reference.
-Use the declared representation when decoding or storing an artifact.
+<a id="read-content-through-the-public-projection"></a>
 
 ## Inspect a run
 
-An application that shows what a session did can use these reads directly, without
-processing events:
-
-| To show | Call |
-| --- | --- |
-| The sessions for an application | `listSessions`, filtered by `metadata` |
-| One session's state | `readSession` |
-| Its runs | `listRuns` |
-| One run in full | `readRun`, then `runTimeline` |
-| A tool's complete output | `readBlobText(call.outputRef)` when `outputPreviewTruncated` is set |
-
-`readRun` returns messages and tool calls as separate lists. `runTimeline`
-merges them into one list in the order they happened, joining each tool call to its
-result, its status and its timing:
+Use `readSession` for session state and recent runs, `listRuns` for older
+summaries, and `readRun` for an individual run. To show messages and tool
+calls together, pass that run to `runTimeline`.
 
 ```ts
 import { runTimeline } from "@lightspeed-ai/sdk";
 
+const { run } = await client.readRun(sessionId, runId);
 for (const item of runTimeline(run)) {
-  if (item.type === "tool") {
-    console.log(item.name, item.call?.status, item.call?.durationMs);
-  } else if (item.type === "message") {
-    console.log(item.role, item.entry.text);
-  }
+  if (item.type === "message") console.log(item.role, item.entry.text);
+  if (item.type === "tool") console.log(item.name, item.call?.status);
 }
 ```
 
-To keep a view current, follow the run with `awaitRun` and read it again when `onEvent`
-fires. Events tell you something changed; the run's projection is what to show.
+Use `outputText` for visible terminal text. For a full result behind a content
+reference, call `readBlobBytes` with its `blobRef` and decode the bytes according
+to their declared representation. A tool result can expose an `outputRef` when
+its preview is truncated. Read a known UTF-8 result with `readBlobText`.
+Use `readEvents` for history omitted from a bounded run view.
+
+## Build transcript authors and times
+
+`transcriptMetadata(sessionId, events)` returns author and timestamp information
+keyed by context entry ID. Pass the union of loaded history and live events.
+Recompute when more events arrive, since an older page can supply the original
+acceptance time of a message that waited in a queue. `transcriptAuthor` applies
+the same author rule to a single entry. Resolve actor IDs to names in your
+application. Treat message origin as display metadata.
+
+## Keep session and resource lists current
+
+List calls return the current session summaries, bots, environments, or
+workspaces. Use `watch` in either SDK, or request
+`GET /api/v1/universes/{universe}/events` with `Accept: text/event-stream`, to
+receive changes for those lists.
+
+Update rows by ID and refetch visible lists on `watch/reset`, including the
+reset at connection start. Use the same filters as your ordinary list reads.
+The watch has no replay cursor, so reconnect and refresh if the stream ends.
+Continue using session event pages for durable transcript history.
+
+## Transcribe audio before submitting session input
+
+1. Upload the audio to the universe's content store with `blobs/put`.
+2. Call `transcriptions/start` with a stable `idempotencyKey` and an `audio`
+   object with `blobRef`, `mime`, and `name`. Use the universe's
+   **Speech-to-text** default or supply an `openai:audio-transcriptions` model.
+3. Save the `transcriptionId` and poll `transcriptions/read`. A succeeded job
+   supplies `text` and `transcriptRef`. Failed jobs can include failure details.
+4. Submit the transcript as text or `textRef`. When you submit unchanged
+   text, an optional `provenanceRef` can point to the original audio blob.
+
+On Platform, transcription drafts can be read or cancelled only by the
+identity that created them. Call `transcriptions/cancel` to stop a job.
+Unsubmitted audio and transcripts can expire. Submit or preserve any results
+you need to keep.
 
 ## Serve a browser UI
 
-Keep runtime tokens on the server. The Platform exposes the shared resource API
-under `/api/v1` and its application-specific routes under `/api/ui`. Browser
-sessions pass authentication, same-origin checks, membership, role and resource
-visibility checks before a request reaches the runtime.
+A browser app served from the Platform origin can use a signed-in Platform
+session and the same `/api/v1` resource routes. For a standalone app, keep the
+runtime token on your server and authorize callers and resource access there.
 
-The shared routes come from the generated catalog, with an explicit admission
-registry. The Platform selects a fixed runtime upstream, replaces identity headers,
-and supplies the authenticated actor. Most request bodies stream unchanged; only
-operations whose policy reads or rewrites fields require bounded body decoding.
-The runtime remains responsible for validating the API payload.
-
-A standalone application's gateway must enforce its own equivalent policy. Use
-`HTTP_OPERATIONS` from `@lightspeed-ai/sdk/server` for route and target metadata;
-do not expose a full-authority runtime token to the browser. A universe partitions
-data but does not constrain a runtime token. For example, blob reads authorize
-ownership within the selected universe, not visibility of a particular session.
-
-Allow only reviewed operations, constrain the upstream, enforce browser origin
-policy for cookie authentication, and preserve cancellation and backpressure when
-forwarding SSE or binary responses. A long `awaitRun` may hold a request open for
-up to 30 seconds at a time; account for your host's request-duration limit.
+The TypeScript server entry point `@lightspeed-ai/sdk/server` exports
+`HTTP_OPERATIONS` with HTTP methods, paths, and parameter bindings. Use an
+operation allowlist and a fixed upstream, and preserve cancellation for
+event streams and binary transfers. The
+[run inspector example](../../../clients/typescript/examples/run-inspector/README.md)
+shows a server-owned credential, an application login, and streamed downloads.
 
 <a id="handle-errors-and-lifecycle-explicitly"></a>
 
 ## Handle errors and lifecycle
 
-Successful `call` and helper results contain the declared DTO directly. Binary
-read helpers return bytes. The watch iterator carries named SSE events separately
-from ordinary responses; list hints do not replace the durable session event log.
+`LightspeedApiError` exposes the HTTP `status`, stable `kind`, and structured
+`data`. `LightspeedTransportError` means the client could not use a response or
+reach the server. If that happens during a write, check the known resource or
+retry with the original identity before submitting new work.
 
-`LightspeedApiError` preserves HTTP `status`, `kind`, and the problem `payload`.
-Its `data` exposes structured problem details, including `submissionId` and model
-default information. Kinds are camelCase, such as `invalidRequest` and `notFound`.
-A missing or invalid runtime token produces HTTP 401 with kind `unauthenticated`
-before the gateway reads the request body.
-
-`LightspeedTransportError` reports invalid responses or network failures. A
-transport failure after submission can leave acceptance unknown; reconcile with
-stable IDs before retrying mutations. Your own abort or timeout rejects with the
-signal's reason, such as `AbortError` or `TimeoutError`.
-
-Two kinds need particular handling:
-
-| Kind | Meaning | What to do |
-| --- | --- | --- |
-| `operationPending` | The wait expired while the session may still be holding the command, for example behind a compaction. It is not a failure, and the command can still land. | Retry the same request. Run start and steering put the submission ID in `data`, including one the server allocated, so a retry cannot land twice. Session events report the outcome. |
-| `sessionExecutionStopped` | The session is open and its history intact, but its workflow execution has stopped. | Call `session/restart`, or decide to close the session. Nothing restarts it behind the caller. |
-
-An approval decision whose wait runs out reports `status: pending` for that decision
-rather than failing the call.
-
-| Action | Method and follow-up |
+| Result | What to do |
 | --- | --- |
-| Cancel queued or active work | `session/runs/cancel`, then observe terminal state. Cancellation cannot undo external effects already performed. |
-| Send steering to active work | `session/runs/steer` with a stable `submissionId`; the next model turn consumes accepted input. A parked run holds it without waking. |
-| Decide tool approvals | `session/runs/approvals/decide`; inspect per-decision results and resolve all pending approvals. |
-| Update session setup | Read the current revision, then `session/config/put` while idle. It replaces the sparse configuration, including feature grants. |
-| Finish the conversation | `session/close`; ordinary close requires an idle session. Closure and deletion are separate decisions. |
-| Bring back a stopped session | `session/restart`; a run that was executing fails, and a parked run keeps waiting. |
-
-The [API reference](../../../crates/api/contract/api-reference.md) describes
-each operation. The client's `OPERATION_INFO` exposes the runtime operation metadata. Use [Workflow tools](workflow-tools.md) when another
-durable workflow needs to own or participate in the session.
+| `unauthenticated` | Check that the credential is valid for the endpoint. |
+| `forbidden` or `notFound` | Check the selected universe, the identity's permissions, the key's restrictions, and visibility of the resource. |
+| `operationPending` | Keep the request and retry identity. The command can still be accepted. For run start or steering, use the `submissionId` returned in the error data. |
+| `sessionExecutionStopped` | Read the stored session and decide whether to call `restartSession` or close it. |
+| Aborted wait or timeout | Resume observation by run ID, or explicitly cancel the run. |
 
 ## Verify the integration
 
-Exercise a normal run, retry the exact same submission, and confirm that both
-responses identify the same run. Disconnect the observer and resume from a
-saved cursor. Test cancellation and a provider failure, and confirm your
-application distinguishes those terminal states from an HTTP timeout.
+Run the example twice with the same job ID and confirm both attempts identify
+the same run. Stop the observer and reconnect from a saved cursor. Exercise
+cancellation and a failed run so your application can distinguish a terminal
+result from a lost connection.
 
-The [client tests](../../../clients/typescript/test/client.test.ts) demonstrate
-transport errors, stable submission IDs, and event following with an injected
-fetch implementation. They are useful fixtures for local client development;
-the production endpoint and provider path still need an integration test with
-the intended deployment.
+Use [Workflow tools](workflow-tools.md) when another durable workflow needs
+to own or participate in a Lightspeed session.

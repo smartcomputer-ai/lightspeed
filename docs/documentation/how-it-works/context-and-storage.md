@@ -445,22 +445,13 @@ people inspect retained history and the runtime reconstructs execution state.
 
 ## Live list updates
 
-`universe/watch` is `GET /api/v1/universes/{universe}/events` with
-`Accept: text/event-stream`. It sends current list rows for sessions, bots,
-environments and VFS workspaces. Runtime tokens can watch every collection.
-The Platform decides which collections and audience its callers may see.
-`visibleTo` narrows sessions to the same audience as
-`session/list`; list filters and pagination remain on ordinary reads.
+A universe watch streams changes to session, bot, environment, and workspace
+list rows. For example, when a run finishes, the browser can update the
+session's list row without reloading the whole list. Platform applies the
+caller's feature access and session visibility to the stream.
 
-Each gateway batches changed IDs for 250 ms and reads them once per universe,
-then distributes the rows to its subscribers. A bounded queue keeps the latest
-change per row. The initial event, a reconnect or a lost-signal condition sends
-`watch/reset`, meaning refetch the visible data. These notifications are lossy
-hints without a replay cursor, so clients retain slow fallback reads.
-
-The browser shares one connection across pages in its active universe, updates
-cached rows, and refreshes open workspace trees when their head changes. File
-contents are read by immutable blob reference. Platform rotates its proxy every
-60 seconds to recheck membership and feature access; direct runtime streams
-last at most 15 minutes. Session event long-polls and detailed bot state reads
-continue separately.
+The gateway coalesces changes before sending the latest row. Treat those
+updates as hints, and refetch the current list when the stream starts or
+sends `watch/reset`. To follow one session's recorded history, use its event
+feed. See [API and SDKs](../integrating-and-extending/api-and-typescript.md)
+for the HTTP route and client examples.

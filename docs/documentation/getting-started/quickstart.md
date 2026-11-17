@@ -7,10 +7,9 @@ Rust and a source checkout if you choose the development launcher.
 ## Before you start
 
 To configure a model, you need an OpenAI or Anthropic API key and Operator or
-Owner access. If your operator has already connected a model, Contributor
-access is enough to start a session. Creating a universe requires Creator or
-Admin authority in its account, or Platform administration authority. See
-[People and roles](../access-and-security/people-and-roles.md).
+Owner access in the universe. If a model is already available through a
+profile or the universe default, Contributor access is enough to start a
+session. See [Organizations, members, and roles](../access-and-security/people-and-roles.md).
 
 If someone has already deployed Lightspeed for you, open that installation
 with your assigned account and continue at
@@ -99,8 +98,11 @@ Select a universe from the switcher. The development launcher creates a
 **Test** universe you can use for this walkthrough. The universe holds your
 sessions, credentials, profiles, and workspaces.
 
-If the app shows **No universes yet**, sign in as a Platform administrator,
-choose **New universe**, enter `Getting started`, and choose **Create universe**.
+If the app shows **No universes yet**, choose **New universe** if it appears.
+Enter `Getting started` as the name, choose an organization if prompted, and
+select **Create universe**. The button is available when you can create in
+an organization with room for another universe. If you need access to an
+existing universe, ask an Organization Admin or a universe Owner.
 
 ## Configure a model
 
@@ -119,10 +121,13 @@ session. A saved key needs access to the model you will select.
 ## Start a conversation
 
 1. Open **Sessions** and choose the plus button labeled **New session**.
-2. Enter `First conversation` as the **Name** and leave **Profile** at
-   **No profile (universe default)**.
-3. Choose **Customize setup…**. Under **Model configuration → Model**, select
-   a conversational model from the provider you just connected.
+2. Enter `First conversation` as the **Name**. Leave **Profile** at **No
+   profile (universe default)**, or choose a profile if your team has
+   prepared one.
+3. If you just connected a provider, choose **Customize setup…**. Under
+   **Model configuration → Model**, select a conversational model from that
+   provider. If a prepared profile or universe default already provides a
+   model, you can use it directly.
 4. Choose **Create session**.
 
 ![New session dialog with First conversation entered as the name, no profile selected, and the Customize setup button.](../images/new-session.png)
@@ -130,11 +135,10 @@ session. A saved key needs access to the model you will select.
 *Demo mode: choose **Customize setup…** to select a model before creating
 the conversation.*
 
-Select the model explicitly for this walkthrough. Alternatively, an Operator
-or Owner can choose **Agent runs** under **Models → Defaults** and leave
-**Universe default** selected in session setup. Adding a credential alone
-does not select that default. If neither the session nor its profile supplies
-a model and the universe has no default, session creation fails.
+To make a connected model available without customizing every session, an
+Operator or Owner can select it under **Models → Defaults → Agent runs**.
+A session uses this route when neither its setup nor its profile specifies a
+model.
 
 Send a short message:
 

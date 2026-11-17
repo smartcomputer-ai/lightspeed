@@ -16,9 +16,10 @@ control, or [Incus VMs](incus-vms.md) to configure provider-managed machines.
 The [environment overview](overview.md) explains the available sources and
 the separate VFS and machine filesystems.
 
-A Contributor can attach an existing environment to a session they can
-control. Creating environments or changing profiles requires an Operator or
-Owner account. You also need a session with a working model.
+Use Operator or Owner access to create an environment, attach one to a
+session, or change its active selection. Contributors can run a session
+whose profile already attaches and selects an environment. You also need a
+session with a working model.
 
 ## Select a machine for a task
 
@@ -299,7 +300,7 @@ accepts only an environment attached in the session's configuration.
 
 | Symptom | What to check |
 | --- | --- |
-| **New environment** is missing | Check that you are an Operator or Owner, then check the universe binding and available, non-deprecated templates. Borrowed machines use registration or attachment instead. |
+| **New environment** is missing | Check that you have Operator or Owner access and that a provider available to this universe offers a current template. Register or attach a machine you already manage. |
 | Selection succeeds but the first tool waits | A provisioned machine may still be provisioning or waking. Inspect its status, state message, and provider health. |
 | A registered machine is disconnected | Restart or reconnect its daemon using the retained identity. Tools wait up to two minutes for a persistent daemon. Lightspeed cannot power on that borrowed machine. |
 | A visible environment is rejected by the session | Check that it is attached in the session's configuration, plus the machine's capabilities and lifecycle status. |

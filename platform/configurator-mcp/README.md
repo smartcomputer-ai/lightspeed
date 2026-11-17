@@ -8,18 +8,19 @@ exposed.
 The product guide, [Configurator MCP](../../docs/documentation/integrating-and-extending/configurator-mcp.md),
 covers the service and its current availability.
 
-The Platform Configurator setup and development-launcher process are disabled
-until scoped Platform tokens are available. A runtime token has full authority
-over every universe and must never be handed to an agent. The package remains
-for development and trusted operator use.
+The Platform setup installs a universe-scoped service-user key and a managed
+MCP server connection. `./dev.sh platform` and `./dev.sh full` start the
+facade with Platform as its upstream. Keep direct runtime credentials for
+trusted infrastructure: a runtime token has full deployment authority.
 
 `tool-filter.json` contains the exact universe methods and params omitted from
 generation. The default surface excludes the `integration` param of `session/start`,
 environment jobs, environment registration keys, and the redundant Lightspeed
 connection probe and binary upload operation.
 Edit that file and run `npm run generate` to tune the advertised surface.
-Each authenticated request exposes that generated tool set. Operation-family
-classification is descriptive and grants no restriction on a runtime token.
+External clients see the generated tool set. The managed Platform setup
+restricts the tools an agent sees separately from the operations its key can
+call.
 Tool descriptions come from the canonical Rust operation catalog and focus on
 operational semantics such as revision guards, lifecycle prerequisites,
 idempotency, and secret handling.
@@ -30,6 +31,7 @@ Build the TypeScript client and Configurator, then start the server:
 
 ```bash
 npm install
+npm run build --workspace @lightspeed-ai/sdk
 npm run build --workspace @lightspeed-ai/configurator-mcp
 LIGHTSPEED_AUTH_MODE=single node platform/configurator-mcp/dist/bin.js
 ```
@@ -48,7 +50,7 @@ is kept here for service-local convenience.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_AUTH_MODE` | `single` | `single` or `authenticated`; must match the upstream gateway |
+| `LIGHTSPEED_AUTH_MODE` | `single` | `authenticated` for Platform or an authenticated runtime, `single` for a private single-mode runtime |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_HOST` | `127.0.0.1` | HTTP bind host |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | HTTP bind port |
 | `LIGHTSPEED_CONFIGURATOR_MCP_API_URL` | `http://127.0.0.1:18080/api/v1` | Lightspeed HTTP API base |
@@ -58,17 +60,17 @@ is kept here for service-local convenience.
 | `LIGHTSPEED_CONFIGURATOR_MCP_UPSTREAM_TIMEOUT_MS` | `60000` | Per-probe and per-tool upstream timeout |
 | `LIGHTSPEED_CONFIGURATOR_MCP_SHUTDOWN_TIMEOUT_MS` | `10000` | Grace period before open HTTP connections are closed |
 
-Authenticated operator requests send `Authorization: Bearer <runtime-token>`
-and `x-lightspeed-universe` for tool calls. Configurator verifies the token
-with the runtime before handling each MCP request. The MCP universe header
-selects the runtime resource URL; it is never forwarded as a runtime header. The optional actor header
-supplies attribution only. All configured runtime tokens have full authority;
-there are no per-token method groups or universe scopes.
+For managed use, configure the Platform `/api/v1` URL as the upstream and
+set `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` on Platform to the facade's
+`/mcp` URL. In the universe's **Settings → Templates**, an Organization Admin
+or Platform Admin can install **Configurator** and rotate its key.
 
-The Platform setup returns unavailable and does not install a credential,
-MCP connection, or profile. Do not register this service for an agent with a
-runtime token. The replacement will use a restricted token issued by the
-Platform.
+Authenticated requests send the upstream credential as a bearer token.
+Configurator verifies it through the upstream's `/connection` endpoint before
+handling each MCP request. Include `initialize` in any Platform key operation
+allowlist. Send the universe UUID as `x-lightspeed-universe` for tool calls
+when discovery hasn't returned a default. Configurator uses this UUID in
+the upstream resource path.
 
 The server uses the current per-request, sessionless Streamable HTTP lifecycle
 and negotiates the 2026 protocol through `server/discover`. It retains the

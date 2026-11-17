@@ -10,9 +10,9 @@ needs VFS access to read its source and save a document. If it later needs to
 check an issue tracker, connect that tracker through MCP and grant the relevant
 tools. That keeps the agent's access understandable as its job grows.
 
-Use Operator or Owner access to register MCP servers and configure
-profiles. A Contributor can change tools in an idle session they can control
-under **Session settings**. See
+Use Operator or Owner access to register MCP servers, configure profiles,
+and change the tools of an idle session you can access. Contributors can
+run sessions with tools already granted by a profile. See
 [Agent and tool access](../access-and-security/agent-and-tool-access.md) for
 how tool configuration and external credentials determine what an agent can do.
 

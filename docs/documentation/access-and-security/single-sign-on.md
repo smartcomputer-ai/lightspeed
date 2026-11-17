@@ -1,42 +1,24 @@
 # Company sign-in (SSO)
 
-Connect Lightspeed to one company OIDC provider so people sign in with their
-company account. The provider grants ordinary application access or Platform
-admin access. Organization Admins and universe Owners then assign local universe
-memberships using the four roles described in [People and roles](people-and-roles.md).
-No directory group is needed for each universe.
-
-Opening Lightspeed without an active session starts company sign-in
-automatically by default. The explicit `/app/login` page remains available after logout
-and for manual sign-in or emergency admin access. A failed attempt stays on
-the login page for an explicit retry; it does not repeatedly redirect.
-
-On managed internal devices, the provider may sign someone in after a brief
-redirect. For external access, it may require credentials and MFA. Lightspeed
-uses the same flow in both cases; those requirements belong to provider policy.
-
-This guide covers deployment setup, emergency access and acceptance checks.
-For a runnable development provider, use
-[local Keycloak](../development/local-development.md#company-sign-in-with-local-keycloak).
-The [environment-variable reference](../reference/environment-variables.md#platform-backend)
-is the complete settings reference.
+Connect the Platform to your company's OpenID Connect (OIDC) provider so
+people sign in with their company accounts. Provider entitlements control who
+can use Lightspeed and who is a Platform Admin. Organization membership and
+universe roles decide where ordinary users can work. You can manage those
+roles locally or map company groups through [declared
+access](../deployment/configuration-as-code.md#configure-organizations-and-access).
 
 ## Configure the provider and Platform
 
-Configure one confidential OIDC client for the deployment. Lightspeed uses an
-authorization code, PKCE and nonce, verifies the returned ID token, and keeps
-its own browser session. It does not trust proxy identity headers or store
-provider tokens.
+Register one confidential OIDC application. Obtain the issuer, client ID,
+and client secret, and configure the provider to return an email unique to
+each user and your two application entitlements. Lightspeed reads the
+`groups` claim by default.
 
-Register a confidential OIDC application with your provider and obtain its
-issuer, client ID and client secret. Arrange for it to return a unique email
-and the two application entitlements. The default claim name is `groups`;
-set `LIGHTSPEED_PLATFORM_OIDC_GROUPS_CLAIM` if the provider uses another name.
-
-On an existing installation, first check the
-[upgrade guidance](../deployment/upgrades-and-recovery.md#enable-company-sign-in-on-an-existing-platform)
+On an existing deployment, first review [upgrading to company
+sign-in](../deployment/upgrades-and-recovery.md#enable-company-sign-in-on-an-existing-platform)
 and designate an [emergency administrator](#emergency-administrator-access).
-Existing local accounts are not automatically converted to company accounts.
+Company identities are matched by issuer and subject. An email already in
+use by a different account needs to be resolved before that person can sign in.
 
 Set these deployment variables and restart the Platform:
 
@@ -49,159 +31,88 @@ LIGHTSPEED_PLATFORM_OIDC_USER_GROUP=lightspeed-users
 LIGHTSPEED_PLATFORM_OIDC_ADMIN_GROUP=lightspeed-platform-admins
 ```
 
-The two group values are exact strings in the `groups` claim by default. The
-admin value is sufficient by itself; neither value means no Platform access.
-They control application access only. The company can use separate access
-requests for ordinary users and administrators.
-
-Retrieve `GET /api/login-config` from the Platform origin and register the
-redirect URL `<LIGHTSPEED_PLATFORM_BASE_URL>/api/auth/callback/<providerId>`
-using its returned `providerId`. Use the public HTTPS origin in production.
-An issuer change produces a different provider ID and requires a new redirect
-registration; it cannot take over existing accounts.
-
-## Choose automatic or manual sign-in
-
-`LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN` defaults to `true`. Normal visits without
-an active session and session expiry start company sign-in automatically. Set
-it to `false` to show the login page and wait for **Sign in with your company
-account**, including after session expiry.
+Use the public HTTPS origin as the base URL. Fetch `GET /api/login-config`
+from that origin and use its `providerId` to register this redirect URL with
+your provider:
 
 ```text
-LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN=false
+https://lightspeed.example.com/api/auth/callback/<providerId>
 ```
 
-Restart the Platform after changing the setting, then refresh the browser.
-The statically built frontend reads `autoSignIn` from `/api/login-config` at
-runtime, so this setting requires no frontend rebuild. Client secrets remain
-on the server. Both modes retain `/app/login` for manual and emergency access,
-and use the same authentication, permissions and session limits.
+Use the exact entitlement values issued by your provider. The admin entitlement
+alone is enough to sign in as a Platform Admin. Ordinary users need the user
+entitlement. For custom discovery, claim names, or entitlements in JWT access
+tokens, see the [Platform environment-variable
+reference](../reference/environment-variables.md#platform-backend). For a local
+walkthrough, see [Company sign-in with local
+Keycloak](../development/local-development.md#company-sign-in-with-local-keycloak).
 
-## Configure identity and entitlement claims
+## Sign in and grant access
 
-Discovery defaults to `<issuer>/.well-known/openid-configuration`. For a
-provider such as AD FS whose metadata lives elsewhere, set
-`LIGHTSPEED_PLATFORM_OIDC_DISCOVERY_URL`. Metadata must describe the exact
-configured issuer. The default scopes are `openid profile email`. Prefer
-application entitlements in the ID token; a provider may require additional
-scopes such as `allatclaims` or a target `RESOURCE` parameter. If entitlements
-are supplied only in a JWT access token, set `CLAIMS_TOKEN=access` and the
-expected resource `AUDIENCE`. Resource selection and audience verification are
-separate settings. All these names use the `LIGHTSPEED_PLATFORM_OIDC_` prefix;
-see the [complete variable reference](../reference/environment-variables.md#platform-backend).
-UserInfo alone is insufficient, and offline access is unsupported.
+Visits without a current session start company sign-in automatically. To use
+a sign-in button instead, set `LIGHTSPEED_PLATFORM_OIDC_AUTO_SIGN_IN=false`.
+The login page remains at `/app/login`. Device authentication for
+`lightspeed connect login` uses the same company sign-in and asks the person to
+approve the CLI's device code.
 
-A company account is bound to the exact issuer and subject. Email and display
-name are profile fields refreshed at login. An email collision with another
-account refuses sign-in; it never links the accounts. The provider must supply
-a unique email for this release.
-
-Any partial OIDC configuration fails startup. With complete configuration,
-company sign-in replaces ordinary password login and disables GitHub login.
-Without OIDC, existing local authentication remains available; configured
-GitHub OAuth remains available through the API.
+Once a colleague signs in, an Organization Admin can add them to a shared
+organization. The organization's default universe access and any individual
+grants determine what they see. Company group policies can grant that access
+at sign-in. For the manual procedure, see [Add people to a shared
+organization](people-and-roles.md#add-people-to-a-shared-organization).
 
 ## Emergency administrator access
 
-Open `/app/login` directly and choose **Admins** to open the separate
-password form without an automatic company redirect. Only explicitly designated local Platform admins can use it;
-a company-admin entitlement never enables a local password.
+Open `/app/login` directly and choose **Admins** to use the emergency password
+form. It is available to designated local Platform Admins. The initial local
+administrator is designated during bootstrap. On an existing deployment,
+`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` can designate a local Platform Admin who
+already has a password. Use a different email from the administrator's
+company account. Platform Admins can create additional emergency accounts
+under **Admin → Platform → Users**.
 
-The bootstrap admin is designated automatically. On an existing installation,
-`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` can designate an existing local admin that
-already has a password; it cannot promote an ordinary or company account and
-does not reset the password. Use a separate email from your company identity.
-Platform admins can create additional emergency admins under **Users**. Store
-these credentials through your organization's protected recovery process.
-Emergency sign-ins are recorded in the access history.
-
-Set `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN=off` to disable password sign-in and
-password changes, including emergency access. With OIDC, the default is
-`break-glass`; without OIDC, it is `local`.
+Set `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN=off` to disable password access
+entirely. The default with OIDC is `break-glass`, which allows the emergency
+form. The default without OIDC is `local`.
 
 ## Session expiry and suspension
 
-With company sign-in configured, Platform sessions have an absolute eight-hour
-limit, adjustable with `LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS`.
-This includes browser-approved CLI sessions created with `lightspeed connect login`.
-The CLI opens a verification URL; the user signs in and explicitly approves
-the displayed device code. Activity does not extend the company session limit. Renewal sends company users back to the
-provider, automatically or after a click according to the sign-in setting.
-The provider may sign them in silently using an existing company session.
-Emergency password sessions have the same limit. A provider outage does not
-extend sessions or stop unexpired sessions from working.
+With company sign-in configured, browser, CLI, and emergency password sessions
+have an absolute lifetime of eight hours by default. You can adjust it with
+`LIGHTSPEED_PLATFORM_OIDC_SESSION_MAX_AGE_SECONDS`. When a company session
+expires, the user signs in again. Their provider may complete that flow using
+its own existing session.
 
-Under **Admin → Users**, admins can suspend a person, reinstate them,
-or sign out all their sessions. Suspension blocks new sign-ins and subsequent
-requests immediately and persists until an admin lifts it. Reinstatement
-requires a fresh login; it does not revive old sessions. Users shows identity
-source, application access and the last successful provider check.
+Lightspeed refreshes company admission and group claims at sign-in. A provider
+response that removes both entitlements revokes the user's Platform sessions.
+If the response removes only the admin entitlement, the next request uses
+ordinary permissions. If the provider refuses login without returning claims,
+existing Lightspeed sessions expire on their original schedule. Company
+personal API keys require the user to renew their admission by signing in
+within the same configured window.
 
-A valid provider response without either entitlement removes application
-access and revokes every Platform session. Loss of only the admin entitlement
-removes Platform admin authority on the next request in every session. If the
-provider refuses login without returning claims, existing Platform sessions
-expire at their original limit. Validate your provider's account-disable and
-entitlement-removal behavior, including existing company SSO cookies, before
-claiming an offboarding time bound. Directory propagation may add delay.
+To block a person's access immediately, open **Admin → Platform → Users** and
+suspend their account. Suspension blocks subsequent requests and fresh sign-ins.
+Reinstatement requires a fresh login. To end browser or CLI sessions only,
+choose **Sign out all sessions**. Revoke API keys separately if those
+credentials should stop working. Running work must be stopped separately.
+See [Remove or change
+access](people-and-roles.md#remove-or-change-access).
 
-Your API keys use the same current company admission state, independently
-of browser-session expiry. Until a background directory source is configured,
-a company user must renew admission by signing in within the configured
-company window. Service-user keys represent organization-owned service users and do
-not borrow their creator's human session. Local personal and service-user keys
-have their own expiry and revocation lifecycle.
+## Verify the deployment
 
-There is no automatic deactivation for inactivity. Suspension and company
-admission changes preserve local memberships, historical records and running
-work. Runtime tokens authenticate trusted components, not people, and are
-independent of company sign-in. Do not distribute them to ordinary users. If an
-operator who held one leaves, replace it in runtime and consumer configuration;
-suspending their Platform account does not invalidate it.
+1. Sign in as an ordinary user and as a company administrator. Confirm each
+   has the expected access, and that a user with neither entitlement is refused.
+2. Add the ordinary user to a shared organization or map their company group.
+   Check that they can open the expected universe and that their role persists
+   across sign-in.
+3. Remove entitlements and test again with an existing company browser session.
+   Check how quickly your provider supplies the new claims or refuses login.
+   Test local suspension and emergency access as well.
 
-## Validate the deployment
-
-Before opening access, test the actual provider registration:
-
-1. Sign in with ordinary access, admin access alone, and neither entitlement.
-   The first two succeed with the corresponding Platform role; the third is
-   refused. An ordinary user starts without universe memberships.
-2. Add the ordinary user to a universe on the universe's **Settings → Members**, change their role, and
-   sign in again. The local role applies on the next request and survives
-   company sign-in.
-3. Verify internal sign-in and any supported external credentials/MFA flow.
-   Confirm the public callback uses the same Platform hostname as the browser.
-4. With an existing company SSO cookie, remove admin access while retaining
-   ordinary access, remove both entitlements, and disable the account at the
-   provider. Repeat sign-in and check the session behavior described above.
-   Record directory propagation and provider delays before promising a
-   revocation bound.
-5. Suspend the user in Lightspeed and check that existing sessions and new
-   sign-ins are blocked. Reinstate them and confirm a fresh login is required.
-6. Check absolute expiry and emergency password access during a provider
-   outage. Verify the separate secret-rotation procedure for any runtime token
-   held by an offboarded operator.
-
-Platform admins can inspect **Admin → Audit log** for company
-admission and admin-status changes, emergency sign-ins, suspension, session
-revocation and membership edits. Historical key-operation entries remain in
-the log after key management is removed. This small durable
-trail survives user and session deletion; comprehensive gateway auditing,
-audit retention controls and export remain deferred. See
-[what is recorded](overview.md#what-is-recorded-today).
-
-## Resolve sign-in failures
-
-If startup refuses the configuration, check that all required OIDC variables
-are supplied and that the two entitlement values differ. Production issuer
-and discovery URLs use HTTPS; loopback HTTP is available for development.
-
-For a refused callback, check the exact registered redirect, issuer, client
-credentials, ID-token email and configured entitlement claim. For access-token
-entitlements, also check the JWT audience and subject. A valid company login
-without an application entitlement is still refused. An email already used by
-a local account must be resolved explicitly; email-based linking is disabled.
-
-If login succeeds but the expected universe does not appear, confirm the person
-belongs to its organization under **Admin → organization → Members**, then grant a role under the universe's **Settings → Members**. Sign-in admission alone does not grant access to shared universes. A local suspension must
-be lifted by a Platform admin even after the provider restores access.
+If the callback fails, check the exact redirect URL, issuer and client
+credentials, then confirm the email and entitlement claim returned by the
+provider. For access-token entitlements, check the audience as well. If sign-in
+succeeds and a universe is missing, check membership in its organization and
+the user's effective universe role. Platform Admins can review admission
+changes under **Admin → Platform → Audit log**.

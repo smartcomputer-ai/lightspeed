@@ -67,20 +67,14 @@ gate with a non-production database whose user may create temporary databases:
 LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 ```
 
-The platform ledger was rebased on 2026-08-30 to the single
-`0000_platform_baseline` entry (auth, universes, setup installations): bots,
-triggers, events, channel accounts, and pairings moved into the Rust core
-schema, so the platform database holds people and the universe mapping
-and nothing else. Keep that shape: a new area gets its own migration, and its
-tables live in their own `platform/db/src/schema/<area>.ts`. A rebase
-invalidates the previous Drizzle ledger. A valuable existing database needs a
-validated migration/adoption procedure; replacing ledger rows by hand does not
-establish that its schema or data matches the baseline. Disposable development
-databases can be reset with `./dev.sh reset`. A journal with a single entry
-passes the gate on the empty-install check alone; the upgrade check resumes
-with the next migration. See
-[Upgrades and recovery](documentation/deployment/upgrades-and-recovery.md) for
-deployment maintenance and recovery requirements.
+The consolidated database baselines are runtime revision 8 and Platform
+revision 1 (`0000_initial_platform`). They require fresh databases and
+migration ledgers. Keep existing databases with their matching release until
+you have a validated data migration. For disposable local databases, use
+`./dev.sh reset` after stopping the launcher. A Platform journal with a single
+entry runs the empty-install gate. The upgrade check resumes with the next
+migration. See [Upgrades and recovery](documentation/deployment/upgrades-and-recovery.md)
+for the deployment procedure.
 
 ## Local release build
 

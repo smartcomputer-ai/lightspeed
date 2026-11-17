@@ -16,8 +16,8 @@ run Node commands from there.
 - `connectors/` — the connector host: one process serving every enabled
   Telegram and WhatsApp account across universes, discovered through the core
   API, with grant-leased provider tokens and one Temporal activity worker per
-  account queue. The host is currently disabled; bot and channel workflows
-  remain in the Rust runtime.
+  account queue. Run it separately as a trusted runtime client. Bot and
+  channel workflows run in the Rust runtime.
 - `configurator-mcp/` — generated Streamable HTTP MCP facade over the
   universe-scoped Lightspeed API. The Platform setup and development process
   use restricted Platform service-user keys, with the development process
@@ -52,7 +52,7 @@ Input `origin` is display metadata, not authorization. The Platform derives
 `user:<id>` from the signed-in user for messages and steering, and ignores
 body-supplied origin claims. Bot deliveries use `event`; other API clients
 may supply their own strings. Authorization and requester attribution are
-explained in [Access and security](../docs/documentation/access-and-security/overview.md).
+explained in [How access works](../docs/documentation/access-and-security/overview.md).
 
 The SDK [transcript metadata helpers and session-view data guide](../docs/documentation/integrating-and-extending/api-and-typescript.md#build-transcript-authors-and-times)
 describe author/time derivation, materialized list fields and watch integration.
@@ -88,161 +88,51 @@ The authoritative configuration reference is
 Platform backend, connector host, Configurator MCP, and development-only
 settings.
 
-The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
-made from (Profiles, Workspaces, Models, Environments, MCP servers), **Access**
-(Credentials, Members) and the universe's **Settings** (General,
-Channels, Templates) at flat `/u/:handle/...` routes; bare `/u/:handle/settings`
-opens the first settings page the caller may see. Models holds model provider keys,
-compatible endpoints and coding-agent subscriptions. Credentials lists reusable
-tokens, environment secrets, GitHub App installations and custom OAuth grants;
-model and MCP server logins stay on their own pages, while credential pickers
-still offer every grant, except that the environment picker offers only
-retrievable ones. Credentials, Channels and Templates are for Operators
-and Admins; General is for Admins.
-
-**Features.** A universe Owner switches parts of the product on or off under
-General → Features; today Bots and Channels, where Channels need Bots. Both
-start off. The registry is `FEATURES` in `platform/shared`, and a universe
-stores only the switches set away from their default (`universes.features`).
-The universe list carries each feature's effective state, and the web hides a
-switched-off feature's pages, menu items and choices. The backend enforces the
-switch in the member gate: a member's `bots/*` or `channels/*` call is refused
-with a 403 while its feature is off, whatever their role. The switch covers
-what members do through the Platform. What already runs, such as a bot
-answering on its channels, keeps running. A runtime token has full authority
-and the Platform feature switch does not constrain it.
+The browser uses `/u/:handle` for universe work and `/admin` for organization
+and deployment administration. An Owner enables **Bots** and **Channels** in
+the universe's **Settings → General → Features**. The Platform gate enforces
+these switches for member requests. Admitted work can continue after a
+switch changes.
 
 ## People, universes and access
 
-The Platform owns people; the runtime knows universes and opaque actors, and
-records who asked for each run, steer, cancellation and approval.
+Platform manages accounts, organizations, memberships, and API keys. See
+[Organizations, members, and roles](../docs/documentation/access-and-security/people-and-roles.md)
+for administrative procedures, [Company sign-in](../docs/documentation/access-and-security/single-sign-on.md)
+for identity setup, and [API keys and runtime tokens](../docs/documentation/access-and-security/api-keys-and-service-access.md)
+for integration credentials. For local identity development, use the
+[Keycloak fixture](../docs/documentation/development/local-development.md#company-sign-in-with-local-keycloak).
 
-**Accounts.** With a company OIDC provider configured, the browser offers company
-sign-in using authorization code + PKCE and nonce. Two exact entitlements
-control ordinary application access and Platform admin access. Company
-profiles and admin status follow the provider; universe memberships remain
-local. Users are bound to issuer and subject, with no email-based linking or
-stored provider tokens. Better Auth server and web consumers use `1.7.6` and
-the Generic OAuth plugin.
+The action catalog in [`shared/src/access.ts`](shared/src/access.ts) groups
+permissions by deployment, organization, and universe. A caller receives the
+combined permissions of their roles at each scope. An API key can narrow
+those permissions. The universe and organization views return the resulting
+actions for the web UI, and the backend enforces them.
 
-Local password login remains available to explicit emergency Platform admins,
-starting with the bootstrap account. `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN=off`
-disables it. Without OIDC, existing local account creation and password login
-remain available; signup stays closed and the server can still configure
-GitHub OAuth. See [Company sign-in (SSO)](../docs/documentation/access-and-security/single-sign-on.md)
-for provider registration and emergency access,
-[People and roles](../docs/documentation/access-and-security/people-and-roles.md)
-for user administration, and the
-[local OIDC fixture](../docs/documentation/development/local-development.md#company-sign-in-with-local-keycloak)
-for development.
+[`backend/src/runtime-client.ts`](backend/src/runtime-client.ts) applies the
+[generated operation actions](backend/src/routes/method-actions.ts), feature
+switches, and resource-specific checks before forwarding a member request.
+The forwarded call uses the Platform runtime token and the member's actor
+ID. See [Changing contracts](../docs/documentation/development/changing-contracts.md)
+for how to update and verify that metadata.
 
-**Revocation and history.** With OIDC, sessions expire absolutely after eight
-hours by default and activity cannot renew them. Every authenticated request
-checks current admission, suspension and permissions. **Users** supports
-suspension, reinstatement and signing out all sessions. **Audit log** shows the
-latest 100 durable access and permanent session deletion events. Membership
-changes apply on the next request; provider login preserves them. Configured
-runtime tokens and already admitted work remain independent: rotate operator
-credentials and cancel work separately when needed.
-
-**Organizations and roles.** Better Auth provides organization and membership records. An organization
-contains many universes, members, and service users. Personal organizations are
-provisioned for admitted users by default; a personal organization has only its
-owner as a member. Organization roles are Admin, Creator, and Member. Each shared
-organization gives its member people a default universe access (Viewer by
-default, any universe role, or none) on every universe. Creators also create universes and
-become Owners of them. Organization Admins administer every universe in their
-organization.
-
-**Actions.** Every check asks whether the principal holds an action; no check
-compares role names. `shared/src/access.ts` defines the universe, organization
-and deployment actions and the roles that bundle them. A principal's authority
-at a scope is the union of the bundles of every role it holds there (grant,
-declared policy, default universe access, administration inherited from above);
-grants only add. Universe and organization views carry the caller's computed
-`actions`, which the web uses for its hints.
-
-Universe roles are Viewer, Contributor, Operator, and Owner. Multiple Owners
-are supported; ordinary grant changes cannot remove the last explicit Owner.
-Owners manage universe grants and may delete unprotected universes. Only
-Organization Admins and Platform Admins can clear protection. The runtime enforces
-protection for every deletion path, including automatic expiry.
-
-Personal and service-user API keys use Better Auth's API Key plugin. A protected
-server association binds each key to its principal. API admission intersects
-current roles with credential restrictions; service-user keys never become
-human sessions. Native organization/service-user/grant/key routes share descriptors
-in `shared/src/platform-api.ts`, exported to TypeScript and Python clients.
-The raw organization and API-key plugin management endpoints are not public.
-
-**The gate.** The server decides before a request reaches core. Every core call
-a route makes for a member goes through one client
-(`backend/src/runtime-client.ts`), which:
-
-- requires the caller to hold the universe action core declares on the method,
-  from `backend/src/routes/method-actions.ts`. That table is generated from the
-  core method manifest by `node platform/scripts/generate-method-actions.mjs`,
-  and `npm run check` fails when it is stale;
-- without `configureSession`, limits session creation to ordinary sessions with
-  universe defaults or a named profile, without setup overrides, and refuses
-  integrated creation and run configuration overrides;
-- for a method that names a session, unless the caller holds
-  `accessPrivateSessions`, requires the session to be shared with the universe or
-  created by the caller; sharing requires its creator;
-- closes an unshared session for its creator or a holder of
-  `accessPrivateSessions`, and a shared one only with `closeSharedSessions`; soft
-  deletion requires a closed session, `deleteSession`, and for an unshared session
-  `accessPrivateSessions`;
-- narrows a member's session list to shared work and their own;
-- permits transcription reads and cancellation only for their creator, whatever
-  else the caller holds; and
-- calls core with the Platform's runtime token, naming the universe and the
-  member as the actor.
-
-The Platform's own refusals are 403 and 404. Core refusing the Platform is a
-server fault (500 or 502), since the member was already admitted. The web's
-permission hints come from the same actions and never replace these checks.
-Only holders of the `purgeSessions` deployment action (Platform Admins) can
-permanently delete soft-deleted session history,
-through the audited Platform purge route. See the
-[session lifecycle guide](../docs/documentation/using-lightspeed/sessions-and-runs.md#close-and-retain-a-session).
-
-`configureSession` is separate from `controlSession`: configuration, profile
-application, metadata, and active-environment changes require an operator,
-while ordinary run controls remain available to contributors. Profile creation
-and editing also require an operator. Readers use the same expandable
-configuration form in profiles and session settings, with protected controls
-and no save action; profile JSON remains available for inspection.
-
-**Private work.** Sessions start private: their creator and the universe's
-admins see them. **Share with universe…** in the session's ⋯ menu shares a
-session and its sub-agents, once and for good. The session header marks private
-work with a lock and shared work with people; lists mark only shared sessions.
-Bots and their conversations are always shared.
-
-**Runtime access.** `LIGHTSPEED_PLATFORM_API_TOKEN`, or
-`LIGHTSPEED_PLATFORM_API_TOKEN_FILE`, supplies the Platform's full-authority
-runtime credential. Configure the same secret among the runtime's
-`LIGHTSPEED_API_TOKEN` values. The runtime must run in `authenticated` mode.
-It no longer stores or issues caller API keys, and the universe and deployment
-API-key pages have been removed. Follow
-[Runtime service access](../docs/documentation/access-and-security/api-keys-and-service-access.md)
-for configuration and rotation.
-
-The development launcher starts Configurator against Platform without runtime
-or database credentials. Organization Admins install its universe-scoped service user
-key, brokered by the runtime into a configuration-only MCP connection. The
-connector host remains disabled; it can run manually as a trusted runtime
-service with an explicit `LIGHTSPEED_CONNECTOR_API_TOKEN`.
+The Platform backend reads its runtime credential from
+`LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`.
+Configure the same secret as one of the runtime's full-authority tokens.
+In local development, Configurator targets Platform using a restricted
+service-user key, and the standalone connector host uses a direct runtime
+token. See the [environment-variable reference](../docs/documentation/reference/environment-variables.md)
+for settings.
 
 ## HTTP surfaces
 
 `/api/v1` is the shared runtime resource API. Hono registrations come from the
 SDK's generated HTTP catalog, with a reviewed operation admission registry.
-Browser sessions supply identity; the backend authorizes universe membership,
-roles, features and session visibility before using its configured runtime
-credential. Unknown operations and service-only credential leases, connector
-ingress and deployment discovery are denied.
+Browser and CLI sessions and Platform API keys supply identity. The backend
+authorizes universe access, features, and session visibility before calling
+the runtime. The shared API exposes admitted universe operations and native
+Platform routes. Trusted services use the private runtime API for operations
+such as connector ingress and credential leases.
 
 Most request bodies stream unchanged to the runtime, which owns wire validation.
 Session creation and run overrides have bounded policy inspection; inspected
@@ -345,7 +235,7 @@ The default full launcher also seeds a Test universe with Operator, Contributor,
 and Viewer logins using the same initial password; see
 [development logins](../docs/documentation/development/local-development.md#development-logins).
 
-The server accepts the following primary configuration names:
+Common server settings are listed below. The [Platform variable reference](../docs/documentation/reference/environment-variables.md#platform-backend) includes defaults and deployment-level access settings.
 
 - `LIGHTSPEED_PLATFORM_DATABASE_URL`;
 - `LIGHTSPEED_PLATFORM_AUTH_SECRET`;
@@ -362,10 +252,6 @@ The server accepts the following primary configuration names:
   `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES`; and
 - `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS`.
 
-Imported pre-release aliases were removed as part of the greenfield
-product-identity reset. Platform deployments must use the
-`LIGHTSPEED_PLATFORM_*` names above.
-
 Live database tests require explicit opt-in variables and are not part of the
 ordinary unit-test run. Never point a local connector host at production
 channel accounts.
@@ -377,9 +263,9 @@ LIGHTSPEED_PLATFORM_MIGRATION_TEST_URL=postgres://... npm run test:migrations
 ```
 
 Release construction stages one platform runtime and one connector-host
-runtime (still published as the `platform-workers` image so image references
-and manifest keys stay stable). The connector host is disabled and receives no runtime token; its removal
-is separate work. The release manifest records one digest for each image.
+runtime (published as `platform-workers`). An operator configures its runtime
+token and Temporal connection separately. The release manifest records one
+digest for each image.
 
 ### Testing & Visual Tests
 

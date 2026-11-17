@@ -109,12 +109,13 @@ does not need a new harness-specific transport.
 
 ## Configure another compatible model service
 
-If the service implements an existing OpenAI-style API, configure an endpoint
-before considering a native adapter. The provider record selects transport
-and credentials; the session selects provider ID, API kind, and model name.
+For a service that implements an existing OpenAI-style API, configure an
+endpoint. Its provider record supplies the connection and credentials.
+The session selects the provider ID, API kind, and model name. On Platform,
+use a caller with `configureResource` in the universe and permission to call
+`credentials/providers/create`.
 
-For example, the following are `credentials/providers/create` parameters for a
-credentialless loopback service:
+These parameters register a loopback service that needs no credential.
 
 ```json
 {
@@ -130,8 +131,8 @@ credentialless loopback service:
 }
 ```
 
-The authentication provider record includes the `model:` prefix. A session or
-profile's model configuration uses the provider ID without that prefix:
+The credential provider record includes the `model:` prefix. A session or
+profile's model configuration uses the provider ID without that prefix.
 
 ```json
 {

@@ -14,7 +14,7 @@ before choosing an exporter or changing a version.
 
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
-| Public application API | DTOs, typed operation catalogs, HTTP bindings and service interfaces in `crates/api/src/` | JSON Schema, HTTP routing catalog, OpenAPI, and API reference; TypeScript and Python clients, Configurator tools, Platform method-role map, and profile-editor reference. |
+| Public application API | DTOs, typed operation catalogs, HTTP bindings and service interfaces in `crates/api/src/` | JSON Schema, HTTP routing catalog, OpenAPI, API reference, TypeScript and Python clients, Configurator tools, Platform method-action map, and profile-editor reference. |
 | Native Platform API | Zod route descriptors in `platform/shared/src/platform-api.ts` and `credential-api.ts` | Native JSON Schema/HTTP catalog and TypeScript/Python clients. |
 | Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript and Python types, and known-answer vectors used by client helpers. |
 | Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
@@ -41,17 +41,17 @@ method metadata together; deployment methods have their corresponding
 [deployment manifest](../../../crates/api/src/deployment.rs). Implement the
 service behavior in the runtime and test the actual admission and result.
 
-Every method declaration requires an `access:` classification. From it, the
-exporter derives scope and the recommended member role. The method's name
-determines its API family, and session-target metadata identifies calls that
-need a session visibility check. These appear in the generated contract and
-TypeScript `OPERATION_INFO`.
+Every operation declares its access scope. A universe operation also names
+the action required to call it. The operation's name identifies its API family,
+and session-target metadata marks operations that need a session visibility
+check. The exporter includes these facts in the contract and TypeScript
+`OPERATION_INFO`.
 
-The runtime publishes this classification without enforcing caller permissions.
-Platform uses the generated role and target metadata to enforce access, while the runtime applies
-separate rules to its own controllers. Review all three when adding a method;
-the classification alone does not implement a resource-specific policy. See
-[Access and security](../access-and-security/overview.md).
+Platform uses that metadata alongside the caller's actions and resource
+policies. The runtime applies its own controller rules and accepts direct API
+calls from trusted runtime clients. When adding an operation, review the
+Platform policy, runtime behavior, and Configurator exposure. See
+[How access works](../access-and-security/overview.md).
 
 Choose whether the operation serves universe members, internal services, or
 deployment administration. The Configurator generator
@@ -371,11 +371,12 @@ and retain post-create foreign keys needed by dependency order. Transitional
 tables, backfills, and copy steps are unnecessary when no existing data must
 survive.
 
-A changed baseline requires recreation of both the runtime schema and its
-migration ledger; deleting rows or changing stored checksums is insufficient.
-For disposable local state, `./dev.sh reset` also recreates the Platform database
-and clears the Lightspeed MinIO prefix. Stop the supervisor first. Checksum
-validation and startup verification remain enabled; resets are never automatic.
+A new baseline requires fresh schemas and ledgers. The consolidated runtime
+baseline ends at revision 8, and the Platform journal starts at
+`0000_initial_platform`. For disposable local state, stop the supervisor
+before `./dev.sh reset`. That command recreates both databases and clears the
+Lightspeed MinIO prefix. For retained data, see
+[Upgrades and recovery](../deployment/upgrades-and-recovery.md).
 
 Normal Rust startup verifies the ledger. Apply migrations explicitly before
 starting the upgraded runtime:

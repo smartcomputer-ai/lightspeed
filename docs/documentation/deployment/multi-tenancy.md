@@ -1,130 +1,85 @@
 # Managing universes
 
-A universe has a runtime UUID and belongs to one Platform organization. Each
-organization can contain many universes. The runtime owns sessions and resources;
-the Platform owns organization membership and universe grants. Preserve that association when adopting,
-recovering, or retiring a universe.
+A universe has a permanent runtime UUID and, when managed through Platform,
+belongs to one organization. Platform records who can use it. The runtime
+stores and executes the work inside it. Keep the two records together when
+backing up or recovering a universe.
 
-Each universe also has a handle: a readable name, unique within the
-deployment, that appears in its Platform URL and that authenticated API clients
-may use in place of the UUID. A handle is 1 to 63 lowercase
-letters, digits and hyphens, and can be changed; the UUID cannot. Because the
-UUID usually differs between deployments, the handle is what deployment
-automation should use to address the same universe in development, test and
-production. See
-[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
-for how a request selects a universe.
-
-For the isolation model and shared infrastructure, see
-[Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md).
-For sign-in and membership, see [People and roles](../access-and-security/people-and-roles.md).
+The handle is the deployment-wide name you see in a universe URL, such as
+`/app/u/research`. Use it to address the same logical universe in scripts
+across environments. Use the UUID for recovery or to check a deletion, since
+a handle can be changed or reused.
 
 ## Create a universe
 
-Creators and Organization Admins create universes using **New universe**. It asks
-for a name; the organization is a choice only for someone who can create in several,
-and the creator becomes the Owner; others are made Owners afterwards under the
-universe's **Settings → Members**. **Change** next to the address sets a different
-handle. Platform Admins can provision for any organization; outside their own
-organizations they choose a member as the Owner. The API's `initialOwner` names
-another Owner at creation, for automation. Creation observes the organization quota and
-protection policy. Owners grant existing organization members access on the universe's **Settings → Members**.
-Creating a runtime universe directly through the API or server CLI creates
-only the runtime record; use **Adopt** to connect it to the Platform. Adoption
-keeps the universe's handle. The handle is chosen at creation, or derived from
-the UUID when none is given, and is renamed afterwards under the universe's **Settings → General** or with `lightspeed universe set-handle`.
+Choose **New universe** in the universe switcher. You can create one where
+you hold organization Creator or Admin access and the organization has room.
+Platform asks for the organization if you can create in several. The creator
+normally becomes the first Owner. A Platform Admin provisioning outside their
+own organizations chooses an existing member as the Owner.
+
+The name suggests a handle. To change it, go to **Settings → General →
+Handle**, or use `lightspeed universe set-handle OLD NEW`. Update links and
+scripts using the old handle after a rename. Use **Settings → Members** to
+grant access to organization members, and see
+[People and roles](../access-and-security/people-and-roles.md) for role choices.
+
+For repeatable provisioning, use a [universe document](configuration-as-code.md).
+The public Platform API also supports naming an initial Owner when creating a
+universe for someone else.
 
 ## Keep Platform and runtime records aligned
 
-Creating a universe through the Platform creates the runtime universe and
-records the association in the Platform database. Because these are separate
-systems, an interrupted operation or a partial restore can leave one side
-without the other.
+A universe created directly on the runtime has no Platform organization. A
+Platform Admin can find it under **Admin → Platform → Unclaimed Universes**.
+Choose **Adopt**, then select the organization and its initial Owner. The
+universe keeps its UUID, handle, and contents.
 
-Deployment admins use **Admin → Platform → Unclaimed Universes** for the advanced
-case of runtime universes with no Platform organization. **Adopt** assigns one to
-a selected organization and explicit initial Owner without replacing its contents.
-The name is suggested from the runtime display name, falling back to its handle,
-and remains editable. The runtime handle is preserved.
-
-Claimed universes stay under **Admin → organization → Universes**. Deployment
-admins also see runtime status, **Recreate on engine**, and deleted-session
-controls there. Recreating a missing runtime universe starts empty; it cannot
-restore deleted sessions or files, or recreate a UUID that has been permanently
-deleted. All universes use the deployment's configured runtime endpoint.
-
-Preserve runtime UUIDs and their Platform mappings during recovery. Secret
-encryption and workflow identities depend on those UUIDs, so copying records
-under a newly invented UUID is not a supported tenant migration. See
-[Upgrades and recovery](upgrades-and-recovery.md) for the full recovery set.
+If a restore leaves a linked universe missing from the runtime, first check
+that Platform is talking to the right runtime and database. A Platform Admin
+can see the runtime status in the organization’s **Universes** list.
+**Recreate on engine** starts the same universe empty. Restore sessions and
+files from the original [recovery set](upgrades-and-recovery.md) when they
+need to survive.
 
 ## Archive and delete a universe
 
-Archiving changes the universe's Platform status and hides it from the
-ordinary switcher. Existing URLs and API requests remain callable, and the
-runtime has no corresponding archived state. Bots, schedules, channels, and
-previously admitted work can continue. Archiving is therefore an organization
-step, not an access-revocation or shutdown mechanism.
+Open the universe’s **Settings → General → Danger zone**.
 
-Deletion does not require archiving, closing sessions, stopping bots, or closing
-environments first. Retain any content you need before proceeding. A Platform
-administrator selects **Delete** under **Admin → organization → Universes** and types
-the universe's handle to confirm. Through the CLI:
+- **Archive universe** hides it from the switcher. Existing links, API
+  access, and running work continue. Use **Restore universe** to return it
+  to the switcher.
+- **Delete** blocks new work immediately, frees the handle, and starts
+  permanent cleanup. Type the current handle to confirm. An Owner can
+  delete an unprotected universe directly.
+
+Use **Deletion protection and expiry** to control whether a universe can
+be removed. An Owner can enable protection. Through Platform, only an
+Organization Admin or Platform Admin can clear it, and the organization's
+policy must allow that. Clear protection before deleting or setting expiry.
+At its expiry time, an unprotected universe enters the same deletion process.
+Activity does not extend the expiry.
+
+After a Platform deletion request, check the organization's **Universes**
+list for progress. Its quota slot becomes available after cleanup. For a
+trusted direct runtime connection, the CLI can wait for cleanup.
 
 ```bash
-lightspeed universe delete my-universe --wait
+lightspeed universe delete research --wait
 ```
 
-Use `--yes` to omit the interactive handle confirmation. `--wait` polls until
-cleanup finishes; an optional duration bounds how long the CLI waits.
+For the direct runtime HTTP API, poll `GET /api/v1/universes/{universe}` by
+UUID after requesting deletion. HTTP 410 (`gone`) marks completion. Platform
+Admins and trusted runtime callers can inspect permanent records with
+`lightspeed universe list --deleted`.
 
-Deletion immediately refuses new universe requests, prevents new daemon
-registrations in that universe, and frees the handle for reuse. The universe then appears as **deleting** in the Platform
-organization inventory, with its current cleanup step and any waiting detail. It is
-hidden from ordinary members. Cleanup removes bot schedules, terminates the
-universe's open workflows, closes environments, clears object storage, and
-finally removes its database rows. Storage failures keep the universe in the
-storage step for retry.
-
-Environment cleanup is best effort. Connected registered daemons receive a
-closure notice; disconnected daemons cannot reconnect with their old registration
-key. Providers are asked to close provisioned machines. After bounded attempts
-or two minutes, deletion proceeds even if a provider has not confirmed cleanup.
-The permanent deletion record identifies any unconfirmed machines by provider
-and target ID for an operator to remove.
-
-API clients call `deployment/universes/delete` once, then poll
-`deployment/universes/read` by UUID. A deleting universe remains readable through
-that deployment method. Once deletion finishes, reading the UUID returns `gone`
-with its permanent record; a UUID that never existed returns `notFound`.
-Repeating deletion is safe, and a deleted UUID cannot be created again. Use
-`lightspeed universe list --deleted` or `deployment/universes/deleted/list` to
-inspect deletion records, including resource counts, attribution and cleanup
-results.
-
-Protected universes refuse deletion, even for Platform Admins. Owners can
-enable protection; only an Organization Admin or Platform Admin can clear it.
-An unprotected universe can have an expiry timestamp for automatic deletion.
-Protection and expiry are mutually exclusive. Clear protection and delete in
-separate requests. Configuration documents protect new universes by default.
-
-The Platform periodically follows the runtime's inventory, including deletions
-requested directly through the API or CLI. It removes that universe's grants and setups only after the runtime confirms `gone`. The containing
-organization, its members, and its other universes remain. A universe
-missing from an empty or different runtime remains marked missing so that an
-accidental configuration change does not discard memberships.
-
-Deletion does not remove:
-
-- Temporal histories, which remain until the namespace retention period ends;
-- machines hosting registered daemons or external endpoints;
-- provider resources shared per universe, such as an Incus project, network,
-  ACL and profile;
-- connector-local authentication directories, including WhatsApp state;
-- third-party state, including OAuth-issued tokens, model-provider usage, and
-  effects agents already performed outside Lightspeed;
-- database and object-store backups.
-
+Cleanup removes the universe’s data, stops its workflows and bot schedules,
+and asks environment providers to close provisioned machines. Its deletion
+record identifies any machines whose closure the provider could not confirm.
+Check those targets with the provider. Registered daemon host machines,
+provider infrastructure shared by multiple environments, backups, retained
+Temporal histories, and effects in external systems follow their own
+retention or cleanup policies.
 
 <a id="follow-a-request-into-its-universe"></a>
 <a id="how-the-boundary-is-represented"></a>
@@ -136,7 +91,5 @@ Deletion does not remove:
 
 ## Access and isolation
 
-The explanation of universe boundaries now lives in
-[Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md).
-[Private and shared work](../access-and-security/private-and-shared-work.md)
-explains who can read and control sessions inside a universe.
+See [Tenant isolation and data protection](../access-and-security/tenant-isolation-and-data-protection.md)
+for what a universe isolates and what the deployment shares.

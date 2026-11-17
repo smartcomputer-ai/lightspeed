@@ -46,11 +46,11 @@ still point to the same shared files.
 ## Share a session with the universe
 
 New standalone sessions are private: through the Platform, only their creator
-and Owners can read them. To share a review with the team, open the session
-title menu, choose **Share with universe…**, and confirm with **Share**. This
+and Owners can read them. To share a review with the team, open
+**Session actions**, choose **Share with universe…**, and confirm with **Share**. This
 also shares its sub-agents. Sharing cannot be undone.
 
-Every member can then read the conversation, and Contributors and above can
+Everyone with universe access can then read the conversation, and Contributors and above can
 continue runs, steer, cancel work, or decide tool approvals. Sharing requires
 the creator with at least the Contributor role, or an Owner. Bot conversations
 are always shared; delegated sessions follow their root's visibility.
@@ -281,31 +281,28 @@ The examples use `lightspeed` on your executable path. Use `./lightspeed`
 for a release binary in the current directory, or `target/debug/lightspeed`
 for the source build above.
 
-For the authenticated development launcher stack from the quickstart, import
-the launcher's saved direct connection:
+For a Platform installation, sign in with the CLI and select the universe
+that contains the session. The chat client sends its own run settings, so
+use Operator or Owner access to a session you can control.
+
+```bash
+lightspeed connect login --url https://lightspeed.example --name work
+lightspeed universe use my-universe
+lightspeed chat --session "<session-id>"
+```
+
+Copy **Session ID** from **Session actions** in the web app. For a local
+checkout, you can also import the development launcher's direct connection.
 
 ```bash
 lightspeed connect dev
 lightspeed chat --session "<session-id>"
 ```
 
-Copy **Session ID** from the web app's session title menu. For a manually
-configured or remote direct connection, use the runtime address and token
-supplied by the operator, and select the universe explicitly:
+For other CLI connections and credential options, see
+[Use Lightspeed from the terminal](cli.md).
 
-```bash
-export LIGHTSPEED_API_URL=http://127.0.0.1:18080/api/v1
-export LIGHTSPEED_API_TOKEN="<runtime token>"
-export LIGHTSPEED_UNIVERSE="<universe UUID or handle>"
-lightspeed chat --session "<session-id>"
-```
-
-A runtime token has full deployment authority. See
-[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md)
-for configuration and rotation. Local single mode accepts neither credentials
-nor universe headers.
-
-Without model flags, `lightspeed chat` uses the deployment default for a new
+Without model flags, `lightspeed chat` uses the profile model or universe default for a new
 session and the stored model when opening an existing session. To choose a
 route for a new session, supply `--provider`, `--api-kind`, and `--model`
 together. When reopening a session, these flags may select another model
@@ -374,19 +371,20 @@ are kept until deleted, whatever their profile sets.
 
 Within Platform, only Platform admins can permanently delete retained session
 history. In the delete dialog, select **Also permanently delete retained history** to soft-delete
-and then purge. For already deleted sessions, open **Admin → Universes →
-Deleted sessions**, select sessions and choose **Purge selected…**, or use
+and then purge. For already deleted sessions, open the universe's **Settings →
+General → Deleted sessions**, select sessions and choose **Purge selected…**, or use
 **Purge all…**, then confirm removal of their deleted history trees. There is
 no automatic purge or restore action.
 Permanent deletion through Platform is recorded in the
 [audit log](../access-and-security/overview.md#what-is-recorded-today).
 
-Direct runtime clients use `session/delete`, which permanently deletes by
-default; pass `softDelete: true` to retain hidden history. Similarly,
-`lightspeed session delete` deletes permanently unless `--soft-delete` is set.
-Both modes require closed sessions and use `cascade` for retention descendants.
-Platform always requests soft deletion before its separate admin purge step;
-automatic retention also continues to soft-delete only.
+On a direct runtime connection, `session/delete` and
+`lightspeed session delete` permanently delete by default. To retain hidden
+history, use `softDelete: true` in the API or `--soft-delete` in the CLI.
+Platform requests soft deletion for both API and CLI calls and uses its
+separate purge action for permanent deletion. Both modes require closed sessions
+and use `cascade` for retention descendants. Automatic retention soft-deletes
+closed sessions.
 
 Bot and channel conversations have a lifecycle controller. Their session
 inspector identifies what manages them; use that controller's reset or close

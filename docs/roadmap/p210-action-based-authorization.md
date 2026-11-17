@@ -250,5 +250,9 @@ documents (`access`); see P209.
   tests, including service users not receiving it.
 - [x] Self-service organization creation switch removed.
 - [x] Service users decided as one organization each; names unique there.
+- [x] Product manual updated for organizations, effective access, session
+  visibility, company sign-in, and API keys. The access section is visible
+  by default in the sidebar. The docs build validated routes and examples
+  were checked against CLI help and the generated contracts.
 - [ ] Deployment-owned service users and a first narrow deployment role (on
   hold).

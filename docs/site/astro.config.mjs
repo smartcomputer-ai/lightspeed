@@ -57,18 +57,7 @@ export default defineConfig({
           { slug: 'using-lightspeed/subagents-and-federation' },
           { slug: 'using-lightspeed/chat-channels' },
         ] },
-        { label: 'Environments', collapsed: true, items: [
-          { slug: 'environments/overview' },
-          { slug: 'environments/bring-your-own-compute' },
-          { slug: 'environments/registered-daemons' },
-          { slug: 'environments/incus-vms' },
-          { slug: 'environments/using-environments' },
-          { slug: 'environments/processes-and-jobs' },
-          { slug: 'environments/credentials' },
-          { slug: 'environments/power-and-cleanup' },
-          { slug: 'environments/networking-and-ingress' },
-        ] },
-        { label: 'Access and security', collapsed: true, items: [
+        { label: 'Organizations and access', items: [
           { slug: 'access-and-security/overview' },
           { slug: 'access-and-security/people-and-roles' },
           { slug: 'access-and-security/single-sign-on' },
@@ -76,6 +65,18 @@ export default defineConfig({
           { slug: 'access-and-security/api-keys-and-service-access' },
           { slug: 'access-and-security/agent-and-tool-access' },
           { slug: 'access-and-security/tenant-isolation-and-data-protection' },
+        ] },
+        { label: 'Environments', collapsed: true, items: [
+          { slug: 'environments/overview' },
+          { slug: 'environments/bring-your-own-compute' },
+          { slug: 'environments/registered-daemons' },
+          { slug: 'environments/incus-vms' },
+          { slug: 'environments/using-environments' },
+          { slug: 'environments/vfs-transfer' },
+          { slug: 'environments/processes-and-jobs' },
+          { slug: 'environments/credentials' },
+          { slug: 'environments/power-and-cleanup' },
+          { slug: 'environments/networking-and-ingress' },
         ] },
         { label: 'Deployment', items: [
           { slug: 'deployment/overview' },
@@ -108,7 +109,7 @@ export default defineConfig({
           { slug: 'development/contributing-and-releasing' },
         ] },
         { label: 'Reference', collapsed: true, items: [
-          { label: 'JSON-RPC API', slug: 'reference/api' },
+          { label: 'HTTP API', slug: 'reference/api' },
           { label: 'Environment variables', slug: 'reference/environment-variables' },
           { label: 'Environment protocol', slug: 'reference/environment-protocol' },
           { label: 'Workflow contract', slug: 'reference/workflow-contract' },

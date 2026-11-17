@@ -6,10 +6,9 @@ universes**: one grammy long-poller or Baileys socket per account, one Temporal
 activity worker per account queue, all in one Node process. Its only
 dependencies are the core HTTP API and Temporal; it reads no database.
 
-The development launcher does not start the host. Trusted operators can run it
-manually with an explicit `LIGHTSPEED_CONNECTOR_API_TOKEN`. This is a full
-authority runtime credential; the shared browser API does not expose connector
-service operations. Scoped Platform service credentials remain separate work.
+Start the host separately from `./dev.sh`. It uses the private runtime API
+with a full-authority `LIGHTSPEED_CONNECTOR_API_TOKEN`. Account discovery,
+credential leasing, and inbound admission are trusted runtime operations.
 
 ## What it does
 
@@ -55,6 +54,22 @@ For implementing another provider, read
 [Channel connectors](../../docs/documentation/integrating-and-extending/channel-connectors.md)
 in the product manual.
 
+## Start the host
+
+Set `LIGHTSPEED_API_URL` to the private runtime's `/api/v1` URL and supply
+`LIGHTSPEED_CONNECTOR_API_TOKEN` through protected configuration. Use the
+runtime's Temporal endpoint and namespace. From a prepared source checkout,
+for example, run a Telegram-only host with:
+
+```bash
+npm run build --workspace @lightspeed-ai/sdk
+LIGHTSPEED_CONNECTOR_PROVIDERS=telegram npm run start --workspace @lightspeed-ai/connectors
+```
+
+The default provider selection includes both Telegram and WhatsApp. To serve
+WhatsApp, also set `LIGHTSPEED_CONNECTOR_WHATSAPP_AUTH_DIR` and
+`LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`.
+
 ## Configuration
 
 See the "Connector host" section of [environment-variable reference](../../docs/documentation/reference/environment-variables.md).
@@ -73,8 +88,6 @@ reference's "Temporal connection security" section lists them.
 npm run test --workspace @lightspeed-ai/connectors
 npm run typecheck --workspace @lightspeed-ai/connectors
 ```
-
-Setting `LIGHTSPEED_CHANNELS_CONNECTORS` does not enable the disabled host.
 
 ## Layout
 

@@ -1,9 +1,5 @@
 # Chat channels
 
-Connector startup is currently disabled. Telegram and WhatsApp accounts do not
-receive or deliver messages through the supported stack. The account and routing
-model below remains as a reference while channel removal is handled separately.
-
 Chat channels let people talk to Lightspeed bots through Telegram or WhatsApp.
 A connected account supplies the provider connection. A bot's chat trigger
 decides which conversations it accepts, how people gain access, and when a
@@ -16,29 +12,21 @@ deliberately combine conversations.
 
 Start with a working bot from [Bots and triggers](bots-and-triggers.md) and a
 model suited to its tasks. Use Operator or Owner access to manage channel
-accounts and bot triggers. The universe needs both **Bots** and **Channels**
-switched on under the universe's **Settings → General → Features**; a new universe starts
-with them off, and until an Owner turns them on the **Channels** page is
-hidden and its requests are refused.
+accounts and bot triggers. A universe Owner enables **Bots** and **Channels**
+under **Settings → General → Features**. The channel controls then appear
+under **Settings → Channels**.
 
 ## Make the connector available
 
-Telegram and WhatsApp require the separate connector host. During the runtime
-access cutover, the development launcher rejects connector selections and the
-host receives no runtime token. Its former restricted API keys no longer
-work. Do not replace them with a full-authority runtime token or expect a
-configured account to begin serving messages.
-
-Preserve existing WhatsApp account state and the media-locator key until the
-associated provider account and retained media are retired. See
-[Channel connectors](../integrating-and-extending/channel-connectors.md) for the
-retained implementation and
-[connector variables](../reference/environment-variables.md#connector-host) for
-its current status.
+Ask your deployment operator to start a connector host with the provider
+you plan to use. It runs separately from the development launcher and
+connects to the private runtime API and Temporal. See
+[Channel connectors](../integrating-and-extending/channel-connectors.md)
+for setup and health checks.
 
 ## Connect a Telegram account
 
-Open **Channels → Connect channel** and choose **Telegram**. Enter the bot
+Open **Settings → Channels → Connect channel** and choose **Telegram**. Enter the bot
 token supplied by BotFather, optionally set a display name, and choose
 **Connect Telegram**.
 
@@ -56,11 +44,9 @@ Under **Channels → Connect channel**, choose **WhatsApp**, enter the account's
 **Phone number**, leave **Print pairing QR code** selected, and choose
 **Connect WhatsApp**.
 
-The connector prints the QR code in its process output. It is not displayed
-in the web app. Have access to that output and scan it through the target
-WhatsApp account's linked-device flow. The connector uses Baileys and stores
-the linked-device authentication in its persistent directory; this is not
-the WhatsApp Cloud API connection flow.
+Read the QR code in the connector's process output and scan it through the
+WhatsApp account's linked-device flow. The connector stores the linked-device
+authentication in its persistent directory.
 
 This QR pairing authorizes Lightspeed to use the WhatsApp account. The
 Lightspeed conversation-pairing code in the next step determines which bot
@@ -95,11 +81,9 @@ The response in the provider chat and the corresponding Lightspeed activity
 verify the complete path from account connection through agent execution to
 delivery.
 
-The chat conversation belongs to this trigger. Messages do not route to the
-bot's Main conversation. Forum threads receive separate sessions under the
-chat binding. The usual defaults coalesce nearby messages with a 0.4-second
-quiet period, up to 1.5 seconds or eight messages, and queue work when the
-conversation is busy.
+The trigger opens a session for the paired chat. Forum threads get separate
+sessions under the same binding, and incoming work queues when the session
+is busy.
 
 ## Set access and group activation
 
@@ -155,14 +139,8 @@ text to the bot. Configure that route under **Models → Defaults**; the bot's
 conversational model does not need audio support. An unset or unusable speech
 route prevents voice preparation and is reported as a delivery failure.
 
-Transcription retains the original audio as provenance. Matching retries
-reuse the admitted transcription, and spoken text does not become a
-channel-management command such as `/activation`. Connector processes handle
-transport; they do not select models or obtain model credentials.
-
-A bot does not need an execution environment just to converse or receive
-prepared input. Add a machine only when its task needs processes or the
-machine's filesystem.
+Add an execution environment if the bot's task needs processes or a machine's
+filesystem.
 
 ## Manage connection and conversation state
 

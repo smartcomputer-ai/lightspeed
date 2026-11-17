@@ -153,18 +153,13 @@ channels, and integrations evolve. The
 [controller page](tools-and-controller-workflows.md) explains the bindings,
 promises, and ownership that make these relationships durable.
 
-The Platform owns login, user accounts, universe membership, and the browser
-application. It checks each person's role and session visibility before
-calling the runtime with a configured token and actor ID. The runtime checks
-the token, selects the request's universe, and records the actor for attribution.
-It applies no caller scope or method-group permissions.
-
-Every direct runtime token has full authority across the deployment, including
-private sessions. Keep those tokens with trusted components and operators;
-an external gateway must decide what untrusted callers may do. Once work is
-admitted, it runs for the universe; removing the requester's membership does
-not stop it. [Access and security](../access-and-security/overview.md) explains
-this boundary and the separate checks on internal controllers.
+Platform owns sign-in, organizations, and access policy. It checks the
+requested action and session visibility before it calls the runtime with a
+deployment token and the requester's actor ID. The runtime authenticates the
+token, works in the requested universe, and records the actor for attribution.
+That token gives Platform the same authority as any trusted runtime client.
+Once work is admitted, the runtime carries it out for the universe, so it can
+continue after the requester leaves. See [How access works](../access-and-security/overview.md).
 
 ## Attach compute when the task needs it
 
@@ -223,13 +218,11 @@ checks prevent a stale connection from modifying or serving its successor.
 Background environment loops each have one PostgreSQL advisory-lock leader.
 See [Operations](../deployment/operations.md) for scaling and shutdown behavior.
 
-Runtime HTTP traffic uses three listeners, even when every role runs in one
-process: private HTTP API for trusted components, public credential callbacks and
-bot webhooks, and the environment gateway for machine traffic. Each listener
-serves only its own routes plus health and readiness probes. The `gateway`
-role owns the HTTP API and public callbacks; `environment-gateway` owns machine routes.
-Credentials held for outbound provider and MCP calls remain in the runtime,
-under the `credentials` crate and `credentials/*` API methods.
+Runtime traffic uses three listeners. The `gateway` role serves the private
+HTTP API on one listener and credential callbacks and bot webhooks on
+another. The `environment-gateway` role serves machine traffic on a third.
+The listeners stay separate when all roles run in one process. See
+[Configure the public edge](../deployment/self-hosting.md#configure-the-public-edge).
 
 A deployment can serve several universes over shared processes, database
 connections, and provider clients. Universe-bound queries, object references,

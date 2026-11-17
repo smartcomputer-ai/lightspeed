@@ -1,17 +1,65 @@
 # Upgrades and recovery
 
-A Lightspeed upgrade touches state that outlives the running code: database
-records, Temporal histories, encrypted credentials, stored content, and machines
-created by earlier runs. Keep a recovery copy of that state, and settle before
-you deploy whether the new release can keep the open work in its Temporal
-histories. Lightspeed has no tool that replays histories against a new build, so
-that compatibility exists only when a release says it does.
+A Lightspeed upgrade has two compatibility checks. The target release must
+accept your database schema, and open Temporal workflows must be able to
+replay on the new code. Make both decisions before your maintenance window
+and keep a recovery set with the release that produced it.
 
-The procedure below continues the [single-host installation](self-hosting.md)
-and uses a planned maintenance window. The runtime does not configure Temporal
-worker version routing, so stop every old worker before the first new one starts.
-On Kubernetes that means the `Recreate` deployment strategy: with the default
-rolling update, both builds poll one task queue during the overlap.
+<a id="upgrade-from-v02-to-v03"></a>
+
+## Check compatibility before reusing state
+
+The current runtime and Platform use new database baselines. To move from
+the previous baseline, provision fresh databases for both applications and
+use a new Temporal namespace. The migrators reject previous ledgers.
+
+Keep the old release and its recovery set when you need to retain existing
+work. Plan a separate data migration and verify it on copies before
+switching traffic. Include organizations, members, universe grants, private
+session owners, and external credential references in that verification.
+Export any configuration you can recreate and update the documents for the
+target version before applying them.
+
+For disposable local state, stop the launcher and run `./dev.sh reset`.
+It recreates the development databases and clears the development
+object-store prefix. Choose a fresh `TEMPORAL_NAMESPACE` as well.
+
+<a id="organization-and-service-user-terminology-change"></a>
+
+### Move to Platform access and the HTTP API
+
+Before switching clients to a deployment with the new baseline:
+
+1. Give the runtime and Platform a matching private runtime token, for example
+   `LIGHTSPEED_API_TOKEN_PLATFORM` on the runtime and
+   `LIGHTSPEED_PLATFORM_API_TOKEN` on Platform. Both support a `_FILE` form.
+   Update [the public edge](self-hosting.md#configure-the-public-edge),
+   callback URLs, and webhook routes together.
+2. Use matching CLI and SDK versions for the resource HTTP API. Replace
+   former runtime caller keys with a Platform API key or CLI browser
+   sign-in for scoped access. Update integrations to use `organizationId`
+   and `serviceUserId`, and change outbound `auth/*` operation names to
+   `credentials/*`. See [API and TypeScript](../integrating-and-extending/api-and-typescript.md).
+3. Point Configurator at Platform and install it with a restricted
+   service-user key. See [Configurator MCP](../integrating-and-extending/configurator-mcp.md).
+4. If you use Telegram or WhatsApp, give the separately run connector host a
+   private runtime token and update its Temporal namespace with the runtime.
+   See [Channel connectors](../integrating-and-extending/channel-connectors.md).
+
+Verify that intended users and keys can reach their universes. Check
+private-session access using a creator, an Owner, and an ordinary member.
+Review default universe access for each shared organization. It starts at
+Viewer, and an organization can choose another role or grant-only access.
+
+### Review configuration reused from older deployments
+
+| Configuration | Current form |
+| --- | --- |
+| Model endpoint and MCP headers | Use tagged `literal` or `credential` values. Put secrets in credentials. See [custom request headers](../using-lightspeed/tools-and-mcp.md#authenticate-with-custom-request-headers). |
+| Credentials bound into machines | Use a retrievable credential or a model API key provider. See [Environment credentials](../environments/credentials.md#choose-a-credential-source). |
+| Private MCP OAuth | List the MCP server and any separate OAuth host in `LIGHTSPEED_MCP_PRIVATE_NETWORKS`. |
+| Daemon settings | Pass settings in the process environment or service manager. |
+| Temporal address | Use a host and port in `TEMPORAL_ADDRESS`. Configure TLS and credentials separately. See [Temporal configuration](configuration.md#secure-the-temporal-connection). |
 
 ## Retain a coherent release
 
@@ -29,44 +77,34 @@ the manifest's immutable image references.
 
 The [build and release guide](../../releasing.md) describes artifact
 construction. The target release's metadata and migration instructions decide
-compatibility with the state you actually have. Platform migration checks cover
-a fresh installation and an upgrade from the baseline named in
-`LIGHTSPEED_PLATFORM_UPGRADE_FROM`. They do not test every historical schema.
-A database from another baseline needs its own validated migration.
+compatibility with the state you actually have. Platform migration checks cover the journal beginning at the baseline named
+in `LIGHTSPEED_PLATFORM_UPGRADE_FROM`. Check the release notes before reusing a
+database from another baseline.
 
 ## Decide whether the release breaks open work
 
-Temporal rebuilds a workflow by replaying its history through the current code.
-If a release changes the commands that code issues, or the types recorded in
-history, an open execution cannot replay past that point. So each release is one
-of two kinds, and nothing at runtime tells them apart. Compare the deployed
-release with the target before the maintenance window, from a source checkout:
+Temporal rebuilds a workflow by replaying its history through the current
+code. If the new code issues different commands or expects different payloads,
+an open execution may fail to replay. Check the release notes and compare
+the deployed and target revisions from a source checkout.
 
 ```bash
-scripts/release/workflow-compat.sh <deployed-tag> [<target-ref>]
+scripts/release/workflow-compat.sh DEPLOYED_TAG TARGET_REF
 ```
 
-The script prints the changes it found, then one word. It compares
-`temporal-workflow`, the workspace crates that crate depends on (`harness`, `api`,
-`bots`, `channels`), and the `temporalio` packages in `Cargo.lock`.
+The script reports changes in workflow source and selected dependencies.
+Use it alongside the release notes and dependency changes to make the
+compatibility decision.
 
 | Result | Meaning | What to do |
 | --- | --- | --- |
-| `restart-in-place` | None of that changed, so open executions replay on the new code. | Keep the current namespace. Open work carries on after the restart. |
-| `breaking` | Something changed, and retained histories may no longer replay. | Drain first, then start on a new Temporal namespace. |
+| `restart-in-place` | The files checked by the script are unchanged. | Keep the namespace when the release supports replaying open work. |
+| `breaking` | The comparison found changes that may affect replay. | Drain first, then start on a new Temporal namespace. |
 
-This is a diff and not a replay check, and it errs both ways. Any change to those
-crates prints `breaking`, including one to a test or a generated file, and a false
-alarm only costs you the namespace change. It sees no other third-party version,
-so read the `Cargo.lock` diff before trusting `restart-in-place`: a dependency
-bump that changes workflow behaviour would still print it.
-
-Release notes state which kind a release is. If the call turns out wrong, `/health`
-stays `ok` and affected executions fail one at a time as they are touched: their
-workflow tasks keep failing, commands to them fail or time out, and the Temporal UI
-shows a nondeterminism error, or a panic saying an activity payload does not convert
-with this build. Stored reads keep working. Moving to a new namespace afterwards heals
-this the same way as if the release had been called breaking.
+An application health check can pass even when Temporal cannot replay an
+execution. Check failing tasks in the Temporal UI for nondeterminism or
+payload errors. If the target release cannot replay them, move to a new
+namespace.
 
 ### Move a breaking release to a new namespace
 
@@ -97,184 +135,6 @@ their own:
 Old main sessions stay open until someone closes them. Drain first, as the procedure
 below describes: everything in this table is much smaller on an idle installation.
 
-<a id="upgrade-from-v02-to-v03"></a>
-
-## Check compatibility before reusing state
-
-The current development code uses a consolidated runtime schema and the
-Platform-owned access model. It has no automatic conversion from the former
-core identity directory, resource grants, or execution identities. A migration
-number or product version alone cannot identify a compatible database: the
-runtime also compares applied migration names and checksums.
-
-The current development code also renames stored event kinds, status values,
-wire values and bot columns, and bounds what reduced state keeps. It has no
-conversion for any of that: a log written by an earlier build does not decode,
-and earlier bot rows fail the new constraints at `migrate`. Moving to it takes a
-fresh runtime database and a new Temporal namespace. Every API enum and error kind
-is now camelCase, so clients and dashboards reading the old values need updating.
-
-Runtime caller access now uses configuration tokens. Before starting an
-authenticated runtime, supply `LIGHTSPEED_API_TOKEN` or named tokens such as
-`LIGHTSPEED_API_TOKEN_PLATFORM`; each supports a `_FILE` form. Give the Platform
-the matching value through `LIGHTSPEED_PLATFORM_API_TOKEN` or its `_FILE` form.
-Every token has full authority. Keep `/api/v1` restricted to trusted components;
-the runtime no longer enforces caller scopes or method groups.
-
-Migration 26 drops the `api_keys` table and rewrites stored key attribution to
-`{ "kind": "token", "name": "<former-key-id>" }`. It covers credentials, OAuth
-flows, sessions, bots, universe deletion records and attributed session events.
-It clears disposable checkpoint pointers so sessions rebuild from their logs.
-Actor, local and internal attribution retain their shape. Older prefix-based
-attribution first passes through the earlier migration that resolves known key
-prefixes and preserves unresolvable prefixes as internal historical records.
-
-Temporal histories are not rewritten. Treat this cutover as
-[breaking](#move-a-breaking-release-to-a-new-namespace), regenerate matching API
-and workflow consumers, and use a new namespace. Clients reading `createdBy`,
-`requestedBy` or `decidedBy` must handle the token name instead of `keyId` and
-`scopeKind`.
-
-Remove `deployment/api-keys/*` calls, `api-key` commands, and `apiKeys` entries
-from configuration documents. Deployment configuration documents are removed;
-universe documents remain. Direct SDK connections use `token` and explicitly
-select their universe. Configurator and connector runtime credentials are configured infrastructure
-tokens; keep these components trusted and enforce access at their own boundaries. See [Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
-
-In `authenticated` mode, missing or invalid tokens receive HTTP 401 with an
-`application/problem+json` error with kind `unauthenticated`, before the body is read. Token
-validation uses configuration and needs no database lookup. Universe resolution
-still uses PostgreSQL, so authenticated requests can fail if that store is
-unavailable. The CLI and SDKs preserve the typed error; a client calling the API
-itself must inspect the HTTP status and structured problem body. See
-[Gateway modes](../access-and-security/api-keys-and-service-access.md#gateway-modes).
-
-An extra header of a model provider's endpoint is now a tagged value, a
-`literal` or a `credential`, the form an MCP server's request headers already
-have, where it used to be a plain string. API clients and configuration
-documents that send a header as a bare string are refused and must send the
-tagged form. `migrate` does not convert stored headers: remove the extra
-headers of a model provider before upgrading and add them again afterwards.
-
-On both a model endpoint and an MCP server, a header named `api-key` or
-`x-api-key` now accepts only a `credential` (as does `proxy-authorization` on a
-model endpoint; an MCP server reserves that name). These names carry a secret,
-and a `literal` is returned to every reader of the provider or server.
-`migrate` stops with a constraint error if an MCP server still stores a plain
-value under one of them: before upgrading, save the value as a token credential
-and make the header name that credential. A
-`lightspeed model provider put --header` or `lightspeed mcp server put --header`
-script keeps working unless it passes one of these names, which take
-`--header-credential`. See
-[Extra headers](../using-lightspeed/models-and-credentials.md#extra-headers)
-and
-[custom request headers](../using-lightspeed/tools-and-mcp.md#authenticate-with-custom-request-headers).
-
-Only two things can now be bound into an environment: a credential created as
-retrievable, and the API key of a model API key provider. The runtime checks
-this when a binding is made and each time it is resolved. `migrate` records
-every credential that is already bound into an environment as retrievable, so
-existing bindings keep working; from then on such a credential can also be
-leased by trusted services. `migrate` deletes bindings that named a stored
-secret directly: that source, and the CLI's `--secret-id` flag, no longer
-exist, so list such bindings before upgrading and bind a retrievable
-credential under the same variable afterwards. A binding to any other
-provider's credential, such as a GitHub App's private key, is kept but refused
-when it is resolved, and every command and job in that environment fails with
-a message naming the variable until the binding is removed; bind a GitHub
-installation credential in its place. A brokered credential that was not bound
-stays brokered and cannot be bound later, which includes GitHub installation
-credentials granted before the upgrade: add the credential again as
-retrievable. Scripts and configuration documents that create a credential for
-an environment must say so, with `--retrievable` or `exposure: retrievable`.
-A configuration document written before the upgrade that binds a credential
-into an environment declares that credential without `exposure`, which reads
-as brokered, while `migrate` has stored it as retrievable. `config diff` and
-`config apply` stop at that difference and name the stored value: add
-`exposure: retrievable` to the credential's existing entry. The credential
-keeps its id and its token. `config export` leaves out a binding to another provider's credential, so the
-exported document can be applied; applying it to an environment that lists
-other bindings removes the left-out one.
-See
-[Choose a credential source](../environments/credentials.md#choose-a-credential-source).
-
-`LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS` is removed and no longer read; a
-value left in the environment has no effect. MCP OAuth requests (metadata,
-client registration, token exchange and refresh) now follow
-`LIGHTSPEED_MCP_PRIVATE_NETWORKS`, decided for each URL by its own host. A
-deployment that set the old switch must list its internal MCP servers and their
-authorization servers, by hostname or address range, or sign-in and token
-refresh toward them fail with "outbound hostname resolved to a forbidden
-address". See the
-[environment-variable reference](../reference/environment-variables.md).
-
-A skill's `name`, `description` and `short_description` now have fixed length
-limits and may not contain control characters. A skill outside them leaves the
-catalog at the next refresh with a warning that names its file. See
-[Add a skill](../using-lightspeed/workspaces-and-skills.md#add-a-skill).
-
-The **Bots** and **Channels** features of a universe now start switched off,
-and the Platform refuses bot and channel requests from members while a switch
-is off, where it used to only hide the pages. The new default applies to
-existing universes too: after the upgrade, a universe that never stored its
-own choice has both features off, and its bot and channel pages stay hidden
-until an Owner turns them on under the universe's **Settings → General → Features**. Do that
-in every universe that uses bots or chat channels. Bots that are already
-running keep running in the runtime during that time, because the switch
-governs only what members do through the Platform. A deployment that uses
-neither feature can also stop running the `bots` and `channels` roles; see
-[Runtime roles and scaling](overview.md#runtime-roles-and-scaling).
-
-A trigger's ingest path and pairing code are no longer part of the trigger
-that `bots/triggers/read`, `bots/triggers/list` and `bots/triggers/delete`
-return. A client that read `ingestPath` or `pairingCode` there must call
-`bots/triggers/secrets/read`, a bot-management method, or take the values from
-the answer of `bots/triggers/put` (`secrets`) or `bots/create`
-(`triggerSecrets`). A bot that may change its own triggers no longer sees
-either value when it lists them; it is told a URL or code once, by the call
-that created it, and only in its Main conversation. See
-[Receive a webhook](../using-lightspeed/bots-and-triggers.md#receive-a-webhook).
-
-`lightspeed-envd` no longer loads a `.env` file from its working directory. A
-daemon that took `LIGHTSPEED_ENVD_*` settings from one starts without them:
-pass them through the process environment or the command line, for example
-with a systemd `EnvironmentFile`. The daemon's file tools now also refuse the
-registration key file it was started with and, on Linux, the `/proc` and
-`/sys` filesystems, under any filesystem root; a command's working directory
-follows the same rule, and what a started command reads does not. See
-[Choose the access level](../environments/using-environments.md#choose-the-access-level).
-
-`TEMPORAL_ADDRESS` now names a host and port only. An address with user
-information, a path or a query is a startup error in the runtime and in the
-connector host. A bare host written without a port now connects to port
-`7233`, where the runtime used to fall back to port `80`. The connection can
-also be secured with TLS, a client certificate and an API key; with none of
-those settings it is unencrypted as before. See
-[Secure the Temporal connection](configuration.md#secure-the-temporal-connection).
-
-The web app no longer displays images that Markdown loads from another site.
-In transcripts, reasoning, and file and blob previews such an image appears as
-a link that names its host; images recorded with the session or stored in its
-files are displayed as before. Enabling **Virtual File System** or
-**Environments** in the profile and session editor no longer turns on **Prompt
-loading** and **Skill discovery**; saved configurations keep their settings.
-
-For disposable development state, stop the launcher and use `./dev.sh reset`
-to recreate the local databases and clear the development object-store prefix.
-Retained Temporal histories still hold the old payloads, so also point
-`TEMPORAL_NAMESPACE` at a new namespace. For an installation whose data must
-survive, preserve the old executable and recovery set and validate a conversion
-against copies before starting new workers. The maintenance procedure below
-assumes the target release supports the retained state; it does not supply that
-conversion.
-
-When installing a tagged release, use the upgrade notes shipped with that tag.
-Instructions for an older release's migrations do not apply to this development
-baseline. Likewise, an unchanged API or environment protocol identifier does
-not guarantee compatibility with saved session configuration or workflow
-histories. Use matching clients and review daemon changes even when protocol
-mismatch would not trigger an automatic daemon update.
-
 ## Review model and context configuration
 
 Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` from the runtime
@@ -300,26 +160,16 @@ and submit prepared text.
 
 ## Enable company sign-in on an existing Platform
 
-The company-identity migration adds identity provenance, session revocation
-versions and durable access records. Existing users remain local and keep
-their memberships; the migration does not grant company or emergency access.
-The required Platform revision is `LIGHTSPEED_PLATFORM_SCHEMA_REVISION` in
-the target release's [metadata](../../../release/metadata.env). Startup applies
-the generated Platform migrations before serving requests.
+Before enabling OIDC, configure `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` to
+designate an existing local password administrator for emergency access.
+Verify emergency login. Use a separate email for that account. Existing local
+and company accounts are separate identities, and an email collision must be
+resolved explicitly before company sign-in.
 
-Before enabling OIDC, designate an existing local password admin through
-`LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and verify its emergency login. Use a
-separate email from the company account: existing local and company accounts
-are never linked by email. Resolve any email collision explicitly before
-company sign-in; no automatic identity or membership transfer is provided.
-Ordinary local accounts and their old sessions cannot access an SSO-enabled
-Platform. Keep their records until you have reviewed the required migration.
-
-Configure and test the provider as described in
-[Company sign-in (SSO)](../access-and-security/single-sign-on.md).
-Verify successful and denied login, both entitlements, emergency access,
-suspension and expiry before opening access. Disabling OIDC does not turn
-company accounts into password accounts.
+Follow [Company sign-in (SSO)](../access-and-security/single-sign-on.md) to
+configure your provider. Verify a regular login, a Platform Admin login,
+a denied login, and emergency access before opening the deployment to members.
+Review existing organization memberships and grants as part of that change.
 
 ## Preserve a complete recovery set
 
@@ -330,7 +180,7 @@ record how their recovery points fit together.
 | Material | Why recovery needs it |
 | --- | --- |
 | Runtime PostgreSQL database and migration ledger | Universe records, sessions/events, checkpoints, profiles, workspace references, blob catalog and inline content, credentials, environment registration keys, bots, channels, and environment state. |
-| Platform PostgreSQL database and migration ledger | Login accounts and sessions, external login records, universe memberships and roles, universe display/routing metadata, and durable access history. |
+| Platform PostgreSQL database and migration ledger | Login accounts and sessions, organizations, memberships and universe grants, Platform API keys, settings, and access history. |
 | Temporal persistence and namespace configuration | Workflow histories, timers, schedules, and in-flight orchestration. Without it, open sessions can [restart from the runtime database](#restart-a-stopped-session), with [these losses](#move-a-breaking-release-to-a-new-namespace). Nothing rebuilds the rest. |
 | Configured object-store content | The bytes referenced by object-backed blobs. Restoring their database catalog does not reconstruct missing objects. |
 | Runtime master key | Existing encrypted secret values and grant tokens need the same `LIGHTSPEED_SECRETS_MASTER_KEY`. |
@@ -374,9 +224,17 @@ ledger can be recovered.
 
 ## Upgrade the single-host installation
 
-Use the retained `runtime.env` and `platform.env` from self-hosting, and set
-`LIGHTSPEED_RELEASE_ID` to the already-built target image tag. Keep the old tag
-and configuration in the deployment record.
+Confirm that the target release supports your retained databases. If it
+starts from a [new baseline](#check-compatibility-before-reusing-state), follow
+[Self-host Lightspeed](self-hosting.md) with fresh databases, or prepare and
+test a separate data migration.
+
+For a compatible database upgrade, use the retained `runtime.env` and
+`platform.env` from self-hosting. Set `LIGHTSPEED_RELEASE_ID` to the new image
+tag. Keep the old tag and configuration in the deployment record.
+
+Stop old workers before the first new worker begins polling their queues.
+On Kubernetes, use the `Recreate` strategy to avoid an overlap.
 
 1. [Decide whether the release is breaking](#decide-whether-the-release-breaks-open-work).
 2. Restrict incoming user and webhook traffic. Stop connector ingress and
@@ -471,9 +329,9 @@ does it for you: a stopped session stays stopped until someone asks.
 lightspeed session restart "<session-id>"
 ```
 
-Direct clients can call `session/restart`, which needs the Operator role. Retrying
-`session/start` with the session's ID does the same for an ordinary session, for a
-Contributor who can see it. Integrated sessions, including bot sessions, and sub-agent
+API clients can call `session/restart`. Through Platform, this requires
+Operator access or higher. A Contributor can restart an ordinary session
+they can see by retrying `session/start` with its ID. Integrated sessions, including bot sessions, and sub-agent
 sessions take `session/restart` only. A retried `session/start` for an integrated session
 answers `sessionExecutionStopped` rather than restarting. Restart is safe to repeat: a session already running answers
 `restarted: false`.
@@ -597,17 +455,3 @@ replacement work.
 | Restored listeners are healthy but work stalls | Verify namespace, workflows, role pollers, retained blobs, and optional service state through a complete test task. |
 | Workflow tasks keep failing after an upgrade, with a nondeterminism error or an activity payload that does not convert | The release was breaking. Move to [a new namespace](#move-a-breaking-release-to-a-new-namespace). A payload error also heals under a build that reads the payload. |
 | A session reads fine but reports `executionFailure` | Its workflow has stopped. [Restart it](#restart-a-stopped-session). |
-
-## Organization and service-user terminology change
-
-The native Platform API, CLI connection fields, and generated clients now use
-`organizationId` and `serviceUserId`. Regenerate or update clients together with
-the Platform; the former account/application routes are not aliases. The
-Platform database migration preserves credential restrictions and managed
-Configurator references while renaming the service-user identity records.
-
-This greenfield cutover does not migrate runtime session attribution from
-`application:<id>` to `serviceUser:<id>`. Recreate disposable development state,
-or explicitly migrate retained runtime attribution before relying on existing
-private sessions owned by those identities. SQL schema migration alone does
-not establish compatibility for that retained runtime state.

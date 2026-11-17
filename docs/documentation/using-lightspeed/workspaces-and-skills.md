@@ -10,8 +10,10 @@ procedures the agent can discover and read when a task calls for them. This
 lets a project keep its source material and working conventions together.
 
 This guide extends the `release-notes` workspace from
-[Build your first agent](../getting-started/first-agent.md). Contributors can
-create and edit workspaces. Creating the profiles in this guide requires Operator or Owner access.
+[Build your first agent](../getting-started/first-agent.md). Use Operator or
+Owner access to create workspaces, set up attachments, and save profiles.
+Contributors can edit files in existing workspaces and run sessions from
+prepared profiles.
 
 ## Attach files to a session
 

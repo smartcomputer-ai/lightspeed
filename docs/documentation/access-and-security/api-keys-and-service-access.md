@@ -1,188 +1,113 @@
 # API keys and runtime tokens
 
-The runtime authenticates trusted components with tokens from configuration.
-Every runtime token has full authority over every universe and method. People
-use the Platform, which checks membership, roles and resource visibility. A
-standalone runtime needs its own trusted gateway or a trusted network.
+Use a Platform API key to connect a script or integration. A **personal API
+key** acts as you. A **service-user API key** acts as an identity the
+organization manages independently of the people who run the integration.
+Trusted infrastructure connecting directly to the runtime uses a
+[runtime token](#configure-runtime-tokens).
 
-## Platform API keys
+## Create a Platform API key
 
-Create user keys under **Settings → API keys**. Create service-user
-keys from the service user itself: **Admin → organization → Members**, open the
-service user, then **New key**. Each key opens to show what it may reach, when
-it was last used, **Replace secret** and **Revoke key**. Organization Admins see every key that can
-reach their organization under **Admin → organization → API keys**: its service
-users' keys and the personal keys of its members whose restrictions allow it,
-each with its owner. They can revoke service-user keys there; only a person can
-revoke their own personal key. Better Auth stores hashed keys,
-checks expiry and revocation, and maintains usage counters. The Platform
-binds each key to its user or service user and applies current permissions.
-Service-user keys use Better Auth organization ownership, but the service-user
-association is server-controlled: an organization key alone grants no access.
+For a personal key, open the account menu and choose **Settings → API keys →
+New key**. For an integration, an Organization Admin can set up a service
+user:
 
-Keys expire after 365 days by default. Choosing **No expiry** (`--no-expiry` in
-the CLI) creates a key that works until it is revoked, for automation that must
-not stop unexpectedly. A deployment that sets a maximum key lifetime refuses
-keys without expiry. Key lists show **Never expires** and when each key was last
-used, so forgotten keys are easy to find and revoke.
-Copy a new secret when it is shown; it is never returned again. A lost or
-leaked secret is replaced in place with **Replace secret** (`lightspeed
-platform api-key replace KEY_ID --output-secret FILE`): the key keeps its ID,
-name, restrictions and expiry, gets a new secret shown once, and the old
-secret stops working at once. Nothing that refers to the key needs renaming;
-only the secret its consumers hold changes. To rotate without a gap instead,
-create a second key, move consumers, and revoke the first.
-Keys cannot mint other keys. Human browser and CLI sessions manage credentials.
+1. Open **Admin → organization → Members → New service user**. Use the
+   **Member** organization role when the integration only needs existing
+   universes.
+2. In each universe the integration needs, go to **Settings → Members** and
+   grant the service user a role.
+3. Return to the service user's details under the organization's **Members**
+   and choose **New key**. Copy the secret when it appears. Lightspeed shows
+   it only once.
 
-A service user's keys can also be declared with a secret supplied from your
-secret store, so the secret flows into Lightspeed and never out: list them
-under the service user in an
-[organization document](../deployment/configuration-as-code.md#configure-organizations-and-access).
-`lightspeed platform api-key generate-secret` makes a secret of the accepted
-form without contacting Lightspeed. A changed secret in the store replaces the
-key's secret on the next `apply`.
+Personal organizations are hidden from their owner's Admin sidebar. To manage
+a service user there, use the [Platform CLI](../using-lightspeed/cli.md#platform-administration)
+or API, or work with a Platform Admin.
 
-Send `Authorization: Bearer <key>` to the Platform `/api/v1` base URL. Runtime
-resource routes are shared with the direct runtime API; native organization,
-service-user, grant, and credential operations are under `/api/v1/platform`.
-Both SDKs use `client.call` for runtime and native Platform operation IDs.
-Generated `client.platform` helpers provide typed native parameter objects
-without a separate transport or authentication path. `lightspeed connect login --url DEPLOYMENT_URL`
-uses browser-approved device authorization for a human CLI session;
-`lightspeed connect add` accepts API keys. See [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
+In the web app, a personal key defaults to one organization. Choose **All
+my organizations** to allow broader access. A service-user key is confined to
+its own organization. Select specific **Universes**, switch on **Read only**,
+or use **Restrict operations** to limit the key further. The caller must have
+permission for the operation and satisfy every key restriction. A key limited
+to existing universes cannot create a universe.
 
-Local scripts can reuse a saved CLI connection through the Node-only
-`createClientFromConnection` factory from `@lightspeed-ai/sdk/node` or Python's
-`await AsyncLightspeedClient.from_connection(...)`. These factories reread the
-saved credential per request and renew CLI-owned session credentials without
-starting login or rewriting externally managed secret files. The selected
-organization remains explicit in native helper parameters. See
-[Reuse a saved CLI connection](../integrating-and-extending/api-and-typescript.md#reuse-a-saved-cli-connection).
+Send the key as `Authorization: Bearer <key>` to the Platform's `/api/v1`
+base URL. For API examples, see [Platform
+access](../integrating-and-extending/api-and-typescript.md#platform-access). If
+you are using the CLI as yourself, `lightspeed connect login` signs in through
+your browser. See [CLI connections](../using-lightspeed/cli.md#connect-to-platform).
 
-In the web app, user keys default to one organization. Choose **All my accessible
-organizations** explicitly for broader use. Service-user keys remain confined
-to their organization. Choose universes by name under **Restrict access**.
-Operation IDs are an advanced restriction. The existing-key list shows status,
-expiry, and restrictions. A universe-specific key still belongs to its user or
-service user; the universe's **Settings → Members** manages universe roles, not keys. Universe
-**Setup → Credentials** holds outbound secrets for agents connecting to external
-services, separate from keys for accessing Lightspeed.
+## Review, replace, or revoke a key
 
-Optional organization IDs, universe UUIDs, operation IDs, and read-only restrictions
-narrow a key's authority. They never grant permissions its principal lacks.
-Universe creation also requires an organization Creator or Admin role and the key's
-creation permission. A key restricted to existing universes cannot create one.
-Service-user keys belong to one organization and use that service user's grants,
-independently of their human creator's continued access.
+Open a key to see its restrictions, expiry, and latest use. An Organization
+Admin can review personal and service-user keys that can reach the organization
+under **Admin → organization → API keys**. They can revoke service-user keys.
+People manage their own personal keys. Credential management requires a human
+browser or CLI session.
 
-Local personal keys and service-user keys do not depend on a browser session.
-Company users require admission refreshed within the configured company
-window until an authoritative background directory source is available.
-Suspension and service-user disabling are checked on subsequent requests.
+Keys expire after 365 days by default. Select **No expiry** where the deployment
+allows it. For the deployment settings, see the [environment-variable
+reference](../reference/environment-variables.md#platform-backend).
 
-The following sections describe **runtime infrastructure tokens**, which have
-full deployment authority and must remain with trusted infrastructure.
+- To replace a lost or exposed secret, open the key and choose **Replace
+  secret**. The key keeps its ID, restrictions, and expiry. The old secret
+  stops working immediately.
+- To rotate with overlap, create a second key, move consumers to it, and then
+  revoke the old key.
+- To cut off a service user, **Disable** it from its details under
+  **Admin → organization → Members**. Its keys stop working until it is enabled.
+
+You can also declare service-user keys alongside an organization, with secrets
+supplied from your secret store. See [Configure organizations and
+access](../deployment/configuration-as-code.md#configure-organizations-and-access).
+
+Personal keys follow their owner's current access. Company users must renew
+their admission through [company sign-in](single-sign-on.md#session-expiry-and-suspension).
+Service-user keys and local personal keys have their own expiry and revocation.
 
 ## Gateway modes
 
-`LIGHTSPEED_AUTH_MODE` is required:
+Set `LIGHTSPEED_AUTH_MODE` on the runtime. Use `authenticated` for Platform
+and other trusted clients, with at least one configured runtime token. Use
+`single` for local development with `LIGHTSPEED_PG_UNIVERSE_ID`. Single mode
+accepts only requests without authorization or actor headers.
 
-| Mode | Behavior |
-| --- | --- |
-| `authenticated` | Requires at least one configured API token. Invalid credentials receive HTTP 401 before the request body is read. |
-| `single` | Unauthenticated local development, using `LIGHTSPEED_PG_UNIVERSE_ID`. Credential, universe and actor headers are rejected. |
+Every runtime token can call every operation, select any universe, and
+access private sessions. Keep the runtime application listener private to
+trusted components and operators. Public callbacks, bot webhooks, and
+environment connections have separate listeners. See [Public URLs and
+internal routes](../deployment/configuration.md#distinguish-public-urls-from-internal-routes).
 
-The runtime binds separate listeners:
+## Configure runtime tokens
 
-| Listener | Default | Routes |
-| --- | --- | --- |
-| Private application API | `127.0.0.1:18080` (`LIGHTSPEED_GATEWAY_BIND`) | `/api/v1/...` |
-| Public callbacks and webhooks | `127.0.0.1:18082` (`LIGHTSPEED_PUBLIC_BIND`) | `/ingress/credentials/callback`, `/ingress/credentials/client-metadata.json`, `/ingress/webhooks/bots/…` |
-| Environment gateway | `127.0.0.1:18083` (`LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND`) | Daemon connections, worker routes, replica peers |
-
-Each serves `/health` and `/ready`. The `gateway` role starts the first two;
-`environment-gateway` starts the third. Bind addresses must be distinct, with
-fixed nonzero ports. Network rules should admit only trusted components and
-operators to the application API. Publish callbacks and webhooks using `LIGHTSPEED_PUBLIC_BASE_URL`.
-Daemon origins use `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` and optional
-`LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`; keep worker and peer routes private.
-
-## Configure tokens
-
-Use an inline secret or a mounted file:
+Generate a secret with `lightspeed token generate-secret` and mount it into
+the runtime:
 
 ```text
 LIGHTSPEED_AUTH_MODE=authenticated
 LIGHTSPEED_API_TOKEN_FILE=/run/secrets/runtime-token
 ```
 
-The plain token is named `default`. Optional names distinguish components in
-attribution without changing their authority:
+To distinguish consumers in records, use separately named tokens such as
+`LIGHTSPEED_API_TOKEN_PLATFORM_FILE` and
+`LIGHTSPEED_API_TOKEN_OPERATOR_FILE`. Each token has the same deployment-wide
+authority. The [runtime API token
+reference](../reference/environment-variables.md#runtime-api-tokens) lists
+the accepted settings.
 
-```text
-LIGHTSPEED_API_TOKEN_PLATFORM_FILE=/run/secrets/platform-token
-LIGHTSPEED_API_TOKEN_OPERATOR_FILE=/run/secrets/operator-token
-```
+For the Platform backend, set `LIGHTSPEED_API_URL` to the runtime's `/api/v1`
+base URL and set `LIGHTSPEED_PLATFORM_API_TOKEN_FILE` to the file containing
+one of the runtime's configured secrets. Keep runtime tokens out of browsers,
+agent tools, workspaces, and execution environments.
 
-A suffix becomes a lower-case token name. Secrets must contain at least 32
-non-whitespace printable ASCII characters suitable for an HTTP header. Use a cryptographic
-random source; `lightspeed token generate-secret` works offline. File input
-removes one terminal LF or CRLF. Other bytes are significant.
+For a trusted client calling the runtime directly, send
+`Authorization: Bearer <token>` and use a universe UUID or handle in
+`/api/v1/universes/{universe}/…` for universe operations. An optional
+`x-lightspeed-actor` header labels who requested the operation. The token
+supplies all authority. See [Authenticated runtime from the
+CLI](../using-lightspeed/cli.md#configure-an-authenticated-runtime-without-platform).
 
-Duplicate names, duplicate secrets, or both inline and file sources for one
-name refuse startup. Configuration is loaded at startup. To rotate with an
-overlap, add a second named token and restart the runtime, move the consumer,
-then remove the previous token and restart again. Already admitted work is
-not cancelled when a token is removed.
-
-Keep runtime tokens with infrastructure secrets. Never pass them to an agent,
-put them in its workspace, or send them to a browser.
-
-## Requests and attribution
-
-Authenticated requests send:
-
-- `Authorization: Bearer <token>`.
-- A universe UUID or handle in `/api/v1/universes/{universe}/...` for
-  universe resources. The HTTP API rejects `x-lightspeed-universe`.
-- Optional `x-lightspeed-actor`, an opaque identifier recorded as the actor.
-  Any configured token may name an actor; it grants no permissions.
-
-Records use `{"kind":"actor","id":"alice"}` when an actor was supplied,
-otherwise `{"kind":"token","name":"platform"}`. Local and internal
-controller attribution remain distinct. `GET /api/v1/connection` reports
-runtime identity, contract revision, `single` and, for authenticated calls,
-`tokenName`. Single mode also returns `defaultUniverse` for URL selection.
-
-A universe selects a data partition. It does not restrict the token to that
-partition. Session list and watch visibility filters are parameters a trusted
-gateway supplies; direct runtime access can read private sessions too. Watch
-stream limits apply per actor, falling back to token name when no actor is
-provided, with a separate total limit.
-
-## Connect the Platform
-
-Set `LIGHTSPEED_API_URL` to the runtime `/api/v1` base URL. The backend reads
-`LIGHTSPEED_PLATFORM_API_TOKEN` or `LIGHTSPEED_PLATFORM_API_TOKEN_FILE`; its
-secret must match one configured on the runtime. The browser never receives
-this token. The Platform supplies the universe and signed-in actor after its
-role and visibility checks, including creator-only transcription reads and
-cancellation.
-
-For first startup, set `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and
-`LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` in protected configuration. Those values
-create the initial local administrator only when the users table is empty.
-See [People and roles](people-and-roles.md).
-
-## Connect operators and development clients
-
-The CLI and SDKs can connect directly with a runtime token and an explicit
-universe. This grants full deployment authority. See
-[Use Lightspeed from the terminal](../using-lightspeed/cli.md) and the
-[TypeScript API client](../integrating-and-extending/api-and-typescript.md).
-
-Channel connector startup remains disabled during the transition. Configurator
-uses a restricted Platform service-user key; the development launcher starts it
-against Platform without a runtime infrastructure token. Environment daemons,
-environment providers and worker-to-environment-gateway credentials are
-unchanged; these are separate machine protocols.
+To rotate with both tokens valid during the cutover, add a second named token
+and restart the runtime. Move the client to the new token, then remove the
+previous token and restart the runtime again.

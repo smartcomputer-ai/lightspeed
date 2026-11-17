@@ -59,8 +59,7 @@ They do not configure the TypeScript Platform backend.
 | `LIGHTSPEED_ENVIRONMENT_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_ENVIRONMENT_GATEWAY_BIND}` for loopback; otherwise it or registration URLs are required | Origin registered daemons dial and sign (`--environment-public-base-url`). Also supplies the local environment route default when this process runs `environment-gateway`; workers may override it with `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`. A non-loopback environment listener requires this or `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. |
 | `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Unset | Comma-separated further gateway URLs registered daemons may dial and sign (also `--environment-registration-urls`), for example a cluster-internal Service address such as `ws://lightspeed-environment-gateway.lightspeed.svc:18083/environments/connect`. Only each URL's origin counts; an entry without a WebSocket origin is a startup error. Read only by a process running `environment-gateway`. |
 | `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles and `scripts/dev/env.sh`) | Comma-separated exact hostnames and CIDR ranges that outbound requests may reach on private networks: runtime MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`), MCP OAuth (metadata, client registration, token exchange, and refresh), and bot URL polls. A listed hostname is allowed wherever it resolves. A range admits any server, named by hostname or by IP, whose resolved address falls inside it; for example `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` covers the usual internal networks while leaving loopback and link-local addresses blocked. Plain HTTP is accepted only for a listed hostname or an address inside a listed range. OAuth requests are decided for each URL separately, redirects included, and do not consult the record's opt-in: an authorization server is a different host from the MCP server it protects, so an internal one must be covered by the list in its own right. All other targets retain public-only HTTPS/SSRF policy. |
-| `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Configurator uses restricted Platform service-user keys. |
-| `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (no credential check, ordinary methods use one configured universe; local development only) or `authenticated` (configured API tokens with full deployment authority). There is no default: the process refuses to start without it. Configurator uses the same mode. |
+| `LIGHTSPEED_AUTH_MODE` | **Required** | `single` for private local development (no credential check, one configured universe for ordinary operations) or `authenticated` (configured API tokens with full deployment authority). |
 | `LIGHTSPEED_SECRETS_MASTER_KEY` | Unset | Base64-encoded 32-byte AES key for encrypted secret values and grant tokens. Required before encrypted secret material can be persisted or resolved. Keep stable across restarts. |
 | `LIGHTSPEED_BLOB_CACHE_BYTES` | `268435456` | Per-process CAS blob-cache budget. `0` disables the cache. |
 | `LIGHTSPEED_CAS_SWEEP_GRACE_MS` | `604800000` (seven days) | Minimum time since a blob's last put or API admission before an unheld blob is eligible for collection; reads do not refresh it. `0` disables background collection. One elected `sessions` process examines up to 100,000 old catalog rows per universe per hourly pass in pages of at most 1,024 rows, resuming its cursor next time. Passes have a soft 10-minute budget between pages; database statements have a five-second timeout and a one-second lock timeout. `lightspeed-runtime cas-sweep [--dry-run]` runs one bounded pass; deletion yields to an active background leader. Profiles and uncommitted workflow handoffs do not retain blobs; a handoff stalled beyond grace may require resubmission. |
@@ -73,13 +72,16 @@ They do not configure the TypeScript Platform backend.
 universes explicitly through the deployment API or `lightspeed-runtime universe
 create`.
 
+Remove the retired `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL`
+from runtime configuration. A nonempty value prevents startup.
+
 In authenticated mode, a token authenticates a trusted component with full
 deployment authority. Universe resources select their UUID or handle in
 `/api/v1/universes/{universe}/…`; connection discovery and deployment resources
 use their own paths. The HTTP API rejects `x-lightspeed-universe`. Any token
 may supply `x-lightspeed-actor` for attribution. Single mode rejects credential
 and actor headers and only serves its configured universe. See
-[Runtime tokens and service access](../access-and-security/api-keys-and-service-access.md).
+[API keys and runtime tokens](../access-and-security/api-keys-and-service-access.md).
 
 ### Temporal connection security
 
@@ -379,18 +381,10 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` | Unset | Seeds an emergency local admin with the password when the users table is empty. Also designates an existing local password admin as emergency access, without elevating roles or resetting its password. |
 | `LIGHTSPEED_PLATFORM_ADMIN_PASSWORD` | Unset | Bootstrap administrator password. Applied only with the email and only while the users table is empty. |
 | `LIGHTSPEED_PLATFORM_PASSWORD_SIGN_IN` | `break-glass` with OIDC; `local` without | `break-glass` permits only designated local emergency admins; `off` disables password sign-in and changes. `local` is rejected with OIDC. |
-| `LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS` | Unset (on) | Platform setting. Provision one personal organization for each admitted user. Can be disabled in shared-organization deployments. |
-| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | Unset (`25`) | Platform setting. Universe limit for personal organizations without their own limit. |
-| `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | Unset (`100`) | Platform setting. Universe limit for shared organizations without their own limit. |
-
-Variables marked *Platform setting* can also be changed by a Platform Admin under
-**Admin → Platform → Settings**. When the variable is set, it wins: the page
-shows the setting locked, with the variable's name. When it is unset, a value
-saved on the page applies, and otherwise the default in parentheses.
 | `LIGHTSPEED_PLATFORM_API_KEY_DEFAULT_EXPIRY_DAYS` | `365` | Default user/service-user key lifetime, capped by the maximum. |
 | `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | Unset | Maximum key lifetime. Unset means no maximum, and keys may be created without expiry when chosen explicitly; set, it also refuses keys without expiry. Both expiry settings accept 1–3650 days. |
-| `LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS` | `30` | Local browser session inactivity lifetime. Company sign-in retains its separate bounded admission window. |
-| `LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS` | `90` | Absolute local browser session lifetime; activity cannot extend it. |
+| `LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS` | `30` | Local browser and CLI session inactivity lifetime, from 1 to 365 days. |
+| `LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS` | `90` | Absolute local browser and CLI session lifetime, from 1 to 3,650 days. Company sign-in uses its own admission window. |
 | `LIGHTSPEED_PLATFORM_OIDC_ISSUER` | Unset | Exact OIDC issuer. Setting any OIDC variable enables configuration validation; incomplete configuration fails startup. HTTPS is required except loopback HTTP for development. |
 | `LIGHTSPEED_PLATFORM_OIDC_DISCOVERY_URL` | `<issuer>/.well-known/openid-configuration` | Metadata URL override, including providers with a separate discovery path. Must describe the exact issuer. HTTPS except loopback HTTP. |
 | `LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID` | Required with OIDC | Confidential application client ID. |
@@ -409,12 +403,30 @@ saved on the page applies, and otherwise the default in parentheses.
 | `LIGHTSPEED_API_URL` | Unset | Runtime endpoint used with the Platform API token. Per-universe overrides must match it exactly. |
 | `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_URL` | Unset | Configurator MCP endpoint installed by the organization-admin setup flow. Set this to enable the template. |
 | `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_ALLOW_PRIVATE_NETWORK` | `false` | Permit the installed Configurator MCP connection to reach a private endpoint. Enabled by the local development launcher. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER` | `false` | Retired; `true` fails startup. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_BYTES` | `33554432` (32 MiB) | Total file content one workspace upload may carry, from 1 byte to 256 MiB. The request body limit follows at 1.5 times this value (at least 1 MiB) for base64 and paths. The web UI reads the effective value, so browser and server agree. An upload is held in memory while it is stored, so raising this raises the Platform's peak memory per upload. Each file reaches the runtime in its own request: a single file above about 47 MiB also needs a larger `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` on the runtime. |
 | `LIGHTSPEED_PLATFORM_WORKSPACE_UPLOAD_MAX_ENTRIES` | `10000` | Files and folders one workspace upload may contain, from 1 to 1,000,000. |
 | `LIGHTSPEED_PLATFORM_CHANNELS_HEALTH_URLS` | Empty list | Comma-separated internal connector-host health base URLs (`/healthz` reports every served account) aggregated for Platform administrators. |
 | `LIGHTSPEED_PLATFORM_DEV_ENVD_ENDPOINT` | unset | Development only: `lightspeed-envd` endpoint offered as the default when registering an external environment. Set by `./dev.sh`; never in deployed configuration. |
 | `LIGHTSPEED_PLATFORM_DEV_SEED` | `false` (`true` in the authenticated full dev profile) | Development only: ensure the Test universe and Admin, Operator, Contributor, Viewer logins at startup. New logins share the bootstrap Admin password; existing passwords are preserved. |
+
+Remove the retired `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER`
+from Platform configuration. Setting it to `true` prevents startup.
+
+### Platform settings
+
+A Platform Admin can set these under **Admin → Platform → Settings**. An
+environment variable locks its setting to the supplied value. With the variable
+unset, Platform uses the saved value or the built-in default shown below.
+An organization-specific universe limit takes precedence over the deployment's
+default limit.
+
+| Variable | Built-in default | Purpose |
+| --- | --- | --- |
+| `LIGHTSPEED_PLATFORM_PERSONAL_ORGANIZATIONS` | `true` | Provision a personal organization for each admitted user. |
+| `LIGHTSPEED_PLATFORM_PERSONAL_UNIVERSE_QUOTA` | `25` | Default universe limit for personal organizations. Accepts 0 to 100,000. |
+| `LIGHTSPEED_PLATFORM_SHARED_UNIVERSE_QUOTA` | `100` | Default universe limit for shared organizations. Accepts 0 to 100,000. |
+
+### Saved CLI connections
 
 The unified `lightspeed` CLI stores runtime and Platform connections under
 `LIGHTSPEED_CONFIG_DIR`, or `$XDG_CONFIG_HOME/lightspeed` /
@@ -480,11 +492,9 @@ Never reuse their credentials in a deployed environment.
 | `LIGHTSPEED_CHANNELS_CONNECTORS` | Disabled | The launcher refuses a nonempty selection; standalone connector hosts require explicit configuration. |
 | `PORT` | `3000` | Platform backend port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |
-| `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Configurator uses restricted Platform service-user keys. |
-| `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER` | `false` | Retired; `true` fails startup. |
 
-The supervisor also honors all runtime, Platform, connector host, and
-Configurator variables documented above.
+The supervisor also honors runtime, Platform, and Configurator variables
+documented above. Configure connector hosts separately.
 
 The `full` and `runtime` development profiles warn when neither
 `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set: they still start, and provider
