@@ -18,10 +18,10 @@ Platform API is built. Its runtime, client and Platform HTTP cutover is implemen
 with integrated live validation now passed. It also implements the `/ingress`
 grouping and `/environments` machine-route prefix. The paths described below
 record the implementation before that cutover. The successor
-Platform design now groups universes into Better Auth organization-backed
-accounts, uses scoped account/universe roles and permits multiple universe
-Owners. Earlier creator-key or unique-owner proposals below are historical;
-see [the agreed account model](p209-platform-authentication-and-authorization.md).
+Platform design groups universes into Better Auth organizations, uses scoped
+organization and universe roles evaluated as actions, and permits multiple
+universe Owners. Earlier creator-key or unique-owner proposals below are
+historical; see [the organization model](p209-platform-authentication-and-authorization.md).
 
 ## Problem
 

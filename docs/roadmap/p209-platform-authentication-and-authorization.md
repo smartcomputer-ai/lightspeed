@@ -516,8 +516,9 @@ These are the acceptance requirements. Executed checks and their scope are
 recorded under Validation and progress; the previous test hold was lifted
 on 2026-11-17.
 
-- Organization membership never implies access to every universe. Creator sees
-  assigned universes and can create; Member cannot create without that role.
+- Organization membership gives a person exactly the organization's default
+  universe access (P210), which may be none; service users get only their
+  grants. Creator can create; Member cannot create without that role.
 - A user may have different roles in different organizations and
   universes. UUIDs, handles, list queries and tokens cannot cross the boundary.
 - Creation grants an initial Owner and enforces organization quotas atomically

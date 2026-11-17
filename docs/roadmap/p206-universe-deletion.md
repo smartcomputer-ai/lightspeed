@@ -328,8 +328,9 @@ One migration, schema revision 25, with `release/metadata.env` aligned:
   (organization, memberships, setups); `notFound` leaves it as "missing", as
   today. A Platform pointed at the wrong or an empty runtime therefore never
   removes memberships.
-- **Platform admin → Universes** shows deleting universes with their step and
-  detail.
+- **Admin → organization → Universes** shows deleting universes with their
+  step and detail; deletion itself is in the universe's Settings → General
+  danger zone.
 - **Create in engine** is refused for a deleted universe.
 - The Platform's audit trail records the request as `universe.delete`.
 
@@ -374,7 +375,7 @@ Each slice lands with its tests.
    Incus: the project, network, ACL and profile). Removing those needs one
    new controller method that releases everything a provider holds for a
    universe, which is an environment-protocol revision. The environment
-   reconciler would call it for each provider bound to a deleting universe,
+   reconciler would call it for each provider available to a deleting universe,
    inside the same bound as the machine closes and equally best effort. It
    is not needed while universes that come and go use registered daemons.
 

@@ -1,11 +1,12 @@
 # P207 — Universe metadata, protection and expiry
 
-**Status:** Runtime mechanism and Platform protection policy implemented,
-2026-11-16. Compilation is passing; behavioral and live tests remain on hold.
+**Status:** Complete, 2026-11-17. Runtime mechanism and Platform protection
+policy are implemented; their unit, integration and live checks pass with the
+P206 and P209 suites. Nothing remains open here.
 
 This document began as the design for creators and self-service universes,
 with a creator level built into the runtime as a third kind of API key. That
-part has been taken out. Accounts contain universes, and creation and lifecycle authority are now
+part has been taken out. Organizations contain universes, and creation and lifecycle authority are now
 scoped roles, designed in
 [Platform authentication and authorization](p209-platform-authentication-and-authorization.md),
 after the runtime's own key model is removed in
@@ -39,8 +40,8 @@ one deployed from a document.
 `metadata` containment filter. The record of a deleted universe keeps its
 metadata.
 
-The runtime holds no account or principal ownership. Platform records the
-containing account and grants the Owner role to one or more principals; there
+The runtime holds no organization or principal ownership. Platform records the
+containing organization and grants the Owner role to one or more principals; there
 is no unique principal owner.
 
 ### Metadata
@@ -63,11 +64,11 @@ may change it; the flag itself grants no permission.
   SDK script that loops over universes, and expiry alike.
 - Through Platform, universe Owners may delete unprotected universes and
   enable protection, but cannot clear protection. Only an Admin of the
-  containing account or a Platform Admin may clear it, subject to account
+  containing organization or a Platform Admin may clear it, subject to organization
   policy. Even administrators first clear the flag explicitly; deletion
   has no bypass option.
-- Account policy can default to or require protection. Mandatory protection
-  must be changed at the account-policy level before unprotection is allowed.
+- Organization policy can default to or require protection. Mandatory protection
+  must be changed at the organization-policy level before unprotection is allowed.
 - Direct runtime callers retain full infrastructure authority and may clear
   the flag; the runtime never duplicates Platform role checks.
 - A protected universe cannot have an expiry, and an expiring universe
@@ -76,10 +77,10 @@ may change it; the flag itself grants no permission.
 Universes deployed from documents are the ones this exists for:
 
 - A document may state `protected: true` or `protected: false`, and `apply`
-  then keeps the universe that way only if the caller and account policy
+  then keeps the universe that way only if the caller and organization policy
   permit it. Clearing protection through a document requires the same
   administrative authority as clearing it through the UI or SDK. An explicit
-  false on creation is refused when account policy requires protection.
+  false on creation is refused when organization policy requires protection.
 - When a document leaves it out, `apply` protects a universe it creates and
   otherwise leaves the field alone. A universe that was created first and
   configured from a document afterwards, such as an expiring test universe,
@@ -124,9 +125,9 @@ If the run crashes before the last line, the universe expires.
 The runtime does not decide caller roles. With a direct connection, a caller
 holding a runtime token may set all three, subject to resource invariants.
 Through Platform, universe Owners and scoped administrators manage metadata,
-expiry and enabling protection; only the containing Account Admin or a
-Platform Admin may clear protection, subject to account policy. See
-[Platform accounts and authorization](p209-platform-authentication-and-authorization.md#deletion-protection).
+expiry and enabling protection; only the containing Organization Admin or a
+Platform Admin may clear protection, subject to organization policy. See
+[Platform organizations and authorization](p209-platform-authentication-and-authorization.md#deletion-protection).
 The same rules apply to the web app, CLI, SDK and configuration documents.
 
 ## Storage
@@ -162,8 +163,8 @@ consumer are regenerated.
   say otherwise, keeps an explicit value, and leaves an existing universe's
   protection alone when the document is silent.
 - Through Platform, an Owner cannot clear protection using configuration
-  updates or `config apply`; Account Admin authority is scoped to the
-  containing account. Mandatory account protection refuses explicit false.
+  updates or `config apply`; Organization Admin authority is scoped to the
+  containing organization. Mandatory organization protection refuses explicit false.
 - Administrative deletion has no protected-flag bypass; it requires the
   explicit authorized unprotection step.
 
@@ -175,8 +176,8 @@ Decided, 2026-11-16:
   Metadata reuses the map sessions and environments have.
 - **Protection is enforced by the server,** not only by the CLI.
 - **`config apply` protects a universe it creates,** unless the document
-  says `protected: false` and account policy permits it.
-- **Platform controls unprotection:** only the containing Account Admin or a
+  says `protected: false` and organization policy permits it.
+- **Platform controls unprotection:** only the containing Organization Admin or a
   Platform Admin may clear it; universe Owner is insufficient. This supersedes
   the earlier rule that anyone allowed to delete could unprotect first.
 - **Expiry is a time on the universe.** There is no maximum lifetime
@@ -226,3 +227,8 @@ Decided, 2026-11-16:
   CLI all-target compilation, TypeScript and Python type checks, SDK build,
   and documentation build pass. Regression coverage was updated; tests and
   Clippy remain on hold.
+
+- 2026-11-17: tests ran with the lifted hold and pass. Terminology follows
+  the rename to organizations. Through Platform, a universe document may name
+  its organization by handle (`organization`) and declare `access`; both are
+  Platform-only and never reach the runtime (P209).

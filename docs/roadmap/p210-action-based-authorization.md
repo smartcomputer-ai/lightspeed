@@ -1,9 +1,10 @@
 # P210 — Action-based authorization and default universe access
 
-**Status:** Action-based checks and default universe access implemented,
-2026-11-17; unit and integration suites pass. The service-user model in
-[Service users: agreed target](#service-users-agreed-target) is agreed in
-outline only. **Revisit its open details with the owner before implementing
+**Status:** Implemented, 2026-11-17: action-based checks and default
+universe access; unit and integration suites pass. Service users are decided
+for now: one organization each (see [Service users](#service-users)).
+Deployment-wide service users are on hold; the outline below is kept for when
+they are needed. **Revisit its open details with the owner before building
 it.**
 
 [Platform organizations, authentication and authorization](p209-platform-authentication-and-authorization.md)
@@ -147,9 +148,19 @@ per request. It has no resource-dependent rules such as shared versus
 unshared sessions. Platform keeps Better Auth for identities and records and
 evaluates authorization itself.
 
-## Service users: agreed target
+## Service users
 
-**Not implemented. Revisit the details below with the owner before starting.**
+Decided 2026-11-17: a service user belongs to exactly one organization, holds
+one organization role there and universe grants in its universes, and its
+name is unique in that organization. It never receives the default universe
+access. This covers automation for now; a pipeline's first key is created by
+an administrator. Its keys can be generated, declared with a supplied secret,
+or given a new secret in place (P209).
+
+### Deployment-wide service users (on hold)
+
+**Not implemented and on hold. Revisit the details below with the owner
+before starting.**
 
 Service users stay separate from Better Auth users. A Better Auth user is a
 human login (email, password or SSO, sessions, the Platform role, company
@@ -208,12 +219,14 @@ How automation should authenticate:
   unclaimed universes until a Platform Admin adopts them into an organization.
 - **Organization service user**: the default for automation that works in
   one organization, as Creator (owns what it creates) or Organization Admin.
-- **Deployment-owned service user** (target above): automation that creates
+- **Deployment-owned service user** (on hold, above): automation that creates
   organizations or spans them, holding a narrow deployment role instead of a
-  person's Platform Admin key.
+  person's Platform Admin key. Until then, a Platform Admin's key creates
+  organizations.
 
-Moving declared members and directory-group mappings from runtime documents
-into Platform, as P209 intends, is separate work.
+Declared members and directory-group mappings now live in Platform and are
+declared in organization documents (`membershipPolicy`) and universe
+documents (`access`); see P209.
 
 ## Later
 
@@ -236,5 +249,6 @@ into Platform, as P209 intends, is separate work.
 - [x] Default universe access: storage, migration, API, settings UI and
   tests, including service users not receiving it.
 - [x] Self-service organization creation switch removed.
-- [ ] Service-user owner and memberships (revisit first).
-- [ ] Deployment-owned service users and a first narrow deployment role.
+- [x] Service users decided as one organization each; names unique there.
+- [ ] Deployment-owned service users and a first narrow deployment role (on
+  hold).

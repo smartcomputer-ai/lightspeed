@@ -3,7 +3,7 @@
 **Status:** HTTP cutover implemented and integrated live validation passed,
 2026-11-17. Runtime, SDKs, CLI and Platform now use the resource contract.
 Application JSON-RPC transport and generated artifacts are removed. Platform
-account hierarchy and personal/application credentials are implemented in P209;
+organizations and personal/service-user credentials are implemented in P209;
 its behavioral and live authentication validation is recorded there.
 
 This accompanies [runtime access simplification](p208-runtime-access-simplification.md)
@@ -81,7 +81,7 @@ Proposed path layout:
 | Surface | Address | Contract owner |
 | --- | --- | --- |
 | Shared application API | `/api/v1/...` on either runtime or Platform | Runtime operation declarations; Platform applies its policy and lifecycle handling |
-| Platform-only resources | `/api/v1/platform/...` on Platform | Platform: accounts, applications, tokens and scoped role grants |
+| Platform-only resources | `/api/v1/platform/...` on Platform | Platform: organizations, service users, API keys, scoped role grants and settings |
 | Frontend-specific adapters | `/api/ui/...` on Platform | Platform web application; may aggregate several operations |
 | Browser sign-in and sessions | `/api/auth/...` on Platform | Existing authentication integration |
 | Public runtime callbacks, metadata and webhooks | `/ingress/...` | Runtime integration endpoints; protocol behavior retained under the grouped paths |
