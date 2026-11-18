@@ -65,8 +65,15 @@ export function UserMenu({ user, canAdmin, organizationId }: { user: SessionUser
           </DropdownMenuTrigger>
           <DropdownMenuContent className="min-w-56" side="top" align="start">
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
+              <DropdownMenuLabel className="grid gap-1 font-normal">
+                <span className="truncate font-bold">{user.name}</span>
+                <span className="truncate">{user.email}</span>
+                <span className="text-xs font-normal text-muted-foreground/60">
+                  Lightspeed v{__LIGHTSPEED_VERSION__}
+                </span>
+              </DropdownMenuLabel>
             </DropdownMenuGroup>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => navigate("/settings")}>
               <SettingsIcon />
               Settings
@@ -114,12 +121,6 @@ export function UserMenu({ user, canAdmin, organizationId }: { user: SessionUser
               <SignOutIcon />
               Sign out
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                Lightspeed v{__LIGHTSPEED_VERSION__}
-              </DropdownMenuLabel>
-            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

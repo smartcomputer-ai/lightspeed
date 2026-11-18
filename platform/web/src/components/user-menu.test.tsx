@@ -44,7 +44,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("ends with the Lightspeed version", async () => {
+it("shows the Lightspeed version below the user identity, separated from Settings", async () => {
   const user = { id: "u1", name: "Ada Demo", email: "ada@example.com" } as Parameters<typeof UserMenu>[0]["user"];
   await act(async () => root.render(
     <MemoryRouter>
@@ -52,8 +52,14 @@ it("ends with the Lightspeed version", async () => {
     </MemoryRouter>,
   ));
   const groups = container.innerHTML.split("<hr>");
-  const last = document.createElement("div");
-  last.innerHTML = groups.at(-1)!;
+  const header = document.createElement("div");
+  header.innerHTML = groups[0]!;
   expect(__LIGHTSPEED_VERSION__).toMatch(/^\d+\.\d+\.\d+/);
-  expect(last.textContent?.trim()).toBe(`Lightspeed v${__LIGHTSPEED_VERSION__}`);
+  expect(Array.from(header.querySelectorAll("span"), (span) => span.textContent?.trim())).toEqual([
+    user.name,
+    user.email,
+    `Lightspeed v${__LIGHTSPEED_VERSION__}`,
+  ]);
+  expect(container.querySelector("hr")?.nextElementSibling?.textContent?.trim()).toBe("Settings");
+  expect(groups.at(-1)).not.toContain("Lightspeed v");
 });
