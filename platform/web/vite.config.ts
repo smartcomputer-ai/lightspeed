@@ -16,6 +16,9 @@ export default defineConfig(({ mode }) => {
   const demo = mode === "demo";
   return {
     base: demo ? "/demo/" : "/app/",
+    define: {
+      __LIGHTSPEED_VERSION__: JSON.stringify(releaseVersion()),
+    },
     plugins: [react(), tailwindcss(), todoGuard(), ...(demo ? [demoEntry()] : [])],
     resolve: {
       alias: {
@@ -42,6 +45,20 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
+
+/// The version shown in the UI. Release builds export
+/// LIGHTSPEED_RELEASE_VERSION (scripts/release/build-dist.sh); other builds
+/// fall back to the product version in release/metadata.env.
+function releaseVersion(): string {
+  const explicit = process.env.LIGHTSPEED_RELEASE_VERSION?.trim();
+  if (explicit) return explicit;
+  try {
+    const metadata = readFileSync(path.resolve(import.meta.dirname, "../../release/metadata.env"), "utf8");
+    return metadata.match(/^LIGHTSPEED_PRODUCT_VERSION=(.+)$/m)?.[1]?.trim() ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 /// Points index.html at the demo entry, which installs the in-browser
 /// backend before loading the real app.

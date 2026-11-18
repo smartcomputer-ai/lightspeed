@@ -114,6 +114,12 @@ export function UserMenu({ user, canAdmin, organizationId }: { user: SessionUser
               <SignOutIcon />
               Sign out
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                Lightspeed v{__LIGHTSPEED_VERSION__}
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
