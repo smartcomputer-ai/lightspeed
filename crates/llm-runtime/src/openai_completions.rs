@@ -9,11 +9,12 @@ use std::{collections::BTreeMap, sync::Arc};
 use async_trait::async_trait;
 use harness::{
     CompactionPolicy, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
-    ContextCompactionTask, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, LlmRequest, LlmUsage, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
-    ObservedToolCall, ProviderApiKind, RemoteMcpExecution, RemoteMcpExposure, TokenEstimate,
-    TokenEstimateQuality, ToolCallId, ToolId, ToolKind, ToolName, storage::BlobStore,
+    ContextCompactionTask, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind,
+    ContextEntrySource, ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
+    OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND, ObservedToolCall, ProviderApiKind,
+    RemoteMcpExecution, RemoteMcpExposure, TokenEstimate, TokenEstimateQuality, ToolCallId, ToolId,
+    ToolKind, ToolName, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::completions as oai_c};
 use serde_json::{Value, json};
@@ -76,6 +77,13 @@ impl CompletionDialect {
 
     fn uses_max_completion_tokens(self) -> bool {
         matches!(self, Self::OpenAi | Self::OpenRouter)
+    }
+
+    /// Self-hosted chat templates (Qwen among them) reject any system message
+    /// that is not the first message, so leading instructions merge into one
+    /// system message and later updates travel as user messages.
+    fn single_leading_system(self) -> bool {
+        self == Self::Compatible
     }
 }
 
@@ -436,8 +444,22 @@ async fn materialize_messages_tracked(
     let mut positions = RequestPositions::with_capacity(entries.len());
     let mut last_assistant_source: Option<ContextEntrySource> = None;
     let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
+    let mut deferred = Vec::new();
 
     for entry in entries {
+        // Deferred updates land once the tool exchange is over: never between
+        // an assistant's calls and their results, nor inside that assistant.
+        if !matches!(
+            entry.kind,
+            ContextEntryKind::ToolResult { .. }
+                | ContextEntryKind::Instructions
+                | ContextEntryKind::Catalog { .. }
+        ) && messages
+            .last()
+            .is_none_or(|message: &oai_c::CompletionMessage| message.role != "assistant")
+        {
+            flush_deferred(&mut messages, &mut positions, &mut deferred);
+        }
         match &entry.kind {
             ContextEntryKind::ToolCall { .. } => {
                 require_completions_provider_kind(entry)?;
@@ -535,6 +557,35 @@ async fn materialize_messages_tracked(
                 last_assistant_source = (message.role == "assistant").then(|| entry.source.clone());
                 messages.push(message);
             }
+            ContextEntryKind::Instructions | ContextEntryKind::Catalog { .. }
+                if dialect.single_leading_system() =>
+            {
+                reject_foreign_provider_kind(entry)?;
+                let message = materialize_message(blobs, entry, dialect, &mut media).await?;
+                let text = message.text();
+                if messages.iter().all(|message| message.role == "system") {
+                    match messages
+                        .first_mut()
+                        .and_then(|first| first.content.as_mut())
+                    {
+                        Some(oai_c::CompletionMessageContent::Text(leading)) => {
+                            leading.push_str("\n\n");
+                            leading.push_str(&text);
+                        }
+                        _ => messages.push(message),
+                    }
+                } else {
+                    let message = text_message("user", instruction_update_text(entry, text));
+                    // A user message may not split an assistant's tool calls
+                    // from their results; it waits until the exchange ends.
+                    if !deferred.is_empty() || in_tool_exchange(&messages) {
+                        deferred.push((entry.entry_id, message));
+                        continue;
+                    }
+                    push_message(&mut messages, message);
+                }
+                last_assistant_source = None;
+            }
             _ => {
                 reject_foreign_provider_kind(entry)?;
                 let message = materialize_message(blobs, entry, dialect, &mut media).await?;
@@ -545,7 +596,40 @@ async fn materialize_messages_tracked(
         }
         positions.push((entry.entry_id, messages.len().saturating_sub(1)));
     }
+    flush_deferred(&mut messages, &mut positions, &mut deferred);
     Ok((messages, positions))
+}
+
+/// Header for an instruction or catalog entry rendered after the conversation
+/// started, where single-system dialects carry it as a user message.
+fn instruction_update_text(entry: &ContextEntry, text: String) -> String {
+    let header = match &entry.kind {
+        ContextEntryKind::Catalog { title } => format!("[Catalog update: {}]", title.trim()),
+        _ => "[Instructions update]".to_owned(),
+    };
+    format!("{header}\n\n{text}")
+}
+
+fn in_tool_exchange(messages: &[oai_c::CompletionMessage]) -> bool {
+    messages.last().is_some_and(|message| {
+        message.role == "tool"
+            || (message.role == "assistant"
+                && message
+                    .tool_calls
+                    .as_ref()
+                    .is_some_and(|calls| !calls.is_empty()))
+    })
+}
+
+fn flush_deferred(
+    messages: &mut Vec<oai_c::CompletionMessage>,
+    positions: &mut RequestPositions,
+    deferred: &mut Vec<(ContextEntryId, oai_c::CompletionMessage)>,
+) {
+    for (entry_id, message) in deferred.drain(..) {
+        push_message(messages, message);
+        positions.push((entry_id, messages.len() - 1));
+    }
 }
 
 // Reasoning and visible output have distinct provenance labels, but belong
@@ -2972,6 +3056,197 @@ mod tests {
         assert_eq!(
             positions,
             [(1, 0), (2, 1), (3, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
+    }
+
+    fn instruction_entries(
+        instructions: &BlobRef,
+        catalog: &BlobRef,
+        user: &BlobRef,
+    ) -> Vec<ContextEntry> {
+        let catalog_entry = |id: u64| {
+            entry(
+                id,
+                ContextEntryKind::Catalog {
+                    title: "Bot directory".to_owned(),
+                },
+                ContextEntrySource::ContextEdit,
+                catalog.clone(),
+            )
+        };
+        let user_entry = |id: u64| {
+            entry(
+                id,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                ContextEntrySource::RunInput {
+                    run_id: RunId::new(1),
+                    input_index: 0,
+                },
+                user.clone(),
+            )
+        };
+        vec![
+            entry(
+                1,
+                ContextEntryKind::Instructions,
+                ContextEntrySource::ContextEdit,
+                instructions.clone(),
+            ),
+            catalog_entry(2),
+            user_entry(3),
+            catalog_entry(4),
+            user_entry(5),
+        ]
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compatible_merges_leading_instructions_and_sends_later_ones_as_user() {
+        let blobs = InMemoryBlobStore::new();
+        let instructions = blobs.insert_text("Be precise.").await;
+        let catalog = blobs.insert_text("- helper").await;
+        let user = blobs.insert_text("Hello").await;
+        let entries = instruction_entries(&instructions, &catalog, &user);
+
+        let (messages, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::Compatible)
+                .await
+                .expect("materialize");
+
+        let value = serde_json::to_value(&messages).expect("json");
+        assert_eq!(
+            value,
+            json!([
+                { "role": "system", "content": "Be precise.\n\nBot directory:\n\n- helper" },
+                { "role": "user", "content": [
+                    { "type": "text", "text": "Hello" },
+                    { "type": "text", "text": "[Catalog update: Bot directory]\n\nBot directory:\n\n- helper" },
+                    { "type": "text", "text": "Hello" }
+                ] }
+            ])
+        );
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 0), (3, 1), (4, 1), (5, 1)]
+                .map(|(id, index)| (ContextEntryId::new(id), index))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compatible_defers_a_catalog_update_past_the_tool_exchange() {
+        let blobs = InMemoryBlobStore::new();
+        let catalog = blobs.insert_text("- helper").await;
+        let user = blobs.insert_text("Hello").await;
+        let call_ref = put_json(
+            &blobs,
+            &json!({
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "read_file", "arguments": "{}" }
+            }),
+        )
+        .await
+        .expect("call");
+        let result_ref = blobs.insert_text("contents").await;
+        let call_id = || ToolCallId::try_new("call_1").expect("call id");
+        let mut call = entry(
+            2,
+            ContextEntryKind::ToolCall {
+                call_id: call_id(),
+                name: ToolName::try_new("read_file").expect("tool name"),
+            },
+            ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(1),
+            },
+            call_ref,
+        );
+        call.content.media_type = Some(MEDIA_TYPE_JSON.to_owned());
+        call.content.provider_kind = Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned());
+        let entries = vec![
+            entry(
+                1,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                ContextEntrySource::RunInput {
+                    run_id: RunId::new(1),
+                    input_index: 0,
+                },
+                user,
+            ),
+            call,
+            entry(
+                3,
+                ContextEntryKind::Catalog {
+                    title: "Bot directory".to_owned(),
+                },
+                ContextEntrySource::ContextEdit,
+                catalog,
+            ),
+            entry(
+                4,
+                ContextEntryKind::ToolResult {
+                    call_id: call_id(),
+                    is_error: false,
+                },
+                ContextEntrySource::Tool {
+                    run_id: RunId::new(1),
+                    turn_id: TurnId::new(1),
+                    batch_id: None,
+                },
+                result_ref,
+            ),
+        ];
+
+        let (messages, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::Compatible)
+                .await
+                .expect("materialize");
+
+        let roles = messages
+            .iter()
+            .map(|message| message.role.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(roles, ["user", "assistant", "tool", "user"]);
+        assert!(
+            messages[3]
+                .text()
+                .starts_with("[Catalog update: Bot directory]")
+        );
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 1), (4, 2), (3, 3)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn openai_keeps_one_developer_message_per_instruction_entry() {
+        let blobs = InMemoryBlobStore::new();
+        let instructions = blobs.insert_text("Be precise.").await;
+        let catalog = blobs.insert_text("- helper").await;
+        let user = blobs.insert_text("Hello").await;
+        let entries = instruction_entries(&instructions, &catalog, &user);
+
+        let (messages, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::OpenAi)
+                .await
+                .expect("materialize");
+
+        let roles = messages
+            .iter()
+            .map(|message| message.role.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            roles,
+            ["developer", "developer", "user", "developer", "user"]
+        );
+        assert_eq!(messages[3].text(), "Bot directory:\n\n- helper");
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]
+                .map(|(id, index)| (ContextEntryId::new(id), index))
         );
     }
 }
