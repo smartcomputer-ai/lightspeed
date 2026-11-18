@@ -18,6 +18,8 @@ tools = { path = "../tools" }
 
 [dev-dependencies]
 api-projection = { path = "../api-projection" }
+minijinja = { version = "3.0.5", features = ["json", "loop_controls", "serde"] }
+minijinja-contrib = { version = "3.0.5", features = ["pycompat"] }
 test-support = { path = "../test-support" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt"] }
 vfs = { path = "../vfs" }

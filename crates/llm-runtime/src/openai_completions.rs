@@ -78,13 +78,6 @@ impl CompletionDialect {
     fn uses_max_completion_tokens(self) -> bool {
         matches!(self, Self::OpenAi | Self::OpenRouter)
     }
-
-    /// Self-hosted chat templates (Qwen among them) reject any system message
-    /// that is not the first message, so leading instructions merge into one
-    /// system message and later updates travel as user messages.
-    fn single_leading_system(self) -> bool {
-        self == Self::Compatible
-    }
 }
 
 #[async_trait]
@@ -446,14 +439,23 @@ async fn materialize_messages_tracked(
     let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
     let mut deferred = Vec::new();
 
+    // Every dialect gets the instructions as one leading message, the way the
+    // other adapters send one system prompt. Chat templates of self-hosted
+    // models (Qwen among them) accept no other system message.
+    if let Some(text) = crate::system_prompt::collated_instructions(blobs, entries).await? {
+        messages.push(text_message(dialect.instruction_role(), text));
+    }
+
     for entry in entries {
-        // Deferred updates land once the tool exchange is over: never between
-        // an assistant's calls and their results, nor inside that assistant.
+        if matches!(entry.kind, ContextEntryKind::Instructions) {
+            positions.push((entry.entry_id, 0));
+            continue;
+        }
+        // Held catalogs land once the tool exchange is over: never between an
+        // assistant's calls and their results, nor inside that assistant.
         if !matches!(
             entry.kind,
-            ContextEntryKind::ToolResult { .. }
-                | ContextEntryKind::Instructions
-                | ContextEntryKind::Catalog { .. }
+            ContextEntryKind::ToolResult { .. } | ContextEntryKind::Catalog { .. }
         ) && messages
             .last()
             .is_none_or(|message: &oai_c::CompletionMessage| message.role != "assistant")
@@ -557,33 +559,27 @@ async fn materialize_messages_tracked(
                 last_assistant_source = (message.role == "assistant").then(|| entry.source.clone());
                 messages.push(message);
             }
-            ContextEntryKind::Instructions | ContextEntryKind::Catalog { .. }
-                if dialect.single_leading_system() =>
-            {
+            // A catalog is context, not instructions: user text at its
+            // position, as on Anthropic. A refreshed catalog lands at the
+            // tail, so no system message ever follows the conversation.
+            ContextEntryKind::Catalog { .. } => {
                 reject_foreign_provider_kind(entry)?;
-                let message = materialize_message(blobs, entry, dialect, &mut media).await?;
-                let text = message.text();
-                if messages.iter().all(|message| message.role == "system") {
-                    match messages
-                        .first_mut()
-                        .and_then(|first| first.content.as_mut())
-                    {
-                        Some(oai_c::CompletionMessageContent::Text(leading)) => {
-                            leading.push_str("\n\n");
-                            leading.push_str(&text);
-                        }
-                        _ => messages.push(message),
-                    }
-                } else {
-                    let message = text_message("user", instruction_update_text(entry, text));
-                    // A user message may not split an assistant's tool calls
-                    // from their results; it waits until the exchange ends.
-                    if !deferred.is_empty() || in_tool_exchange(&messages) {
-                        deferred.push((entry.entry_id, message));
-                        continue;
-                    }
-                    push_message(&mut messages, message);
+                let message = text_message(
+                    "user",
+                    crate::catalog_prompts::stored_catalog_text(
+                        blobs,
+                        entry,
+                        &entry.content.content_ref,
+                    )
+                    .await?,
+                );
+                // A user message may not split an assistant's tool calls
+                // from their results; it waits until the exchange ends.
+                if !deferred.is_empty() || in_tool_exchange(&messages) {
+                    deferred.push((entry.entry_id, message));
+                    continue;
                 }
+                push_message(&mut messages, message);
                 last_assistant_source = None;
             }
             _ => {
@@ -598,16 +594,6 @@ async fn materialize_messages_tracked(
     }
     flush_deferred(&mut messages, &mut positions, &mut deferred);
     Ok((messages, positions))
-}
-
-/// Header for an instruction or catalog entry rendered after the conversation
-/// started, where single-system dialects carry it as a user message.
-fn instruction_update_text(entry: &ContextEntry, text: String) -> String {
-    let header = match &entry.kind {
-        ContextEntryKind::Catalog { title } => format!("[Catalog update: {}]", title.trim()),
-        _ => "[Instructions update]".to_owned(),
-    };
-    format!("{header}\n\n{text}")
 }
 
 fn in_tool_exchange(messages: &[oai_c::CompletionMessage]) -> bool {
@@ -819,15 +805,6 @@ async fn materialize_message(
                 ..Default::default()
             })
         }
-        ContextEntryKind::Instructions => Ok(text_message(
-            dialect.instruction_role(),
-            read_text(blobs, &entry.content.content_ref).await?,
-        )),
-        ContextEntryKind::Catalog { .. } => Ok(text_message(
-            dialect.instruction_role(),
-            crate::catalog_prompts::stored_catalog_text(blobs, entry, &entry.content.content_ref)
-                .await?,
-        )),
         ContextEntryKind::ToolResult { call_id, .. } => Ok(oai_c::CompletionMessage {
             role: "tool".to_owned(),
             content: Some(oai_c::CompletionMessageContent::Text(
@@ -836,7 +813,9 @@ async fn materialize_message(
             tool_call_id: Some(call_id.as_str().to_owned()),
             ..Default::default()
         }),
-        ContextEntryKind::ToolCall { .. }
+        ContextEntryKind::Instructions
+        | ContextEntryKind::Catalog { .. }
+        | ContextEntryKind::ToolCall { .. }
         | ContextEntryKind::ReasoningState
         | ContextEntryKind::ProviderOpaque
         | ContextEntryKind::McpApprovalResponse { .. } => {
@@ -3059,194 +3038,585 @@ mod tests {
         );
     }
 
-    fn instruction_entries(
-        instructions: &BlobRef,
-        catalog: &BlobRef,
-        user: &BlobRef,
-    ) -> Vec<ContextEntry> {
-        let catalog_entry = |id: u64| {
-            entry(
-                id,
-                ContextEntryKind::Catalog {
-                    title: "Bot directory".to_owned(),
-                },
-                ContextEntrySource::ContextEdit,
-                catalog.clone(),
-            )
-        };
-        let user_entry = |id: u64| {
-            entry(
-                id,
-                ContextEntryKind::Message {
-                    role: ContextMessageRole::User,
-                },
-                ContextEntrySource::RunInput {
-                    run_id: RunId::new(1),
-                    input_index: 0,
-                },
-                user.clone(),
-            )
-        };
-        vec![
-            entry(
-                1,
-                ContextEntryKind::Instructions,
-                ContextEntrySource::ContextEdit,
-                instructions.clone(),
-            ),
-            catalog_entry(2),
-            user_entry(3),
-            catalog_entry(4),
-            user_entry(5),
-        ]
+    const ALL_DIALECTS: [CompletionDialect; 4] = [
+        CompletionDialect::OpenAi,
+        CompletionDialect::DeepSeek,
+        CompletionDialect::OpenRouter,
+        CompletionDialect::Compatible,
+    ];
+
+    fn text_entry(
+        id: u64,
+        kind: ContextEntryKind,
+        source: ContextEntrySource,
+        text: &BlobRef,
+    ) -> ContextEntry {
+        entry(id, kind, source, text.clone())
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn compatible_merges_leading_instructions_and_sends_later_ones_as_user() {
-        let blobs = InMemoryBlobStore::new();
-        let instructions = blobs.insert_text("Be precise.").await;
-        let catalog = blobs.insert_text("- helper").await;
-        let user = blobs.insert_text("Hello").await;
-        let entries = instruction_entries(&instructions, &catalog, &user);
-
-        let (messages, positions) =
-            materialize_messages_tracked(&blobs, &entries, CompletionDialect::Compatible)
-                .await
-                .expect("materialize");
-
-        let value = serde_json::to_value(&messages).expect("json");
-        assert_eq!(
-            value,
-            json!([
-                { "role": "system", "content": "Be precise.\n\nBot directory:\n\n- helper" },
-                { "role": "user", "content": [
-                    { "type": "text", "text": "Hello" },
-                    { "type": "text", "text": "[Catalog update: Bot directory]\n\nBot directory:\n\n- helper" },
-                    { "type": "text", "text": "Hello" }
-                ] }
-            ])
-        );
-        assert_eq!(
-            positions,
-            [(1, 0), (2, 0), (3, 1), (4, 1), (5, 1)]
-                .map(|(id, index)| (ContextEntryId::new(id), index))
-        );
+    fn user_message(id: u64, run: u64, text: &BlobRef) -> ContextEntry {
+        text_entry(
+            id,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            ContextEntrySource::RunInput {
+                run_id: RunId::new(run),
+                input_index: 0,
+            },
+            text,
+        )
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn compatible_defers_a_catalog_update_past_the_tool_exchange() {
-        let blobs = InMemoryBlobStore::new();
-        let catalog = blobs.insert_text("- helper").await;
-        let user = blobs.insert_text("Hello").await;
+    fn assistant_message(id: u64, run: u64, turn: u64, text: &BlobRef) -> ContextEntry {
+        text_entry(
+            id,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            },
+            ContextEntrySource::AssistantOutput {
+                run_id: RunId::new(run),
+                turn_id: TurnId::new(turn),
+            },
+            text,
+        )
+    }
+
+    fn instructions(id: u64, text: &BlobRef) -> ContextEntry {
+        text_entry(
+            id,
+            ContextEntryKind::Instructions,
+            ContextEntrySource::ContextEdit,
+            text,
+        )
+    }
+
+    fn catalog(id: u64, text: &BlobRef, supersedes: Option<u64>) -> ContextEntry {
+        let mut catalog = text_entry(
+            id,
+            ContextEntryKind::Catalog {
+                title: "Bot directory".to_owned(),
+            },
+            ContextEntrySource::ContextEdit,
+            text,
+        );
+        catalog.supersedes = supersedes.map(ContextEntryId::new);
+        catalog
+    }
+
+    async fn tool_call(blobs: &InMemoryBlobStore, id: u64, run: u64, turn: u64) -> ContextEntry {
         let call_ref = put_json(
-            &blobs,
+            blobs,
             &json!({
-                "id": "call_1",
+                "id": format!("call{id:05}"),
                 "type": "function",
                 "function": { "name": "read_file", "arguments": "{}" }
             }),
         )
         .await
         .expect("call");
-        let result_ref = blobs.insert_text("contents").await;
-        let call_id = || ToolCallId::try_new("call_1").expect("call id");
         let mut call = entry(
-            2,
+            id,
             ContextEntryKind::ToolCall {
-                call_id: call_id(),
+                call_id: ToolCallId::try_new(format!("call{id:05}")).expect("call id"),
                 name: ToolName::try_new("read_file").expect("tool name"),
             },
             ContextEntrySource::AssistantOutput {
-                run_id: RunId::new(1),
-                turn_id: TurnId::new(1),
+                run_id: RunId::new(run),
+                turn_id: TurnId::new(turn),
             },
             call_ref,
         );
         call.content.media_type = Some(MEDIA_TYPE_JSON.to_owned());
         call.content.provider_kind = Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned());
-        let entries = vec![
-            entry(
-                1,
-                ContextEntryKind::Message {
-                    role: ContextMessageRole::User,
-                },
-                ContextEntrySource::RunInput {
-                    run_id: RunId::new(1),
-                    input_index: 0,
-                },
-                user,
-            ),
-            call,
-            entry(
-                3,
-                ContextEntryKind::Catalog {
-                    title: "Bot directory".to_owned(),
-                },
-                ContextEntrySource::ContextEdit,
-                catalog,
-            ),
-            entry(
-                4,
-                ContextEntryKind::ToolResult {
-                    call_id: call_id(),
-                    is_error: false,
-                },
-                ContextEntrySource::Tool {
-                    run_id: RunId::new(1),
-                    turn_id: TurnId::new(1),
-                    batch_id: None,
-                },
-                result_ref,
-            ),
-        ];
+        call
+    }
 
-        let (messages, positions) =
-            materialize_messages_tracked(&blobs, &entries, CompletionDialect::Compatible)
-                .await
-                .expect("materialize");
+    fn tool_result(id: u64, call: u64, run: u64, turn: u64, text: &BlobRef) -> ContextEntry {
+        text_entry(
+            id,
+            ContextEntryKind::ToolResult {
+                call_id: ToolCallId::try_new(format!("call{call:05}")).expect("call id"),
+                is_error: false,
+            },
+            ContextEntrySource::Tool {
+                run_id: RunId::new(run),
+                turn_id: TurnId::new(turn),
+                batch_id: None,
+            },
+            text,
+        )
+    }
 
-        let roles = messages
+    async fn rendered(
+        blobs: &InMemoryBlobStore,
+        entries: &[ContextEntry],
+        dialect: CompletionDialect,
+    ) -> Vec<String> {
+        materialize_messages(blobs, entries, dialect)
+            .await
+            .expect("materialize")
             .iter()
-            .map(|message| message.role.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(roles, ["user", "assistant", "tool", "user"]);
-        assert!(
-            messages[3]
-                .text()
-                .starts_with("[Catalog update: Bot directory]")
-        );
-        assert_eq!(
-            positions,
-            [(1, 0), (2, 1), (4, 2), (3, 3)].map(|(id, index)| (ContextEntryId::new(id), index))
-        );
+            .map(|message| serde_json::to_string(message).expect("json"))
+            .collect()
+    }
+
+    /// Request N must be a byte-level prefix of request N+1, message for
+    /// message, so a provider's prefix cache (OpenAI, vLLM, SGLang) keeps
+    /// everything N already sent.
+    async fn assert_prefix_kept(
+        blobs: &InMemoryBlobStore,
+        before: &[ContextEntry],
+        appended: &[ContextEntry],
+    ) {
+        let after = [before, appended].concat();
+        for dialect in ALL_DIALECTS {
+            let first = rendered(blobs, before, dialect).await;
+            let second = rendered(blobs, &after, dialect).await;
+            assert!(
+                second.len() >= first.len() && second[..first.len()] == first[..],
+                "{dialect:?}: request N is not a prefix of request N+1\nN:   {first:#?}\nN+1: {second:#?}"
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn openai_keeps_one_developer_message_per_instruction_entry() {
+    async fn every_dialect_sends_one_leading_instruction_message_and_catalogs_as_user() {
         let blobs = InMemoryBlobStore::new();
-        let instructions = blobs.insert_text("Be precise.").await;
-        let catalog = blobs.insert_text("- helper").await;
-        let user = blobs.insert_text("Hello").await;
-        let entries = instruction_entries(&instructions, &catalog, &user);
+        let base = blobs.insert_text("Be precise.").await;
+        let profile = blobs.insert_text("  You review code.\n").await;
+        let empty = blobs.insert_text("   ").await;
+        let directory = blobs.insert_text("- helper").await;
+        let hello = blobs.insert_text("Hello").await;
+        let entries = vec![
+            instructions(1, &base),
+            instructions(2, &profile),
+            instructions(3, &empty),
+            catalog(4, &directory, None),
+            user_message(5, 1, &hello),
+        ];
 
-        let (messages, positions) =
-            materialize_messages_tracked(&blobs, &entries, CompletionDialect::OpenAi)
+        for dialect in ALL_DIALECTS {
+            let (messages, positions) = materialize_messages_tracked(&blobs, &entries, dialect)
                 .await
                 .expect("materialize");
+            assert_eq!(
+                serde_json::to_value(&messages).expect("json"),
+                json!([
+                    { "role": dialect.instruction_role(), "content": "Be precise.\n\nYou review code." },
+                    { "role": "user", "content": [
+                        { "type": "text", "text": "Bot directory:\n\n- helper" },
+                        { "type": "text", "text": "Hello" }
+                    ] }
+                ]),
+                "{dialect:?}"
+            );
+            assert_eq!(
+                positions,
+                [(1, 0), (2, 0), (3, 0), (4, 1), (5, 1)]
+                    .map(|(id, index)| (ContextEntryId::new(id), index))
+            );
+        }
+    }
 
-        let roles = messages
-            .iter()
-            .map(|message| message.role.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            roles,
-            ["developer", "developer", "user", "developer", "user"]
-        );
-        assert_eq!(messages[3].text(), "Bot directory:\n\n- helper");
-        assert_eq!(
-            positions,
-            [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)]
-                .map(|(id, index)| (ContextEntryId::new(id), index))
-        );
+    #[tokio::test(flavor = "current_thread")]
+    async fn no_system_message_follows_the_conversation() {
+        let blobs = InMemoryBlobStore::new();
+        let base = blobs.insert_text("Be precise.").await;
+        let late = blobs.insert_text("Late layer.").await;
+        let directory = blobs.insert_text("- helper").await;
+        let refreshed = blobs.insert_text("- helper\n- reviewer").await;
+        let hello = blobs.insert_text("Hello").await;
+        let answer = blobs.insert_text("Hi").await;
+        let entries = vec![
+            instructions(1, &base),
+            catalog(2, &directory, None),
+            user_message(3, 1, &hello),
+            assistant_message(4, 1, 1, &answer),
+            // Out of planned order on purpose: instructions still lead.
+            instructions(5, &late),
+            catalog(6, &refreshed, Some(2)),
+            user_message(7, 2, &hello),
+        ];
+
+        for dialect in ALL_DIALECTS {
+            let messages = materialize_messages(&blobs, &entries, dialect)
+                .await
+                .expect("materialize");
+            let roles = messages
+                .iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>();
+            let leading = dialect.instruction_role();
+            assert_eq!(roles, [leading, "user", "assistant", "user"], "{dialect:?}");
+            assert_eq!(messages[0].text(), "Be precise.\n\nLate layer.");
+            assert!(
+                messages[3]
+                    .text()
+                    .starts_with(crate::catalog_prompts::CATALOG_UPDATE_HEADER),
+                "{dialect:?}: the refreshed catalog announces itself"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_catalog_arriving_mid_tool_exchange_waits_for_the_results() {
+        let blobs = InMemoryBlobStore::new();
+        let directory = blobs.insert_text("- helper").await;
+        let hello = blobs.insert_text("Hello").await;
+        let contents = blobs.insert_text("contents").await;
+        let entries = vec![
+            user_message(1, 1, &hello),
+            tool_call(&blobs, 2, 1, 1).await,
+            catalog(3, &directory, None),
+            tool_result(4, 2, 1, 1, &contents),
+        ];
+
+        for dialect in ALL_DIALECTS {
+            let (messages, positions) = materialize_messages_tracked(&blobs, &entries, dialect)
+                .await
+                .expect("materialize");
+            let roles = messages
+                .iter()
+                .map(|message| message.role.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(roles, ["user", "assistant", "tool", "user"], "{dialect:?}");
+            assert_eq!(messages[3].text(), "Bot directory:\n\n- helper");
+            assert_eq!(
+                positions,
+                [(1, 0), (2, 1), (4, 2), (3, 3)]
+                    .map(|(id, index)| (ContextEntryId::new(id), index))
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_prefix_holds_across_a_new_turn_a_tool_round_trip_and_a_catalog_refresh() {
+        let blobs = InMemoryBlobStore::new();
+        let base = blobs.insert_text("Be precise.").await;
+        let profile = blobs.insert_text("You review code.").await;
+        let directory = blobs.insert_text("- helper").await;
+        let refreshed = blobs.insert_text("- helper\n- reviewer").await;
+        let hello = blobs.insert_text("Hello").await;
+        let answer = blobs.insert_text("Hi").await;
+        let contents = blobs.insert_text("contents").await;
+
+        // Turn 1 of run 1.
+        let first = vec![
+            instructions(1, &base),
+            instructions(2, &profile),
+            catalog(3, &directory, None),
+            user_message(4, 1, &hello),
+        ];
+        // The model calls a tool; the next request carries the result.
+        let tool_round = vec![
+            tool_call(&blobs, 5, 1, 1).await,
+            tool_result(6, 5, 1, 1, &contents),
+        ];
+        assert_prefix_kept(&blobs, &first, &tool_round).await;
+
+        // Run 2: the catalog is refreshed before the next user message.
+        let second = [
+            first.clone(),
+            tool_round.clone(),
+            vec![assistant_message(7, 1, 2, &answer)],
+        ]
+        .concat();
+        let refresh = vec![catalog(8, &refreshed, Some(3)), user_message(9, 2, &hello)];
+        assert_prefix_kept(&blobs, &second, &refresh).await;
+
+        // A catalog published while a tool call is open.
+        let third = [second.clone(), refresh.clone()].concat();
+        let mid_exchange = vec![
+            tool_call(&blobs, 10, 2, 1).await,
+            catalog(11, &refreshed, Some(8)),
+            tool_result(12, 10, 2, 1, &contents),
+        ];
+        assert_prefix_kept(&blobs, &third, &mid_exchange).await;
+        let fourth = [third, mid_exchange].concat();
+        assert_prefix_kept(
+            &blobs,
+            &fourth,
+            &[
+                assistant_message(13, 2, 2, &answer),
+                user_message(14, 3, &hello),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn every_adapter_collates_the_same_system_prompt() {
+        let blobs = InMemoryBlobStore::new();
+        let base = blobs.insert_text("Be precise.\n").await;
+        let empty = blobs.insert_text("").await;
+        let profile = blobs.insert_text("You review code.").await;
+        let entries = vec![
+            instructions(1, &base),
+            instructions(2, &empty),
+            instructions(3, &profile),
+        ];
+        let collated = crate::system_prompt::collated_instructions(&blobs, &entries)
+            .await
+            .expect("collate");
+        assert_eq!(collated.as_deref(), Some("Be precise.\n\nYou review code."));
+        for dialect in ALL_DIALECTS {
+            let messages = materialize_messages(&blobs, &entries, dialect)
+                .await
+                .expect("materialize");
+            assert_eq!(messages.len(), 1);
+            assert_eq!(Some(messages[0].text()), collated);
+        }
+    }
+
+    /// Real chat templates of open models, rendered the way vLLM renders them.
+    mod chat_templates {
+        use super::*;
+        use minijinja::{Environment, Error, ErrorKind, context};
+
+        const TEMPLATES: [(&str, &str); 5] = [
+            (
+                "qwen3.5",
+                include_str!("../tests/fixtures/chat_templates/qwen3.5.jinja"),
+            ),
+            (
+                "qwen3",
+                include_str!("../tests/fixtures/chat_templates/qwen3.jinja"),
+            ),
+            (
+                "qwen2.5",
+                include_str!("../tests/fixtures/chat_templates/qwen2.5.jinja"),
+            ),
+            (
+                "gpt-oss",
+                include_str!("../tests/fixtures/chat_templates/gpt-oss.jinja"),
+            ),
+            (
+                "mistral-v0.3",
+                include_str!("../tests/fixtures/chat_templates/mistral-v0.3.jinja"),
+            ),
+        ];
+
+        /// Templates that move the system prompt next to the newest user
+        /// message, so no client can keep their rendered prefix stable.
+        const MOVES_SYSTEM_PROMPT: [&str; 1] = ["mistral-v0.3"];
+
+        /// Templates that render earlier assistant turns differently once a
+        /// newer user message exists.
+        const RERENDERS_PAST_TURNS: [&str; 1] = ["qwen3.5"];
+
+        fn environment() -> Environment<'static> {
+            let mut env = Environment::new();
+            env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
+            env.add_function(
+                "raise_exception",
+                |message: String| -> Result<String, Error> {
+                    Err(Error::new(ErrorKind::InvalidOperation, message))
+                },
+            );
+            env.add_function("strftime_now", |_format: String| "2026-11-18".to_owned());
+            for (name, source) in TEMPLATES {
+                env.add_template(name, source).expect("template parses");
+            }
+            env
+        }
+
+        /// The request messages as a server hands them to the template: text
+        /// parts joined into one string, null fields left out, tool-call
+        /// arguments parsed.
+        fn template_messages(messages: &[oai_c::CompletionMessage]) -> Vec<Value> {
+            messages
+                .iter()
+                .map(|message| {
+                    let mut value = serde_json::to_value(message).expect("json");
+                    if let Some(parts) = value["content"].as_array() {
+                        let text = parts
+                            .iter()
+                            .filter_map(|part| part["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        value["content"] = Value::String(text);
+                    }
+                    if let Some(object) = value.as_object_mut() {
+                        object.retain(|_, field| !field.is_null());
+                    }
+                    if let Some(calls) = value.get_mut("tool_calls").and_then(Value::as_array_mut) {
+                        for call in calls {
+                            let arguments = call["function"]["arguments"].as_str().unwrap_or("{}");
+                            call["function"]["arguments"] =
+                                serde_json::from_str(arguments).expect("arguments");
+                        }
+                    }
+                    value
+                })
+                .collect()
+        }
+
+        fn render(env: &Environment, name: &str, messages: &[Value]) -> Result<String, Error> {
+            render_with(env, name, messages, true)
+        }
+
+        fn render_with(
+            env: &Environment,
+            name: &str,
+            messages: &[Value],
+            add_generation_prompt: bool,
+        ) -> Result<String, Error> {
+            let tools = json!([{
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file.",
+                    "parameters": { "type": "object", "properties": {} }
+                }
+            }]);
+            env.get_template(name).expect("template").render(context! {
+                messages => minijinja::Value::from(minijinja::value::Serde(messages)),
+                tools => minijinja::Value::from(minijinja::value::Serde(&tools)),
+                add_generation_prompt => add_generation_prompt,
+                bos_token => "<s>",
+                eos_token => "</s>",
+            })
+        }
+
+        /// A session's requests as it grows: instructions in layers, a
+        /// catalog, a tool round trip, a refreshed catalog and a second run.
+        async fn session_requests(blobs: &InMemoryBlobStore) -> Vec<Vec<ContextEntry>> {
+            let base = blobs.insert_text("Be precise.").await;
+            let profile = blobs.insert_text("You review code.").await;
+            let environment = blobs.insert_text("You work in /data/workspace.").await;
+            let directory = blobs.insert_text("- helper").await;
+            let refreshed = blobs.insert_text("- helper\n- reviewer").await;
+            let hello = blobs.insert_text("Hello").await;
+            let answer = blobs.insert_text("Hi").await;
+            let contents = blobs.insert_text("contents").await;
+
+            let first = vec![
+                instructions(1, &base),
+                instructions(2, &profile),
+                instructions(3, &environment),
+                catalog(4, &directory, None),
+                user_message(5, 1, &hello),
+            ];
+            let second = [
+                first.clone(),
+                vec![
+                    tool_call(blobs, 6, 1, 1).await,
+                    tool_result(7, 6, 1, 1, &contents),
+                ],
+            ]
+            .concat();
+            let third = [
+                second.clone(),
+                vec![
+                    assistant_message(8, 1, 2, &answer),
+                    catalog(9, &refreshed, Some(4)),
+                    user_message(10, 2, &hello),
+                ],
+            ]
+            .concat();
+            vec![first, second, third]
+        }
+
+        #[tokio::test(flavor = "current_thread")]
+        async fn every_template_accepts_every_dialects_requests() {
+            let env = environment();
+            let blobs = InMemoryBlobStore::new();
+            for entries in session_requests(&blobs).await {
+                // OpenAI and OpenRouter send `developer`; they never reach a
+                // self-hosted template.
+                for dialect in [CompletionDialect::Compatible, CompletionDialect::DeepSeek] {
+                    let messages = materialize_messages(&blobs, &entries, dialect)
+                        .await
+                        .expect("materialize");
+                    let messages = template_messages(&messages);
+                    for (name, _) in TEMPLATES {
+                        if let Err(error) = render(&env, name, &messages) {
+                            panic!("{name} rejects the {dialect:?} request: {error:#}");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Request N+1 must render as request N plus new text, so a server's
+        /// prefix cache (vLLM, SGLang, llama.cpp) keeps what N computed. Some
+        /// templates re-render earlier assistant turns once a new user message
+        /// arrives (Qwen drops the empty think block); for those the cache is
+        /// kept up to the previous request's last user message, which is all
+        /// any client can get from them.
+        #[tokio::test(flavor = "current_thread")]
+        async fn every_rendered_request_extends_the_previous_one() {
+            let env = environment();
+            let blobs = InMemoryBlobStore::new();
+            let requests = session_requests(&blobs).await;
+            for (name, _) in TEMPLATES {
+                if MOVES_SYSTEM_PROMPT.contains(&name) {
+                    continue;
+                }
+                let mut previous: Option<Vec<Value>> = None;
+                for entries in &requests {
+                    let messages = template_messages(
+                        &materialize_messages(&blobs, entries, CompletionDialect::Compatible)
+                            .await
+                            .expect("materialize"),
+                    );
+                    let rendered = render(&env, name, &messages).expect("render");
+                    if let Some(previous) = previous {
+                        let last_user = previous
+                            .iter()
+                            .rposition(|message| message["role"] == "user")
+                            .expect("a user message");
+                        let new_run = messages[previous.len()..]
+                            .iter()
+                            .any(|message| message["role"] == "user");
+                        let stable = if new_run && RERENDERS_PAST_TURNS.contains(&name) {
+                            render_with(&env, name, &previous[..=last_user], false)
+                        } else {
+                            render(&env, name, &previous)
+                        }
+                        .expect("render");
+                        let kept = stable
+                            .chars()
+                            .zip(rendered.chars())
+                            .take_while(|(left, right)| left == right)
+                            .count();
+                        assert!(
+                            rendered.starts_with(&stable),
+                            "{name}: the next request rewrites the rendered prompt after {kept} of {} characters\n--- before\n{stable}\n--- after\n{rendered}",
+                            stable.chars().count()
+                        );
+                    }
+                    previous = Some(messages);
+                }
+            }
+        }
+
+        /// The message shape this change replaces: one system message per
+        /// instruction layer and per catalog. The templates must reject it,
+        /// or the test above would not catch a regression.
+        #[test]
+        fn the_old_shape_is_rejected_where_it_broke() {
+            let env = environment();
+            let messages = [
+                json!({ "role": "system", "content": "Be precise." }),
+                json!({ "role": "system", "content": "Bot directory:\n\n- helper" }),
+                json!({ "role": "user", "content": "Hello" }),
+                json!({ "role": "assistant", "content": "Hi" }),
+                json!({ "role": "system", "content": "Bot directory:\n\n- helper\n- reviewer" }),
+                json!({ "role": "user", "content": "Hello" }),
+            ];
+            let qwen = render(&env, "qwen3.5", &messages).expect_err("qwen3.5 rejects it");
+            assert!(
+                qwen.to_string()
+                    .contains("System message must be at the beginning."),
+                "{qwen:#}"
+            );
+            let mistral = render(&env, "mistral-v0.3", &messages).expect_err("mistral rejects it");
+            assert!(
+                mistral.to_string().contains("roles must alternate"),
+                "{mistral:#}"
+            );
+        }
     }
 }

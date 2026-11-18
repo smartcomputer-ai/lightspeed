@@ -3,7 +3,8 @@ mod config;
 pub use config::{
     anthropic_messages_live_client, anthropic_messages_live_config, anthropic_messages_live_model,
     deepseek_completions_live_model, env_or_dotenv_var, openai_completions_live_client,
-    openai_completions_live_model, openai_responses_live_client, openai_responses_live_model,
+    openai_completions_live_model, openai_completions_live_provider_id,
+    openai_responses_live_client, openai_responses_live_model,
 };
 
 use std::{sync::Arc, time::Duration};

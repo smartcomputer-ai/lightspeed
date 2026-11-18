@@ -16,6 +16,13 @@ pub fn openai_completions_live_model() -> String {
         .unwrap_or_else(|_| "gpt-5.5".to_owned())
 }
 
+/// The provider id decides the request dialect: `openai` (the default)
+/// sends `developer` messages; any other id, such as `vllm`, sends what a
+/// self-hosted OpenAI-compatible server expects.
+pub fn openai_completions_live_provider_id() -> String {
+    env_or_dotenv_var("OPENAI_COMPLETIONS_PROVIDER_ID").unwrap_or_else(|_| "openai".to_owned())
+}
+
 pub fn openai_completions_live_client() -> CompletionsClient {
     CompletionsClient::new(openai_completions_config_with(env_or_dotenv_var))
         .expect("OpenAI Completions client")

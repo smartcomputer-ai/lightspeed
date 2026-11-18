@@ -19,6 +19,7 @@ mod prompt_cache;
 pub mod provider_keys;
 pub mod result;
 pub mod secrets;
+mod system_prompt;
 pub mod testing;
 
 pub use anthropic_messages::{

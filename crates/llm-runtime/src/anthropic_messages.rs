@@ -713,23 +713,13 @@ async fn materialize_system(
     entries: &[ContextEntry],
     cache_control: &Value,
 ) -> LlmAdapterResult<Option<am::SystemContent>> {
-    let mut parts = Vec::new();
-    for entry in entries {
-        if matches!(entry.kind, ContextEntryKind::Instructions) {
-            let text = read_text(blobs, &entry.content.content_ref).await?;
-            let text = text.trim();
-            if !text.is_empty() {
-                parts.push(text.to_owned());
-            }
-        }
-    }
-    if parts.is_empty() {
+    let Some(text) = crate::system_prompt::collated_instructions(blobs, entries).await? else {
         return Ok(None);
-    }
+    };
     Ok(Some(am::SystemContent::Blocks(vec![
         am::ContentBlockParam::Text(am::TextBlockParam {
             r#type: "text".to_owned(),
-            text: parts.join("\n\n"),
+            text,
             cache_control: Some(cache_control.clone()),
             extra: Default::default(),
         }),

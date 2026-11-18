@@ -533,21 +533,9 @@ async fn materialize_instructions(
     blobs: &dyn BlobStore,
     entries: &[ContextEntry],
 ) -> LlmAdapterResult<Option<Value>> {
-    let mut parts = Vec::new();
-    for entry in entries {
-        if matches!(entry.kind, ContextEntryKind::Instructions) {
-            let text = read_text(blobs, &entry.content.content_ref).await?;
-            let text = text.trim();
-            if !text.is_empty() {
-                parts.push(text.to_owned());
-            }
-        }
-    }
-    if parts.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(Value::String(parts.join("\n\n"))))
-    }
+    Ok(crate::system_prompt::collated_instructions(blobs, entries)
+        .await?
+        .map(Value::String))
 }
 
 async fn materialize_input_items(
