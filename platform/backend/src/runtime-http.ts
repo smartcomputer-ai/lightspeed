@@ -162,7 +162,8 @@ async function forward(request: Request, url: URL, identity: Record<string, stri
   const cancel = () => abort.abort();
   request.signal.addEventListener("abort", cancel, { once: true });
   if (request.signal.aborted) cancel();
-  const timer = watch ? setTimeout(cancel, 60_000) : undefined;
+  const watchExpiry = watch ? new DOMException("Watch expired", "AbortError") : undefined;
+  const timer = watchExpiry && setTimeout(() => abort.abort(watchExpiry), 60_000);
   const cleanup = () => { if (timer) clearTimeout(timer); request.signal.removeEventListener("abort", cancel); };
   const headers = new Headers(identity);
   headers.set("accept-encoding", "identity");
@@ -183,7 +184,13 @@ async function forward(request: Request, url: URL, identity: Record<string, stri
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try { const next = await reader.read(); if (next.done) { cleanup(); reader.releaseLock(); controller.close(); } else controller.enqueue(next.value); }
-        catch (error) { cleanup(); reader.releaseLock(); controller.error(error); cancel(); }
+        catch (error) {
+          cleanup();
+          reader.releaseLock();
+          // Scheduled rotation ends an established watch so the client reconnects for fresh admission.
+          if (watchExpiry && error === watchExpiry && upstream.ok) controller.close();
+          else { controller.error(error); cancel(); }
+        }
       },
       async cancel() { cancel(); cleanup(); await reader.cancel().catch(() => {}); reader.releaseLock(); },
     });
