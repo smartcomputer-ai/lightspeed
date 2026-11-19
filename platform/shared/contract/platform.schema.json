@@ -45,7 +45,8 @@
                 "session",
                 "cliSession",
                 "personalKey",
-                "serviceUserKey"
+                "serviceUserKey",
+                "federated"
               ]
             },
             "id": {
@@ -186,7 +187,8 @@
                 "session",
                 "cliSession",
                 "personalKey",
-                "serviceUserKey"
+                "serviceUserKey",
+                "federated"
               ]
             },
             "id": {

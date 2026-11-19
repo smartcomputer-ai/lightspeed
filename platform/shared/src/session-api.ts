@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const platformSessionViewSchema = z.object({
   principal: z.object({ kind: z.enum(["user", "serviceUser"]), id: z.string(), name: z.string(), email: z.string().nullable() }),
-  credential: z.object({ kind: z.enum(["session", "cliSession", "personalKey", "serviceUserKey"]), id: z.string() }),
+  credential: z.object({ kind: z.enum(["session", "cliSession", "personalKey", "serviceUserKey", "federated"]), id: z.string() }),
   session: z.object({ id: z.string(), createdAt: z.string().datetime(), expiresAt: z.string().datetime() }).nullable(),
 });
 export const SESSION_OPERATIONS = {

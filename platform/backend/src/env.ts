@@ -1,3 +1,5 @@
+import { WorkloadFederation } from "./federation.js";
+import { readFederationConfig } from "./federation-config.js";
 import { readFileSync } from "node:fs";
 import { databaseWorkloadIdentityFromEnv, type DatabaseWorkloadIdentity } from "@lightspeed-ai/platform-db";
 import {
@@ -47,6 +49,7 @@ export interface ServerEnv {
   apiKeyMaxExpiryDays?: number;
   github: { clientId: string; clientSecret: string } | null;
   oidc?: OidcConfig | null;
+  federation?: WorkloadFederation;
   passwordSignIn?: "local" | "break-glass" | "off";
   /// Authenticated Lightspeed runtime HTTP API endpoint.
   lightspeedApiUrl: string | null;
@@ -115,6 +118,8 @@ export function loadEnv(): ServerEnv {
     apiKeyMaxExpiryDays: optionalIntegerEnv("LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS", 1, 3650),
     github,
     oidc,
+    federation: process.env.LIGHTSPEED_PLATFORM_FEDERATION_FILE
+      ? new WorkloadFederation(readFederationConfig(process.env.LIGHTSPEED_PLATFORM_FEDERATION_FILE)) : undefined,
     passwordSignIn: passwordSignIn as ServerEnv["passwordSignIn"],
     lightspeedApiUrl: process.env.LIGHTSPEED_API_URL ?? null,
     lightspeedApiToken,

@@ -112,6 +112,21 @@ export const credentialBindings = pgTable("credential_bindings", {
   index("credential_bindings_service_user_idx").on(table.serviceUserId),
 ]);
 
+/** Bind the verified issuer identifier, so reusing a configuration name cannot transfer authority. */
+export const federatedCredentials = pgTable("federated_credentials", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  serviceUserId: uuid("service_user_id").notNull().references(() => serviceUsers.id, { onDelete: "cascade" }),
+  issuer: text("issuer").notNull(),
+  subject: text("subject").notNull(),
+  serviceAccountUid: text("service_account_uid"),
+  restrictions: jsonb("restrictions").$type<CredentialRestrictions>().default({}).notNull(),
+  createdAt: createdAt(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+}, table => [
+  uniqueIndex("federated_credentials_identity_idx").on(table.issuer, table.subject),
+  index("federated_credentials_service_user_idx").on(table.serviceUserId),
+]);
+
 export const universesRelations = relations(universes, ({ one }) => ({
   organization: one(organization, {
     fields: [universes.organizationId],

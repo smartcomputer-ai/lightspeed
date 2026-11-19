@@ -16,7 +16,7 @@ export interface PlatformConnectionDetails {
     platformAdmin: boolean;
   };
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey" | "federated";
     id: string;
   };
   organizations: {
@@ -62,7 +62,7 @@ export interface PlatformSessionReadResult {
     email: string | null;
   };
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey" | "federated";
     id: string;
   };
   session: {

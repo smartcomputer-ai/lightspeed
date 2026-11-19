@@ -1,3 +1,5 @@
+import { compactJws, MAX_WORKLOAD_TOKEN_LENGTH } from "./federation.js";
+import { resolveFederatedBinding } from "./federated-binding.js";
 import { eq } from "drizzle-orm";
 import { schema } from "@lightspeed-ai/platform-db";
 import { credentialRestrictionsSchema } from "@lightspeed-ai/platform-shared";
@@ -24,8 +26,15 @@ export async function authenticateRequest(ctx: AppContext, request: Request): Pr
   if (authorization !== null) {
     // An explicitly supplied invalid credential must never fall back to a broader cookie.
     const match = /^Bearer ([^\s,]+)$/i.exec(authorization);
-    if (!match || match[1]!.length > 4096) return null;
+    if (!match) return null;
     const secret = match[1]!;
+    if (ctx.env.federation && secret.length <= MAX_WORKLOAD_TOKEN_LENGTH && compactJws.test(secret)) {
+      const identity = await ctx.env.federation.verify(secret);
+      if (!identity) return null;
+      const binding = await ctx.db.transaction(tx => resolveFederatedBinding(tx, identity));
+      return binding?.auth ? { auth: binding.auth } : null;
+    }
+    if (secret.length > 4096) return null;
     const configId = secret.startsWith(PERSONAL_KEY_PREFIX) ? PERSONAL_KEY_CONFIG : secret.startsWith(SERVICE_USER_KEY_PREFIX) ? SERVICE_USER_KEY_CONFIG : null;
     if (!configId) {
       // Ignore cookies completely when a bearer is explicit. Better Auth owns

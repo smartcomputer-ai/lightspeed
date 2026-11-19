@@ -22,7 +22,7 @@ class Principal(TypedDict):
 
 
 class Credential(TypedDict):
-    kind: Literal['session', 'cliSession', 'personalKey', 'serviceUserKey']
+    kind: Literal['session', 'cliSession', 'personalKey', 'serviceUserKey', 'federated']
     id: str
 
 

@@ -8,6 +8,13 @@
       "when": 1794949711889,
       "tag": "0000_initial_platform",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795096286064,
+      "tag": "0001_federated_credentials",
+      "breakpoints": true
     }
   ]
 }
