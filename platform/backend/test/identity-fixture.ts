@@ -57,6 +57,10 @@ function pooled(instance: PGlite): PGlite {
 export async function identityFixture(env: ServerEnv = identityEnv) {
   const postgres = pooled(await migratedDatabase());
   const db = drizzle(postgres, { schema, casing: "snake_case" }) as unknown as Db;
+  return { postgres, ...await identityTestApp(db, env) };
+}
+
+export async function identityTestApp(db: Db, env: ServerEnv) {
   await bootstrapAdmin(db, env);
   const auth = createAuth(db, env);
   const app = buildApp({ db, auth, env, pool: {} as never });
@@ -64,7 +68,7 @@ export async function identityFixture(env: ServerEnv = identityEnv) {
     method, headers: { origin: env.baseUrl, cookie, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }));
-  return { db, postgres, auth, app, request, env };
+  return { db, auth, app, request, env };
 }
 
 export function responseCookies(response: Response): string {

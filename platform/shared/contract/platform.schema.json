@@ -45,7 +45,8 @@
                 "session",
                 "cliSession",
                 "personalKey",
-                "serviceUserKey"
+                "serviceUserKey",
+                "federated"
               ]
             },
             "id": {
@@ -186,7 +187,8 @@
                 "session",
                 "cliSession",
                 "personalKey",
-                "serviceUserKey"
+                "serviceUserKey",
+                "federated"
               ]
             },
             "id": {
@@ -2008,6 +2010,29 @@
                 },
                 "additionalProperties": false
               },
+              "enrollment": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subjectPattern": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject",
+                  "subjectPattern"
+                ],
+                "additionalProperties": false
+              },
               "createdAt": {
                 "type": "string",
                 "format": "date-time",
@@ -2039,6 +2064,43 @@
       "required": [
         "organizations",
         "canCreate"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsEnrollParams": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "handle",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsEnrollResult": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enrolled": {
+          "type": "boolean",
+          "description": "True when this request created the organization; false when the workload already belongs to it."
+        }
+      },
+      "required": [
+        "organizationId",
+        "enrolled"
       ],
       "additionalProperties": false
     },
@@ -2294,6 +2356,29 @@
               },
               "additionalProperties": false
             },
+            "enrollment": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subjectPattern": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "subject",
+                "subjectPattern"
+              ],
+              "additionalProperties": false
+            },
             "createdAt": {
               "type": "string",
               "format": "date-time",
@@ -2528,6 +2613,29 @@
                   }
                 }
               },
+              "additionalProperties": false
+            },
+            "enrollment": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subjectPattern": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "subject",
+                "subjectPattern"
+              ],
               "additionalProperties": false
             },
             "createdAt": {
@@ -2901,6 +3009,29 @@
               },
               "additionalProperties": false
             },
+            "enrollment": {
+              "type": "object",
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subjectPattern": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "subject",
+                "subjectPattern"
+              ],
+              "additionalProperties": false
+            },
             "createdAt": {
               "type": "string",
               "format": "date-time",
@@ -3173,6 +3304,83 @@
                 "type": "string",
                 "format": "date-time",
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+              },
+              "federatedCredentials": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "issuer": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "serviceAccountUid": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "restrictions": {
+                      "type": "object",
+                      "properties": {
+                        "organizationIds": {
+                          "maxItems": 1000,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "universeIds": {
+                          "maxItems": 1000,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "operations": {
+                          "maxItems": 1000,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "readOnly": {
+                          "type": "boolean"
+                        },
+                        "allowUniverseCreation": {
+                          "type": "boolean"
+                        },
+                        "allowServiceUserKeys": {
+                          "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "issuer",
+                    "subject"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -3254,6 +3462,83 @@
               "type": "string",
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "federatedCredentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "serviceAccountUid": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "restrictions": {
+                    "type": "object",
+                    "properties": {
+                      "organizationIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "universeIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "operations": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      },
+                      "allowUniverseCreation": {
+                        "type": "boolean"
+                      },
+                      "allowServiceUserKeys": {
+                        "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
@@ -3340,6 +3625,83 @@
               "type": "string",
               "format": "date-time",
               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "federatedCredentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "serviceAccountUid": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "restrictions": {
+                    "type": "object",
+                    "properties": {
+                      "organizationIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "universeIds": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "operations": {
+                        "maxItems": 1000,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "readOnly": {
+                        "type": "boolean"
+                      },
+                      "allowUniverseCreation": {
+                        "type": "boolean"
+                      },
+                      "allowServiceUserKeys": {
+                        "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "issuer",
+                  "subject"
+                ],
+                "additionalProperties": false
+              }
             }
           },
           "required": [
@@ -3355,6 +3717,368 @@
       },
       "required": [
         "serviceUser"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsListParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsListResult": {
+      "type": "object",
+      "properties": {
+        "credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "issuer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "subject": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "serviceAccountUid": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "restrictions": {
+                "type": "object",
+                "properties": {
+                  "organizationIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "universeIds": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "operations": {
+                    "maxItems": 1000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
+                  "allowUniverseCreation": {
+                    "type": "boolean"
+                  },
+                  "allowServiceUserKeys": {
+                    "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "lastUsedAt": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "issuer",
+              "subject",
+              "restrictions",
+              "id",
+              "lastUsedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "issuers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "credentials",
+        "issuers"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsPutParams": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "serviceAccountUid": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "restrictions": {
+          "type": "object",
+          "properties": {
+            "organizationIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "universeIds": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              }
+            },
+            "operations": {
+              "maxItems": 1000,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "readOnly": {
+              "type": "boolean"
+            },
+            "allowUniverseCreation": {
+              "type": "boolean"
+            },
+            "allowServiceUserKeys": {
+              "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "createOnly": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "issuer",
+        "subject",
+        "organizationId",
+        "serviceUserId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsPutResult": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "type": "object",
+          "properties": {
+            "issuer": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "serviceAccountUid": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "restrictions": {
+              "type": "object",
+              "properties": {
+                "organizationIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "universeIds": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "operations": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "readOnly": {
+                  "type": "boolean"
+                },
+                "allowUniverseCreation": {
+                  "type": "boolean"
+                },
+                "allowServiceUserKeys": {
+                  "description": "Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.",
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "lastUsedAt": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "issuer",
+            "subject",
+            "restrictions",
+            "id",
+            "lastUsedAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "credential"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsDeleteParams": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceUserId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "credentialId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        }
+      },
+      "required": [
+        "organizationId",
+        "serviceUserId",
+        "credentialId"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformServiceUsersFederatedCredentialsDeleteResult": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "ok"
       ],
       "additionalProperties": false
     },

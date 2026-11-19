@@ -71,8 +71,7 @@ pub(crate) struct OrganizationDocument {
     pub service_users: Option<Vec<ServiceUserEntry>>,
 }
 
-/// A service user, identified by its name in the organization. Its keys are
-/// issued with `lightspeed platform service-user key`, never declared.
+/// A service user and its declared credentials, identified by name in the organization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ServiceUserEntry {
@@ -83,6 +82,19 @@ pub(crate) struct ServiceUserEntry {
     /// Keys whose secret comes from outside, by name. A key left out is kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keys: Option<Vec<ServiceUserKey>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub federated_credentials: Option<Vec<FederatedCredential>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FederatedCredential {
+    pub issuer: String,
+    pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account_uid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restrictions: Option<Value>,
 }
 
 /// A service user's key with a supplied secret, so the secret flows in from
@@ -302,12 +314,27 @@ fn parse(path: &Path, mut value: Value) -> Result<LoadedDocument> {
             if document.handle.trim().is_empty() {
                 bail!("handle is empty {}", located());
             }
+            let mut identities = std::collections::BTreeSet::new();
             let mut names = std::collections::BTreeSet::new();
             for service_user in document.service_users.iter().flatten() {
                 if !names.insert(service_user.name.as_str()) {
                     bail!(
                         "service user {} is listed twice {}",
                         service_user.name,
+                        located()
+                    );
+                }
+                for binding in service_user.federated_credentials.iter().flatten() {
+                    anyhow::ensure!(
+                        !binding.issuer.is_empty() && !binding.subject.is_empty(),
+                        "federated credential requires issuer and subject {}",
+                        located()
+                    );
+                    anyhow::ensure!(
+                        identities.insert((&binding.issuer, &binding.subject)),
+                        "duplicate federated credential {} {} {}",
+                        binding.issuer,
+                        binding.subject,
                         located()
                     );
                 }

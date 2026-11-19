@@ -23,6 +23,14 @@ export function OrganizationSettings({ organization }: { organization: Organizat
   return (
     <div className="grid gap-6">
       {!organization.personal && <NameCard organization={organization} />}
+      {organization.enrollment && <Card>
+        <CardHeader><CardTitle>Workload enrollment</CardTitle></CardHeader>
+        <CardContent><dl className="grid gap-2 text-sm">
+          <div><dt>Issuer</dt><dd className="break-all">{organization.enrollment.issuer}</dd></div>
+          <div><dt>Subject</dt><dd className="break-all font-mono">{organization.enrollment.subject}</dd></div>
+          <div><dt>Enrollment rule</dt><dd className="break-all font-mono">{organization.enrollment.subjectPattern}</dd></div>
+        </dl></CardContent>
+      </Card>}
       <UniversesCard key={`${organization.universeQuotaSource}:${organization.universeQuota}`} organization={organization} />
       {!organization.personal && <DefaultUniverseAccessCard organization={organization} />}
       <ProtectionCard organization={organization} />

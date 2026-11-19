@@ -60,6 +60,116 @@ and review [API keys and service access](../access-and-security/api-keys-and-ser
 The [Platform environment settings](../reference/environment-variables.md#platform-backend)
 cover sign-in, session lifetimes, and API key expiry.
 
+## Enroll organizations with workload identity
+
+A pipeline can use a short-lived OIDC bearer token to create one shared
+organization and act as its Admin service user. Mount a YAML file on each
+Platform replica, set `LIGHTSPEED_PLATFORM_FEDERATION_FILE` to its path,
+and restart Platform. Use the same file on every replica. Without this
+setting, workload federation is off.
+
+This example allows the `apply` ServiceAccount in namespaces starting with
+`team-` to enroll up to 50 organizations across the rule. Choose an audience
+specific to this deployment and project it into the pipeline pod's token.
+Restrict who can run workloads as those ServiceAccounts.
+
+```yaml
+issuers:
+  - name: cluster
+    issuer: https://oidc.example.com/clusters/prod/
+    audiences: [lightspeed-platform-prod]
+    algorithms: [RS256]
+    maxTokenLifetimeSeconds: 3600
+    clockSkewSeconds: 60
+    keys:
+      discoveryUrl: https://kubernetes.default.svc/.well-known/openid-configuration
+      jwksUrl: https://kubernetes.default.svc/openid/v1/jwks
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+enrollment:
+  - issuer: cluster
+    subjectPattern: "system:serviceaccount:team-*:apply"
+    maxOrganizations: 50
+    handlePattern: "^team-[a-z0-9-]+$"
+    organization: { universeQuota: null }
+    serviceUser: { name: deployer, role: admin }
+```
+
+Set `issuer` to the exact token `iss`, including any trailing slash. Omit
+`keys` to use the issuer's public discovery document and its `jwks_uri`.
+For offline verification, use `keys: { jwksFile: /etc/lightspeed/jwks.json }`.
+For Kubernetes API discovery as shown above, Platform's own mounted token
+must be accepted by the API server and have permission to read discovery
+and signing keys. Platform rereads the CA and fetch credential on refresh.
+Each replica caches keys for an hour, refreshes on an unknown key ID at most
+once per 30 seconds, and accepts previously fetched keys during an outage
+for up to 24 hours from their last successful refresh.
+
+Send the workload token as an `Authorization: Bearer` credential with
+`POST /api/v1/organizations/enroll` and a JSON body such as
+`{"handle":"team-research","name":"Research"}`. Platform uses the first rule
+whose issuer and full subject match. In a subject pattern, `*` matches any
+substring. The issuer and subject pattern identify the rule for quota
+accounting. A null universe quota follows the shared organization default.
+
+| HTTP result | Meaning |
+| --- | --- |
+| `201` | Platform created the organization, its Admin service user, and the credential. The response contains `organizationId` and `enrolled: true`. |
+| `200` | The workload already belongs to this organization. A retry returns the same ID and `enrolled: false`. |
+| `401` | The workload token failed verification or the binding is inactive. |
+| `403` | The workload or requested handle falls outside enrollment policy, or the credential's restrictions deny the operation. |
+| `409` | The handle is taken, the workload already belongs to or enrolled another organization, or the rule is at capacity. |
+
+After enrollment, present a current workload token on ordinary Platform
+API requests. Disabling the service user or removing its binding takes
+effect on the next request. Its enrollment continues to occupy a rule slot
+until the organization is deleted. The Platform audit records the issuer
+and subject for enrollment and federated authentication.
+
+### Run a GitOps job
+
+Mount a projected ServiceAccount token with the audience configured for this
+Platform. Point the CLI at the mounted file so it reads the current token on
+every request, including after Kubernetes rotates it.
+
+```sh
+export LIGHTSPEED_API_URL=https://platform.example.com/api/v1
+export LIGHTSPEED_API_TOKEN_FILE=/var/run/secrets/lightspeed/token
+lightspeed config apply --enroll -f organization.yaml -f universe.yaml
+```
+
+Supply exactly one organization document. Its handle and name identify the
+enrollment request. The name defaults to the handle when omitted. Re-running
+the command reuses the organization and applies any outstanding changes.
+For enrollment alone, run
+`lightspeed platform organization enroll --handle team-research --name Research`.
+To supply the token file as a flag, place `--token-file PATH` before the command.
+
+Declare a workload binding under its service user, using the issuer's
+configured name and the exact token subject:
+
+```yaml
+schemaVersion: 1
+kind: organization
+handle: team-research
+name: Research
+serviceUsers:
+  - name: deployer
+    role: admin
+    federatedCredentials:
+      - issuer: cluster
+        subject: system:serviceaccount:team-research:apply
+```
+
+A binding can also specify `serviceAccountUid` and `restrictions`. Organization
+exports include these declarations. Omitting a binding during apply preserves
+it. To revoke it, open the service user's details or use
+`lightspeed platform service-user federated-credential SERVICE_USER_ID delete CREDENTIAL_ID`.
+The same CLI command group supports `list` and `put`. A workload needs the
+explicit `allowServiceUserKeys` restriction and organization permission to
+manage credentials. Platform admins can see the enrolling issuer, subject,
+and matching rule in the organization's settings.
+
 ## Secure the Temporal connection
 
 Every runtime process opens its own connection to the

@@ -18,6 +18,7 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listPlatformSettings": "platform/settings/list",
   "putPlatformSetting": "platform/settings/put",
   "listOrganizations": "platform/organizations/list",
+  "enrollOrganization": "platform/organizations/enroll",
   "createOrganization": "platform/organizations/create",
   "readOrganization": "platform/organizations/read",
   "updateOrganization": "platform/organizations/update",
@@ -27,6 +28,9 @@ export const PLATFORM_CLIENT_HELPERS = {
   "listServiceUsers": "platform/organizations/service-users/list",
   "createServiceUser": "platform/organizations/service-users/create",
   "updateServiceUser": "platform/organizations/service-users/update",
+  "listFederatedCredentials": "platform/service-users/federated-credentials/list",
+  "putFederatedCredential": "platform/service-users/federated-credentials/put",
+  "deleteFederatedCredential": "platform/service-users/federated-credentials/delete",
   "adoptUniverse": "platform/universes/adopt",
   "createUniverse": "platform/universes/create",
   "updateUniverse": "platform/universes/update",
@@ -84,6 +88,9 @@ export class PlatformHelpers {
   listOrganizations(params: PlatformOperationParams<"platform/organizations/list"> = {}, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/list">> {
     return this.client.call("platform/organizations/list", params, options);
   }
+  enrollOrganization(params: PlatformOperationParams<"platform/organizations/enroll">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/enroll">> {
+    return this.client.call("platform/organizations/enroll", params, options);
+  }
   createOrganization(params: PlatformOperationParams<"platform/organizations/create">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/create">> {
     return this.client.call("platform/organizations/create", params, options);
   }
@@ -110,6 +117,15 @@ export class PlatformHelpers {
   }
   updateServiceUser(params: PlatformOperationParams<"platform/organizations/service-users/update">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/organizations/service-users/update">> {
     return this.client.call("platform/organizations/service-users/update", params, options);
+  }
+  listFederatedCredentials(params: PlatformOperationParams<"platform/service-users/federated-credentials/list">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/federated-credentials/list">> {
+    return this.client.call("platform/service-users/federated-credentials/list", params, options);
+  }
+  putFederatedCredential(params: PlatformOperationParams<"platform/service-users/federated-credentials/put">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/federated-credentials/put">> {
+    return this.client.call("platform/service-users/federated-credentials/put", params, options);
+  }
+  deleteFederatedCredential(params: PlatformOperationParams<"platform/service-users/federated-credentials/delete">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/service-users/federated-credentials/delete">> {
+    return this.client.call("platform/service-users/federated-credentials/delete", params, options);
   }
   adoptUniverse(params: PlatformOperationParams<"platform/universes/adopt">, options: CallOptions = {}): Promise<PlatformOperationResult<"platform/universes/adopt">> {
     return this.client.call("platform/universes/adopt", params, options);

@@ -16,6 +16,7 @@ export interface PlatformOperationMap {
   "platform/settings/list": { params: T.PlatformSettingsListParams; result: T.PlatformSettingsListResult };
   "platform/settings/put": { params: T.PlatformSettingsPutParams; result: T.PlatformSettingsPutResult };
   "platform/organizations/list": { params: T.PlatformOrganizationsListParams; result: T.PlatformOrganizationsListResult };
+  "platform/organizations/enroll": { params: T.PlatformOrganizationsEnrollParams; result: T.PlatformOrganizationsEnrollResult };
   "platform/organizations/create": { params: T.PlatformOrganizationsCreateParams; result: T.PlatformOrganizationsCreateResult };
   "platform/organizations/read": { params: T.PlatformOrganizationsReadParams; result: T.PlatformOrganizationsReadResult };
   "platform/organizations/update": { params: T.PlatformOrganizationsUpdateParams; result: T.PlatformOrganizationsUpdateResult };
@@ -25,6 +26,9 @@ export interface PlatformOperationMap {
   "platform/organizations/service-users/list": { params: T.PlatformOrganizationsServiceUsersListParams; result: T.PlatformOrganizationsServiceUsersListResult };
   "platform/organizations/service-users/create": { params: T.PlatformOrganizationsServiceUsersCreateParams; result: T.PlatformOrganizationsServiceUsersCreateResult };
   "platform/organizations/service-users/update": { params: T.PlatformOrganizationsServiceUsersUpdateParams; result: T.PlatformOrganizationsServiceUsersUpdateResult };
+  "platform/service-users/federated-credentials/list": { params: T.PlatformServiceUsersFederatedCredentialsListParams; result: T.PlatformServiceUsersFederatedCredentialsListResult };
+  "platform/service-users/federated-credentials/put": { params: T.PlatformServiceUsersFederatedCredentialsPutParams; result: T.PlatformServiceUsersFederatedCredentialsPutResult };
+  "platform/service-users/federated-credentials/delete": { params: T.PlatformServiceUsersFederatedCredentialsDeleteParams; result: T.PlatformServiceUsersFederatedCredentialsDeleteResult };
   "platform/universes/adopt": { params: T.PlatformUniversesAdoptParams; result: T.PlatformUniversesAdoptResult };
   "platform/universes/create": { params: T.PlatformUniversesCreateParams; result: T.PlatformUniversesCreateResult };
   "platform/universes/update": { params: T.PlatformUniversesUpdateParams; result: T.PlatformUniversesUpdateResult };
@@ -99,6 +103,10 @@ export const PLATFORM_OPERATIONS = {
     "method": "GET",
     "path": "/api/v1/platform/organizations"
   },
+  "platform/organizations/enroll": {
+    "method": "POST",
+    "path": "/api/v1/organizations/enroll"
+  },
   "platform/organizations/create": {
     "method": "POST",
     "path": "/api/v1/platform/organizations"
@@ -134,6 +142,18 @@ export const PLATFORM_OPERATIONS = {
   "platform/organizations/service-users/update": {
     "method": "PATCH",
     "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}"
+  },
+  "platform/service-users/federated-credentials/list": {
+    "method": "GET",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials"
+  },
+  "platform/service-users/federated-credentials/put": {
+    "method": "PUT",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials"
+  },
+  "platform/service-users/federated-credentials/delete": {
+    "method": "DELETE",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials/{credentialId}"
   },
   "platform/universes/adopt": {
     "method": "POST",

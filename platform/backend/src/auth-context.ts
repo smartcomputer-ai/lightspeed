@@ -22,9 +22,10 @@ export type Principal = {
 export interface AuthContext {
   principal: Principal;
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey" | "federated";
     id: string;
     restrictions: CredentialRestrictions;
+    workload?: { issuer: string; subject: string };
   };
   actorId: string;
   session?: { id: string; createdAt: Date; expiresAt: Date };

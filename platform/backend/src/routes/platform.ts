@@ -6,6 +6,7 @@ import { ORGANIZATION_ROLES, PLATFORM_OPERATIONS, type OrganizationRole, type Pl
 import type { AppContext, ApiVariables } from "../context.js";
 import { deploymentAllows, enforceRestrictions, getAuth, type AuthContext } from "../auth-context.js";
 import { organizationForPrincipal, listOrganizationsForPrincipal, declaredPrincipalRole, refusePersonalOrganization, requireOrganizationAction, withOwnerNames, type OrganizationAccess } from "../organization-access.js";
+import { serviceUserDeclarations, listFederatedCredentials, putFederatedCredential, deleteFederatedCredential } from "../federated-credentials.js";
 import { auditAsSubject } from "../identity-audit.js";
 import { effectiveUniverseQuota, listPlatformSettings, platformSettings, putPlatformSetting } from "../platform-settings.js";
 import { deploymentClient, GateRefusal } from "../runtime-client.js";
@@ -28,6 +29,12 @@ function countsUniverses(access: Pick<OrganizationAccess, "actions">) { return a
 async function universeCount(db: AppContext["db"], organizationId: string) { return (await universeCounts(db, [organizationId])).get(organizationId) ?? 0; }
 function serviceUserView(serviceUser: typeof schema.serviceUsers.$inferSelect) { return { id: serviceUser.id, organizationId: serviceUser.organizationId, name: serviceUser.name, enabled: serviceUser.enabled, role: serviceUser.role, createdAt: serviceUser.createdAt }; }
 
+async function enrollmentDetails(ctx: AppContext, auth: AuthContext, ids: string[]) {
+  const table = schema.organizationEnrollments;
+  const rows = auth.principal.platformAdmin && ids.length ? await ctx.db.select().from(table).where(inArray(table.organizationId, ids)) : [];
+  return new Map(rows.map(({ organizationId, issuer, subject, subjectPattern }) => [organizationId, { issuer, subject, subjectPattern }]));
+}
+
 export function platformRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
   app.onError((error, c) => {
@@ -37,6 +44,7 @@ export function platformRoutes(ctx: AppContext) {
     console.error("Platform API failed", error); return problem(c, 500, "internal", "Platform request failed");
   });
   for (const [operation, spec] of Object.entries(PLATFORM_OPERATIONS)) {
+    if (!spec.path.startsWith("/api/v1/platform/")) continue;
     if (operation.startsWith("platform/session/") || operation.startsWith("platform/credentials/") || operation.includes("/credentials/")) continue;
     const path = spec.path.replace(/^\/api\/v1\/platform/, "").replace(/\{([^}]+)\}/g, ":$1");
     app.on(spec.method, path, async c => {
@@ -70,6 +78,9 @@ function requireSettingsAuthority(auth: AuthContext) {
 async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformOperationId, params: Record<string, unknown>): Promise<unknown> {
   const organizationId = params.organizationId as string;
   switch (operation) {
+    case "platform/service-users/federated-credentials/list": return listFederatedCredentials(ctx, auth, params as PlatformOperationParams<typeof operation>);
+    case "platform/service-users/federated-credentials/put": return putFederatedCredential(ctx, auth, params as PlatformOperationParams<typeof operation>);
+    case "platform/service-users/federated-credentials/delete": return deleteFederatedCredential(ctx, auth, params as PlatformOperationParams<typeof operation>);
     case "platform/settings/list": {
       requireSettingsAuthority(auth);
       return { settings: await listPlatformSettings(ctx.db, ctx.env) };
@@ -89,7 +100,8 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
       const counts = await universeCounts(ctx.db, accessible.filter(access => countsUniverses(access)).map(access => access.organization.id));
       const named = await withOwnerNames(ctx.db, accessible.map(access => access.organization));
       const settings = await platformSettings(ctx.db, ctx.env);
-      return { organizations: accessible.map((access, index) => organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0, settings)), canCreate };
+      const enrollments = await enrollmentDetails(ctx, auth, accessible.map(a => a.organization.id));
+      return { organizations: accessible.map((access, index) => ({ ...organizationView(named[index]!, access, counts.get(access.organization.id) ?? 0, settings), enrollment: enrollments.get(access.organization.id) })), canCreate };
     }
     case "platform/organizations/create": {
       if (!deploymentAllows(auth, "createOrganization")) throw new GateRefusal(403, "deployment permission required: createOrganization");
@@ -113,7 +125,8 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     case "platform/organizations/read": {
       const access = await organizationForPrincipal(ctx, auth, organizationId); if (!access) throw new GateRefusal(404, "organization not found");
       const [named] = await withOwnerNames(ctx.db, [access.organization]);
-      return { organization: organizationView(named!, access, countsUniverses(access) ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)) };
+      const enrollments = await enrollmentDetails(ctx, auth, [organizationId]);
+      return { organization: { ...organizationView(named!, access, countsUniverses(access) ? await universeCount(ctx.db, organizationId) : 0, await platformSettings(ctx.db, ctx.env)), enrollment: enrollments.get(organizationId) } };
     }
     case "platform/organizations/update": {
       const access = await requireOrganizationAction(ctx, auth, organizationId, "managePolicy");
@@ -197,7 +210,8 @@ async function dispatch(ctx: AppContext, auth: AuthContext, operation: PlatformO
     case "platform/organizations/service-users/list": {
       await requireOrganizationDirectory(ctx, auth, organizationId);
       const serviceUsers = await ctx.db.select().from(schema.serviceUsers).where(eq(schema.serviceUsers.organizationId, organizationId));
-      return { serviceUsers: serviceUsers.map(serviceUserView) };
+      const declarations = await serviceUserDeclarations(ctx, auth, organizationId, serviceUsers.map(user => user.id));
+      return { serviceUsers: serviceUsers.map(user => ({ ...serviceUserView(user), federatedCredentials: declarations.get(user.id) })) };
     }
     case "platform/organizations/service-users/create": {
       await requireOrganizationAction(ctx, auth, organizationId, "manageServiceUsers");

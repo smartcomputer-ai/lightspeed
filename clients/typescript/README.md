@@ -249,7 +249,7 @@ Native Platform helpers use `client.platform` and typed parameter objects:
 | settings | `listPlatformSettings`, `putPlatformSetting` |
 | credentials | `listPersonalApiKeys`, `createPersonalApiKey`, `replacePersonalApiKey`, `revokePersonalApiKey` |
 | service-users | `listServiceUserApiKeys`, `createServiceUserApiKey`, `putServiceUserApiKey`, `replaceServiceUserApiKey`, `revokeServiceUserApiKey` |
-| organizations | `listOrganizations`, `createOrganization`, `readOrganization`, `updateOrganization`, `listOrganizationMembers`, `putOrganizationMember`, `removeOrganizationMember`, `listOrganizationApiKeys`, `listServiceUsers`, `createServiceUser`, `updateServiceUser` |
+| organizations | `listOrganizations`, `enrollOrganization`, `createOrganization`, `readOrganization`, `updateOrganization`, `listOrganizationMembers`, `putOrganizationMember`, `removeOrganizationMember`, `listOrganizationApiKeys`, `listServiceUsers`, `createServiceUser`, `updateServiceUser`, `listFederatedCredentials`, `putFederatedCredential`, `deleteFederatedCredential` |
 | universes | `adoptUniverse`, `createUniverse`, `readPlatformUniverse`, `updateUniverse`, `listUniverseGrants`, `putUniverseGrant`, `removeUniverseGrant`, `readUniverseAccessPolicy`, `putUniverseAccessPolicy` |
 
 Additional conveniences include `awaitRun`, `readBlobText`, `putBlob`,

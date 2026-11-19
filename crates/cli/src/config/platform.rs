@@ -14,7 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
 
-use super::document::{OrganizationDocument, ServiceUserEntry, ServiceUserGrant, UniverseAccess};
+use super::document::{
+    FederatedCredential, OrganizationDocument, ServiceUserEntry, ServiceUserGrant, UniverseAccess,
+};
 use super::plan::{Action, Step, Work};
 use super::resources::Target;
 use crate::connection::ResolvedConnection;
@@ -78,7 +80,8 @@ pub(crate) enum PlatformWork {
         role: String,
     },
     /// `credential` holds the key's name, secret, expiry and restrictions.
-    PutServiceUserKey {
+    PutServiceUserCredential {
+        operation: &'static str,
         handle: String,
         service_user: String,
         credential: Value,
@@ -132,6 +135,21 @@ async fn service_users(target: &Target, organization_id: &str) -> Result<Vec<Val
         .as_array()
         .cloned()
         .unwrap_or_default())
+}
+
+fn federated_credentials(user: &Value) -> Result<Vec<FederatedCredential>> {
+    let mut declarations: Vec<FederatedCredential> = user
+        .get("federatedCredentials")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or_default();
+    for binding in &mut declarations {
+        if binding.restrictions.as_ref() == Some(&json!({})) {
+            binding.restrictions = None;
+        }
+    }
+    Ok(declarations)
 }
 
 /// A policy with its empty parts left out, so that `{}` and
@@ -385,6 +403,41 @@ pub(crate) async fn plan_organization(
             };
             steps.push(step);
             let organization_id = live.as_ref().and_then(|live| live["id"].as_str());
+            if let Some(wanted) = &entry.federated_credentials {
+                let bindings = current
+                    .map(federated_credentials)
+                    .transpose()?
+                    .unwrap_or_default();
+                for binding in wanted {
+                    let prior = bindings
+                        .iter()
+                        .find(|b| b.issuer == binding.issuer && b.subject == binding.subject);
+                    let mut canonical = binding.clone();
+                    if canonical.restrictions.as_ref() == Some(&json!({})) {
+                        canonical.restrictions = None;
+                    }
+                    let action = match prior {
+                        None => Action::Create,
+                        Some(b) if b == &canonical => Action::Unchanged,
+                        _ => Action::Update,
+                    };
+                    let mut step = Step::new(
+                        subject,
+                        "federatedCredentials",
+                        format!("{}/{}/{}", entry.name, binding.issuer, binding.subject),
+                        action,
+                    );
+                    if action != Action::Unchanged {
+                        step.work = Some(Work::Platform(PlatformWork::PutServiceUserCredential {
+                            operation: "platform/service-users/federated-credentials/put",
+                            handle: handle.into(),
+                            service_user: entry.name.clone(),
+                            credential: serde_json::to_value(binding)?,
+                        }));
+                    }
+                    steps.push(step);
+                }
+            }
             for key in entry.keys.iter().flatten() {
                 let credential = credentials[&(entry.name.clone(), key.name.clone())].clone();
                 let id = format!("{}/{}", entry.name, key.name);
@@ -445,7 +498,8 @@ pub(crate) async fn plan_organization(
                     }
                 };
                 if step.action != Action::Unchanged {
-                    step.work = Some(Work::Platform(PlatformWork::PutServiceUserKey {
+                    step.work = Some(Work::Platform(PlatformWork::PutServiceUserCredential {
+                        operation: "platform/service-users/credentials/put",
                         handle: handle.to_owned(),
                         service_user: entry.name.clone(),
                         credential,
@@ -698,7 +752,8 @@ pub(crate) async fn run(target: &Target, work: PlatformWork) -> Result<()> {
             )
             .await?;
         }
-        PlatformWork::PutServiceUserKey {
+        PlatformWork::PutServiceUserCredential {
+            operation,
             handle,
             service_user,
             mut credential,
@@ -711,7 +766,7 @@ pub(crate) async fn run(target: &Target, work: PlatformWork) -> Result<()> {
                 .with_context(|| format!("service user {service_user} is gone"))?;
             credential["organizationId"] = json!(organization_id);
             credential["serviceUserId"] = found["id"].clone();
-            call(target, "platform/service-users/credentials/put", credential).await?;
+            call(target, operation, credential).await?;
         }
         PlatformWork::PutAccessPolicy { policy } => {
             let universe = target
@@ -862,21 +917,24 @@ pub(crate) async fn export_organization(
         .get("membershipPolicy")
         .map(normalized_policy)
         .filter(|policy| policy.as_object().is_some_and(|parts| !parts.is_empty()));
-    let mut service_users: Vec<ServiceUserEntry> =
-        service_users(target, live["id"].as_str().unwrap_or_default())
-            .await?
-            .into_iter()
-            .filter_map(|service_user| {
-                Some(ServiceUserEntry {
-                    name: service_user["name"].as_str()?.to_owned(),
-                    role: service_user["role"].as_str()?.to_owned(),
-                    enabled: (service_user["enabled"] == false).then_some(false),
-                    // A key's secret never leaves Lightspeed, so keys are
-                    // declared by hand, never exported.
-                    keys: None,
-                })
-            })
-            .collect();
+    let org_id = live["id"].as_str().context("missing organization ID")?;
+    let mut service_users = Vec::new();
+    for user in self::service_users(target, org_id).await? {
+        let bindings = federated_credentials(&user)?;
+        service_users.push(ServiceUserEntry {
+            name: user["name"]
+                .as_str()
+                .context("missing service user name")?
+                .into(),
+            role: user["role"]
+                .as_str()
+                .context("missing service user role")?
+                .into(),
+            enabled: (user["enabled"] == false).then_some(false),
+            keys: None,
+            federated_credentials: (!bindings.is_empty()).then_some(bindings),
+        });
+    }
     service_users.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(OrganizationDocument {
         schema_version: super::document::SCHEMA_VERSION,

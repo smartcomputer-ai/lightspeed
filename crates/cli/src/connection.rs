@@ -28,6 +28,7 @@ pub enum CredentialKind {
     RuntimeToken,
     PlatformApiKey,
     PlatformSession,
+    Federated,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +95,7 @@ pub struct Connections {
 #[derive(Clone, Default)]
 pub struct ResolvedConnection {
     pub name: Option<String>,
+    pub request_token_file: Option<PathBuf>,
     pub endpoint: String,
     pub secret: Option<String>,
     pub credential_kind: CredentialKind,
@@ -122,7 +124,12 @@ impl ResolvedConnection {
     pub fn auth_headers(&self) -> Result<reqwest::header::HeaderMap> {
         use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
-        let secret = if self.credential_kind == CredentialKind::PlatformSession {
+        let secret = if let Some(path) = &self.request_token_file {
+            Some(nonempty_secret(
+                std::fs::read_to_string(path)
+                    .with_context(|| format!("read API token file {}", path.display()))?,
+            )?)
+        } else if self.credential_kind == CredentialKind::PlatformSession {
             self.credential_file
                 .as_deref()
                 .map(read_secret)
@@ -448,6 +455,7 @@ pub(crate) fn saved_resolved(name: &str, saved: &SavedConnection) -> Result<Reso
     }
     Ok(ResolvedConnection {
         name: Some(name.to_owned()),
+        request_token_file: None,
         endpoint: endpoint_with_policy(&saved.endpoint, saved.allow_insecure_http)?,
         credential_kind: saved.credential_kind,
         credential_file: saved.credential_file.clone(),
@@ -474,6 +482,7 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
     if response.contract_revision != api::HTTP_CONTRACT_REVISION {
         bail!("deployment HTTP contract revision is incompatible with this CLI");
     }
+    let authenticated = connection.secret.is_some() || connection.request_token_file.is_some();
     let discovered_kind = match response.runtime {
         api::RuntimeKind::Runtime => ServerKind::Runtime,
         api::RuntimeKind::Platform => ServerKind::Platform,
@@ -489,7 +498,7 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
             if connection.credential_kind == CredentialKind::PlatformSession {
                 bail!("a Platform session cannot authenticate to a direct runtime");
             }
-            connection.credential_kind = if connection.secret.is_some() {
+            connection.credential_kind = if authenticated {
                 CredentialKind::RuntimeToken
             } else {
                 CredentialKind::None
@@ -500,7 +509,7 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
             ServerKind::Runtime
         }
         api::RuntimeKind::Platform => {
-            if connection.secret.is_none() {
+            if !authenticated {
                 bail!(
                     "Platform authentication is required; use `lightspeed connect login` or add an API-key connection"
                 );
@@ -516,6 +525,9 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
                 (CredentialKind::PlatformSession, _) => {
                     bail!("the approved credential is not a CLI login session")
                 }
+                (_, "federated") if connection.credential_file.is_none() => {
+                    connection.credential_kind = CredentialKind::Federated;
+                }
                 (_, "personalKey" | "serviceUserKey") => {
                     connection.credential_kind = CredentialKind::PlatformApiKey
                 }
@@ -528,7 +540,7 @@ pub async fn verify(mut connection: ResolvedConnection) -> Result<ResolvedConnec
             ServerKind::Platform
         }
     });
-    if response.caller.single != connection.secret.is_none() {
+    if response.caller.single == authenticated {
         bail!("deployment authentication does not match the configured connection");
     }
     // A deployment-wide suggestion cannot undo an explicit organization selection:
@@ -570,11 +582,16 @@ pub async fn resolve_universe(connection: &ResolvedConnection, selected: &str) -
 
 /// Explicit connection selection is an atomic choice of endpoint and credential.
 /// Environment overrides apply when no named connection is explicitly selected.
-pub async fn resolve(
+pub fn configured(
     name: Option<&str>,
     url: Option<&str>,
     universe: Option<&str>,
+    token_file: Option<&Path>,
 ) -> Result<ResolvedConnection> {
+    anyhow::ensure!(
+        name.is_none() || token_file.is_none(),
+        "--connection selects its own credential"
+    );
     let config = match config_dir() {
         Ok(dir) => load_at(&dir)?,
         // Nowhere to keep saved connections, as in a container that sets no
@@ -606,6 +623,16 @@ pub async fn resolve(
     } else {
         None
     };
+    let request_token_file = token_file.map(Path::to_owned).or_else(|| {
+        name.is_none()
+            .then(|| std::env::var_os("LIGHTSPEED_API_TOKEN_FILE"))
+            .flatten()
+            .map(PathBuf::from)
+    });
+    anyhow::ensure!(
+        request_token_file.is_none() || explicit_secret.is_none(),
+        "choose either an API token or an API token file"
+    );
     let mut connection = if let Some(saved) = saved {
         let saved_endpoint = endpoint_with_policy(&saved.endpoint, saved.allow_insecure_http)?;
         let effective_endpoint = target
@@ -622,7 +649,7 @@ pub async fn resolve(
                 caller: None,
                 ..Default::default()
             }
-        } else if explicit_secret.is_some() {
+        } else if explicit_secret.is_some() || request_token_file.is_some() {
             ResolvedConnection {
                 name: selected.map(str::to_owned),
                 endpoint: saved_endpoint,
@@ -648,6 +675,7 @@ pub async fn resolve(
             ..Default::default()
         }
     };
+    connection.request_token_file = request_token_file;
     if let Some(secret) = explicit_secret {
         connection.secret = Some(secret);
         connection.credential_kind = CredentialKind::RuntimeToken;
@@ -663,7 +691,7 @@ pub async fn resolve(
     {
         connection.universe = Some(universe.into());
     }
-    verify(connection).await
+    Ok(connection)
 }
 
 #[derive(Debug, Args)]
@@ -749,7 +777,11 @@ pub async fn handle(
     universe: Option<&str>,
     api_url: Option<&str>,
     organization: Option<&str>,
+    token_file_override: Option<&Path>,
 ) -> Result<()> {
+    if token_file_override.is_some() && !matches!(args.command, ConnectCommand::Status) {
+        bail!("--token-file applies to requests; connect add has its own --token-file option");
+    }
     if let ConnectCommand::Login(args) = args.command {
         return crate::device_login::login(args, selected, api_url).await;
     }
@@ -798,6 +830,10 @@ pub async fn handle(
                 ..Default::default()
             })
             .await?;
+            anyhow::ensure!(
+                verified.credential_kind != CredentialKind::Federated,
+                "use --token-file or LIGHTSPEED_API_TOKEN_FILE for a rotating workload credential"
+            );
             let universe = match &verified.universe {
                 Some(selected) => Some(resolve_universe(&verified, selected).await?),
                 None => None,
@@ -881,7 +917,13 @@ pub async fn handle(
             }
         }
         ConnectCommand::Status => {
-            let mut c = resolve(selected, api_url, universe).await?;
+            let mut c = verify(configured(
+                selected,
+                api_url,
+                universe,
+                token_file_override,
+            )?)
+            .await?;
             apply_organization_override(&mut c, organization, universe)?;
             let caller = c.caller.as_ref().unwrap();
             let status = universe_status(&c).await?;
@@ -1050,22 +1092,19 @@ pub(crate) fn remove_owned_secret(dir: &Path, saved: &SavedConnection) -> Result
     Ok(())
 }
 
-/// Retry discovery only. The deadline also bounds an in-flight HTTP request.
-pub async fn resolve_wait(
-    name: Option<&str>,
-    url: Option<&str>,
-    universe: Option<&str>,
-    seconds: Option<u64>,
-) -> Result<ResolvedConnection> {
-    let Some(seconds) = seconds else {
-        return resolve(name, url, universe).await;
+/// Bound startup retries to idempotent enrollment or discovery, including each in-flight request.
+pub async fn wait_for_startup<T, F: Future<Output = Result<T>>>(
+    wait: Option<(tokio::time::Instant, u64)>,
+    request: impl Fn() -> F,
+) -> Result<T> {
+    let Some((deadline, seconds)) = wait else {
+        return request().await;
     };
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
     loop {
         if tokio::time::Instant::now() >= deadline {
             bail!("Deployment did not become available within {seconds} seconds");
         }
-        match tokio::time::timeout_at(deadline, resolve(name, url, universe)).await {
+        match tokio::time::timeout_at(deadline, request()).await {
             Ok(Ok(connection)) => return Ok(connection),
             Ok(Err(error)) if error.is::<crate::api_client::StartupUnavailable>() => {}
             Ok(Err(error)) => return Err(error),
@@ -1086,6 +1125,27 @@ pub async fn resolve_wait(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_mount_is_read_again_for_each_request_and_never_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        let connection = ResolvedConnection {
+            request_token_file: Some(path.clone()),
+            ..Default::default()
+        };
+        for token in ["first", "rotated"] {
+            let next = dir.path().join("next");
+            std::fs::write(&next, format!("{token}\n")).unwrap();
+            std::fs::rename(next, &path).unwrap();
+            assert_eq!(
+                connection.auth_headers().unwrap()[reqwest::header::AUTHORIZATION],
+                format!("Bearer {token}")
+            );
+        }
+        std::fs::remove_file(path).unwrap();
+        assert!(connection.auth_headers().is_err());
+    }
 
     #[test]
     fn saved_files_are_private_and_metadata_has_no_secret() {

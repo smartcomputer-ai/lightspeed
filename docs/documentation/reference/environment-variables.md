@@ -261,6 +261,7 @@ are given together.
 | --- | --- | --- |
 | `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed HTTP API base URL ending in `/api/v1`. Also used as the Platform backend's fallback gateway URL. |
 | `LIGHTSPEED_API_TOKEN` | Unset | Token sent by the CLI to an authenticated runtime. |
+| `LIGHTSPEED_API_TOKEN_FILE` | Alternative to the inline token | File containing a runtime key, Platform key, or workload token. The CLI rereads it for each HTTP request. The command-line equivalent is `lightspeed --token-file PATH …`. |
 | `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or handle overriding saved selection, sent to the runtime as given. Runtime tokens may select any universe. |
 | `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |
@@ -382,6 +383,7 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 | `LIGHTSPEED_PLATFORM_API_KEY_MAX_EXPIRY_DAYS` | Unset | Maximum key lifetime. Unset means no maximum, and keys may be created without expiry when chosen explicitly; set, it also refuses keys without expiry. Both expiry settings accept 1–3650 days. |
 | `LIGHTSPEED_PLATFORM_SESSION_IDLE_DAYS` | `30` | Local browser and CLI session inactivity lifetime, from 1 to 365 days. |
 | `LIGHTSPEED_PLATFORM_SESSION_MAX_DAYS` | `90` | Absolute local browser and CLI session lifetime, from 1 to 3,650 days. Company sign-in uses its own admission window. |
+| `LIGHTSPEED_PLATFORM_FEDERATION_FILE` | Unset | Path to the YAML [workload federation and enrollment policy](../deployment/configuration.md#enroll-organizations-with-workload-identity), read at Platform startup. |
 | `LIGHTSPEED_PLATFORM_OIDC_ISSUER` | Unset | Exact OIDC issuer. Setting any OIDC variable enables configuration validation; incomplete configuration fails startup. HTTPS is required except loopback HTTP for development. |
 | `LIGHTSPEED_PLATFORM_OIDC_DISCOVERY_URL` | `<issuer>/.well-known/openid-configuration` | Metadata URL override, including providers with a separate discovery path. Must describe the exact issuer. HTTPS except loopback HTTP. |
 | `LIGHTSPEED_PLATFORM_OIDC_CLIENT_ID` | Required with OIDC | Confidential application client ID. |

@@ -12,5 +12,5 @@ export async function auditIdentity(db: AuditStore, event: AuditEvent): Promise<
 
 /** Principal and credential attribution for every Platform-native mutation. */
 export async function auditAsSubject(db: AuditStore, auth: import("./auth-context.js").AuthContext, event: Omit<AuditEvent, "actorId">): Promise<void> {
-  return auditIdentity(db, { ...event, actorId: auth.actorId, details: { ...event.details, credentialId: auth.credential.id, credentialKind: auth.credential.kind } });
+  return auditIdentity(db, { ...event, actorId: auth.actorId, details: { ...event.details, ...auth.credential.workload, credentialId: auth.credential.id, credentialKind: auth.credential.kind } });
 }

@@ -137,12 +137,20 @@ const people = [
   { id: "declared:bob", userId: "bob", name: "Bob", email: "bob@example.test", role: "member", added: false, declared: true, createdAt: "2026-11-01T00:00:00.000Z" },
 ];
 const robots = [{ id: "robot", organizationId: "team", name: "Build robot", enabled: true, role: "member", createdAt: "2026-11-01T00:00:00.000Z" }];
-function withDirectory() {
-  mocks.api.mockImplementation(async (operation: string) =>
-    operation.endsWith("members/list") ? { members: people }
-      : operation.endsWith("service-users/list") ? { serviceUsers: robots }
-        : operation.endsWith("credentials/list") ? { credentials: [] }
-          : {});
+function withDirectory(federation = false) {
+  let credentials: { id: string; issuer: string; subject: string; restrictions: object; lastUsedAt: string }[] = [];
+  mocks.api.mockImplementation(async (operation: string, params) => {
+    if (operation.endsWith("members/list")) return { members: people };
+    if (operation.endsWith("service-users/list")) return { serviceUsers: robots };
+    if (operation.endsWith("federated-credentials/list")) return { credentials, issuers: federation ? ["cluster"] : [] };
+    if (operation.endsWith("federated-credentials/put")) {
+      const binding = { ...params, id: "binding", lastUsedAt: "2026-11-01T00:00:00Z" };
+      credentials = [binding];
+      return { credential: binding };
+    }
+    if (operation.endsWith("federated-credentials/delete")) { credentials = []; return { ok: true }; }
+    return { credentials: [] };
+  });
 }
 const rows = (label: string) => [...container.querySelectorAll(`table[aria-label="${label}"] tbody tr`)];
 const openRow = (label: string, index: number) => act(async () => (rows(label)[index]!.querySelector("td") as HTMLElement).click());
@@ -210,9 +218,34 @@ it("creates a service user and manages its keys and lifecycle from its details",
   await openRow("Service users", 0);
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/service-users/credentials/list", { organizationId: "team", serviceUserId: "robot" }));
   expect(dialog().textContent).toContain("API keys");
+  await waitForUi(() => expect(dialog().textContent).toContain("Federated credentials"));
+  expect(dialog().textContent).toContain("LIGHTSPEED_PLATFORM_FEDERATION_FILE");
+  expect(button("Add credential", dialog())).toBeUndefined();
   expect(button("New key", dialog())).toBeDefined();
   await click("Disable", dialog());
   expect(mocks.api.mock.calls.some(([operation, params]) => operation === "platform/organizations/service-users/update" && (params as { enabled?: boolean }).enabled === false)).toBe(false);
+});
+
+it("adds a federated credential, shows its last use, and revokes it from service user details", async () => {
+  mocks.role = "admin";
+  withDirectory(true);
+  await show("/admin/organizations/team/members");
+  await waitForUi(() => expect(rows("Service users")).toHaveLength(1));
+  await openRow("Service users", 0);
+  await waitForUi(() => expect(dialog().querySelector("#federated-subject")).toBeTruthy());
+  await type("#federated-subject", "builder");
+  await click("Add credential", dialog());
+  await waitForUi(() => expect(dialog().textContent).toContain("Last used"));
+  expect(mocks.api).toHaveBeenCalledWith("platform/service-users/federated-credentials/put", {
+    organizationId: "team", serviceUserId: "robot", issuer: "cluster", subject: "builder",
+    serviceAccountUid: null, restrictions: {}, createOnly: true,
+  });
+  await click("Revoke", dialog());
+  await click("Revoke", document.querySelector('[role="alertdialog"]')!);
+  await waitForUi(() => expect(dialog().textContent).not.toContain("Last used"));
+  expect(mocks.api).toHaveBeenCalledWith("platform/service-users/federated-credentials/delete", {
+    organizationId: "team", serviceUserId: "robot", credentialId: "binding",
+  });
 });
 
 it("keeps a personal organization to its owner while allowing service users", async () => {

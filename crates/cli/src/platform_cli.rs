@@ -24,6 +24,15 @@ enum PlatformCommand {
 }
 
 impl PlatformArgs {
+    pub(crate) fn enrollment(&self) -> Option<Value> {
+        match &self.command {
+            PlatformCommand::Organization(OrganizationArgs {
+                command: OrganizationCommand::Enroll { handle, name },
+            }) => Some(json!({ "handle": handle, "name": name })),
+            _ => None,
+        }
+    }
+
     /// Whether the command runs without a connection.
     pub(crate) fn offline(&self) -> bool {
         matches!(&self.command, PlatformCommand::ApiKey(args) if matches!(args.command, ApiKeyCommand::GenerateSecret))
@@ -84,6 +93,13 @@ pub(crate) struct OrganizationArgs {
 }
 #[derive(Debug, Subcommand)]
 enum OrganizationCommand {
+    /// Enroll a workload as the admin of a shared organization.
+    Enroll {
+        #[arg(long)]
+        handle: String,
+        #[arg(long)]
+        name: String,
+    },
     /// List the organizations this connection can see.
     List,
     /// Show one organization: the selected one unless an ID is given.
@@ -143,6 +159,12 @@ pub(crate) struct ServiceUserArgs {
 }
 #[derive(Debug, Subcommand)]
 enum ServiceUserCommand {
+    /// Manage a service user's workload identity bindings.
+    FederatedCredential {
+        service_user: String,
+        #[command(subcommand)]
+        command: FederatedCredentialCommand,
+    },
     /// List the selected organization's service users.
     List,
     /// Create a service user; issue its keys with `platform api-key create
@@ -164,6 +186,24 @@ enum ServiceUserCommand {
         role: Option<OrganizationRole>,
         #[arg(long)]
         enabled: Option<bool>,
+    },
+}
+#[derive(Debug, Subcommand)]
+enum FederatedCredentialCommand {
+    List,
+    Put {
+        #[arg(long)]
+        issuer: String,
+        #[arg(long)]
+        subject: String,
+        #[arg(long)]
+        service_account_uid: Option<String>,
+        /// JSON file containing the credential restrictions.
+        #[arg(long)]
+        restrictions: Option<PathBuf>,
+    },
+    Delete {
+        credential_id: String,
     },
 }
 #[derive(Debug, Args)]
@@ -356,6 +396,7 @@ fn with_organization(mut params: Value) -> Result<Value> {
 pub(crate) async fn organization(args: OrganizationArgs) -> Result<()> {
     require_platform()?;
     let (operation, params) = match args.command {
+        OrganizationCommand::Enroll { .. } => unreachable!("enrollment precedes discovery"),
         OrganizationCommand::List => ("platform/organizations/list", json!({})),
         OrganizationCommand::Show { target } => (
             "platform/organizations/read",
@@ -409,6 +450,36 @@ pub(crate) async fn organization(args: OrganizationArgs) -> Result<()> {
 }
 pub(crate) async fn service_user(args: ServiceUserArgs) -> Result<()> {
     let (operation, params) = match args.command {
+        ServiceUserCommand::FederatedCredential {
+            service_user,
+            command,
+        } => {
+            let mut params = json!({"serviceUserId": service_user});
+            let op = match command {
+                FederatedCredentialCommand::List => {
+                    "platform/service-users/federated-credentials/list"
+                }
+                FederatedCredentialCommand::Put {
+                    issuer,
+                    subject,
+                    service_account_uid,
+                    restrictions,
+                } => {
+                    params["issuer"] = json!(issuer);
+                    params["subject"] = json!(subject);
+                    params["serviceAccountUid"] = json!(service_account_uid);
+                    if let Some(file) = restrictions {
+                        params["restrictions"] = read_object(&file)?;
+                    }
+                    "platform/service-users/federated-credentials/put"
+                }
+                FederatedCredentialCommand::Delete { credential_id } => {
+                    params["credentialId"] = json!(credential_id);
+                    "platform/service-users/federated-credentials/delete"
+                }
+            };
+            (op, params)
+        }
         ServiceUserCommand::List => ("platform/organizations/service-users/list", json!({})),
         ServiceUserCommand::Create { name, role } => (
             "platform/organizations/service-users/create",

@@ -79,6 +79,7 @@ impl ConnectionDisplay {
             .to_owned();
         if let Some(caller) = &connection.caller {
             header_universe.push_str(match connection.credential_kind {
+                CredentialKind::Federated => " · workload identity",
                 CredentialKind::PlatformSession => " · CLI session",
                 CredentialKind::PlatformApiKey => " · Platform API key",
                 _ if caller.single => " · single mode",

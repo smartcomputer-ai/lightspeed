@@ -1,6 +1,7 @@
 import { runtimeHttpRoutes, problem } from "./runtime-http.js";
 import type { MiddlewareHandler } from "hono";
 import { authenticateRequest, CredentialRateLimit } from "./authentication.js";
+import { enrollmentRoutes } from "./routes/enrollment.js";
 import { platformRoutes } from "./routes/platform.js";
 import { credentialRoutes } from "./credential-routes.js";
 import { sessionRoutes } from "./session-routes.js";
@@ -40,6 +41,8 @@ export function buildApp(ctx: AppContext) {
   // better-auth owns the rest of /api/auth (sign-in, admin user management,
   // bearer tokens).
   app.on(["GET", "POST"], "/api/auth/*", (c) => ctx.auth.handler(c.req.raw));
+
+  if (ctx.env.federation) app.route("/", enrollmentRoutes(ctx.db, ctx.env.federation));
 
   const authenticated: MiddlewareHandler<{ Variables: ApiVariables }> = async (c, next) => {
     const admission = await authenticateRequest(ctx, c.req.raw);

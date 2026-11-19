@@ -35,6 +35,9 @@ struct Cli {
     /// Deployment URL override; never forwards a saved key to a different endpoint.
     #[arg(long, global = true)]
     api_url: Option<String>,
+    /// Read the bearer token from this file on every request (or set LIGHTSPEED_API_TOKEN_FILE).
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
     /// Use a saved runtime or Platform connection for this invocation.
     #[arg(long, global = true)]
     connection: Option<String>,
@@ -95,7 +98,7 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     if let Command::Connect(args) = cli.command {
         return connection::handle(
             args,
@@ -103,6 +106,7 @@ async fn main() -> Result<()> {
             cli.universe.as_deref(),
             cli.api_url.as_deref(),
             cli.organization.as_deref(),
+            cli.token_file.as_deref(),
         )
         .await;
     }
@@ -124,20 +128,47 @@ async fn main() -> Result<()> {
             _ => unreachable!("only these commands have offline forms"),
         };
     }
-    let wait = match &cli.command {
-        Command::Config(args) => args.wait_seconds(),
+    let enrollment = match &mut cli.command {
+        Command::Config(args) => args.prepare_enrollment()?,
+        Command::Platform(args) => args.enrollment(),
         _ => None,
     };
-    let mut active = connection::resolve_wait(
+    let configured = connection::configured(
         cli.connection.as_deref(),
         cli.api_url.as_deref(),
         cli.universe.as_deref(),
-        wait,
-    )
-    .await?;
+        cli.token_file.as_deref(),
+    )?;
+    let wait = match &cli.command {
+        Command::Config(args) => args.wait_seconds().map(|seconds| {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(seconds);
+            (deadline, seconds)
+        }),
+        _ => None,
+    };
+    let mut enrolled_organization = None;
+    if let Some(params) = enrollment {
+        let client = api_client::HttpAgentApi::with_connection(configured.clone());
+        let result = connection::wait_for_startup(wait, || client.enroll(&params)).await?;
+        if matches!(cli.command, Command::Platform(_)) {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
+        let id = result["organizationId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("enrollment response omitted organization ID"))?;
+        if result["enrolled"] == true {
+            eprintln!("Enrolled organization {id}");
+        }
+        enrolled_organization = Some(id.to_owned());
+    }
+    let mut active =
+        connection::wait_for_startup(wait, || connection::verify(configured.clone())).await?;
     connection::apply_organization_override(
         &mut active,
-        cli.organization.as_deref(),
+        cli.organization
+            .as_deref()
+            .or(enrolled_organization.as_deref()),
         cli.universe.as_deref(),
     )?;
     connection::ACTIVE

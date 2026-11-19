@@ -16,7 +16,7 @@ export interface PlatformConnectionDetails {
     platformAdmin: boolean;
   };
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey" | "federated";
     id: string;
   };
   organizations: {
@@ -62,7 +62,7 @@ export interface PlatformSessionReadResult {
     email: string | null;
   };
   credential: {
-    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey";
+    kind: "session" | "cliSession" | "personalKey" | "serviceUserKey" | "federated";
     id: string;
   };
   session: {
@@ -735,9 +735,33 @@ export interface PlatformOrganizationsListResult {
         role: "member" | "creator" | "admin";
       }[];
     };
+    enrollment?: {
+      issuer: string;
+      subject: string;
+      subjectPattern: string;
+    };
     createdAt: string;
   }[];
   canCreate: boolean;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsEnrollParams".
+ */
+export interface PlatformOrganizationsEnrollParams {
+  handle: string;
+  name: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsEnrollResult".
+ */
+export interface PlatformOrganizationsEnrollResult {
+  organizationId: string;
+  /**
+   * True when this request created the organization; false when the workload already belongs to it.
+   */
+  enrolled: boolean;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
@@ -819,6 +843,11 @@ export interface PlatformOrganizationsCreateResult {
         role: "member" | "creator" | "admin";
       }[];
     };
+    enrollment?: {
+      issuer: string;
+      subject: string;
+      subjectPattern: string;
+    };
     createdAt: string;
   };
 }
@@ -892,6 +921,11 @@ export interface PlatformOrganizationsReadResult {
         group: string;
         role: "member" | "creator" | "admin";
       }[];
+    };
+    enrollment?: {
+      issuer: string;
+      subject: string;
+      subjectPattern: string;
     };
     createdAt: string;
   };
@@ -999,6 +1033,11 @@ export interface PlatformOrganizationsUpdateResult {
         role: "member" | "creator" | "admin";
       }[];
     };
+    enrollment?: {
+      issuer: string;
+      subject: string;
+      subjectPattern: string;
+    };
     createdAt: string;
   };
 }
@@ -1096,6 +1135,31 @@ export interface PlatformOrganizationsServiceUsersListResult {
     enabled: boolean;
     role: "member" | "creator" | "admin";
     createdAt: string;
+    federatedCredentials?: {
+      issuer: string;
+      subject: string;
+      serviceAccountUid?: string | null;
+      restrictions?: {
+        /**
+         * @maxItems 1000
+         */
+        organizationIds?: string[];
+        /**
+         * @maxItems 1000
+         */
+        universeIds?: string[];
+        /**
+         * @maxItems 1000
+         */
+        operations?: string[];
+        readOnly?: boolean;
+        allowUniverseCreation?: boolean;
+        /**
+         * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+         */
+        allowServiceUserKeys?: boolean;
+      };
+    }[];
   }[];
 }
 /**
@@ -1119,6 +1183,31 @@ export interface PlatformOrganizationsServiceUsersCreateResult {
     enabled: boolean;
     role: "member" | "creator" | "admin";
     createdAt: string;
+    federatedCredentials?: {
+      issuer: string;
+      subject: string;
+      serviceAccountUid?: string | null;
+      restrictions?: {
+        /**
+         * @maxItems 1000
+         */
+        organizationIds?: string[];
+        /**
+         * @maxItems 1000
+         */
+        universeIds?: string[];
+        /**
+         * @maxItems 1000
+         */
+        operations?: string[];
+        readOnly?: boolean;
+        allowUniverseCreation?: boolean;
+        /**
+         * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+         */
+        allowServiceUserKeys?: boolean;
+      };
+    }[];
   };
 }
 /**
@@ -1144,7 +1233,155 @@ export interface PlatformOrganizationsServiceUsersUpdateResult {
     enabled: boolean;
     role: "member" | "creator" | "admin";
     createdAt: string;
+    federatedCredentials?: {
+      issuer: string;
+      subject: string;
+      serviceAccountUid?: string | null;
+      restrictions?: {
+        /**
+         * @maxItems 1000
+         */
+        organizationIds?: string[];
+        /**
+         * @maxItems 1000
+         */
+        universeIds?: string[];
+        /**
+         * @maxItems 1000
+         */
+        operations?: string[];
+        readOnly?: boolean;
+        allowUniverseCreation?: boolean;
+        /**
+         * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+         */
+        allowServiceUserKeys?: boolean;
+      };
+    }[];
   };
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersFederatedCredentialsListParams".
+ */
+export interface PlatformServiceUsersFederatedCredentialsListParams {
+  organizationId: string;
+  serviceUserId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersFederatedCredentialsListResult".
+ */
+export interface PlatformServiceUsersFederatedCredentialsListResult {
+  credentials: {
+    issuer: string;
+    subject: string;
+    serviceAccountUid?: string | null;
+    restrictions: {
+      /**
+       * @maxItems 1000
+       */
+      organizationIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      universeIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      operations?: string[];
+      readOnly?: boolean;
+      allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
+    };
+    id: string;
+    lastUsedAt: string | null;
+  }[];
+  issuers: string[];
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersFederatedCredentialsPutParams".
+ */
+export interface PlatformServiceUsersFederatedCredentialsPutParams {
+  issuer: string;
+  subject: string;
+  serviceAccountUid?: string | null;
+  restrictions?: {
+    /**
+     * @maxItems 1000
+     */
+    organizationIds?: string[];
+    /**
+     * @maxItems 1000
+     */
+    universeIds?: string[];
+    /**
+     * @maxItems 1000
+     */
+    operations?: string[];
+    readOnly?: boolean;
+    allowUniverseCreation?: boolean;
+    /**
+     * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+     */
+    allowServiceUserKeys?: boolean;
+  };
+  organizationId: string;
+  serviceUserId: string;
+  createOnly?: boolean;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersFederatedCredentialsPutResult".
+ */
+export interface PlatformServiceUsersFederatedCredentialsPutResult {
+  credential: {
+    issuer: string;
+    subject: string;
+    serviceAccountUid?: string | null;
+    restrictions: {
+      /**
+       * @maxItems 1000
+       */
+      organizationIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      universeIds?: string[];
+      /**
+       * @maxItems 1000
+       */
+      operations?: string[];
+      readOnly?: boolean;
+      allowUniverseCreation?: boolean;
+      /**
+       * Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+       */
+      allowServiceUserKeys?: boolean;
+    };
+    id: string;
+    lastUsedAt: string | null;
+  };
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersFederatedCredentialsDeleteParams".
+ */
+export interface PlatformServiceUsersFederatedCredentialsDeleteParams {
+  organizationId: string;
+  serviceUserId: string;
+  credentialId: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformServiceUsersFederatedCredentialsDeleteResult".
+ */
+export interface PlatformServiceUsersFederatedCredentialsDeleteResult {
+  ok: true;
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
