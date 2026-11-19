@@ -59,13 +59,19 @@ export function FederatedCredentials(owner: { organizationId: string; serviceUse
   });
   const error = list.error ?? put.error ?? remove.error;
   if (error && !list.data) return <p role="alert">Could not load federated credentials. {error.message}</p>;
-  if (!list.data || (!list.data.credentials.length && !list.data.issuers.length)) return null;
+  if (!list.data) return null;
   const exists = list.data.credentials.some(
     (binding) => binding.issuer === issuer && binding.subject === subject,
   );
   return (
     <section className="grid gap-3">
       <h3 className="font-medium">Federated credentials</h3>
+      {list.data.issuers.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          To add a workload credential, configure a trusted issuer in the Platform backend’s{" "}
+          <code>LIGHTSPEED_PLATFORM_FEDERATION_FILE</code> and restart the backend.
+        </p>
+      )}
       {list.data.credentials.map((binding) => (
         <div key={binding.id} className="flex items-start justify-between gap-3">
           <div className="min-w-0 text-sm">

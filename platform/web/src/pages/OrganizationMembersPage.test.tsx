@@ -218,6 +218,9 @@ it("creates a service user and manages its keys and lifecycle from its details",
   await openRow("Service users", 0);
   await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith("platform/service-users/credentials/list", { organizationId: "team", serviceUserId: "robot" }));
   expect(dialog().textContent).toContain("API keys");
+  await waitForUi(() => expect(dialog().textContent).toContain("Federated credentials"));
+  expect(dialog().textContent).toContain("LIGHTSPEED_PLATFORM_FEDERATION_FILE");
+  expect(button("Add credential", dialog())).toBeUndefined();
   expect(button("New key", dialog())).toBeDefined();
   await click("Disable", dialog());
   expect(mocks.api.mock.calls.some(([operation, params]) => operation === "platform/organizations/service-users/update" && (params as { enabled?: boolean }).enabled === false)).toBe(false);
