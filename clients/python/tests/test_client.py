@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from lightspeed_ai import (
+from lightspeed import (
     CLIENT_HELPERS,
     MANUAL_CLIENT_HELPERS,
     OPERATION_INFO,
@@ -18,8 +18,8 @@ from lightspeed_ai import (
     LightspeedApiError,
     LightspeedTransportError,
 )
-from lightspeed_ai import client as implementation
-from lightspeed_ai._http import HTTP_OPERATIONS
+from lightspeed import client as implementation
+from lightspeed._http import HTTP_OPERATIONS
 
 PARITY = json.loads((Path(__file__).resolve().parents[2] / "fixtures/gateway-parity.json").read_text())
 

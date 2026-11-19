@@ -1,10 +1,10 @@
 from typing import assert_type
 from collections.abc import AsyncIterator
-from lightspeed_ai import types as Api
+from lightspeed import types as Api
 
-from lightspeed_ai import AsyncLightspeedClient, ClientConnectionResponse
-from lightspeed_ai import platform_types as Platform
-from lightspeed_ai.types import (
+from lightspeed import AsyncLightspeedClient, ClientConnectionResponse
+from lightspeed import platform_types as Platform
+from lightspeed.types import (
     CredentialGrantPutResponse,
     McpServerPutResponse,
     RunReadResponse,

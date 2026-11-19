@@ -12,7 +12,7 @@ export const releasePackages = [
 // lockfile each state once.
 const pythonVersionFiles = [
   ['clients/python/pyproject.toml', /^(\[project\]\n(?:[^\[]*?\n)?version = ")([^"]+)"/m],
-  ['clients/python/uv.lock', /^(\[\[package\]\]\nname = "lightspeed-ai"\nversion = ")([^"]+)"/m],
+  ['clients/python/uv.lock', /^(\[\[package\]\]\nname = "lightspeed-ai-sdk"\nversion = ")([^"]+)"/m],
 ];
 
 export function validateVersion(version) {

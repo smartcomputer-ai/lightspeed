@@ -6,9 +6,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from lightspeed_ai import AsyncLightspeedClient, LightspeedApiError, LightspeedTransportError
-from lightspeed_ai._endpoint import normalize_endpoint
-from lightspeed_ai import _connection
+from lightspeed import AsyncLightspeedClient, LightspeedApiError, LightspeedTransportError
+from lightspeed._endpoint import normalize_endpoint
+from lightspeed import _connection
 
 ENDPOINTS = json.loads((Path(__file__).resolve().parents[2] / "fixtures/endpoints.json").read_text())
 

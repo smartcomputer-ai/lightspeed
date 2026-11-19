@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from lightspeed_ai import AsyncLightspeedClient
+from lightspeed import AsyncLightspeedClient
 
 pytestmark = pytest.mark.skipif(
     os.getenv("LIGHTSPEED_TEST_GATEWAY") != "1", reason="opt-in test requires a configured local gateway",

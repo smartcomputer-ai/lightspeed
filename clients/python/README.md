@@ -21,7 +21,7 @@ remain full-authority infrastructure credentials.
 
 ```python
 from uuid import uuid4
-from lightspeed_ai import AsyncLightspeedClient
+from lightspeed import AsyncLightspeedClient
 
 async with AsyncLightspeedClient(
     "https://lightspeed.example", token=platform_key
@@ -40,7 +40,7 @@ administrators supply an explicit `initialOwner` when provisioning. Native helpe
 take one parameter dictionary using API field names. The same operations are
 available through typed `client.call`, for example
 `await client.call("platform/organizations/list")`. Native parameter and result types
-live in `lightspeed_ai.platform_types`.
+live in `lightspeed.platform_types`.
 
 For local scripts, reuse the named or selected connection saved by `lightspeed login`
 or `lightspeed connect add`:
@@ -70,11 +70,19 @@ its user is an organization Admin. API keys cannot mint other keys.
 Requires Python 3.12 or newer. [HTTPX](https://www.python-httpx.org/) is the only
 runtime dependency.
 
-Install from the repository, at the tag of your Lightspeed release, because the
-client's types follow that release's API:
+Install the stable SDK from PyPI:
 
 ```bash
-python -m pip install "lightspeed-ai @ git+https://github.com/smartcomputer-ai/lightspeed@v<release-version>#subdirectory=clients/python"
+python -m pip install lightspeed-ai-sdk
+```
+
+Import the SDK with `from lightspeed import AsyncLightspeedClient`. The client's
+types follow the Lightspeed release. Pin `lightspeed-ai-sdk==<release-version>`
+to match your deployment. For a release that predates PyPI publication, install
+from its Git tag and use the import shown in that tag's README:
+
+```bash
+python -m pip install "git+https://github.com/smartcomputer-ai/lightspeed@v<release-version>#subdirectory=clients/python"
 ```
 
 From a checkout, `python -m pip install ./clients/python` installs the same package.
@@ -88,7 +96,7 @@ You need the gateway's `/api/v1` URL, a
 import asyncio
 import os
 
-from lightspeed_ai import AsyncLightspeedClient
+from lightspeed import AsyncLightspeedClient
 
 
 async def main() -> None:
@@ -300,7 +308,7 @@ merges them into one list in the order they happened, with each tool call joined
 result:
 
 ```python
-from lightspeed_ai import run_timeline
+from lightspeed import run_timeline
 
 run = (await client.read_run(session_id, run_id))["run"]
 
@@ -324,12 +332,12 @@ To keep a view current, follow the run with `await_run` and read it again when
 
 ## Types
 
-`lightspeed_ai.types` holds every type in the API, named as the API names them and
+`lightspeed.types` holds every type in the API, named as the API names them and
 documented from the contract. Each variant of a tagged union is named after its tag,
 and checking the tag narrows the type:
 
 ```python
-from lightspeed_ai.types import SessionEventView
+from lightspeed.types import SessionEventView
 
 
 def failure_message(event: SessionEventView) -> str | None:
@@ -360,9 +368,9 @@ new ones.
 ## Write workflow code
 
 Temporal workflows that receive tool calls from an integrated session import
-`lightspeed_ai.workflow`. It has the contract's signal, query and activity names, and
+`lightspeed.workflow`. It has the contract's signal, query and activity names, and
 helpers for parsing envelopes, deriving IDs, fingerprinting recipes, and building
-replies. `lightspeed_ai.workflow_types` has the generated types, which work as the type
+replies. `lightspeed.workflow_types` has the generated types, which work as the type
 hints Temporal decodes workflow arguments and signals from, such as
 `WorkflowToolStartArgs` and `EmissionEnvelope`. The module depends on no Temporal
 package and is deterministic. Its functions raise `ValueError` for a value the contract
@@ -382,14 +390,14 @@ from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from lightspeed_ai.workflow import (
+    from lightspeed.workflow import (
         DELIVER_EMISSION_SIGNAL,
         REPLY_COMPLETION_KEY,
         WORKFLOW_TOOL_RECOVERY_QUERY,
         reply_promise_id,
         source_resolution_envelope,
     )
-    from lightspeed_ai.workflow_types import (
+    from lightspeed.workflow_types import (
         PromiseResolution,
         WorkflowToolRecoveryResult,
         WorkflowToolStartArgs,
@@ -452,13 +460,13 @@ recovery query answers from those keys. A bound receiver takes `EmissionEnvelope
 The types, method tables, and most helpers are generated from the committed contracts in
 `crates/api/contract/` and `crates/temporal-workflow/contract/`, so don't edit
 `types.py`, `_generated.py`, `workflow_types.py`, or `_workflow_manifest.py` under
-`src/lightspeed_ai/` by hand. Helpers come from the TypeScript SDK's
+`src/lightspeed/` by hand. Helpers come from the TypeScript SDK's
 inventory, [`clients/typescript/scripts/helpers.mjs`](../typescript/scripts/helpers.mjs),
 which the generator reads with Node.js. It requires one named helper for every
 runtime operation, rejects name collisions and missing implementations, and checks
 that handwritten helpers expose the complete wire parameters and transport. The
 helper table above is generated from that same inventory. Helpers that need behavior
-of their own live in `src/lightspeed_ai/client.py`; native Platform names come from
+of their own live in `src/lightspeed/client.py`; native Platform names come from
 its shared contract.
 
 With [uv](https://docs.astral.sh/uv/) and Node.js installed, from `clients/python`:

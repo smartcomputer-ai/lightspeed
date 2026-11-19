@@ -153,7 +153,7 @@ which a test checks.
 The Python generator needs [uv](https://docs.astral.sh/uv/) and Node.js. It reads the
 API and workflow exports and the same helper table, and writes `types.py`,
 `_generated.py`, `workflow_types.py`, and `_workflow_manifest.py` under
-`clients/python/src/lightspeed_ai/`. A new helper belongs in the Python client's
+`clients/python/src/lightspeed/`. A new helper belongs in the Python client's
 README too, which its tests check.
 
 The method-action generator updates `platform/backend/src/routes/method-actions.ts`:

@@ -151,7 +151,7 @@ Or use the asynchronous Python client.
 
 ```python
 import asyncio
-from lightspeed_ai import AsyncLightspeedClient
+from lightspeed import AsyncLightspeedClient
 
 async def main():
     async with await AsyncLightspeedClient.from_connection("work") as client:

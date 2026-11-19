@@ -337,7 +337,7 @@ missing completion signal with recovery results available.
 
 The [generated workflow contract](../../../crates/temporal-workflow/contract/workflow-contract.md)
 and the workflow helpers for [TypeScript](../../../clients/typescript/src/workflow.ts)
-and [Python](../../../clients/python/src/lightspeed_ai/workflow.py)
+and [Python](../../../clients/python/src/lightspeed/workflow.py)
 own the exact envelopes, identifiers, and signal/query names. Use those helpers
 instead of copying hashing or workflow-ID rules into your integration. The
 [Python client README](../../../clients/python/README.md#write-workflow-code) has the

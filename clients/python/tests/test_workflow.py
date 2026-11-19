@@ -1,6 +1,6 @@
 import pytest
 
-from lightspeed_ai.workflow import (
+from lightspeed.workflow import (
     DELIVER_EMISSION_SIGNAL,
     REPLY_COMPLETION_KEY,
     WORKFLOW_CONTRACT_VECTORS,
@@ -132,7 +132,7 @@ def test_temporals_data_converter_decodes_the_generated_types():
     # arguments decoded from the type hints, before any of its code runs.
     from temporalio.converter import value_to_type
 
-    from lightspeed_ai import AwaitRunResult, RunTimelineItem, types, workflow_types
+    from lightspeed import AwaitRunResult, RunTimelineItem, types, workflow_types
 
     assert value_to_type(workflow_types.WorkflowToolStartArgs, VECTORS["startArgs"]) == VECTORS["startArgs"]
     assert value_to_type(
