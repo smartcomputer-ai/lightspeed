@@ -51,6 +51,8 @@ const COPY: Record<
   },
 };
 
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
 const COMPATIBLE_PROVIDER_PRESETS = [
   {
     id: "deepseek",
@@ -60,7 +62,7 @@ const COMPATIBLE_PROVIDER_PRESETS = [
   {
     id: "openrouter",
     label: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/ui",
+    baseUrl: OPENROUTER_BASE_URL,
   },
   {
     id: "ollama",
@@ -78,7 +80,7 @@ type CompatibleProviderPresetId =
   (typeof COMPATIBLE_PROVIDER_PRESETS)[number]["id"];
 type CompatibleProviderChoice = CompatibleProviderPresetId | "custom";
 
-function compatibleProviderPreset(id: string) {
+export function compatibleProviderPreset(id: string) {
   return COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === id);
 }
 
@@ -175,7 +177,7 @@ export function ModelApiKeyForm({
               id="model-key-base-url"
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder="https://openrouter.ai/api/ui"
+              placeholder={OPENROUTER_BASE_URL}
             />
             <FieldDescription>
               Optional. HTTPS is required except for localhost/loopback HTTP.
@@ -486,7 +488,7 @@ export function OpenAiCompatibleForm({
         <Input
           value={baseUrl}
           onChange={(event) => setBaseUrl(event.target.value)}
-          placeholder="https://openrouter.ai/api/ui"
+          placeholder={OPENROUTER_BASE_URL}
         />
       </Field>
       <Field>

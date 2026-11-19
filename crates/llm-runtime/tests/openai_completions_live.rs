@@ -13,6 +13,8 @@ use llm_runtime::{
 };
 use serde_json::json;
 
+#[path = "openai_completions_live/qwen.rs"]
+mod qwen;
 mod support;
 
 use support::{
@@ -115,27 +117,39 @@ fn deepseek_adapter(blobs: Arc<InMemoryBlobStore>) -> OpenAiCompletionsLlmAdapte
         .expect("DEEPSEEK_API_KEY must be set in env or root .env");
     let base_url = env_or_dotenv_var("DEEPSEEK_BASE_URL")
         .unwrap_or_else(|_| "https://api.deepseek.com".to_owned());
+    let providers = custom_model_provider("deepseek", &base_url, Some(api_key));
+    OpenAiCompletionsLlmAdapter::new(custom_provider_client(), blobs)
+        .with_provider_key_resolver(Arc::new(providers))
+        .with_debug_dumps(true)
+}
+
+fn custom_model_provider(
+    provider_id: &str,
+    base_url: &str,
+    api_key: Option<String>,
+) -> StaticModelProviders {
     let endpoint = ResolvedEndpoint::new(
-        &base_url,
+        base_url,
         &BTreeMap::new(),
         ["openai:completions".to_owned()],
     )
-    .expect("DeepSeek endpoint");
-    let providers = StaticModelProviders::new().with_provider(
-        "deepseek",
+    .expect("Chat Completions endpoint");
+    StaticModelProviders::new().with_provider(
+        provider_id,
         ResolvedModelProvider {
-            auth: Some(ResolvedProviderAuth::api_key(api_key)),
+            auth: api_key.map(ResolvedProviderAuth::api_key),
             endpoint: Some(endpoint),
         },
-    );
+    )
+}
+
+fn custom_provider_client() -> Arc<dyn llm_runtime::OpenAiCompletionsApi> {
     // The provider record must supply both the destination and credentials.
     let client = llm_clients::openai::completions::Client::new(
         llm_clients::openai::completions::Config::without_api_key(),
     )
     .expect("base OpenAI client");
-    OpenAiCompletionsLlmAdapter::new(retrying_openai_completions_client(client), blobs)
-        .with_provider_key_resolver(Arc::new(providers))
-        .with_debug_dumps(true)
+    retrying_openai_completions_client(client)
 }
 
 async fn assistant_text(

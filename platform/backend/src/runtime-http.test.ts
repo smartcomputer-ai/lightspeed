@@ -121,6 +121,38 @@ describe("shared resource API admission", () => {
     await reader.cancel();
     expect(canceled).toHaveBeenCalledOnce(); expect(upstreamSignal?.aborted).toBe(true);
   });
+  it("ends the event stream cleanly when the watch must be reauthorized", async () => {
+    vi.useFakeTimers();
+    try {
+      const event = new TextEncoder().encode("event: watch/reset\ndata: {}\n\n");
+      const calls = runtime((_url, { signal }) => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(event);
+          signal!.addEventListener("abort", () => controller.error(signal!.reason), { once: true });
+        },
+      }), { headers: { "content-type": "text/event-stream" } }));
+      const response = await app().request(path("/events"));
+      const reader = response.body!.getReader();
+      expect((await reader.read()).value).toEqual(event);
+      const pending = reader.read();
+      const upstream = calls.at(-1)!.init.signal!;
+      vi.advanceTimersByTime(59_999);
+      expect(upstream.aborted).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(upstream.aborted).toBe(true);
+      await expect(pending).resolves.toMatchObject({ done: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("propagates an unexpected upstream watch failure", async () => {
+    const failure = new DOMException("Runtime disconnected", "AbortError");
+    runtime(() => new Response(new ReadableStream({ start(controller) { controller.error(failure); } }), {
+      headers: { "content-type": "text/event-stream" },
+    }));
+    const response = await app().request(path("/events"));
+    await expect(response.text()).rejects.toBe(failure);
+  });
   it("uses native lifecycle services instead of forwarding universe deletion", async () => {
     const calls = runtime(); mocks.remove.mockResolvedValue({ state: "deleting" });
     const response = await app("owner", undefined, true).request(path(""), { method: "DELETE" });
