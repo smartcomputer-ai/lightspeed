@@ -441,7 +441,11 @@ async fn materialize_messages_tracked(
     for entry in entries {
         if matches!(entry.kind, ContextEntryKind::Instructions) {
             reject_foreign_provider_kind(entry)?;
-            instruction_layers.push(read_text(blobs, &entry.content.content_ref).await?);
+            let text = read_text(blobs, &entry.content.content_ref).await?;
+            if !text.trim().is_empty() {
+                instruction_layers.push(text);
+                positions.push((entry.entry_id, 0));
+            }
         }
     }
     if !instruction_layers.is_empty() {
@@ -453,10 +457,7 @@ async fn materialize_messages_tracked(
 
     for entry in entries {
         match &entry.kind {
-            ContextEntryKind::Instructions => {
-                positions.push((entry.entry_id, 0));
-                continue;
-            }
+            ContextEntryKind::Instructions => continue,
             ContextEntryKind::ToolCall { .. } => {
                 require_completions_provider_kind(entry)?;
                 let raw = read_json(blobs, &entry.content.content_ref).await?;
@@ -3027,7 +3028,7 @@ mod tests {
             );
             assert_eq!(
                 positions,
-                [(1, 0), (2, 1), (3, 0), (4, 1), (5, 2), (6, 3), (7, 3)]
+                [(1, 0), (3, 0), (2, 1), (4, 1), (5, 2), (6, 3), (7, 3)]
                     .map(|(id, index)| (ContextEntryId::new(id), index))
             );
 
@@ -3046,6 +3047,55 @@ mod tests {
                 "{provider}: compaction context"
             );
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blank_instruction_layers_have_no_message_or_request_position() {
+        let blobs = InMemoryBlobStore::new();
+        let layer = async |id, text: &str| {
+            entry(
+                id,
+                ContextEntryKind::Instructions,
+                ContextEntrySource::ContextEdit,
+                blobs.insert_text(text).await,
+            )
+        };
+        let entries = [
+            layer(1, "  Keep the indentation.\n").await,
+            layer(2, "").await,
+            layer(3, " \t\n").await,
+            entry(
+                4,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                ContextEntrySource::ContextEdit,
+                blobs.insert_text("Hello").await,
+            ),
+        ];
+        let user = oai_c::CompletionMessage::user("Hello");
+        let (mixed, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::Compatible)
+                .await
+                .unwrap();
+        assert_eq!(
+            mixed,
+            [
+                text_message("system", "  Keep the indentation.\n".into()),
+                user.clone()
+            ]
+        );
+        assert_eq!(
+            positions,
+            [(entries[0].entry_id, 0), (entries[3].entry_id, 1)]
+        );
+
+        let (all_blank, positions) =
+            materialize_messages_tracked(&blobs, &entries[1..], CompletionDialect::Compatible)
+                .await
+                .unwrap();
+        assert_eq!(all_blank, [user]);
+        assert_eq!(positions, [(entries[3].entry_id, 0)]);
     }
 
     #[tokio::test(flavor = "current_thread")]
