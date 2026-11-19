@@ -234,9 +234,12 @@ Pushing the tag starts publication. The protected Linux amd64 and Windows x64
 environment must contain `NPM_TOKEN`. The environment only pauses publication
 if approval rules have actually been configured in GitHub.
 
-For Python publication, a PyPI project owner must configure a GitHub trusted
-publisher on the existing `lightspeed-ai` project under the `lightspeed-ai`
-organization. Enter `smartcomputer-ai` as the GitHub owner, `lightspeed` as
+Before the first Python release, confirm that the distribution appears under
+**Projects** in the `lightspeed-ai` PyPI organization. An existing project
+can be transferred by its owner. [PyPI project transfers](https://docs.pypi.org/organization-accounts/actions/project-actions/#transfer-a-project)
+
+In the project's **Publishing** settings, add a GitHub trusted publisher.
+Enter `smartcomputer-ai` as the GitHub owner, `lightspeed` as
 the repository, `release-tag.yml` as the workflow filename and
 `official-release` as the environment. The workflow exchanges its GitHub
 identity for a short-lived PyPI upload token. [PyPI trusted publisher setup](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)
