@@ -46,6 +46,31 @@ jobs:
           echo "version=$LIGHTSPEED_PRODUCT_VERSION" >> "$GITHUB_OUTPUT"
           echo "staging_tag=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
+  python:
+    needs: identity
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.identity.outputs.sha }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.8
+          python-version: "3.12"
+          cache-dependency-glob: clients/python/uv.lock
+      - run: scripts/release/build-python-sdk.sh "$RUNNER_TEMP/python-dist"
+      - id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/python-dist/*.whl
+            ${{ runner.temp }}/python-dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
   linux:
     needs: identity
     runs-on: [self-hosted, linux, x64, hz01, protected]
@@ -311,8 +336,32 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  publish-python:
+    needs: [build, python]
+    runs-on: ubuntu-latest
+    environment: official-release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.python.outputs.artifact_id }}
+          path: python-dist
+          merge-multiple: true
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.8
+          enable-cache: false
+      - name: Publish the verified wheel and source distribution to PyPI
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ \
+            "python-dist/lightspeed_ai-${VERSION}-py3-none-any.whl" \
+            "python-dist/lightspeed_ai-${VERSION}.tar.gz"
+
   publish-release:
-    needs: build
+    needs: [build, publish-python]
     runs-on: [self-hosted, linux, x64, hz01, protected]
     environment: official-release
     permissions:

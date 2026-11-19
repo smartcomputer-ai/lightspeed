@@ -120,6 +120,8 @@ jobs:
           uv run --locked python scripts/generate.py --check
           uv run --locked mypy
           uv run --locked pytest
+      - name: Build and install the Python SDK distributions
+        run: scripts/release/build-python-sdk.sh "$RUNNER_TEMP/python-dist"
       - run: npm ci
       - name: Check every Node consumer and integration boundary
         env:

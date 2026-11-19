@@ -234,8 +234,18 @@ Pushing the tag starts publication. The protected Linux amd64 and Windows x64
 environment must contain `NPM_TOKEN`. The environment only pauses publication
 if approval rules have actually been configured in GitHub.
 
+For Python publication, a PyPI project owner must configure a GitHub trusted
+publisher on the existing `lightspeed-ai` project under the `lightspeed-ai`
+organization. Enter `smartcomputer-ai` as the GitHub owner, `lightspeed` as
+the repository, `release-tag.yml` as the workflow filename and
+`official-release` as the environment. The workflow exchanges its GitHub
+identity for a short-lived PyPI upload token. [PyPI trusted publisher setup](https://docs.pypi.org/trusted-publishers/adding-a-publisher/)
+
 The release workflow independently tests and builds the tagged source. It
-does not promote an already-built main snapshot. Final publication runs
+builds a Python wheel and source distribution and installs each in isolation.
+After release assembly succeeds, a protected job uploads those exact files
+to PyPI. On retry, it checks the hashes of files already published for that
+version. Final publication runs
 through the `official-release` environment, validates the staged bundle by
 digest, and publishes exact-version OCI aliases, the npm package, and the
 GitHub Release with its assets. Existing aliases are checked against their

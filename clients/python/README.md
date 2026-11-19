@@ -70,8 +70,15 @@ its user is an organization Admin. API keys cannot mint other keys.
 Requires Python 3.12 or newer. [HTTPX](https://www.python-httpx.org/) is the only
 runtime dependency.
 
-Install from the repository, at the tag of your Lightspeed release, because the
-client's types follow that release's API:
+Install the stable SDK from PyPI:
+
+```bash
+python -m pip install lightspeed-ai
+```
+
+The client's types follow the Lightspeed release. Pin `lightspeed-ai==<release-version>`
+to match your deployment. For a release that predates PyPI publication, install
+from its Git tag:
 
 ```bash
 python -m pip install "lightspeed-ai @ git+https://github.com/smartcomputer-ai/lightspeed@v<release-version>#subdirectory=clients/python"
