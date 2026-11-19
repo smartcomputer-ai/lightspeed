@@ -26,6 +26,9 @@ export interface PlatformOperationMap {
   "platform/organizations/service-users/list": { params: T.PlatformOrganizationsServiceUsersListParams; result: T.PlatformOrganizationsServiceUsersListResult };
   "platform/organizations/service-users/create": { params: T.PlatformOrganizationsServiceUsersCreateParams; result: T.PlatformOrganizationsServiceUsersCreateResult };
   "platform/organizations/service-users/update": { params: T.PlatformOrganizationsServiceUsersUpdateParams; result: T.PlatformOrganizationsServiceUsersUpdateResult };
+  "platform/service-users/federated-credentials/list": { params: T.PlatformServiceUsersFederatedCredentialsListParams; result: T.PlatformServiceUsersFederatedCredentialsListResult };
+  "platform/service-users/federated-credentials/put": { params: T.PlatformServiceUsersFederatedCredentialsPutParams; result: T.PlatformServiceUsersFederatedCredentialsPutResult };
+  "platform/service-users/federated-credentials/delete": { params: T.PlatformServiceUsersFederatedCredentialsDeleteParams; result: T.PlatformServiceUsersFederatedCredentialsDeleteResult };
   "platform/universes/adopt": { params: T.PlatformUniversesAdoptParams; result: T.PlatformUniversesAdoptResult };
   "platform/universes/create": { params: T.PlatformUniversesCreateParams; result: T.PlatformUniversesCreateResult };
   "platform/universes/update": { params: T.PlatformUniversesUpdateParams; result: T.PlatformUniversesUpdateResult };
@@ -139,6 +142,18 @@ export const PLATFORM_OPERATIONS = {
   "platform/organizations/service-users/update": {
     "method": "PATCH",
     "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}"
+  },
+  "platform/service-users/federated-credentials/list": {
+    "method": "GET",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials"
+  },
+  "platform/service-users/federated-credentials/put": {
+    "method": "PUT",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials"
+  },
+  "platform/service-users/federated-credentials/delete": {
+    "method": "DELETE",
+    "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials/{credentialId}"
   },
   "platform/universes/adopt": {
     "method": "POST",

@@ -80,6 +80,15 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/organizations/service-users/update': {'method': 'PATCH',
                                                  'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}',
                                                  'helper': {'name': 'updateServiceUser'}},
+ 'platform/service-users/federated-credentials/list': {'method': 'GET',
+                                                       'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials',
+                                                       'helper': {'name': 'listFederatedCredentials'}},
+ 'platform/service-users/federated-credentials/put': {'method': 'PUT',
+                                                      'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials',
+                                                      'helper': {'name': 'putFederatedCredential'}},
+ 'platform/service-users/federated-credentials/delete': {'method': 'DELETE',
+                                                         'path': '/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials/{credentialId}',
+                                                         'helper': {'name': 'deleteFederatedCredential'}},
  'platform/universes/adopt': {'method': 'POST',
                               'path': '/api/v1/platform/organizations/{organizationId}/universes/adopt',
                               'helper': {'name': 'adoptUniverse'}},
@@ -190,6 +199,15 @@ class PlatformApi:
 
     async def update_service_user(self, params: Api.PlatformOrganizationsServiceUsersUpdateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsServiceUsersUpdateResult:
         return cast(Api.PlatformOrganizationsServiceUsersUpdateResult, await self._invoke('platform/organizations/service-users/update', dict(params or {}), headers))
+
+    async def list_federated_credentials(self, params: Api.PlatformServiceUsersFederatedCredentialsListParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersFederatedCredentialsListResult:
+        return cast(Api.PlatformServiceUsersFederatedCredentialsListResult, await self._invoke('platform/service-users/federated-credentials/list', dict(params or {}), headers))
+
+    async def put_federated_credential(self, params: Api.PlatformServiceUsersFederatedCredentialsPutParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersFederatedCredentialsPutResult:
+        return cast(Api.PlatformServiceUsersFederatedCredentialsPutResult, await self._invoke('platform/service-users/federated-credentials/put', dict(params or {}), headers))
+
+    async def delete_federated_credential(self, params: Api.PlatformServiceUsersFederatedCredentialsDeleteParams, *, headers: HeadersInput | None = None) -> Api.PlatformServiceUsersFederatedCredentialsDeleteResult:
+        return cast(Api.PlatformServiceUsersFederatedCredentialsDeleteResult, await self._invoke('platform/service-users/federated-credentials/delete', dict(params or {}), headers))
 
     async def adopt_universe(self, params: Api.PlatformUniversesAdoptParams, *, headers: HeadersInput | None = None) -> Api.PlatformUniversesAdoptResult:
         return cast(Api.PlatformUniversesAdoptResult, await self._invoke('platform/universes/adopt', dict(params or {}), headers))

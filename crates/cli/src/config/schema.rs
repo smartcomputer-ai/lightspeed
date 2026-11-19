@@ -297,8 +297,21 @@ pub(crate) fn document_schema() -> Value {
         },
         "additionalProperties": false,
     }));
+    let platform: Value = serde_json::from_str(include_str!(
+        "../../../../platform/shared/contract/platform.schema.json"
+    ))
+    .expect("generated Platform schema");
+    let mut binding =
+        platform["definitions"]["PlatformServiceUsersFederatedCredentialsPutParams"].clone();
+    for owner in ["organizationId", "serviceUserId", "createOnly"] {
+        binding["properties"].as_object_mut().unwrap().remove(owner);
+        binding["required"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|key| key != owner);
+    }
     organization_sections.insert("serviceUsers".to_owned(), json!({
-        "description": "Service users, by their name in the organization. Their API keys are issued with `lightspeed platform service-user`, never declared. One left out is kept.",
+        "description": "Service users, by their name in the organization. Credentials are additive. A service user or credential left out is kept.",
         "type": "array",
         "items": {
             "type": "object",
@@ -306,6 +319,7 @@ pub(crate) fn document_schema() -> Value {
                 "name": { "type": "string", "minLength": 1 },
                 "role": organization_role,
                 "enabled": { "type": "boolean" },
+                "federatedCredentials": { "type": "array", "items": binding },
                 "keys": {
                     "description": "Keys whose secret comes from outside, by name. The document is each key's desired state: restrictions left out mean none, an expiry left out means never. A changed secret replaces the old one at once. A key left out is kept.",
                     "type": "array",

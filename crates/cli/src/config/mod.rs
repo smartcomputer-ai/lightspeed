@@ -48,6 +48,36 @@ enum ConfigCommand {
 }
 
 impl ConfigArgs {
+    pub(crate) fn prepare_enrollment(&mut self) -> Result<Option<serde_json::Value>> {
+        let ConfigCommand::Apply(args) = &mut self.command else {
+            return Ok(None);
+        };
+        if !args.enroll {
+            return Ok(None);
+        }
+        let documents = document::load(&args.document.files)?;
+        anyhow::ensure!(
+            args.document.universe_id.is_none() || documents.len() == 1,
+            "--universe-id requires exactly one document"
+        );
+        let mut organizations = documents
+            .iter()
+            .filter_map(|loaded| match &loaded.document {
+                document::Document::Organization(org) => Some(org),
+                _ => None,
+            });
+        let org = organizations
+            .next()
+            .context("--enroll requires exactly one organization document")?;
+        anyhow::ensure!(
+            organizations.next().is_none(),
+            "--enroll requires exactly one organization document"
+        );
+        let params = serde_json::json!({"handle": org.handle, "name": org.name.as_deref().unwrap_or(&org.handle)});
+        args.loaded = Some(documents);
+        Ok(Some(params))
+    }
+
     pub(crate) fn wait_seconds(&self) -> Option<u64> {
         match &self.command {
             ConfigCommand::Apply(args) => args.wait,
@@ -90,6 +120,11 @@ pub(crate) struct DocumentArgs {
 
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ApplyArgs {
+    /// Enroll the workload using the single organization document before planning.
+    #[arg(long)]
+    enroll: bool,
+    #[arg(skip)]
+    loaded: Option<Vec<document::LoadedDocument>>,
     #[command(flatten)]
     document: DocumentArgs,
     /// Wait up to this many seconds for Runtime startup (60 when no value is given).
@@ -129,17 +164,16 @@ fn base_connection() -> ResolvedConnection {
 }
 
 async fn plan_all(
-    files: &[PathBuf],
+    documents: &[document::LoadedDocument],
     owner: &crate::platform_cli::InitialOwnerArgs,
     universe_id: Option<uuid::Uuid>,
 ) -> Result<Vec<DocumentPlan>> {
-    let documents = document::load(files)?;
     anyhow::ensure!(
         universe_id.is_none() || documents.len() == 1,
         "--universe-id requires exactly one document"
     );
     let base = base_connection();
-    let declared = platform::Declared::of(&documents);
+    let declared = platform::Declared::of(documents);
     // Organizations first, so the universes and grants that need them
     // find them when they are applied.
     let mut ordered: Vec<&document::LoadedDocument> = documents.iter().collect();
@@ -158,7 +192,7 @@ async fn plan_all(
 /// `lightspeed config diff`: exit status 0 when nothing would change, 2 when
 /// something would.
 async fn diff(args: DocumentArgs) -> Result<()> {
-    let plans = plan_all(&args.files, &args.owner, args.universe_id).await?;
+    let plans = plan_all(&document::load(&args.files)?, &args.owner, args.universe_id).await?;
     report(&plans, args.json)?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         bail!("the documents ask for changes apply will not make");
@@ -172,10 +206,18 @@ async fn diff(args: DocumentArgs) -> Result<()> {
 /// `lightspeed config apply`: every document is planned before anything is
 /// written, so a document that cannot be applied changes nothing.
 async fn apply(args: ApplyArgs) -> Result<()> {
+    let enrolled = args.enroll;
+    let documents = match args.loaded {
+        Some(documents) => documents,
+        None => document::load(&args.document.files)?,
+    };
     let args = args.document;
-    let mut plans = plan_all(&args.files, &args.owner, args.universe_id).await?;
+    let mut plans = plan_all(&documents, &args.owner, args.universe_id).await?;
     if plans.iter().any(DocumentPlan::has_conflicts) {
         report(&plans, args.json)?;
+        if enrolled {
+            bail!("enrollment completed, but the configuration plan has conflicts");
+        }
         bail!("the documents ask for changes apply will not make; nothing was written");
     }
     let mut outcome = Ok(());

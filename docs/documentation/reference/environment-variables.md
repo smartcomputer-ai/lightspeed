@@ -261,6 +261,7 @@ are given together.
 | --- | --- | --- |
 | `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed HTTP API base URL ending in `/api/v1`. Also used as the Platform backend's fallback gateway URL. |
 | `LIGHTSPEED_API_TOKEN` | Unset | Token sent by the CLI to an authenticated runtime. |
+| `LIGHTSPEED_API_TOKEN_FILE` | Alternative to the inline token | File containing a runtime key, Platform key, or workload token. The CLI rereads it for each HTTP request. The command-line equivalent is `lightspeed --token-file PATH …`. |
 | `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or handle overriding saved selection, sent to the runtime as given. Runtime tokens may select any universe. |
 | `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
 | `LIGHTSPEED_CHAT_REASONING_EFFORT` | `high` | Default effort: `low`, `medium`, `high`, or `none`. Invalid values fall back to `high`. |

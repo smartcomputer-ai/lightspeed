@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ConfirmDangerButton } from "@/components/confirm-danger-button";
 import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
 import { ResourceStatus } from "@/components/resource-table";
+import { FederatedCredentials } from "./federated-credentials";
 import { ApiKeysSection } from "@/components/api-keys/api-keys-section";
 import type { ResourceStatusInfo } from "@/lib/resource-status";
 
@@ -168,6 +169,7 @@ function ServiceUserDetails({ organizationId, serviceUser }: { organizationId: s
         <p className="text-sm text-muted-foreground">Service users get only the universe roles granted under a universe's Settings → Members, not the default universe access.</p>
         {save.error && <p role="alert" className="text-sm text-destructive">{save.error.message}</p>}
       </form>
+      <FederatedCredentials organizationId={organizationId} serviceUserId={serviceUser.id} />
       <ApiKeysSection owner={{ kind: "serviceUser", organizationId, serviceUserId: serviceUser.id, name: serviceUser.name, enabled: serviceUser.enabled }}
         description="Keys sign in as this service user, in this organization only." />
       <ResourceActions>

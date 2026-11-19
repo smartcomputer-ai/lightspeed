@@ -35,6 +35,38 @@ fn stateful(state: &mut State, method: &str, path: &str, body: &Value) -> Option
     };
     let parts: Vec<&str> = path.trim_start_matches("/api/v1/").split('/').collect();
     match (method, parts.as_slice()) {
+        ("POST", ["organizations", "enroll"]) => {
+            let id = format!("org-{}", body["handle"].as_str()?);
+            if state.organizations.iter().any(|org| org["id"] == id) {
+                return Some((200, json!({"organizationId":id, "enrolled":false})));
+            }
+            stateful(state, "POST", "/api/v1/platform/organizations", body)?;
+            Some((201, json!({"organizationId":id, "enrolled":true})))
+        }
+        (
+            "PUT",
+            [
+                "platform",
+                "organizations",
+                org,
+                "service-users",
+                user,
+                "federated-credentials",
+            ],
+        ) => {
+            let service = state
+                .service_users
+                .iter_mut()
+                .find(|s| s["id"] == *user && s["organizationId"] == *org)?;
+            let entries = service
+                .as_object_mut()?
+                .entry("federatedCredentials")
+                .or_insert(json!([]))
+                .as_array_mut()?;
+            entries.retain(|e| e["issuer"] != body["issuer"] || e["subject"] != body["subject"]);
+            entries.push(body.clone());
+            Some((200, json!({"credential":body})))
+        }
         ("GET", ["platform", "organizations"]) => Some((
             200,
             json!({"organizations": state.organizations, "canCreate": true}),
@@ -1123,4 +1155,66 @@ fn a_pipeline_key_is_created_to_declare_service_user_keys_only_when_asked() {
         .find(|(method, path, _)| method == "POST" && path == "/api/v1/platform/credentials")
         .unwrap();
     assert_eq!(body["restrictions"]["allowServiceUserKeys"], true);
+}
+
+#[test]
+fn enroll_precedes_discovery_and_federated_declarations_round_trip() {
+    let platform = Platform::with_platform_admin(true);
+    let file = write_documents(
+        &platform,
+        &[(
+            "research.yaml",
+            "schemaVersion: 1
+kind: organization
+handle: research
+name: Research
+serviceUsers:
+  - name: reader
+    role: member
+    federatedCredentials:
+      - issuer: cluster
+        subject: research-reader
+        restrictions: { readOnly: true }
+",
+        )],
+    );
+    let apply = ["config", "apply", "--enroll", "-f", &file, "--json"];
+    platform.success(&apply);
+    let requests = platform.requests.lock().unwrap().clone();
+    assert_eq!(requests[0].1, "/api/v1/organizations/enroll");
+    assert_eq!(requests[1].1, "/api/v1/connection");
+    let steps: Vec<Value> = serde_json::from_str(&platform.success(&apply)).unwrap();
+    assert!(steps.iter().all(|s| s["action"] == "unchanged"));
+    let exported: Value = serde_yaml::from_str(&platform.success(&[
+        "--organization",
+        "org-research",
+        "config",
+        "export",
+        "--kind",
+        "organization",
+    ]))
+    .unwrap();
+    assert_eq!(
+        exported["serviceUsers"][0]["federatedCredentials"][0],
+        json!({"issuer":"cluster","subject":"research-reader","restrictions":{"readOnly":true}})
+    );
+}
+
+#[test]
+fn enrollment_requires_exactly_one_organization_before_contacting_platform() {
+    let platform = Platform::with_platform_admin(true);
+    let doc = write_documents(
+        &platform,
+        &[(
+            "a.yaml",
+            "schemaVersion: 1\nkind: universe\nhandle: declared-work\n",
+        )],
+    );
+    assert!(
+        !platform
+            .run(&["config", "apply", "--enroll", "-f", &doc])
+            .status
+            .success()
+    );
+    assert!(platform.requests.lock().unwrap().is_empty());
 }

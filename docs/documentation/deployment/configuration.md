@@ -126,6 +126,50 @@ effect on the next request. Its enrollment continues to occupy a rule slot
 until the organization is deleted. The Platform audit records the issuer
 and subject for enrollment and federated authentication.
 
+### Run a GitOps job
+
+Mount a projected ServiceAccount token with the audience configured for this
+Platform. Point the CLI at the mounted file so it reads the current token on
+every request, including after Kubernetes rotates it.
+
+```sh
+export LIGHTSPEED_API_URL=https://platform.example.com/api/v1
+export LIGHTSPEED_API_TOKEN_FILE=/var/run/secrets/lightspeed/token
+lightspeed config apply --enroll -f organization.yaml -f universe.yaml
+```
+
+Supply exactly one organization document. Its handle and name identify the
+enrollment request. The name defaults to the handle when omitted. Re-running
+the command reuses the organization and applies any outstanding changes.
+For enrollment alone, run
+`lightspeed platform organization enroll --handle team-research --name Research`.
+To supply the token file as a flag, place `--token-file PATH` before the command.
+
+Declare a workload binding under its service user, using the issuer's
+configured name and the exact token subject:
+
+```yaml
+schemaVersion: 1
+kind: organization
+handle: team-research
+name: Research
+serviceUsers:
+  - name: deployer
+    role: admin
+    federatedCredentials:
+      - issuer: cluster
+        subject: system:serviceaccount:team-research:apply
+```
+
+A binding can also specify `serviceAccountUid` and `restrictions`. Organization
+exports include these declarations. Omitting a binding during apply preserves
+it. To revoke it, open the service user's details or use
+`lightspeed platform service-user federated-credential SERVICE_USER_ID delete CREDENTIAL_ID`.
+The same CLI command group supports `list` and `put`. A workload needs the
+explicit `allowServiceUserKeys` restriction and organization permission to
+manage credentials. Platform admins can see the enrolling issuer, subject,
+and matching rule in the organization's settings.
+
 ## Secure the Temporal connection
 
 Every runtime process opens its own connection to the

@@ -251,6 +251,36 @@
       "result": "PlatformOrganizationsServiceUsersUpdateResult"
     },
     {
+      "operationId": "platform/service-users/federated-credentials/list",
+      "helper": {
+        "name": "listFederatedCredentials"
+      },
+      "method": "GET",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials",
+      "params": "PlatformServiceUsersFederatedCredentialsListParams",
+      "result": "PlatformServiceUsersFederatedCredentialsListResult"
+    },
+    {
+      "operationId": "platform/service-users/federated-credentials/put",
+      "helper": {
+        "name": "putFederatedCredential"
+      },
+      "method": "PUT",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials",
+      "params": "PlatformServiceUsersFederatedCredentialsPutParams",
+      "result": "PlatformServiceUsersFederatedCredentialsPutResult"
+    },
+    {
+      "operationId": "platform/service-users/federated-credentials/delete",
+      "helper": {
+        "name": "deleteFederatedCredential"
+      },
+      "method": "DELETE",
+      "path": "/api/v1/platform/organizations/{organizationId}/service-users/{serviceUserId}/federated-credentials/{credentialId}",
+      "params": "PlatformServiceUsersFederatedCredentialsDeleteParams",
+      "result": "PlatformServiceUsersFederatedCredentialsDeleteResult"
+    },
+    {
       "operationId": "platform/universes/adopt",
       "helper": {
         "name": "adoptUniverse"

@@ -631,6 +631,19 @@ impl HttpAgentApi {
             .await
     }
 
+    /// Enrollment is the only Platform request that can precede connection discovery.
+    pub(crate) async fn enroll(
+        &self,
+        params: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let parts =
+            crate::platform_api::request_parts("platform/organizations/enroll", params.clone())?;
+        let response = self
+            .send_parts(parts, self.connection.auth_headers()?)
+            .await?;
+        Ok(response.json().await?)
+    }
+
     /// Native Platform routes are described by its generated catalog; authentication
     /// and response handling share the resource HTTP transport.
     pub(crate) async fn platform_request<P: Serialize, R: DeserializeOwned>(
@@ -718,6 +731,7 @@ impl HttpAgentApi {
             .path
             .strip_prefix("/api/v1")
             .ok_or_else(|| AgentApiError::internal("invalid catalog path"))?;
+        let sent_token = headers.get(reqwest::header::AUTHORIZATION).cloned();
         let mut request = self
             .client
             .request(
@@ -747,8 +761,15 @@ impl HttpAgentApi {
         let status = response.status();
         let body = response.bytes().await?;
         if let Ok(problem) = serde_json::from_slice::<api::HttpProblem>(&body) {
-            let mut error =
-                AgentApiError::new(problem.kind, self.connection.redact_error(problem.detail));
+            let mut detail = self.connection.redact_error(problem.detail);
+            if let Some(token) = sent_token
+                .as_ref()
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.strip_prefix("Bearer "))
+            {
+                detail = detail.replace(token, "[credential redacted]");
+            }
+            let mut error = AgentApiError::new(problem.kind, detail);
             error.model_default_slot = problem.model_default_slot;
             error.submission_id = problem.submission_id;
             error.deleted_universe = problem.deleted_universe;

@@ -131,6 +131,7 @@ export function organizationRoutes(store: DemoStore) {
     if (grant?.role === "owner" && !grants.some(g => g.id !== grant.id && g.role === "owner" && g.active)) return c.json({ error: "Keep at least one Owner" }, 409);
     state.members = state.members.filter(m => m.id !== c.req.param("grantId")); serviceUserGrants.set(state.universe.id, (serviceUserGrants.get(state.universe.id) ?? []).filter(g => g.id !== c.req.param("grantId"))); return c.json({ ok: true });
   });
+  app.get("/organizations/:organizationId/service-users/:serviceUserId/federated-credentials", c => c.json({ credentials: [], issuers: [] }));
   for (const path of ["/credentials", "/organizations/:organizationId/service-users/:serviceUserId/credentials"]) {
     app.get(path, c => c.json({ credentials: [] }));
     app.post(path, c => c.json({ error: "API keys require a deployed Platform. The demo cannot issue credentials." }, 400));

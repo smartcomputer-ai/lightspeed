@@ -83,7 +83,14 @@ it("creates one ordinary organization, one admin binding and one enrollment audi
   expect(audit.filter(e => e.targetId === first.organizationId)).toMatchObject([{ actorId: `serviceUser:${users[0]!.id}`,
     details: { issuer: source.issuer, subject: source.subject, credentialKind: "federated" } }]);
   const result = await fixture.app.request("/api/v1/platform/organizations", { headers: { authorization: `Bearer ${token}` } });
-  expect(await result.json()).toMatchObject({ canCreate: false, organizations: [{ id: first.organizationId, role: "admin" }] });
+  const workloadView = await result.json() as { organizations: object[] };
+  expect(workloadView).toMatchObject({ canCreate: false, organizations: [{ id: first.organizationId, role: "admin" }] });
+  expect(workloadView.organizations[0]).not.toHaveProperty("enrollment");
+  const cookie = responseCookies(await fixture.request("/api/auth/sign-in/email", { email: identityEnv.adminEmail, password: identityEnv.adminPassword }));
+  const details = await fixture.request(`/api/v1/platform/organizations/${first.organizationId}`, undefined, cookie);
+  expect(await details.json()).toMatchObject({ organization: { enrollment: {
+    issuer: source.issuer, subject: source.subject, subjectPattern: "system:serviceaccount:team-*:apply",
+  } } });
   await fixture.db.update(schema.serviceUsers).set({ enabled: false }).where(eq(schema.serviceUsers.id, users[0]!.id));
   expect((await enroll(token, "team-first")).status).toBe(401);
   await fixture.db.delete(schema.federatedCredentials).where(eq(schema.federatedCredentials.serviceUserId, users[0]!.id));

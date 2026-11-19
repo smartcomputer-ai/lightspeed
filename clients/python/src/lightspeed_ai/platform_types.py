@@ -564,6 +564,12 @@ class MembershipPolicy(TypedDict):
     directoryGroupMappings: NotRequired[list[DirectoryGroupMapping]]
 
 
+class Enrollment(TypedDict):
+    issuer: str
+    subject: str
+    subjectPattern: str
+
+
 class Organization1(TypedDict):
     id: str
     name: str
@@ -608,6 +614,7 @@ class Organization1(TypedDict):
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy]
+    enrollment: NotRequired[Enrollment]
     createdAt: str
 
 
@@ -704,6 +711,7 @@ class Organization2(TypedDict):
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy1]
+    enrollment: NotRequired[Enrollment]
     createdAt: str
 
 
@@ -775,6 +783,7 @@ class Organization3(TypedDict):
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy2]
+    enrollment: NotRequired[Enrollment]
     createdAt: str
 
 
@@ -873,6 +882,7 @@ class Organization4(TypedDict):
     defaultProtected: bool
     requireProtected: bool
     membershipPolicy: NotRequired[MembershipPolicy4]
+    enrollment: NotRequired[Enrollment]
     createdAt: str
 
 
@@ -928,6 +938,25 @@ class PlatformOrganizationsServiceUsersListParams(TypedDict):
     organizationId: str
 
 
+class Restrictions12(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
+
+
+class FederatedCredential(TypedDict):
+    issuer: str
+    subject: str
+    serviceAccountUid: NotRequired[str | None]
+    restrictions: NotRequired[Restrictions12]
+
+
 class ServiceUser(TypedDict):
     id: str
     organizationId: str
@@ -935,6 +964,7 @@ class ServiceUser(TypedDict):
     enabled: bool
     role: Literal['member', 'creator', 'admin']
     createdAt: str
+    federatedCredentials: NotRequired[list[FederatedCredential]]
 
 
 class PlatformOrganizationsServiceUsersListResult(TypedDict):
@@ -947,8 +977,37 @@ class PlatformOrganizationsServiceUsersCreateParams(TypedDict):
     organizationId: str
 
 
+class Restrictions13(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
+
+
+class FederatedCredential1(TypedDict):
+    issuer: str
+    subject: str
+    serviceAccountUid: NotRequired[str | None]
+    restrictions: NotRequired[Restrictions13]
+
+
+class ServiceUser1(TypedDict):
+    id: str
+    organizationId: str
+    name: str
+    enabled: bool
+    role: Literal['member', 'creator', 'admin']
+    createdAt: str
+    federatedCredentials: NotRequired[list[FederatedCredential1]]
+
+
 class PlatformOrganizationsServiceUsersCreateResult(TypedDict):
-    serviceUser: ServiceUser
+    serviceUser: ServiceUser1
 
 
 class PlatformOrganizationsServiceUsersUpdateParams(TypedDict):
@@ -959,8 +1018,125 @@ class PlatformOrganizationsServiceUsersUpdateParams(TypedDict):
     serviceUserId: str
 
 
+class Restrictions14(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
+
+
+class FederatedCredential2(TypedDict):
+    issuer: str
+    subject: str
+    serviceAccountUid: NotRequired[str | None]
+    restrictions: NotRequired[Restrictions14]
+
+
+class ServiceUser2(TypedDict):
+    id: str
+    organizationId: str
+    name: str
+    enabled: bool
+    role: Literal['member', 'creator', 'admin']
+    createdAt: str
+    federatedCredentials: NotRequired[list[FederatedCredential2]]
+
+
 class PlatformOrganizationsServiceUsersUpdateResult(TypedDict):
-    serviceUser: ServiceUser
+    serviceUser: ServiceUser2
+
+
+class PlatformServiceUsersFederatedCredentialsListParams(TypedDict):
+    organizationId: str
+    serviceUserId: str
+
+
+class Restrictions15(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
+
+
+class Credential10(TypedDict):
+    issuer: str
+    subject: str
+    serviceAccountUid: NotRequired[str | None]
+    restrictions: Restrictions15
+    id: str
+    lastUsedAt: str | None
+
+
+class PlatformServiceUsersFederatedCredentialsListResult(TypedDict):
+    credentials: list[Credential10]
+    issuers: list[str]
+
+
+class Restrictions16(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
+
+
+class PlatformServiceUsersFederatedCredentialsPutParams(TypedDict):
+    issuer: str
+    subject: str
+    serviceAccountUid: NotRequired[str | None]
+    restrictions: NotRequired[Restrictions16]
+    organizationId: str
+    serviceUserId: str
+    createOnly: NotRequired[bool]
+
+
+class Restrictions17(TypedDict):
+    organizationIds: NotRequired[list[OrganizationId]]
+    universeIds: NotRequired[list[UniverseId]]
+    operations: NotRequired[list[Operation]]
+    readOnly: NotRequired[bool]
+    allowUniverseCreation: NotRequired[bool]
+    allowServiceUserKeys: NotRequired[bool]
+    """
+    Lets this key declare service-user keys with supplied secrets in organizations where its principal manages service users. Off by default: keys otherwise never create keys.
+    """
+
+
+class Credential11(TypedDict):
+    issuer: str
+    subject: str
+    serviceAccountUid: NotRequired[str | None]
+    restrictions: Restrictions17
+    id: str
+    lastUsedAt: str | None
+
+
+class PlatformServiceUsersFederatedCredentialsPutResult(TypedDict):
+    credential: Credential11
+
+
+class PlatformServiceUsersFederatedCredentialsDeleteParams(TypedDict):
+    organizationId: str
+    serviceUserId: str
+    credentialId: str
+
+
+class PlatformServiceUsersFederatedCredentialsDeleteResult(TypedDict):
+    ok: Literal[True]
 
 
 class InitialOwner(TypedDict):
