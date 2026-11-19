@@ -69,15 +69,16 @@ pub(super) async fn prepare_code_tool_scope(
     let mut bindings = BTreeMap::new();
     let mut names = std::collections::BTreeSet::new();
     let mut runtime_tool_count = 0;
-    let mut insert = |tool_id: harness::ToolId, tool_name: harness::ToolName| {
+    let mut insert = |target, tool_name: harness::ToolName| {
         if !names.insert(tool_name.clone()) {
             return Err(activity_error(anyhow::anyhow!(
                 "duplicate exposed code tool name {tool_name}"
             )));
         }
-        let input = serde_json::to_vec(&(&tool_id, &tool_name)).map_err(activity_error)?;
+        let binding = harness::CodeToolBinding { target, tool_name };
+        let input = serde_json::to_vec(&binding).map_err(activity_error)?;
         let handle = format!("binding:{}", harness::BlobRef::from_bytes(&input));
-        bindings.insert(handle, harness::CodeToolBinding { tool_id, tool_name });
+        bindings.insert(handle, binding);
         Ok(())
     };
     for tool in resolved {
@@ -88,16 +89,16 @@ pub(super) async fn prepare_code_tool_scope(
                 let executor = deps.runtime_mcp.as_ref().ok_or_else(|| {
                     activity_error(anyhow::anyhow!("runtime MCP inventory is unavailable"))
                 })?;
-                for (name, _) in executor
+                for (name, remote) in executor
                     .injected_tools(spec, &tool.name, &mut runtime_tool_count)
                     .await
                     .map_err(activity_error)?
                 {
-                    insert(tool.id.clone(), harness::ToolName::new(name))?;
+                    insert(remote.target(&tool.id, spec), harness::ToolName::new(name))?;
                 }
             }
         } else if let Some(callable) = tool.into_callable() {
-            insert(callable.tool_id, callable.definition.name)?;
+            insert(callable.tool_id.into(), callable.definition.name)?;
         }
     }
     Ok(temporal_workflow::CodeToolPrepareScopeActivityResult { bindings })
@@ -492,10 +493,17 @@ fn validate_code_tool_presentation(call: &harness::ToolInvocationRequest) -> Res
         .as_ref()
         .ok_or_else(|| "code tool call has no admitted tool ID".to_owned())?;
     if let Some(harness::RemoteMcpCallRuntime::Injected {
-        remote_tool_name, ..
+        target,
+        remote_tool_name,
+        ..
     }) = &call.remote_mcp
     {
-        return (call.tool_name.as_str() == format!("{id}__{remote_tool_name}"))
+        let advertised = llm_runtime::injected_tool_name(
+            &id.as_wire_name(),
+            &target.server_label,
+            remote_tool_name,
+        );
+        return (advertised.as_deref() == Some(call.tool_name.as_str()))
             .then_some(())
             .ok_or_else(|| "code tool MCP name does not match its admitted binding".to_owned());
     }
@@ -688,6 +696,9 @@ mod tests {
         }
     }
 
+    const ECHO_REMOTE: &str =
+        "echo_document_attachment_metadata_for_all_selected_workspaces_by_identifier";
+
     async fn mcp_call(
         blobs: &dyn BlobStore,
         call_id: &str,
@@ -701,7 +712,10 @@ mod tests {
             builtin: None,
             call_id: ToolCallId::new(call_id),
             tool_id: Some(ToolId::new("mcp_echo")),
-            tool_name: ToolName::new("mcp_echo__hello"),
+            tool_name: ToolName::new(
+                llm_runtime::injected_tool_name(&ToolName::new("mcp_echo"), "echo", ECHO_REMOTE)
+                    .unwrap(),
+            ),
             arguments_ref,
             workflow_tool: None,
             promise_control: None,
@@ -713,7 +727,7 @@ mod tests {
                     allowed_tools: None,
                     approval: RemoteMcpApprovalPolicy::Always,
                 },
-                remote_tool_name: "hello".to_owned(),
+                remote_tool_name: ECHO_REMOTE.into(),
                 approval_decision,
             }),
         }
@@ -814,6 +828,151 @@ mod tests {
             )
             .await
             .expect("error text")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shortened_injected_tools_call_the_exact_remote_name_directly_and_from_code() {
+        use crate::gateway::service::mcp_discovery::tests::{TestMcpState, start_test_server};
+        use mcp::McpRegistryStore;
+
+        let first = "export_all_attached_document_records_for_personal_accounts_with_full_metadata";
+        let second = first.replace("personal", "business");
+        let remotes = [first, second.as_str()];
+        let mut state = TestMcpState::default();
+        state
+            .tool_names
+            .extend(remotes.iter().map(|s| s.to_string()));
+        let state = Arc::new(tokio::sync::Mutex::new(state));
+        let (endpoint, server) = start_test_server(state.clone()).await;
+
+        let registry = Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        registry
+            .put_server(
+                mcp::PutMcpServerRecord {
+                    server_id: mcp::McpServerId::new("echo"),
+                    display_name: None,
+                    server_url: endpoint,
+                    transport: Default::default(),
+                    default_server_label: "echo".into(),
+                    description: None,
+                    allowed_tools: None,
+                    execution: mcp::McpExecution::Runtime,
+                    exposure: mcp::McpExposure::Inject,
+                    approval: mcp::McpApprovalPolicy::Never,
+                    defer_loading: None,
+                    allow_private_network: true,
+                    auth_policy: mcp::McpServerAuthPolicy::None,
+                    auth_grant_id: None,
+                    headers: Default::default(),
+                    status: mcp::McpServerStatus::Active,
+                    now_ms: 1,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let policy = McpPrivateNetworkPolicy::parse(Some("127.0.0.1/32")).unwrap();
+        let secrets: Arc<dyn SecretResolver> = Arc::new(AbsentSecretResolver);
+        let inventory = Arc::new(RuntimeMcpInventoryResolver::new(
+            registry.clone(),
+            secrets.clone(),
+            policy.clone(),
+        ));
+        let executor = Arc::new(RuntimeMcpExecutor::new(
+            registry, secrets, inventory, policy,
+        ));
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, _) = deps(RuntimeScript::Complete, blobs.clone(), Some(executor));
+        let id = ToolId::new("mcp_echo");
+        let scope = prepare_code_tool_scope(
+            &deps,
+            temporal_workflow::CodeToolPrepareScopeActivityRequest {
+                tools: vec![harness::ToolSpec {
+                    id: id.clone(),
+                    execution: Default::default(),
+                    parallelism: harness::ToolParallelism::ParallelSafe,
+                    kind: harness::ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
+                        server_id: "echo".into(),
+                        server_label: "echo".into(),
+                        record_revision: 1,
+                        allowed_tools: None,
+                        description_ref: None,
+                        execution: harness::RemoteMcpExecution::Runtime,
+                        exposure: harness::RemoteMcpExposure::Inject,
+                        approval: RemoteMcpApprovalPolicy::Never,
+                        defer_loading: None,
+                    }),
+                }],
+                model: harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiResponses,
+                    provider_id: "openai".into(),
+                    model: "test".into(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(scope.bindings.len(), 2);
+        for remote in remotes {
+            let alias =
+                llm_runtime::injected_tool_name(&id.as_wire_name(), "echo", remote).unwrap();
+            let binding = scope
+                .bindings
+                .values()
+                .find(|b| b.tool_name.as_str() == alias)
+                .unwrap();
+            let harness::ResolvedToolTarget::Mcp {
+                remote_name: exact, ..
+            } = &binding.target
+            else {
+                panic!("expected MCP target")
+            };
+            assert_eq!(exact, remote);
+            let mut call = mcp_call(blobs.as_ref(), "call_1", None).await;
+            call.tool_name = binding.tool_name.clone();
+            let Some(RemoteMcpCallRuntime::Injected {
+                target,
+                remote_tool_name,
+                ..
+            }) = &mut call.remote_mcp
+            else {
+                unreachable!()
+            };
+            target.approval = RemoteMcpApprovalPolicy::Never;
+            remote_tool_name.clone_from(exact);
+            let request = batch(vec![call])
+                .request
+                .call_request(0, Default::default())
+                .unwrap();
+            let ToolInvokeCallActivityResult::Completed { result } = invoke_call(
+                &deps,
+                crate::worker::ToolInvokeCallActivityRequest {
+                    request: request.clone(),
+                },
+            )
+            .await
+            .unwrap() else {
+                panic!("direct call did not finish")
+            };
+            assert_eq!(result.status, ToolCallStatus::Succeeded);
+            let temporal_workflow::CodeToolInvokeActivityResult::Completed { result } =
+                invoke_code_tool(
+                    &deps,
+                    temporal_workflow::CodeToolInvokeActivityRequest { request },
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("code call did not finish")
+            };
+            assert_eq!(result.status, ToolCallStatus::Succeeded);
+        }
+        assert_eq!(
+            state.lock().await.called_names,
+            [first, first, &second, &second]
+        );
+        server.abort();
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1048,7 +1207,7 @@ mod tests {
             ..
         } = subject;
         assert_eq!(server_id, "echo");
-        assert_eq!(tool_name, "hello");
+        assert_eq!(tool_name, ECHO_REMOTE);
         assert!(received_call_ids(&tools).is_empty());
     }
 

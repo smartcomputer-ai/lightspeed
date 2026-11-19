@@ -325,6 +325,38 @@ impl CoreAgentLlm for MatrixScriptedLlm {
     }
 }
 
+fn scripted_injected_tool(
+    request: &LlmGenerationRequest,
+    server_id: &str,
+    remote: &str,
+) -> Option<harness::CodeToolBinding> {
+    request.request.tools.iter().find_map(|tool| {
+        let ToolKind::RemoteMcp(spec) = &tool.kind else {
+            return None;
+        };
+        if spec.server_id != server_id
+            || spec.execution != harness::RemoteMcpExecution::Runtime
+            || spec.exposure != harness::RemoteMcpExposure::Inject
+            || spec
+                .allowed_tools
+                .as_ref()
+                .is_some_and(|names| !names.iter().any(|name| name == remote))
+        {
+            return None;
+        }
+        let name =
+            llm_runtime::injected_tool_name(&tool.id.as_wire_name(), &spec.server_label, remote)?;
+        Some(harness::CodeToolBinding {
+            tool_name: ToolName::new(name),
+            target: harness::ResolvedToolTarget::Mcp {
+                server_tool_id: tool.id.clone(),
+                server_label: spec.server_label.clone(),
+                remote_name: remote.into(),
+            },
+        })
+    })
+}
+
 impl MatrixScriptedLlm {
     async fn tool_call(
         &self,
@@ -340,6 +372,10 @@ impl MatrixScriptedLlm {
             .map_err(io_error)?;
         let call_id = ToolCallId::new(call_id);
         let tool_name = ToolName::new(tool);
+        let binding = ["echo", "rich"]
+            .into_iter()
+            .filter_map(|remote| scripted_injected_tool(request, &self.ids.small, remote))
+            .find(|binding| binding.tool_name == tool_name);
         Ok(LlmGenerationResult {
             run_id: request.run_id,
             turn_id: request.turn_id,
@@ -367,7 +403,9 @@ impl MatrixScriptedLlm {
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id,
-                    tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                    target: binding.map(|b| b.target).or_else(|| {
+                        test_support::scripted_tool_id(request, tool_name.as_str()).map(Into::into)
+                    }),
                     tool_name,
                     provider_kind: Some("mcp-live-matrix".to_owned()),
                     arguments_ref,
@@ -1969,7 +2007,8 @@ impl RuntimeMcpScriptedLlm {
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id,
-                    tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                    target: test_support::scripted_tool_id(request, tool_name.as_str())
+                        .map(Into::into),
                     tool_name,
                     provider_kind: Some("runtime-mcp-script".to_owned()),
                     arguments_ref,
@@ -2854,21 +2893,12 @@ impl CoreAgentLlm for MixedBatchScriptedLlm {
 }
 
 impl MixedBatchScriptedLlm {
-    /// The injected call name is `<server tool>__<remote tool>`; the server
-    /// tool is found by its record id so the test never hard-codes the
-    /// label-derived tool name.
     fn injected_tool_name(
         &self,
         request: &LlmGenerationRequest,
     ) -> Result<String, CoreAgentIoError> {
-        request
-            .request
-            .tools
-            .iter()
-            .find(|tool| {
-                matches!(&tool.kind, ToolKind::RemoteMcp(spec) if spec.server_id == self.server_id)
-            })
-            .map(|tool| format!("{}__{}", tool.id, self.selected_tool))
+        scripted_injected_tool(request, &self.server_id, &self.selected_tool)
+            .map(|binding| binding.tool_name.to_string())
             .ok_or_else(|| CoreAgentIoError::Failed {
                 message: format!(
                     "mixed batch scripted model expected the {} MCP server tool",
@@ -2907,9 +2937,13 @@ impl MixedBatchScriptedLlm {
                 provenance_ref: None,
                 token_estimate: None,
             });
+            let binding = scripted_injected_tool(request, &self.server_id, &self.selected_tool)
+                .filter(|binding| binding.tool_name == tool_name);
             tool_calls.push(ObservedToolCall {
                 call_id,
-                tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                target: binding.map(|b| b.target).or_else(|| {
+                    test_support::scripted_tool_id(request, tool_name.as_str()).map(Into::into)
+                }),
                 tool_name,
                 provider_kind: Some("mixed-batch-script".to_owned()),
                 arguments_ref,

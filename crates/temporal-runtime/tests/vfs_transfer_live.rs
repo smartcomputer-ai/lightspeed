@@ -1032,7 +1032,7 @@ impl CoreAgentLlm for TransferLlm {
             let tool_name = ToolName::new(name);
             calls.push(ObservedToolCall {
                 call_id: call_id.clone(),
-                tool_id: test_support::scripted_tool_id(&request, name),
+                target: test_support::scripted_tool_id(&request, name).map(Into::into),
                 tool_name: tool_name.clone(),
                 provider_kind: None,
                 arguments_ref,

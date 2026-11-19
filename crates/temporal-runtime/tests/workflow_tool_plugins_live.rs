@@ -619,7 +619,8 @@ impl WorkflowToolScriptedLlm {
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id,
-                    tool_id: test_support::scripted_tool_id(request, tool_name.as_str()),
+                    target: test_support::scripted_tool_id(request, tool_name.as_str())
+                        .map(Into::into),
                     tool_name,
                     provider_kind: Some("workflow-tool-script".to_owned()),
                     arguments_ref,

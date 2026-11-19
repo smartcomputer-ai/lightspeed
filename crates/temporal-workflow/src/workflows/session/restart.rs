@@ -448,7 +448,7 @@ mod tests {
             .iter()
             .map(|(call_id, tool)| ObservedToolCall {
                 call_id: ToolCallId::new(*call_id),
-                tool_id: Some(ToolId::new(*tool)),
+                target: Some(ToolId::new(*tool).into()),
                 tool_name: ToolName::new(*tool),
                 provider_kind: None,
                 arguments_ref: BlobRef::from_bytes(call_id.as_bytes()),
@@ -643,7 +643,16 @@ mod tests {
         let mut session = Session::opened(vec![runtime_mcp_tool("mcp_mail")]);
         session.request_run(b"hi", "sub-1");
         let generation = session.until_generation();
-        session.finish_turn_with_calls(&generation, &[("c1", "mcp_mail")]);
+        let mut result = tool_call_generation(&generation, &[("c1", "mcp_mail__send")]);
+        let call = &mut result.facts.tool_calls[0];
+        call.target = Some(harness::ResolvedToolTarget::Mcp {
+            server_tool_id: ToolId::new("mcp_mail"),
+            server_label: "mail".into(),
+            remote_name: "send".into(),
+        });
+        let now = session.tick();
+        let action = session.drive.resume_generation(result, now).unwrap();
+        session.commit(action);
         let batch = session.until_batch();
         let subject = ApprovalSubject::McpToolCall {
             server_id: "mail".to_owned(),

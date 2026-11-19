@@ -13,7 +13,7 @@ use harness::{
     ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, LlmRequest, LlmUsage, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
     ObservedToolCall, ProviderApiKind, RemoteMcpExecution, RemoteMcpExposure, TokenEstimate,
-    TokenEstimateQuality, ToolCallId, ToolId, ToolKind, ToolName, storage::BlobStore,
+    TokenEstimateQuality, ToolCallId, ToolKind, ToolName, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::completions as oai_c};
 use serde_json::{Value, json};
@@ -191,6 +191,7 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
                 ),
             });
         }
+        let mcp = crate::mcp::RequestMcp::new(self.inventory.as_ref(), None);
         let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(
             self.blobs.as_ref(),
             &request.request,
@@ -198,11 +199,20 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
         .await?;
         let mut provider_request = materialize_request_with_catalog(
             self.blobs.as_ref(),
-            self.inventory.as_ref(),
+            &mcp,
             &request.request,
             &mut catalog,
         )
         .await?;
+        let notice = mcp
+            .notice(self.blobs.as_ref(), &request.request.context)
+            .await?;
+        if let Some((text, _)) = &notice {
+            provider_request
+                .messages
+                .push(text_message("user", text.clone()));
+        }
+
         // Route every turn of a session to the same prompt cache.
         provider_request.prompt_cache_key =
             Some(crate::prompt_cache::prompt_cache_key(&request.session_id));
@@ -240,6 +250,9 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
         )
         .await?;
         catalog.normalize(&mut result);
+        if let Some((_, entry)) = notice {
+            result.context_entries.insert(0, entry);
+        }
         let debug_dumps = store_debug_dumps(
             self.blobs.as_ref(),
             request_dump,
@@ -866,9 +879,10 @@ async fn materialize_tools(
                 )
                 .await?;
                 for (name, runtime_tool) in runtime_tools {
-                    catalog
-                        .names
-                        .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                    catalog.names.insert(
+                        ToolName::new(name.clone()),
+                        Some(runtime_tool.target(&tool.id, spec)),
+                    )?;
                     let description =
                         catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                     materialized.push(oai_c::CompletionTool {
@@ -1424,7 +1438,7 @@ async fn tool_call_context(
         },
         ObservedToolCall {
             call_id,
-            tool_id: Some(ToolId::new(tool_name.as_str())),
+            target: None,
             tool_name,
             provider_kind: Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned()),
             arguments_ref,
@@ -1482,8 +1496,8 @@ fn u64_to_u32(value: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use harness::ToolChoice;
     use harness::ToolSpec;
+    use harness::{ToolChoice, ToolId};
     use std::sync::{Arc, Mutex};
 
     use harness::{
@@ -1513,6 +1527,22 @@ mod tests {
                 ),
                 annotations: None,
             }])
+        }
+
+        async fn list_tools_with_status(
+            &self,
+            spec: &harness::RemoteMcpToolSpec,
+        ) -> Result<crate::mcp::McpListing, crate::McpInventoryError> {
+            if spec.server_id == "offline" {
+                return Ok(crate::mcp::McpListing {
+                    tools: vec![],
+                    warning: Some("tools/list failed: HTTP 401 (unauthorized)"),
+                });
+            }
+            Ok(crate::mcp::McpListing {
+                tools: self.list_tools(spec).await?,
+                warning: None,
+            })
         }
 
         async fn server_url(&self, _: &str) -> Result<Option<String>, crate::McpInventoryError> {
@@ -1741,6 +1771,82 @@ mod tests {
             turn_id: TurnId::new(3),
             request,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn runtime_listing_failure_is_visible_once_and_recovery_updates_the_session() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let adapter = OpenAiCompletionsLlmAdapter::new(fake_api(), blobs.clone())
+            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory))
+            .with_debug_dumps(true);
+        let mut generation = generation_request(request(Vec::new()));
+        for id in ["offline", "healthy"] {
+            generation.request.tools.push(ToolSpec {
+                id: ToolId::new(format!("mcp_{id}")),
+                kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
+                    server_id: id.into(),
+                    record_revision: 1,
+                    server_label: id.into(),
+                    description_ref: None,
+                    allowed_tools: None,
+                    execution: RemoteMcpExecution::Runtime,
+                    exposure: RemoteMcpExposure::Inject,
+                    approval: harness::RemoteMcpApprovalPolicy::Never,
+                    defer_loading: None,
+                }),
+                execution: Default::default(),
+                parallelism: ToolParallelism::ParallelSafe,
+            });
+        }
+        let first = adapter.generate(generation.clone()).await.unwrap();
+        let wire = crate::blob_io::read_json(
+            blobs.as_ref(),
+            &first.debug_dumps.unwrap().provider_request_ref,
+        )
+        .await
+        .unwrap();
+        assert_eq!(wire["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(wire["tools"][0]["function"]["name"], "mcp_healthy__lookup");
+        let notice = &first.result.context_entries[0];
+        let reason = "offline: tools/list failed: HTTP 401";
+        assert!(wire["messages"].to_string().contains(reason));
+        assert!(
+            crate::blob_io::read_text(blobs.as_ref(), &notice.content.content_ref)
+                .await
+                .unwrap()
+                .contains(reason)
+        );
+
+        // Replay the notice exactly as the reducer would place it in context.
+        let mut prior = entry(
+            1,
+            notice.kind.clone(),
+            ContextEntrySource::AssistantOutput {
+                run_id: generation.run_id,
+                turn_id: generation.turn_id,
+            },
+            notice.content.content_ref.clone(),
+        );
+        prior.origin = notice.origin.clone();
+        generation.request.context.entries.push(prior);
+        let repeat = adapter.generate(generation.clone()).await.unwrap();
+        assert!(
+            repeat
+                .result
+                .context_entries
+                .iter()
+                .all(|e| !matches!(e.kind, ContextEntryKind::Catalog { .. }))
+        );
+        generation.request.tools.remove(0);
+        let cleared = adapter.generate(generation).await.unwrap();
+        let recovery = &cleared.result.context_entries[0];
+        assert!(matches!(recovery.kind, ContextEntryKind::Catalog { .. }));
+        assert!(
+            crate::blob_io::read_text(blobs.as_ref(), &recovery.content.content_ref)
+                .await
+                .unwrap()
+                .contains("no credential or tool-list failures")
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

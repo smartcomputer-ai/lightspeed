@@ -111,7 +111,7 @@ impl CoreAgentLlm for CodeCallLlm {
                 LlmFinish::ToolCalls,
                 vec![ObservedToolCall {
                     call_id,
-                    tool_id,
+                    target: tool_id.map(Into::into),
                     tool_name: name,
                     provider_kind: None,
                     arguments_ref: reference.clone(),

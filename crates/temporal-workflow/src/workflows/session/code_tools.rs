@@ -354,7 +354,7 @@ fn invocation_command(
                 request_id: request.request_id,
             },
             binding_id: request.binding_id,
-            tool_id: binding.tool_id.clone(),
+            tool_id: binding.target.tool_id().clone(),
             tool_name: binding.tool_name.clone(),
             arguments_ref: request.arguments_ref,
         },
@@ -377,7 +377,7 @@ async fn admit_open(
             .spec
             .bindings
             .values()
-            .map(|binding| binding.tool_id.clone())
+            .map(|binding| binding.target.tool_id().clone())
             .collect::<BTreeSet<_>>();
         return Ok(
             if existing.spec.parent_invocation_id == request.parent_invocation_id
@@ -508,7 +508,7 @@ async fn admit_open(
     if request.allowed_tools.as_ref().is_some_and(|allowed| {
         bindings
             .values()
-            .map(|binding| binding.tool_id.clone())
+            .map(|binding| binding.target.tool_id().clone())
             .collect::<BTreeSet<_>>()
             != *allowed
     }) {
@@ -1072,7 +1072,7 @@ mod tests {
             bindings.insert(
                 request_id.to_owned(),
                 harness::CodeToolBinding {
-                    tool_id: tool_id.clone(),
+                    target: tool_id.clone().into(),
                     tool_name: tool_id.as_wire_name(),
                 },
             );

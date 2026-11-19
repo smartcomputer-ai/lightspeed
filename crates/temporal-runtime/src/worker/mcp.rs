@@ -10,6 +10,7 @@ use credentials::{PrivateNetworkAccess, PrivateNetworkList, SecretValue};
 use harness::RemoteMcpToolSpec;
 use llm_runtime::{
     McpInventoryError, McpInventoryResolver, RuntimeMcpTool,
+    mcp::McpListing,
     secrets::{SecretResolveError, SecretResolver, resolve_mcp_bearer},
 };
 use mcp::search::McpToolSearchQuery;
@@ -166,7 +167,7 @@ pub struct RuntimeMcpInventoryResolver {
 struct CachedInventory {
     fetched_at: Instant,
     ttl: Duration,
-    tools: Vec<RuntimeMcpTool>,
+    listing: McpListing,
 }
 
 impl RuntimeMcpInventoryResolver {
@@ -211,16 +212,14 @@ impl RuntimeMcpInventoryResolver {
     async fn uncached(
         &self,
         spec: &RemoteMcpToolSpec,
-    ) -> Result<(Vec<RuntimeMcpTool>, bool, Option<Duration>), McpInventoryError> {
+    ) -> Result<(Vec<RuntimeMcpTool>, bool, Option<Duration>), &'static str> {
         let record = usable_record(self.servers.as_ref(), &spec.server_id)
             .await
-            .map_err(McpInventoryError::new)?
-            .ok_or_else(|| {
-                McpInventoryError::new(format!("MCP server {} is not available", spec.server_id))
-            })?;
+            .map_err(|_| "MCP server lookup failed")?
+            .ok_or("MCP server is unavailable")?;
         let auth = record_auth(self.secrets.as_ref(), &record)
             .await
-            .map_err(|error| McpInventoryError::new(format!("resolve MCP credential: {error}")))?;
+            .map_err(|error| error.mcp_notice())?;
         let private_access = self
             .private_networks
             .access(&record.server_url, record.allow_private_network);
@@ -233,7 +232,24 @@ impl RuntimeMcpInventoryResolver {
                 mcp::McpToolDiscoveryLimits::default(),
             )
             .await
-            .map_err(|error| McpInventoryError::new(error.to_string()))?;
+            .map_err(|error| {
+                use mcp::McpToolDiscoveryFailureKind::*;
+                match error.kind {
+                    Unauthorized => "tools/list failed: HTTP 401 (unauthorized)",
+                    Forbidden => "tools/list failed: HTTP 403 (forbidden)",
+                    AdditionalConsentRequired => "tools/list failed: additional consent required",
+                    CredentialAbsent => "tools/list failed: missing credential",
+                    GrantNeedsReauth => "tools/list failed: reconnect the credential",
+                    GrantAudienceMismatch => "tools/list failed: credential audience mismatch",
+                    RemoteRateLimited => "tools/list failed: HTTP 429 (rate limited)",
+                    Unreachable => "tools/list failed: server unreachable",
+                    InvalidResponse => "tools/list failed: invalid response",
+                    UnsupportedProtocol => "tools/list failed: unsupported protocol",
+                    PaginationLimit => "tools/list failed: pagination limit exceeded",
+                    ResponseTooLarge => "tools/list failed: response too large",
+                    RemoteFailure => "tools/list failed: remote server error",
+                }
+            })?;
         let DiscoveredMcpInventory {
             tools: discovered,
             tools_list_changed,
@@ -465,18 +481,27 @@ impl RuntimeMcpExecutor {
             let spec = spec_from_target(target, harness::RemoteMcpExposure::Search);
             let inventory = self
                 .inventory
-                .list_tools(&spec)
+                .list_tools_with_status(&spec)
                 .await
                 .map_err(|error| error.to_string())?;
             let mut tools = Vec::with_capacity(names.len());
             for name in names {
                 let tool = inventory
+                    .tools
                     .iter()
                     .find(|tool| tool.remote_name == name)
-                    .ok_or_else(|| format!("MCP server {server} does not advertise tool {name}"))?;
+                    .ok_or_else(|| {
+                        inventory.warning.map_or_else(
+                            || format!("MCP server {server} does not advertise tool {name}"),
+                            |reason| format!("MCP server {server}: {reason}"),
+                        )
+                    })?;
                 tools.push(full_tool_definition(server, tool));
             }
-            let output = serde_json::json!({"tools": tools, "nextCursor": null});
+            let mut output = serde_json::json!({"tools": tools, "nextCursor": null});
+            if let Some(reason) = inventory.notice() {
+                output["unavailableServers"] = serde_json::json!({(server): reason});
+            }
             return Ok(RuntimeMcpExecutionOutcome::Completed {
                 visible: serde_json::to_string(&output).map_err(|error| error.to_string())?,
                 output,
@@ -490,17 +515,21 @@ impl RuntimeMcpExecutor {
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as usize;
         let mut matches = Vec::new();
+        let mut warnings = Vec::new();
         for target in targets
             .iter()
             .filter(|target| selected_server.is_none_or(|server| server == target.server_id))
         {
             let spec = spec_from_target(target, harness::RemoteMcpExposure::Search);
-            for tool in self
+            let listing = self
                 .inventory
-                .list_tools(&spec)
+                .list_tools_with_status(&spec)
                 .await
-                .map_err(|error| error.to_string())?
-            {
+                .map_err(|error| error.to_string())?;
+            if let Some(reason) = listing.notice() {
+                warnings.push(format!("- {}: {reason}", target.server_id));
+            }
+            for tool in listing.tools {
                 let rank = match query.as_ref() {
                     Some(query) => {
                         let Some(rank) = query.score(
@@ -525,8 +554,19 @@ impl RuntimeMcpExecutor {
                 .then_with(|| left.2.remote_name.cmp(&right.2.remote_name))
         });
         let output = paged_tool_output(&matches, cursor)?;
+        let page = serde_json::to_string(&output).map_err(|error| error.to_string())?;
+        // Keep the structured page and its byte budget stable. The tool transcript
+        // also explains any partial results, even if generation runs on another worker.
+        let visible = if warnings.is_empty() {
+            page
+        } else {
+            format!(
+                "Unavailable MCP servers:\n{}\n\n{page}",
+                warnings.join("\n")
+            )
+        };
         Ok(RuntimeMcpExecutionOutcome::Completed {
-            visible: serde_json::to_string(&output).map_err(|error| error.to_string())?,
+            visible,
             output,
             is_error: false,
             assets: Vec::new(),
@@ -551,18 +591,24 @@ impl RuntimeMcpExecutor {
             ));
         }
         let spec = spec_from_target(target, harness::RemoteMcpExposure::Search);
-        let tools = self
+        let listing = self
             .inventory
-            .list_tools(&spec)
+            .list_tools_with_status(&spec)
             .await
             .map_err(|error| error.to_string())?;
-        let tool = tools
+        let tool = listing
+            .tools
             .iter()
             .find(|tool| tool.remote_name == tool_name)
             .ok_or_else(|| {
-                format!(
-                    "MCP server {} does not advertise tool {tool_name}",
-                    target.server_id
+                listing.warning.map_or_else(
+                    || {
+                        format!(
+                            "MCP server {} does not advertise tool {tool_name}",
+                            target.server_id
+                        )
+                    },
+                    |reason| format!("MCP server {}: {reason}", target.server_id),
                 )
             })?;
         validate_mcp_arguments(tool_name, tool, arguments)
@@ -1138,6 +1184,13 @@ impl McpInventoryResolver for RuntimeMcpInventoryResolver {
         &self,
         spec: &RemoteMcpToolSpec,
     ) -> Result<Vec<RuntimeMcpTool>, McpInventoryError> {
+        Ok(self.list_tools_with_status(spec).await?.tools)
+    }
+
+    async fn list_tools_with_status(
+        &self,
+        spec: &RemoteMcpToolSpec,
+    ) -> Result<McpListing, McpInventoryError> {
         let key = (
             spec.server_id.clone(),
             spec.record_revision,
@@ -1146,7 +1199,7 @@ impl McpInventoryResolver for RuntimeMcpInventoryResolver {
         if let Some(cached) = self.cache.lock().await.get(&key)
             && cached.fetched_at.elapsed() < cached.ttl
         {
-            return Ok(cached.tools.clone());
+            return Ok(cached.listing.clone());
         }
         let lock = {
             let mut locks = self.locks.lock().await;
@@ -1159,7 +1212,7 @@ impl McpInventoryResolver for RuntimeMcpInventoryResolver {
         if let Some(cached) = self.cache.lock().await.get(&key)
             && cached.fetched_at.elapsed() < cached.ttl
         {
-            return Ok(cached.tools.clone());
+            return Ok(cached.listing.clone());
         }
         let (tools, tools_list_changed, advertised_ttl) = match self.uncached(spec).await {
             Ok(fetched) => fetched,
@@ -1176,11 +1229,12 @@ impl McpInventoryResolver for RuntimeMcpInventoryResolver {
                 let entry = cache.entry(key).or_insert_with(|| CachedInventory {
                     fetched_at: Instant::now(),
                     ttl: self.failure_ttl,
-                    tools: Vec::new(),
+                    listing: McpListing::default(),
                 });
                 entry.fetched_at = Instant::now();
                 entry.ttl = self.failure_ttl;
-                return Ok(entry.tools.clone());
+                entry.listing.warning = Some(error);
+                return Ok(entry.listing.clone());
             }
         };
         let ttl = advertised_ttl.unwrap_or(if tools_list_changed {
@@ -1192,15 +1246,19 @@ impl McpInventoryResolver for RuntimeMcpInventoryResolver {
         cache.retain(|(server_id, revision, _), _| {
             server_id != &spec.server_id || *revision == spec.record_revision
         });
+        let listing = McpListing {
+            tools,
+            warning: None,
+        };
         cache.insert(
             key,
             CachedInventory {
                 fetched_at: Instant::now(),
                 ttl,
-                tools: tools.clone(),
+                listing: listing.clone(),
             },
         );
-        Ok(tools)
+        Ok(listing)
     }
 
     async fn server_url(&self, server_id: &str) -> Result<Option<String>, McpInventoryError> {
@@ -1736,8 +1794,8 @@ mod tests {
             tokio::time::sleep(self.delay).await;
             if self.failing.load(Ordering::SeqCst) {
                 return Err(mcp::McpToolDiscoveryFailure::new(
-                    mcp::McpToolDiscoveryFailureKind::Unreachable,
-                    "MCP endpoint timed out",
+                    mcp::McpToolDiscoveryFailureKind::Unauthorized,
+                    "private detail from the remote endpoint",
                 ));
             }
             let tool = |name: &str| mcp::DiscoveredMcpTool {
@@ -1772,15 +1830,36 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(5)).await;
 
         discoverer.failing.store(true, Ordering::SeqCst);
-        let kept = resolver.list_tools(&spec(1)).await.expect("kept");
-        assert_eq!(tool_names(&kept), ["tool_a", "tool_b"]);
+        let kept = resolver
+            .list_tools_with_status(&spec(1))
+            .await
+            .expect("kept");
+        assert_eq!(tool_names(&kept.tools), ["tool_a", "tool_b"]);
         assert_eq!(discoverer.calls.load(Ordering::SeqCst), 2);
-        resolver.list_tools(&spec(1)).await.expect("inside window");
+        assert_eq!(
+            kept.warning,
+            Some("tools/list failed: HTTP 401 (unauthorized)")
+        );
+        assert_eq!(
+            resolver
+                .list_tools_with_status(&spec(1))
+                .await
+                .expect("inside window")
+                .warning,
+            kept.warning
+        );
         assert_eq!(discoverer.calls.load(Ordering::SeqCst), 2);
 
         discoverer.failing.store(false, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(70)).await;
-        resolver.list_tools(&spec(1)).await.expect("recovered");
+        assert!(
+            resolver
+                .list_tools_with_status(&spec(1))
+                .await
+                .expect("recovered")
+                .warning
+                .is_none()
+        );
         assert_eq!(discoverer.calls.load(Ordering::SeqCst), 3);
     }
 
@@ -1809,6 +1888,49 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(70)).await;
         let recovered = resolver.list_tools(&spec(1)).await.expect("recovered");
         assert_eq!(tool_names(&recovered), ["tool_a", "tool_b"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn on_demand_search_reports_a_listing_failure_alongside_healthy_results() {
+        use mcp::McpRegistryStore;
+        let servers = Arc::new(mcp::InMemoryMcpRegistryStore::new());
+        servers
+            .put_server(server_input("http://127.0.0.1/mcp", true), None)
+            .await
+            .unwrap();
+        let inventory = Arc::new(RuntimeMcpInventoryResolver {
+            servers,
+            ..RuntimeMcpInventoryResolver::for_test(
+                FlakyDiscoverer::new(false, Duration::ZERO),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            )
+        });
+        let runtime = RuntimeMcpExecutor::new(
+            inventory.servers.clone(),
+            inventory.secrets.clone(),
+            inventory.clone(),
+            inventory.private_networks.clone(),
+        );
+        let targets = ["test", "other"].map(|id| harness::RemoteMcpCallTarget {
+            server_id: id.into(),
+            server_label: id.into(),
+            record_revision: 1,
+            allowed_tools: None,
+            approval: harness::RemoteMcpApprovalPolicy::Never,
+        });
+        let RuntimeMcpExecutionOutcome::Completed {
+            output, visible, ..
+        } = runtime
+            .find_tools(&targets, serde_json::json!({}))
+            .await
+            .unwrap()
+        else {
+            panic!("expected a search result")
+        };
+        assert_eq!(output["tools"].as_array().unwrap().len(), 2);
+        assert!(visible.contains("Unavailable MCP servers"));
+        assert!(visible.contains("other: MCP server is unavailable"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
