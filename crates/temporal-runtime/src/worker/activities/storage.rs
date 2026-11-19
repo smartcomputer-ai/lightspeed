@@ -2061,7 +2061,7 @@ mod tests {
                 tool_calls: vec![
                     ObservedToolCall {
                         call_id: harness::ToolCallId::new("report-call"),
-                        tool_id: Some(ToolId::new("work_report")),
+                        target: Some(ToolId::new("work_report").into()),
                         tool_name: ToolName::new("work_report"),
                         provider_kind: None,
                         arguments_ref: BlobRef::from_bytes(b"{\"outcome\":\"complete\"}"),
@@ -2069,7 +2069,7 @@ mod tests {
                     },
                     ObservedToolCall {
                         call_id: harness::ToolCallId::new("approval-call"),
-                        tool_id: Some(ToolId::new("request_approval")),
+                        target: Some(ToolId::new("request_approval").into()),
                         tool_name: ToolName::new("request_approval"),
                         provider_kind: None,
                         arguments_ref: BlobRef::from_bytes(b"{\"reason\":\"ship it\"}"),

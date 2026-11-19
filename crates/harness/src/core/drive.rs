@@ -958,8 +958,7 @@ pub(crate) fn tool_invocation_request(
         .iter()
         .map(|call| {
             let workflow_tool = call
-                .tool_id
-                .as_ref()
+                .tool_id()
                 .and_then(|id| state.workflow_tools.binding_for_tool_id(id))
                 .map(|binding| {
                     crate::WorkflowToolCallRuntime::v1(
@@ -976,8 +975,7 @@ pub(crate) fn tool_invocation_request(
             let remote_mcp = crate::remote_mcp_call_runtime(state, batch_id, call);
             ToolInvocationRequest {
                 builtin: call
-                    .tool_id
-                    .as_ref()
+                    .tool_id()
                     .and_then(|id| state.tooling.tools.get(id))
                     .and_then(|tool| match &tool.kind {
                         crate::ToolKind::Builtin(spec) => Some(crate::BuiltinToolCallRuntime {
@@ -998,7 +996,7 @@ pub(crate) fn tool_invocation_request(
                         _ => None,
                     }),
                 call_id: call.call_id.clone(),
-                tool_id: call.tool_id.clone(),
+                tool_id: call.tool_id().cloned(),
                 tool_name: call.tool_name.clone(),
                 arguments_ref: call.arguments_ref.clone(),
                 workflow_tool,
@@ -1190,8 +1188,7 @@ pub fn tool_batch_parked_proposals(
             call_state.status == ToolCallStatus::Pending
                 && call_state
                     .call
-                    .tool_id
-                    .as_ref()
+                    .tool_id()
                     .is_some_and(|id| id.as_str() == AWAIT_TOOL_ID)
         })
         .map(|call_state| call_state.call.call_id.clone())
@@ -1280,8 +1277,7 @@ pub fn tool_batch_parked_proposals(
         call_state.call.call_id == call_id
             && call_state
                 .call
-                .tool_id
-                .as_ref()
+                .tool_id()
                 .is_some_and(|id| id.as_str() == AWAIT_TOOL_ID)
     }) {
         return Err(DomainError::InvariantViolation(format!(
@@ -2755,7 +2751,7 @@ mod tests {
     ) -> ToolInvocationBatchRequest {
         let tool_call = ObservedToolCall {
             call_id: crate::ToolCallId::new("call_wait"),
-            tool_id: Some(test_tool_id(tool_name)),
+            target: Some(test_tool_id(tool_name).into()),
             tool_name: ToolName::new(tool_name),
             provider_kind: None,
             arguments_ref: BlobRef::from_bytes(br#"{"wait":true}"#),
@@ -4938,7 +4934,7 @@ mod tests {
             request,
             vec![ObservedToolCall {
                 call_id: crate::ToolCallId::new("read-skill"),
-                tool_id: Some(ToolId::new("vfs.read_file")),
+                target: Some(ToolId::new("vfs.read_file").into()),
                 tool_name: ToolName::new("vfs_read_file"),
                 provider_kind: None,
                 arguments_ref: BlobRef::from_bytes(br#"{"path":"/skills/review/SKILL.md"}"#),
@@ -6658,7 +6654,7 @@ mod tests {
                         usage: None,
                         tool_calls: vec![ObservedToolCall {
                             call_id: crate::ToolCallId::new("call_wait"),
-                            tool_id: Some(ToolId::new("concurrency.await")),
+                            target: Some(ToolId::new("concurrency.await").into()),
                             tool_name: ToolName::new("await"),
                             provider_kind: None,
                             arguments_ref: BlobRef::from_bytes(br#"{"wait":true}"#),
@@ -6867,7 +6863,7 @@ mod tests {
                         usage: None,
                         tool_calls: vec![ObservedToolCall {
                             call_id: crate::ToolCallId::new("call_a"),
-                            tool_id: Some(ToolId::new("fn_a")),
+                            target: Some(ToolId::new("fn_a").into()),
                             tool_name: ToolName::new("fn_a"),
                             provider_kind: None,
                             arguments_ref: BlobRef::from_bytes(b"{}"),
@@ -6938,7 +6934,7 @@ mod tests {
                 usage: None,
                 tool_calls: vec![ObservedToolCall {
                     call_id: crate::ToolCallId::new(format!("call_{}", request.turn_id)),
-                    tool_id: Some(ToolId::new("fn_a")),
+                    target: Some(ToolId::new("fn_a").into()),
                     tool_name: ToolName::new("fn_a"),
                     provider_kind: None,
                     arguments_ref: BlobRef::from_bytes(b"{}"),
@@ -9710,7 +9706,7 @@ mod tests {
         let observed_calls = vec![
             ObservedToolCall {
                 call_id: ToolCallId::new("call-send-1"),
-                tool_id: Some(ToolId::new("message_send")),
+                target: Some(ToolId::new("message_send").into()),
                 tool_name: ToolName::new("message_send"),
                 provider_kind: None,
                 arguments_ref: BlobRef::from_bytes(br#"{"text":"one"}"#),
@@ -9718,7 +9714,7 @@ mod tests {
             },
             ObservedToolCall {
                 call_id: ToolCallId::new("call-echo"),
-                tool_id: Some(ToolId::new("local_echo")),
+                target: Some(ToolId::new("local_echo").into()),
                 tool_name: ToolName::new("local_echo"),
                 provider_kind: None,
                 arguments_ref: BlobRef::from_bytes(br#"{"text":"echo"}"#),
@@ -9726,7 +9722,7 @@ mod tests {
             },
             ObservedToolCall {
                 call_id: ToolCallId::new("call-send-2"),
-                tool_id: Some(ToolId::new("message_send")),
+                target: Some(ToolId::new("message_send").into()),
                 tool_name: ToolName::new("message_send"),
                 provider_kind: None,
                 arguments_ref: BlobRef::from_bytes(br#"{"text":"two"}"#),
@@ -9952,7 +9948,7 @@ mod tests {
             vec![
                 ObservedToolCall {
                     call_id: ToolCallId::new("call-send"),
-                    tool_id: Some(ToolId::new("message_send")),
+                    target: Some(ToolId::new("message_send").into()),
                     tool_name: ToolName::new("message_send"),
                     provider_kind: None,
                     arguments_ref: BlobRef::from_bytes(br#"{"text":"one"}"#),
@@ -9960,7 +9956,7 @@ mod tests {
                 },
                 ObservedToolCall {
                     call_id: ToolCallId::new("call-await"),
-                    tool_id: Some(ToolId::new(AWAIT_TOOL_ID)),
+                    target: Some(ToolId::new(AWAIT_TOOL_ID).into()),
                     tool_name: ToolName::new("await"),
                     provider_kind: None,
                     arguments_ref: BlobRef::from_bytes(br#"{"promises":["other"]}"#),
@@ -10921,7 +10917,7 @@ mod tests {
         let run_id = generation.run_id;
         let observed = |tool: &str| ObservedToolCall {
             call_id: crate::ToolCallId::new(format!("call_{tool}")),
-            tool_id: Some(test_tool_id(tool)),
+            target: Some(test_tool_id(tool).into()),
             tool_name: ToolName::new(tool),
             provider_kind: None,
             arguments_ref: BlobRef::from_bytes(tool.as_bytes()),
@@ -11322,7 +11318,7 @@ mod tests {
             vec![
                 ObservedToolCall {
                     call_id: crate::ToolCallId::new("call_a"),
-                    tool_id: Some(ToolId::new("tool_a")),
+                    target: Some(ToolId::new("tool_a").into()),
                     tool_name: ToolName::new("tool_a"),
                     provider_kind: None,
                     arguments_ref: BlobRef::from_bytes(br#"{"a":true}"#),
@@ -11330,7 +11326,7 @@ mod tests {
                 },
                 ObservedToolCall {
                     call_id: crate::ToolCallId::new("call_b"),
-                    tool_id: Some(ToolId::new("tool_b")),
+                    target: Some(ToolId::new("tool_b").into()),
                     tool_name: ToolName::new("tool_b"),
                     provider_kind: None,
                     arguments_ref: BlobRef::from_bytes(br#"{"b":true}"#),
@@ -11586,9 +11582,19 @@ mod tests {
     }
 
     fn observed_call(call_id: &str, tool_name: &str) -> ObservedToolCall {
+        let tool_id = test_tool_id(tool_name);
+        let target = if tool_name == "mcp_echo__hello" {
+            crate::ResolvedToolTarget::Mcp {
+                server_tool_id: tool_id,
+                server_label: "echo".into(),
+                remote_name: "hello".into(),
+            }
+        } else {
+            tool_id.into()
+        };
         ObservedToolCall {
             call_id: crate::ToolCallId::new(call_id),
-            tool_id: Some(test_tool_id(tool_name)),
+            target: Some(target),
             tool_name: ToolName::new(tool_name),
             provider_kind: None,
             arguments_ref: BlobRef::from_bytes(b"{}"),
@@ -11887,7 +11893,7 @@ mod tests {
         );
         let call = ObservedToolCall {
             call_id: crate::ToolCallId::new("call-bash"),
-            tool_id: Some(ToolId::new("env.run_process")),
+            target: Some(ToolId::new("env.run_process").into()),
             tool_name: ToolName::new("Bash"),
             provider_kind: Some("tool_use".into()),
             arguments_ref: BlobRef::from_bytes(br#"{"command":"echo hello"}"#),
@@ -11896,7 +11902,7 @@ mod tests {
         let mut unknown = call.clone();
         unknown.call_id = crate::ToolCallId::new("unknown-alias");
         unknown.tool_name = ToolName::new("exec_command");
-        unknown.tool_id = None;
+        unknown.target = None;
         let action = drive
             .resume_generation(
                 LlmGenerationResult {
@@ -11942,7 +11948,7 @@ mod tests {
             }
         };
         assert_eq!(request.calls.len(), 1, "unknown aliases do not execute");
-        assert_eq!(request.calls[0].tool_id, call.tool_id);
+        assert_eq!(request.calls[0].tool_id.as_ref(), call.tool_id());
         assert_eq!(request.calls[0].tool_name.as_str(), "Bash");
         assert_eq!(
             request.calls[0].builtin,
@@ -12053,6 +12059,10 @@ mod tests {
         ]
         .into_iter()
         .map(test_tool_spec)
+        .chain([runtime_inject_mcp_tool(
+            "mcp_echo",
+            crate::RemoteMcpApprovalPolicy::Never,
+        )])
         .map(|tool| (tool.id.clone(), tool))
         .collect();
         let action = drive
@@ -12137,7 +12147,7 @@ mod tests {
                     (
                         name.to_owned(),
                         crate::CodeToolBinding {
-                            tool_id: test_tool_id(name),
+                            target: test_tool_id(name).into(),
                             tool_name: ToolName::new(name),
                         },
                     )
@@ -12167,6 +12177,34 @@ mod tests {
     ) -> Vec<CoreAgentEntry> {
         let action = drive.admit_command(command, 100).unwrap();
         commit_action(drive, action)
+    }
+
+    #[test]
+    fn code_tool_uses_the_remote_identity_from_its_pinned_scope() {
+        let (mut drive, parent) = code_tool_fixture();
+        let mut scope = code_tool_scope(parent);
+        let mut call = code_tool_spec("1", "local_echo");
+        call.tool_id = ToolId::new("mcp_echo");
+        call.tool_name = ToolName::new("shortened_alias");
+        scope.bindings.insert(
+            call.binding_id.clone(),
+            crate::CodeToolBinding {
+                tool_name: call.tool_name.clone(),
+                target: crate::ResolvedToolTarget::Mcp {
+                    server_tool_id: call.tool_id.clone(),
+                    server_label: "echo".into(),
+                    remote_name: "hello".into(),
+                },
+            },
+        );
+        code_tool_commit(&mut drive, CoreAgentCommand::OpenCodeToolScope { scope });
+        code_tool_commit(&mut drive, CoreAgentCommand::AdmitCodeToolCall { call });
+        let request =
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
+                .unwrap();
+        assert!(
+            matches!(&request.calls[0].remote_mcp, Some(crate::RemoteMcpCallRuntime::Injected {remote_tool_name, ..}) if remote_tool_name == "hello")
+        );
     }
 
     #[test]
@@ -12725,7 +12763,7 @@ mod tests {
         recursive.bindings.insert(
             "code_execute".into(),
             crate::CodeToolBinding {
-                tool_id: ToolId::new("code_execute"),
+                target: ToolId::new("code_execute").into(),
                 tool_name: ToolName::new("code_execute"),
             },
         );

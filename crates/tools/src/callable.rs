@@ -355,7 +355,7 @@ fn validate_provider_options(function: &FunctionDefinition) -> Result<(), Catalo
 
 pub fn valid_exposed_name(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= 64
+        && name.len() <= harness::TOOL_NAME_MAX_LEN
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))

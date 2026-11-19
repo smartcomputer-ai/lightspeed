@@ -13,7 +13,7 @@ use harness::{
     ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, LlmRequest, LlmUsage, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
     ObservedToolCall, ProviderApiKind, RemoteMcpExecution, RemoteMcpExposure, TokenEstimate,
-    TokenEstimateQuality, ToolCallId, ToolId, ToolKind, ToolName, storage::BlobStore,
+    TokenEstimateQuality, ToolCallId, ToolKind, ToolName, storage::BlobStore,
 };
 use llm_clients::{ApiResponse, openai::completions as oai_c};
 use serde_json::{Value, json};
@@ -879,9 +879,10 @@ async fn materialize_tools(
                 )
                 .await?;
                 for (name, runtime_tool) in runtime_tools {
-                    catalog
-                        .names
-                        .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                    catalog.names.insert(
+                        ToolName::new(name.clone()),
+                        Some(runtime_tool.target(&tool.id, spec)),
+                    )?;
                     let description =
                         catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                     materialized.push(oai_c::CompletionTool {
@@ -1437,7 +1438,7 @@ async fn tool_call_context(
         },
         ObservedToolCall {
             call_id,
-            tool_id: Some(ToolId::new(tool_name.as_str())),
+            target: None,
             tool_name,
             provider_kind: Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned()),
             arguments_ref,
@@ -1495,8 +1496,8 @@ fn u64_to_u32(value: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use harness::ToolChoice;
     use harness::ToolSpec;
+    use harness::{ToolChoice, ToolId};
     use std::sync::{Arc, Mutex};
 
     use harness::{

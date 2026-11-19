@@ -10,7 +10,7 @@ use harness::{
     LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
     OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedApprovalRequest, ObservedToolCall,
     ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy, RemoteMcpExecution,
-    RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId, ToolId,
+    RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId,
     ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::content::{
@@ -814,9 +814,10 @@ async fn materialize_tools(
                 )
                 .await?;
                 for (name, runtime_tool) in runtime_tools {
-                    catalog
-                        .names
-                        .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                    catalog.names.insert(
+                        ToolName::new(name.clone()),
+                        Some(runtime_tool.target(&tool.id, spec)),
+                    )?;
                     let description =
                         catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                     let mut function = oai::FunctionTool::new(name, runtime_tool.input_schema);
@@ -1172,7 +1173,7 @@ async fn result_from_response_with_catalog(
                     PROVIDER_KIND_CUSTOM_TOOL_CALL,
                 )
                 .await?;
-                tool_call.tool_id = Some(tool.id.clone());
+                tool_call.target = Some(tool.id.clone().into());
                 context_entries.push(context_entry);
                 tool_calls.push(tool_call);
             }
@@ -1608,7 +1609,7 @@ async fn tool_call_context(
     };
     let tool_call = ObservedToolCall {
         call_id,
-        tool_id: Some(ToolId::new(tool_name.as_str())),
+        target: None,
         tool_name,
         provider_kind: Some(provider_kind.to_string()),
         arguments_ref,
@@ -1803,7 +1804,7 @@ fn developer_message(text: String) -> oai::ResponseInputItem {
 
 #[cfg(test)]
 mod tests {
-    use harness::ToolChoice;
+    use harness::{ToolChoice, ToolId};
     mod patch_tests;
 
     use std::collections::BTreeMap;
@@ -1965,6 +1966,63 @@ mod tests {
         assert_eq!(value.as_array().expect("array").len(), 1);
         assert_eq!(value[0]["name"], "mcp_github__search_issues");
         assert_eq!(value[0]["strict"], false);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn response_to_shortened_mcp_function_binds_only_the_advertised_name() {
+        let blobs = InMemoryBlobStore::new();
+        let mut registration = runtime_mcp_tool(RemoteMcpExposure::Inject);
+        registration.id = ToolId::new(format!("mcp_{}", "s".repeat(60)));
+        let request = LlmGenerationRequest {
+            session_id: SessionId::new("session-a"),
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(1),
+            request: harness::LlmRequest {
+                tools: vec![registration.clone()],
+                ..intent_request(Vec::new())
+            },
+        };
+        let mut catalog =
+            crate::tool_catalog::ToolCatalog::resolve_for_request(&blobs, &request.request)
+                .await
+                .unwrap();
+        let tools = materialize_tools(&blobs, &StaticMcpInventory, &mut catalog)
+            .await
+            .unwrap();
+        let wire = serde_json::to_value(tools).unwrap();
+        let alias = wire[0]["name"].as_str().unwrap();
+        let raw_json = json!({"id": "resp_1", "status": "completed", "output": [
+            {"type":"function_call","id":"fc_1","call_id":"call_1","name":alias,"arguments":"{}"},
+            {"type":"function_call","id":"fc_2","call_id":"call_2","name":"search_issues","arguments":"{}"}
+        ]});
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).unwrap(),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let mut result = result_from_response(&blobs, &request, &response)
+            .await
+            .unwrap();
+        assert!(
+            result
+                .facts
+                .tool_calls
+                .iter()
+                .all(|call| call.target.is_none())
+        );
+        catalog.normalize(&mut result);
+        let calls = result.facts.tool_calls;
+        assert_eq!(calls[0].tool_name.as_str(), alias);
+        assert_eq!(
+            calls[0].target,
+            Some(harness::ResolvedToolTarget::Mcp {
+                server_tool_id: registration.id,
+                server_label: "github".into(),
+                remote_name: "search_issues".into()
+            })
+        );
+        assert!(calls[1].target.is_none());
     }
 
     struct FakeOpenAiResponsesApi {
@@ -3030,7 +3088,7 @@ mod tests {
         );
         assert_eq!(result.facts.tool_calls.len(), 1);
         assert_eq!(
-            result.facts.tool_calls[0].tool_id,
+            result.facts.tool_calls[0].tool_id().cloned(),
             Some(ToolId::new("env.read_file"))
         );
         assert_eq!(

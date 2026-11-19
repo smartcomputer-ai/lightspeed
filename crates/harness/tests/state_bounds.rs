@@ -305,7 +305,7 @@ fn call_of(request: &LlmGenerationRequest, tool: &str) -> ObservedToolCall {
     let call = format!("call_{:020}", request.turn_id.as_u64());
     ObservedToolCall {
         call_id: ToolCallId::new(&call),
-        tool_id: Some(ToolId::new(tool)),
+        target: Some(ToolId::new(tool).into()),
         tool_name: ToolName::new(tool),
         provider_kind: Some("openai.responses.function_call".to_owned()),
         arguments_ref: blob(format!("args-{call}")),
@@ -895,7 +895,7 @@ impl Session {
                 bindings: BTreeMap::from([(
                     "read_file".to_owned(),
                     CodeToolBinding {
-                        tool_id: ToolId::new("read_file"),
+                        target: ToolId::new("read_file").into(),
                         tool_name: ToolName::new("read_file"),
                     },
                 )]),

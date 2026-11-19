@@ -1219,7 +1219,7 @@ fn failure(kind: FailureKind, message: impl Into<String>) -> McpToolDiscoveryFai
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use axum::{
         Json, Router,
@@ -1235,7 +1235,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[derive(Default)]
-    struct TestMcpState {
+    pub(crate) struct TestMcpState {
+        pub(crate) tool_names: Vec<String>,
+        pub(crate) called_names: Vec<String>,
         discover_count: usize,
         initialize_count: usize,
         initialized_count: usize,
@@ -1248,6 +1250,18 @@ mod tests {
         list_delay: Option<Duration>,
         oauth_challenge: Option<String>,
         tools_list_changed: bool,
+    }
+
+    pub(crate) async fn start_test_server(
+        state: Arc<Mutex<TestMcpState>>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}/mcp"), server)
     }
 
     async fn streamable_handler(
@@ -1352,7 +1366,14 @@ mod tests {
                     .into_response();
                 }
                 let cursor = request.pointer("/params/cursor").and_then(Value::as_str);
-                let result = if cursor.is_none() {
+                let result = if !state.tool_names.is_empty() {
+                    let tools: Vec<_> = state
+                        .tool_names
+                        .iter()
+                        .map(|name| json!({"name": name, "inputSchema": {"type": "object"}}))
+                        .collect();
+                    json!({"tools": tools})
+                } else if cursor.is_none() {
                     json!({
                         "tools": [{
                             "name": "search",
@@ -1382,6 +1403,9 @@ mod tests {
             }
             Some("tools/call") => {
                 state.tool_call_count += 1;
+                state
+                    .called_names
+                    .push(request["params"]["name"].as_str().unwrap().into());
                 Json(json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -1792,16 +1816,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn custom_headers_reach_every_discovery_and_tool_call_request() {
         let state = Arc::new(Mutex::new(TestMcpState::default()));
-        let app = Router::new()
-            .route("/mcp", post(streamable_handler).delete(shutdown_handler))
-            .with_state(state.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind fixture");
-        let address = listener.local_addr().expect("fixture address");
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve fixture");
-        });
+        let (endpoint, server) = start_test_server(state.clone()).await;
         let mut auth = McpRequestAuth::bearer("bearer-token");
         auth.headers.insert(
             HeaderName::from_static("x-upstream-url"),
@@ -1811,7 +1826,6 @@ mod tests {
         token.set_sensitive(true);
         auth.headers
             .insert(HeaderName::from_static("x-upstream-token"), token);
-        let endpoint = format!("http://{address}/mcp");
         let transport = HttpMcpToolDiscoverer::new();
 
         transport

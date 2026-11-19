@@ -1328,7 +1328,7 @@ pub(crate) fn validate_invoke_effect(
                     "workflow tool invoke effect references missing tool call {expected_call_id}"
                 ))
             })?;
-        if call.call.tool_id.as_ref() != Some(&binding.definition.tool.id)
+        if call.call.tool_id() != Some(&binding.definition.tool.id)
             || call.call.arguments_ref != invocation.arguments_ref
         {
             return Err(DomainError::InvariantViolation(
@@ -1590,7 +1590,7 @@ fn validate_recorded_invocation(
                     invocation.tool_call_id
                 ))
             })?;
-        if call.call.tool_id.as_ref() != Some(&binding.definition.tool.id)
+        if call.call.tool_id() != Some(&binding.definition.tool.id)
             || call.call.arguments_ref != invocation.arguments_ref
         {
             return Err(DomainError::InvariantViolation(
@@ -2789,7 +2789,7 @@ mod tests {
             .iter()
             .map(|call_id| ObservedToolCall {
                 call_id: ToolCallId::new(*call_id),
-                tool_id: Some(definition.tool.id.clone()),
+                target: Some(definition.tool.id.clone().into()),
                 tool_name: ToolName::new("work_report"),
                 provider_kind: None,
                 arguments_ref: BlobRef::from_bytes(call_id.as_bytes()),

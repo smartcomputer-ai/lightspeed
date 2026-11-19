@@ -74,7 +74,7 @@ impl CoreAgentLlm for CodeCallLlm {
             assert!(tool_id.is_some(), "code mode must advertise code_execute");
             vec![ObservedToolCall {
                 call_id: call_id.clone(),
-                tool_id,
+                target: tool_id.map(Into::into),
                 tool_name: name.clone(),
                 provider_kind: None,
                 arguments_ref: reference.clone(),

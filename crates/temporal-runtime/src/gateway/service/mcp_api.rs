@@ -532,7 +532,7 @@ pub(super) fn map_mcp_error(error: mcp::McpRegistryError) -> AgentApiError {
 fn default_mcp_tool_id(server_label: &str) -> Result<ToolId, AgentApiError> {
     let mut tool_id = String::from("mcp_");
     for ch in server_label.chars() {
-        if tool_id.len() >= 64 {
+        if tool_id.len() >= harness::TOOL_NAME_MAX_LEN {
             break;
         }
         tool_id.push(if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {

@@ -18,7 +18,7 @@ use harness::{
     LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
     ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy,
     RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality,
-    ToolCallId, ToolId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::content::{
     ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
@@ -1175,9 +1175,10 @@ async fn materialize_tools(
                         )
                         .await?;
                         for (name, runtime_tool) in runtime_tools {
-                            catalog
-                                .names
-                                .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                            catalog.names.insert(
+                                ToolName::new(name.clone()),
+                                Some(runtime_tool.target(&tool.id, remote_mcp)),
+                            )?;
                             let description =
                                 catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                             materialized.push(am::Tool::Custom(am::ToolDefinition {
@@ -1899,7 +1900,7 @@ async fn tool_use_context(
     };
     let tool_call = ObservedToolCall {
         call_id,
-        tool_id: Some(ToolId::new(tool_name.as_str())),
+        target: None,
         tool_name,
         provider_kind: Some(PROVIDER_KIND_TOOL_USE.to_owned()),
         arguments_ref,
@@ -2103,7 +2104,7 @@ async fn has_signed_compaction(
 
 #[cfg(test)]
 mod tests {
-    use harness::ToolChoice;
+    use harness::{ToolChoice, ToolId};
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
@@ -3898,7 +3899,7 @@ mod tests {
         );
         assert_eq!(result.facts.tool_calls.len(), 1);
         assert_eq!(
-            result.facts.tool_calls[0].tool_id,
+            result.facts.tool_calls[0].tool_id().cloned(),
             Some(ToolId::new("env.read_file"))
         );
         assert_eq!(
