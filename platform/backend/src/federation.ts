@@ -32,7 +32,9 @@ export class WorkloadFederation {
         requiredClaims: ["exp", "sub", ...(issuer.maxTokenLifetimeSeconds ? ["iat"] : [])],
         clockTolerance: issuer.clockSkewSeconds,
       });
-      if (typeof payload.sub !== "string" || !payload.sub || payload.sub.includes("\0") || Buffer.byteLength(payload.sub) > 1024) return null;
+      // PostgreSQL text must represent the signed subject without replacement or truncation.
+      if (typeof payload.sub !== "string" || !payload.sub || /[\p{Cs}\u0000]/u.test(payload.sub) || Buffer.byteLength(payload.sub) > 1024) return null;
+      if (Array.isArray(payload.aud) && !payload.aud.every(value => typeof value === "string")) return null;
       if (!Number.isFinite(payload.exp) || (payload.nbf !== undefined && !Number.isFinite(payload.nbf))) return null;
       if (payload.iat !== undefined && (!Number.isFinite(payload.iat) ||
         payload.iat > Date.now() / 1000 + issuer.clockSkewSeconds || payload.exp! <= payload.iat ||

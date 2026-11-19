@@ -17,7 +17,7 @@ it("verifies configured issuer, signature, audience, time claims and lifetime be
   expect(await federation.verify(await mint({ aud: ["other", audience] }))).toEqual({ issuer, subject });
   const now = Math.floor(Date.now() / 1000);
   for (const claims of [{ iss: issuer.slice(0, -1) }, { aud: "other" }, { iat: undefined }, { exp: undefined },
-    { exp: now }, { sub: "" }, { iat: now + 90 }, { nbf: now + 90 }, { exp: now + 800 }]) {
+    { exp: now }, { sub: "" }, { sub: "\uD800" }, { iat: now + 90 }, { nbf: now + 90 }, { exp: now + 800 }]) {
     expect(await federation.verify(await mint(claims))).toBeNull();
   }
   const other = await workloadIssuer();
@@ -58,6 +58,7 @@ it("coalesces discovery, rotates the projected fetch credential and bounds stale
   await once(server, "listening");
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const path = join(source.dir, "token");
+  const rotated = await workloadIssuer();
   const clock = vi.spyOn(Date, "now");
   try {
     await writeFile(path, expected);
@@ -65,7 +66,7 @@ it("coalesces discovery, rotates the projected fetch credential and bounds stale
       { ...source.trusted, keys: { discoveryUrl: origin + "/discovery", bearerTokenFile: path } },
     ] }));
     const first = await source.mint();
-    const second = await source.mint({}, "second");
+    const second = await rotated.mint({}, "second");
     const start = Date.now();
     expect(await Promise.all([federation.verify(first), federation.verify(first)])).toEqual([
       { issuer: source.issuer, subject: source.subject }, { issuer: source.issuer, subject: source.subject },
@@ -73,7 +74,7 @@ it("coalesces discovery, rotates the projected fetch credential and bounds stale
     expect(await federation.verify(second)).toBeNull();
     expect(requests).toBe(2);
     clock.mockReturnValue(start + 31_000);
-    key = { ...key, kid: "second" };
+    key = { ...rotated.jwk, kid: "second" };
     expected = "rotated";
     await writeFile(path, expected);
     expect(await federation.verify(second)).toBeTruthy();
@@ -87,6 +88,7 @@ it("coalesces discovery, rotates the projected fetch credential and bounds stale
     expect(await federation.verify(second)).toBeNull();
   } finally {
     clock.mockRestore();
+    await rotated.close();
     server.close();
     await once(server, "close");
   }
