@@ -120,7 +120,7 @@ impl CoreAgentLlm for ScriptedLlm {
                 LlmFinish::ToolCalls,
                 vec![ObservedToolCall {
                     call_id,
-                    tool_id: Some(tool_id),
+                    target: Some(tool_id.into()),
                     tool_name: name,
                     provider_kind: None,
                     arguments_ref: reference.clone(),

@@ -72,7 +72,8 @@ pub(crate) fn interrupt_code_tools_for_run(state: &mut CoreAgentState, run_id: c
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeToolBinding {
-    pub tool_id: ToolId,
+    #[serde(alias = "tool_id")]
+    pub target: crate::ResolvedToolTarget,
     pub tool_name: ToolName,
 }
 
@@ -334,13 +335,13 @@ fn validate_scope(state: &CoreAgentState, scope: &CodeToolScopeSpec) -> Result<(
         .ok_or_else(|| invalid("code tool parent binding is missing"))?;
     for (binding_id, binding) in &scope.bindings {
         validate_id("binding_id", binding_id)?;
-        let tool_id = &binding.tool_id;
+        let tool_id = binding.target.tool_id();
         let tool = state
             .tooling
             .tools
             .get(tool_id)
             .ok_or_else(|| invalid(format!("code tool {tool_id} is not granted")))?;
-        if !tool.invokes_client_effect() || tool_id == &parent_tool.definition.tool.id {
+        if !tool.admits_call(&binding.target) || tool_id == &parent_tool.definition.tool.id {
             return Err(invalid(format!(
                 "tool {tool_id} is not available for code tool execution"
             )));
@@ -375,7 +376,7 @@ fn validate_recorded_call<'a>(
         .bindings
         .get(&call.binding_id)
         .is_some_and(|binding| {
-            binding.tool_id == call.tool_id && binding.tool_name == call.tool_name
+            binding.target.tool_id() == &call.tool_id && binding.tool_name == call.tool_name
         })
     {
         return Err(invalid("code tool is outside the execution grant"));
@@ -826,6 +827,11 @@ pub fn code_tool_request(
             "code tool request session does not match its parent",
         ));
     }
+    let binding = scope
+        .spec
+        .bindings
+        .get(&call.spec.binding_id)
+        .ok_or_else(|| invalid("code tool binding is absent from its scope"))?;
     let mut request = crate::core::drive::tool_invocation_request(
         state,
         session_id,
@@ -835,8 +841,8 @@ pub fn code_tool_request(
         call.promise_id_base,
         std::slice::from_ref(&crate::ObservedToolCall {
             call_id: call.call_id.clone(),
-            tool_id: Some(call.spec.tool_id.clone()),
-            tool_name: call.spec.tool_name.clone(),
+            target: Some(binding.target.clone()),
+            tool_name: binding.tool_name.clone(),
             provider_kind: None,
             arguments_ref: call.spec.arguments_ref.clone(),
             native_call_ref: None,

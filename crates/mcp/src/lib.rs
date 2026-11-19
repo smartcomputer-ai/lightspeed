@@ -283,12 +283,7 @@ impl McpServerRecord {
         validate_remote_mcp_server_label(&self.default_server_label)?;
         validate_nonempty_optional("description", self.description.as_deref())?;
         validate_allowed_tools(self.allowed_tools.as_deref())?;
-        validate_execution_policy(
-            &self.default_server_label,
-            self.execution,
-            self.exposure,
-            self.allowed_tools.as_deref(),
-        )?;
+        validate_execution_policy(self.execution, self.exposure, self.allowed_tools.as_deref())?;
         self.auth_policy.validate()?;
         if matches!(self.auth_policy, McpServerAuthPolicy::None) && self.auth_grant_id.is_some() {
             return Err(McpRegistryError::InvalidInput {
@@ -707,7 +702,6 @@ fn validate_allowed_tools(values: Option<&[String]>) -> Result<(), McpRegistryEr
 }
 
 fn validate_execution_policy(
-    server_label: &str,
     execution: McpExecution,
     exposure: McpExposure,
     allowed_tools: Option<&[String]>,
@@ -723,7 +717,6 @@ fn validate_execution_policy(
     let Some(allowed_tools) = allowed_tools else {
         return Ok(());
     };
-    let prefix = runtime_tool_prefix(server_label);
     for remote_name in allowed_tools {
         validate_mcp_component(
             "runtime injected MCP tool",
@@ -731,29 +724,8 @@ fn validate_execution_policy(
             "ASCII letters, digits, '_', '-'",
             |ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'),
         )?;
-        let combined = format!("{prefix}{remote_name}");
-        if combined.len() > 64 {
-            return Err(McpRegistryError::InvalidInput {
-                message: format!(
-                    "runtime MCP tool name {combined:?} exceeds the 64-byte provider limit; shorten the server label or remote tool name, or use search exposure"
-                ),
-            });
-        }
     }
     Ok(())
-}
-
-pub fn runtime_tool_prefix(server_label: &str) -> String {
-    let mut prefix = String::from("mcp_");
-    for ch in server_label.chars() {
-        prefix.push(if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
-            ch
-        } else {
-            '_'
-        });
-    }
-    prefix.push_str("__");
-    prefix
 }
 
 fn validate_scope_defaults(values: &[String]) -> Result<(), McpRegistryError> {
@@ -950,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_inject_selected_tools_must_fit_provider_function_names() {
+    fn runtime_inject_selected_tools_accept_long_names_and_require_provider_characters() {
         let mut record =
             put_request("durable-runtime-server-identifier", McpServerStatus::Active).into_record();
         record.execution = McpExecution::Runtime;
@@ -961,11 +933,11 @@ mod tests {
             .validate()
             .expect("the compact server label determines the injected tool name");
 
-        record.allowed_tools = Some(vec!["x".repeat(60)]);
-        assert!(matches!(
-            record.validate(),
-            Err(McpRegistryError::InvalidInput { .. })
-        ));
+        record.default_server_label = "s".repeat(128);
+        record.allowed_tools = Some(vec!["x".repeat(128)]);
+        record
+            .validate()
+            .expect("long names are aliased at injection");
 
         record.allowed_tools = Some(vec!["not/a/function".to_owned()]);
         assert!(matches!(

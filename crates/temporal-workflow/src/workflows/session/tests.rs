@@ -1049,7 +1049,7 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
             calls: vec![harness::ToolCallState {
                 call: harness::ObservedToolCall {
                     call_id: call_id.clone(),
-                    tool_id: Some(harness::ToolId::new("await")),
+                    target: Some(harness::ToolId::new("await").into()),
                     tool_name: harness::ToolName::new("await"),
                     provider_kind: None,
                     arguments_ref: harness::BlobRef::from_bytes(b"{}"),

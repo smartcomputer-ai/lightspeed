@@ -18,7 +18,7 @@ use harness::{
     LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
     ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy,
     RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality,
-    ToolCallId, ToolId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    ToolCallId, ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
 use llm_clients::content::{
     ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
@@ -225,25 +225,33 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             });
         }
 
+        let mcp = crate::mcp::RequestMcp::new(self.inventory.as_ref(), Some(self.secrets.as_ref()));
         let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(
             self.blobs.as_ref(),
             &request.request,
         )
         .await?;
-        let provider_request = materialize_request_with_catalog(
+        let mut provider_request = materialize_request_with_catalog(
             self.blobs.as_ref(),
-            self.inventory.as_ref(),
+            &mcp,
             &request.request,
             &mut catalog,
             self.thinking_prefix_mismatch,
         )
         .await?;
-        let (mut send_request, mut redacted_request) = inject_remote_mcp_auth(
-            self.secrets.as_ref(),
-            &request.request.tools,
-            provider_request,
-        )
-        .await?;
+        let notice = mcp
+            .notice(self.blobs.as_ref(), &request.request.context)
+            .await?;
+        if let Some((text, _)) = &notice {
+            push_block(
+                &mut provider_request.messages,
+                am::MessageRole::User,
+                am::ContentBlockParam::text(text),
+            )?;
+        }
+
+        let (mut send_request, mut redacted_request) =
+            inject_remote_mcp_auth(&mcp, &request.request.tools, provider_request)?;
         let provider =
             resolve_model_provider(self.provider_keys.as_ref(), &request.request.model).await?;
         let mut request_dumps = Vec::new();
@@ -306,6 +314,9 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             fail_on_invalid_response(parsed, self.blobs.as_ref(), &request, response_id, usage)
                 .await?;
         catalog.normalize(&mut result);
+        if let Some((_, entry)) = notice {
+            result.context_entries.insert(0, entry);
+        }
         let request_dump = match request_dumps.len() {
             0 => None,
             1 => request_dumps.pop(),
@@ -395,15 +406,16 @@ impl LlmCompactionAdapter for AnthropicMessagesLlmAdapter {
                 ),
             });
         }
-        let provider_request = self.materialize_compact_request(&request.request).await?;
+        let mcp = crate::mcp::RequestMcp::new(self.inventory.as_ref(), Some(self.secrets.as_ref()));
+        let provider_request = materialize_compact_request_with_binding(
+            self.blobs.as_ref(),
+            &mcp,
+            &request.request,
+            self.thinking_prefix_mismatch,
+        )
+        .await?;
         let provider_request = if supports_native_compaction(&request.request.model.model) {
-            inject_remote_mcp_auth(
-                self.secrets.as_ref(),
-                &request.request.tools,
-                provider_request,
-            )
-            .await?
-            .0
+            inject_remote_mcp_auth(&mcp, &request.request.tools, provider_request)?.0
         } else {
             provider_request
         };
@@ -1163,9 +1175,10 @@ async fn materialize_tools(
                         )
                         .await?;
                         for (name, runtime_tool) in runtime_tools {
-                            catalog
-                                .names
-                                .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                            catalog.names.insert(
+                                ToolName::new(name.clone()),
+                                Some(runtime_tool.target(&tool.id, remote_mcp)),
+                            )?;
                             let description =
                                 catalog.runtime_mcp_description(&tool.id, &name, &runtime_tool);
                             materialized.push(am::Tool::Custom(am::ToolDefinition {
@@ -1280,8 +1293,8 @@ fn anthropic_tool_search_model_support(model: &str) -> Option<bool> {
 /// `authorization_token` resolved at the last moment, and the redacted request
 /// that is persisted to blobs, preserving only the fact that auth was
 /// configured.
-async fn inject_remote_mcp_auth(
-    secrets: &dyn SecretResolver,
+fn inject_remote_mcp_auth(
+    mcp: &crate::mcp::RequestMcp,
     tools: &[ToolSpec],
     materialized: am::CreateMessageRequest,
 ) -> LlmAdapterResult<(am::CreateMessageRequest, am::CreateMessageRequest)> {
@@ -1309,12 +1322,7 @@ async fn inject_remote_mcp_auth(
         else {
             continue;
         };
-        let token = crate::secrets::resolve_mcp_bearer(secrets, &remote_mcp.server_id, &server_url)
-            .await
-            .map_err(|error| LlmAdapterError::SecretResolution {
-                tool: tool.id.to_string(),
-                message: error.to_string(),
-            })?;
+        let token = mcp.token(remote_mcp.server_id.clone(), server_url)?;
         let Some(token) = token else {
             continue;
         };
@@ -1892,7 +1900,7 @@ async fn tool_use_context(
     };
     let tool_call = ObservedToolCall {
         call_id,
-        tool_id: Some(ToolId::new(tool_name.as_str())),
+        target: None,
         tool_name,
         provider_kind: Some(PROVIDER_KIND_TOOL_USE.to_owned()),
         arguments_ref,
@@ -2096,7 +2104,7 @@ async fn has_signed_compaction(
 
 #[cfg(test)]
 mod tests {
-    use harness::ToolChoice;
+    use harness::{ToolChoice, ToolId};
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
@@ -3563,37 +3571,48 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn generate_does_not_treat_a_missing_credential_resource_as_absent() {
-        let blobs = Arc::new(InMemoryBlobStore::new());
-        let api = fake_api(completed_text_response_json());
-        let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs)
-            .with_secret_resolver(Arc::new(crate::secrets::StaticSecretResolver::new()))
-            .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory));
-
-        let error = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
-            .await
-            .expect_err("missing optional MCP server must not silently downgrade");
-
-        assert!(matches!(error, LlmAdapterError::SecretResolution { .. }));
-        assert!(api.seen.lock().expect("lock").is_empty());
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn generate_fails_before_provider_io_when_the_credential_cannot_be_resolved() {
+    async fn a_broken_credential_omits_only_its_server_and_reports_the_cause() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let api = fake_api(completed_text_response_json());
         let adapter = AnthropicMessagesLlmAdapter::new(api.clone(), blobs.clone())
+            .with_secret_resolver(Arc::new(crate::StaticSecretResolver::new().with_secret(
+                crate::SECRET_NAMESPACE_MCP_SERVER,
+                "healthy",
+                "healthy-token",
+            )))
             .with_mcp_inventory_resolver(Arc::new(StaticMcpInventory));
-
-        let error = LlmGenerationAdapter::generate(&adapter, mcp_auth_generation_request())
-            .await
-            .expect_err("an unresolvable credential must fail generation");
-
-        assert!(matches!(error, LlmAdapterError::SecretResolution { .. }));
-        assert!(
-            api.seen.lock().expect("lock").is_empty(),
-            "no provider call may happen when auth resolution fails"
+        let mut request = mcp_auth_generation_request();
+        let mut other = request.request.tools[0].clone();
+        other.id = ToolId::try_new("mcp_healthy").unwrap();
+        let ToolKind::RemoteMcp(spec) = &mut other.kind else {
+            unreachable!()
+        };
+        spec.server_label = "healthy".into();
+        spec.server_id = "healthy".into();
+        request.request.tools.push(other);
+        let execution = adapter.generate(request).await.unwrap();
+        let wire = serde_json::to_value(&api.seen.lock().unwrap()[0]).unwrap();
+        assert_eq!(wire["mcp_servers"].as_array().unwrap().len(), 1);
+        assert_eq!(wire["mcp_servers"][0]["name"], "healthy");
+        assert_eq!(
+            wire["mcp_servers"][0]["authorization_token"],
+            "healthy-token"
         );
+        assert!(
+            !wire["tools"]
+                .to_string()
+                .contains(r#""mcp_server_name":"echo""#)
+        );
+        let entry = &execution.result.context_entries[0];
+        assert!(
+            matches!(&entry.kind, ContextEntryKind::Catalog {title} if title == "Unavailable MCP servers")
+        );
+        let body = crate::blob_io::read_text(blobs.as_ref(), &entry.content.content_ref)
+            .await
+            .unwrap();
+        assert!(body.contains("credential was not found"));
+        assert!(wire.to_string().contains("credential was not found"));
+        assert!(!body.contains("healthy-token"));
     }
 
     fn generation_request() -> LlmGenerationRequest {
@@ -3880,7 +3899,7 @@ mod tests {
         );
         assert_eq!(result.facts.tool_calls.len(), 1);
         assert_eq!(
-            result.facts.tool_calls[0].tool_id,
+            result.facts.tool_calls[0].tool_id().cloned(),
             Some(ToolId::new("env.read_file"))
         );
         assert_eq!(

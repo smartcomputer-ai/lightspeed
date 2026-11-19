@@ -308,7 +308,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
         })
         .expect("admitted skill read call");
     assert_eq!(
-        selected_call.tool_id.as_ref().map(|id| id.as_str()),
+        selected_call.tool_id().map(|id| id.as_str()),
         Some("vfs.read_file")
     );
     assert_eq!(selected_call.tool_name.as_str(), "vfs_read_file");

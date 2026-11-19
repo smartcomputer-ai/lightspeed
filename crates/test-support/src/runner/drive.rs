@@ -1069,7 +1069,7 @@ mod tests {
                         approval_requests: Vec::new(),
                         tool_calls: vec![ObservedToolCall {
                             call_id: harness::ToolCallId::new("call-1"),
-                            tool_id: Some(ToolId::new("test_tool")),
+                            target: Some(ToolId::new("test_tool").into()),
                             tool_name: ToolName::new("test_tool"),
                             provider_kind: None,
                             arguments_ref: BlobRef::from_bytes(br#"{}"#),
@@ -1125,7 +1125,7 @@ mod tests {
                         approval_requests: Vec::new(),
                         tool_calls: vec![ObservedToolCall {
                             call_id: harness::ToolCallId::new(self.call_id.clone()),
-                            tool_id: Some(ToolId::new("vfs.read_file")),
+                            target: Some(ToolId::new("vfs.read_file").into()),
                             tool_name: ToolName::new("vfs_read_file"),
                             provider_kind: None,
                             arguments_ref,
