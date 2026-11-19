@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from lightspeed_ai import AsyncLightspeedClient, LightspeedApiError
+from lightspeed import AsyncLightspeedClient, LightspeedApiError
 
 
 async def test_native_platform_uses_shared_credentials_and_preserves_path_prefix():

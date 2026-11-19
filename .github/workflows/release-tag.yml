@@ -357,8 +357,8 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           uv publish --trusted-publishing always --check-url https://pypi.org/simple/ \
-            "python-dist/lightspeed_ai-${VERSION}-py3-none-any.whl" \
-            "python-dist/lightspeed_ai-${VERSION}.tar.gz"
+            "python-dist/lightspeed_ai_sdk-${VERSION}-py3-none-any.whl" \
+            "python-dist/lightspeed_ai_sdk-${VERSION}.tar.gz"
 
   publish-release:
     needs: [build, publish-python]

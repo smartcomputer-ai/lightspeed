@@ -9,14 +9,14 @@ mkdir -p "$out_dir"
 out_dir=$(cd "$out_dir" && pwd)
 uv build --python 3.12 --no-sources --out-dir "$out_dir" clients/python
 
-for file in "lightspeed_ai-${LIGHTSPEED_PRODUCT_VERSION}.tar.gz" \
-            "lightspeed_ai-${LIGHTSPEED_PRODUCT_VERSION}-py3-none-any.whl"; do
+for file in "lightspeed_ai_sdk-${LIGHTSPEED_PRODUCT_VERSION}.tar.gz" \
+            "lightspeed_ai_sdk-${LIGHTSPEED_PRODUCT_VERSION}-py3-none-any.whl"; do
   uv run --python 3.12 --isolated --no-project --with "$out_dir/$file" python -I -c '
 import sys
 from importlib.metadata import version
-from lightspeed_ai import AsyncLightspeedClient
+from lightspeed import AsyncLightspeedClient
 
-if version("lightspeed-ai") != sys.argv[1]:
+if version("lightspeed-ai-sdk") != sys.argv[1]:
     sys.exit("Installed SDK version differs from the release version")
 ' "$LIGHTSPEED_PRODUCT_VERSION"
 done

@@ -1,8 +1,8 @@
 """Async Python client for the Lightspeed API.
 
 `AsyncLightspeedClient` is the entry point. Wire types live in
-`lightspeed_ai.types` and are generated from the Lightspeed API contract.
-`lightspeed_ai.workflow` has helpers for Temporal workflow code.
+`lightspeed.types` and are generated from the Lightspeed API contract.
+`lightspeed.workflow` has helpers for Temporal workflow code.
 """
 
 from . import types, platform_types

@@ -1,4 +1,4 @@
-from lightspeed_ai import run_timeline
+from lightspeed import run_timeline
 
 
 def test_timeline_merges_call_entries_and_preserves_in_flight_calls():

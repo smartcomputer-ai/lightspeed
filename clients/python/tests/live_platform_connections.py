@@ -25,7 +25,7 @@ from uuid import uuid4
 import pytest
 import httpx
 
-from lightspeed_ai import AsyncLightspeedClient, LightspeedApiError
+from lightspeed import AsyncLightspeedClient, LightspeedApiError
 
 
 async def typescript_check(directory: Path, name: str, mode: str, blob_ref: str = "") -> dict:

@@ -3,7 +3,7 @@
 A workflow that receives tool calls from an integrated session, or answers
 them, uses this module for the contract's names, IDs and envelopes. It depends
 on no Temporal package and does nothing but hash, compare and validate, so it
-is deterministic. `lightspeed_ai.workflow_types` holds the contract's types.
+is deterministic. `lightspeed.workflow_types` holds the contract's types.
 
 Every function raises `ValueError` for a value the contract does not allow.
 """
