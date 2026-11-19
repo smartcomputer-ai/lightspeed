@@ -50,6 +50,9 @@ PLATFORM_OPERATIONS: dict[str, Any] = {'platform/session/read': {'method': 'GET'
  'platform/organizations/list': {'method': 'GET',
                                  'path': '/api/v1/platform/organizations',
                                  'helper': {'name': 'listOrganizations'}},
+ 'platform/organizations/enroll': {'method': 'POST',
+                                   'path': '/api/v1/organizations/enroll',
+                                   'helper': {'name': 'enrollOrganization'}},
  'platform/organizations/create': {'method': 'POST',
                                    'path': '/api/v1/platform/organizations',
                                    'helper': {'name': 'createOrganization'}},
@@ -157,6 +160,9 @@ class PlatformApi:
 
     async def list_organizations(self, params: Api.PlatformOrganizationsListParams | None = None, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsListResult:
         return cast(Api.PlatformOrganizationsListResult, await self._invoke('platform/organizations/list', dict(params or {}), headers))
+
+    async def enroll_organization(self, params: Api.PlatformOrganizationsEnrollParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsEnrollResult:
+        return cast(Api.PlatformOrganizationsEnrollResult, await self._invoke('platform/organizations/enroll', dict(params or {}), headers))
 
     async def create_organization(self, params: Api.PlatformOrganizationsCreateParams, *, headers: HeadersInput | None = None) -> Api.PlatformOrganizationsCreateResult:
         return cast(Api.PlatformOrganizationsCreateResult, await self._invoke('platform/organizations/create', dict(params or {}), headers))

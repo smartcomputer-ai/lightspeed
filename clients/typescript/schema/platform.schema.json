@@ -2044,6 +2044,43 @@
       ],
       "additionalProperties": false
     },
+    "PlatformOrganizationsEnrollParams": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "handle",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "PlatformOrganizationsEnrollResult": {
+      "type": "object",
+      "properties": {
+        "organizationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enrolled": {
+          "type": "boolean",
+          "description": "True when this request created the organization; false when the workload already belongs to it."
+        }
+      },
+      "required": [
+        "organizationId",
+        "enrolled"
+      ],
+      "additionalProperties": false
+    },
     "PlatformOrganizationsCreateParams": {
       "type": "object",
       "properties": {

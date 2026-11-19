@@ -37,6 +37,7 @@ export function platformRoutes(ctx: AppContext) {
     console.error("Platform API failed", error); return problem(c, 500, "internal", "Platform request failed");
   });
   for (const [operation, spec] of Object.entries(PLATFORM_OPERATIONS)) {
+    if (!spec.path.startsWith("/api/v1/platform/")) continue;
     if (operation.startsWith("platform/session/") || operation.startsWith("platform/credentials/") || operation.includes("/credentials/")) continue;
     const path = spec.path.replace(/^\/api\/v1\/platform/, "").replace(/\{([^}]+)\}/g, ":$1");
     app.on(spec.method, path, async c => {

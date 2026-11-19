@@ -249,7 +249,7 @@ treat differently from an absent field, so pass it only when you mean it.
 | --- | --- |
 | Session | `read_current_session`, `revoke_current_session` |
 | Credentials | `list_personal_api_keys`, `create_personal_api_key`, `replace_personal_api_key`, `revoke_personal_api_key` |
-| Organizations | `list_organization_api_keys`, `list_organizations`, `create_organization`, `read_organization`, `update_organization`, `list_organization_members`, `put_organization_member`, `remove_organization_member`, `list_service_users`, `create_service_user`, `update_service_user` |
+| Organizations | `list_organization_api_keys`, `list_organizations`, `enroll_organization`, `create_organization`, `read_organization`, `update_organization`, `list_organization_members`, `put_organization_member`, `remove_organization_member`, `list_service_users`, `create_service_user`, `update_service_user` |
 | Service-Users | `list_service_user_api_keys`, `create_service_user_api_key`, `replace_service_user_api_key`, `put_service_user_api_key`, `revoke_service_user_api_key` |
 | Settings | `list_platform_settings`, `put_platform_setting` |
 | Universes | `adopt_universe`, `create_universe`, `update_universe`, `list_universe_grants`, `put_universe_grant`, `remove_universe_grant`, `read_platform_universe`, `read_universe_access_policy`, `put_universe_access_policy` |

@@ -151,6 +151,16 @@
       "result": "PlatformOrganizationsListResult"
     },
     {
+      "operationId": "platform/organizations/enroll",
+      "helper": {
+        "name": "enrollOrganization"
+      },
+      "method": "POST",
+      "path": "/api/v1/organizations/enroll",
+      "params": "PlatformOrganizationsEnrollParams",
+      "result": "PlatformOrganizationsEnrollResult"
+    },
+    {
       "operationId": "platform/organizations/create",
       "helper": {
         "name": "createOrganization"

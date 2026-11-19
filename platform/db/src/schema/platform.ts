@@ -127,6 +127,18 @@ export const federatedCredentials = pgTable("federated_credentials", {
   index("federated_credentials_service_user_idx").on(table.serviceUserId),
 ]);
 
+/** The enrollment outlives credential rotation and is released with its organization. */
+export const organizationEnrollments = pgTable("organization_enrollments", {
+  organizationId: text("organization_id").primaryKey().references(() => organization.id, { onDelete: "cascade" }),
+  issuer: text("issuer").notNull(),
+  subject: text("subject").notNull(),
+  subjectPattern: text("subject_pattern").notNull(),
+  createdAt: createdAt(),
+}, table => [
+  uniqueIndex("organization_enrollments_identity_idx").on(table.issuer, table.subject),
+  index("organization_enrollments_rule_idx").on(table.issuer, table.subjectPattern),
+]);
+
 export const universesRelations = relations(universes, ({ one }) => ({
   organization: one(organization, {
     fields: [universes.organizationId],

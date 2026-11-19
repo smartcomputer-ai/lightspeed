@@ -741,6 +741,25 @@ export interface PlatformOrganizationsListResult {
 }
 /**
  * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsEnrollParams".
+ */
+export interface PlatformOrganizationsEnrollParams {
+  handle: string;
+  name: string;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
+ * via the `definition` "PlatformOrganizationsEnrollResult".
+ */
+export interface PlatformOrganizationsEnrollResult {
+  organizationId: string;
+  /**
+   * True when this request created the organization; false when the workload already belongs to it.
+   */
+  enrolled: boolean;
+}
+/**
+ * This interface was referenced by `PlatformApi`'s JSON-Schema
  * via the `definition` "PlatformOrganizationsCreateParams".
  */
 export interface PlatformOrganizationsCreateParams {

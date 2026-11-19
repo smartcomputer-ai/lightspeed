@@ -15,6 +15,13 @@
       "when": 1795096286064,
       "tag": "0001_federated_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795096426457,
+      "tag": "0002_organization_enrollment",
+      "breakpoints": true
     }
   ]
 }

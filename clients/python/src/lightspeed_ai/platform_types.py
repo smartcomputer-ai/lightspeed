@@ -616,6 +616,19 @@ class PlatformOrganizationsListResult(TypedDict):
     canCreate: bool
 
 
+class PlatformOrganizationsEnrollParams(TypedDict):
+    handle: str
+    name: str
+
+
+class PlatformOrganizationsEnrollResult(TypedDict):
+    organizationId: str
+    enrolled: bool
+    """
+    True when this request created the organization; false when the workload already belongs to it.
+    """
+
+
 class PlatformOrganizationsCreateParams(TypedDict):
     name: str
     handle: str

@@ -16,6 +16,7 @@ export interface PlatformOperationMap {
   "platform/settings/list": { params: T.PlatformSettingsListParams; result: T.PlatformSettingsListResult };
   "platform/settings/put": { params: T.PlatformSettingsPutParams; result: T.PlatformSettingsPutResult };
   "platform/organizations/list": { params: T.PlatformOrganizationsListParams; result: T.PlatformOrganizationsListResult };
+  "platform/organizations/enroll": { params: T.PlatformOrganizationsEnrollParams; result: T.PlatformOrganizationsEnrollResult };
   "platform/organizations/create": { params: T.PlatformOrganizationsCreateParams; result: T.PlatformOrganizationsCreateResult };
   "platform/organizations/read": { params: T.PlatformOrganizationsReadParams; result: T.PlatformOrganizationsReadResult };
   "platform/organizations/update": { params: T.PlatformOrganizationsUpdateParams; result: T.PlatformOrganizationsUpdateResult };
@@ -98,6 +99,10 @@ export const PLATFORM_OPERATIONS = {
   "platform/organizations/list": {
     "method": "GET",
     "path": "/api/v1/platform/organizations"
+  },
+  "platform/organizations/enroll": {
+    "method": "POST",
+    "path": "/api/v1/organizations/enroll"
   },
   "platform/organizations/create": {
     "method": "POST",

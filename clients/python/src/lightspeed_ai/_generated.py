@@ -921,6 +921,9 @@ class GeneratedClient:
     async def call(self, method: Literal['platform/organizations/list'], params: Platform.PlatformOrganizationsListParams | None = None,
                    *, headers: HeadersInput | None = None) -> Platform.PlatformOrganizationsListResult: ...
     @overload
+    async def call(self, method: Literal['platform/organizations/enroll'], params: Platform.PlatformOrganizationsEnrollParams,
+                   *, headers: HeadersInput | None = None) -> Platform.PlatformOrganizationsEnrollResult: ...
+    @overload
     async def call(self, method: Literal['platform/organizations/create'], params: Platform.PlatformOrganizationsCreateParams,
                    *, headers: HeadersInput | None = None) -> Platform.PlatformOrganizationsCreateResult: ...
     @overload
