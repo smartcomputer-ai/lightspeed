@@ -437,8 +437,26 @@ async fn materialize_messages_tracked(
     let mut last_assistant_source: Option<ContextEntrySource> = None;
     let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
 
+    let mut instruction_layers = Vec::new();
+    for entry in entries {
+        if matches!(entry.kind, ContextEntryKind::Instructions) {
+            reject_foreign_provider_kind(entry)?;
+            instruction_layers.push(read_text(blobs, &entry.content.content_ref).await?);
+        }
+    }
+    if !instruction_layers.is_empty() {
+        messages.push(text_message(
+            dialect.instruction_role(),
+            instruction_layers.join("\n\n"),
+        ));
+    }
+
     for entry in entries {
         match &entry.kind {
+            ContextEntryKind::Instructions => {
+                positions.push((entry.entry_id, 0));
+                continue;
+            }
             ContextEntryKind::ToolCall { .. } => {
                 require_completions_provider_kind(entry)?;
                 let raw = read_json(blobs, &entry.content.content_ref).await?;
@@ -735,12 +753,8 @@ async fn materialize_message(
                 ..Default::default()
             })
         }
-        ContextEntryKind::Instructions => Ok(text_message(
-            dialect.instruction_role(),
-            read_text(blobs, &entry.content.content_ref).await?,
-        )),
         ContextEntryKind::Catalog { .. } => Ok(text_message(
-            dialect.instruction_role(),
+            "user",
             crate::catalog_prompts::stored_catalog_text(blobs, entry, &entry.content.content_ref)
                 .await?,
         )),
@@ -752,7 +766,8 @@ async fn materialize_message(
             tool_call_id: Some(call_id.as_str().to_owned()),
             ..Default::default()
         }),
-        ContextEntryKind::ToolCall { .. }
+        ContextEntryKind::Instructions
+        | ContextEntryKind::ToolCall { .. }
         | ContextEntryKind::ReasoningState
         | ContextEntryKind::ProviderOpaque
         | ContextEntryKind::McpApprovalResponse { .. } => {
@@ -2939,6 +2954,98 @@ mod tests {
             materialize_create_request(&blobs, &input_request).await,
             Err(LlmAdapterError::InvalidProviderRequest { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn instructions_share_the_leading_message_and_catalogs_stay_in_history() {
+        let blobs = InMemoryBlobStore::new();
+        let text_entry = async |id, kind, text: &str| {
+            entry(
+                id,
+                kind,
+                ContextEntrySource::ContextEdit,
+                blobs.insert_text(text).await,
+            )
+        };
+        let catalog = ContextEntryKind::Catalog {
+            title: "Skills".into(),
+        };
+        let user = ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        };
+        let original = text_entry(2, catalog.clone(), "skill-a").await;
+        let mut update = text_entry(6, catalog, "skill-b").await;
+        update.supersedes = Some(original.entry_id);
+        let entries = vec![
+            text_entry(1, ContextEntryKind::Instructions, "Profile").await,
+            original,
+            text_entry(3, ContextEntryKind::Instructions, "Environment").await,
+            text_entry(4, user.clone(), "List skills").await,
+            text_entry(
+                5,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant,
+                },
+                "skill-a",
+            )
+            .await,
+            update,
+            text_entry(7, user, "List skills again").await,
+        ];
+        for (provider, expected_role) in [
+            ("openai", "developer"),
+            ("openrouter", "developer"),
+            ("deepseek", "system"),
+            ("local-qwen", "system"),
+        ] {
+            let dialect = CompletionDialect::for_provider(provider);
+            let before = materialize_messages(&blobs, &entries[..5], dialect)
+                .await
+                .unwrap();
+            let (messages, positions) = materialize_messages_tracked(&blobs, &entries, dialect)
+                .await
+                .unwrap();
+            assert!(
+                messages.starts_with(&before),
+                "{provider}: catalog refresh rewrote history"
+            );
+            assert_eq!(
+                serde_json::to_value(&messages).unwrap(),
+                json!([
+                    {"role": expected_role, "content": "Profile\n\nEnvironment"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "Skills:\n\nskill-a"},
+                        {"type": "text", "text": "List skills"}
+                    ]},
+                    {"role": "assistant", "content": "skill-a"},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": format!("{}\n\nSkills:\n\nskill-b", crate::catalog_prompts::CATALOG_UPDATE_HEADER)},
+                        {"type": "text", "text": "List skills again"}
+                    ]}
+                ]),
+                "{provider}"
+            );
+            assert_eq!(
+                positions,
+                [(1, 0), (2, 1), (3, 0), (4, 1), (5, 2), (6, 3), (7, 3)]
+                    .map(|(id, index)| (ContextEntryId::new(id), index))
+            );
+
+            let task = ContextCompactionTask {
+                model: model_for(provider, "test-model"),
+                context: request(entries.clone()).context,
+                request_fingerprint: "compact".into(),
+                target_tokens: None,
+                covered_entry_ids: vec![],
+                tools: vec![],
+                input_limit_tokens: None,
+            };
+            let compact = materialize_compact_request(&blobs, &task).await.unwrap();
+            assert!(
+                compact.messages.starts_with(&messages),
+                "{provider}: compaction context"
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
