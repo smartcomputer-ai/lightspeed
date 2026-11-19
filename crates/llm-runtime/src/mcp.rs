@@ -1,3 +1,5 @@
+use std::{collections::BTreeMap, sync::Mutex};
+
 use async_trait::async_trait;
 use harness::{RemoteMcpToolSpec, ToolName};
 use serde_json::Value;
@@ -52,9 +54,187 @@ pub trait McpInventoryResolver: Send + Sync {
         spec: &RemoteMcpToolSpec,
     ) -> Result<Vec<RuntimeMcpTool>, McpInventoryError>;
 
+    /// The last usable tools and any failure observed refreshing them.
+    async fn list_tools_with_status(
+        &self,
+        spec: &RemoteMcpToolSpec,
+    ) -> Result<McpListing, McpInventoryError> {
+        Ok(McpListing {
+            tools: self.list_tools(spec).await?,
+            warning: None,
+        })
+    }
+
     /// The URL a provider should connect to, or `None` when the server's record
     /// is gone, switched off or no longer provider-hosted.
     async fn server_url(&self, server_id: &str) -> Result<Option<String>, McpInventoryError>;
+}
+
+#[derive(Clone, Default)]
+pub struct McpListing {
+    pub tools: Vec<RuntimeMcpTool>,
+    /// A local, credential-safe description suitable for model and session context.
+    pub warning: Option<&'static str>,
+}
+
+impl McpListing {
+    pub fn notice(&self) -> Option<String> {
+        self.warning.map(|reason| {
+            if self.tools.is_empty() {
+                reason.to_owned()
+            } else {
+                format!("{reason}; using the last known tool list")
+            }
+        })
+    }
+}
+
+/// Observe failures at the actual point of use. Provider URLs are admitted only
+/// after their credential is resolved; the value stays bound to that URL for this request.
+pub(crate) struct RequestMcp<'a> {
+    inventory: &'a dyn McpInventoryResolver,
+    secrets: Option<&'a dyn crate::SecretResolver>,
+    tokens: Mutex<BTreeMap<(String, String), Option<crate::ResolvedSecretValue>>>,
+    warnings: Mutex<BTreeMap<String, String>>,
+}
+
+impl<'a> RequestMcp<'a> {
+    pub fn new(
+        inventory: &'a dyn McpInventoryResolver,
+        secrets: Option<&'a dyn crate::SecretResolver>,
+    ) -> Self {
+        Self {
+            inventory,
+            secrets,
+            tokens: Mutex::default(),
+            warnings: Mutex::default(),
+        }
+    }
+
+    pub fn token(
+        &self,
+        id: String,
+        url: String,
+    ) -> LlmAdapterResult<Option<crate::ResolvedSecretValue>> {
+        self.tokens
+            .lock()
+            .unwrap()
+            .get(&(id, url))
+            .cloned()
+            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+                message: "MCP server URL differs from the authorized endpoint".into(),
+            })
+    }
+
+    pub async fn notice(
+        &self,
+        blobs: &dyn harness::storage::BlobStore,
+        context: &harness::ContextSnapshot,
+    ) -> LlmAdapterResult<Option<(String, harness::ContextEntryInput)>> {
+        let lines: Vec<_> = self
+            .warnings
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(id, why)| format!("- {id}: {why}"))
+            .collect();
+        // Compare only notices emitted with a generation result. A catalog supplied
+        // by session preparation has its own lifetime and remains visible independently.
+        const ORIGIN: &str = "mcp_request";
+        let previous = context.entries.iter().rev().find(|entry| {
+            entry.origin.as_deref() == Some(ORIGIN)
+                && matches!(
+                    entry.source,
+                    harness::ContextEntrySource::AssistantOutput { .. }
+                )
+                && matches!(entry.kind, harness::ContextEntryKind::Catalog { .. })
+        });
+        let title = if lines.is_empty() {
+            "MCP availability updated"
+        } else {
+            "Unavailable MCP servers"
+        };
+        let body = if lines.is_empty() {
+            if previous.is_none() {
+                return Ok(None);
+            }
+            "The current toolset has no credential or tool-list failures.".to_owned()
+        } else {
+            format!(
+                "Current credential and tool-list failures:\n{}",
+                lines.join("\n")
+            )
+        };
+        if previous.is_some_and(|entry| {
+            entry.content.content_ref == harness::BlobRef::from_bytes(body.as_bytes())
+        }) {
+            return Ok(None);
+        }
+        let entry = harness::ContextEntryInput {
+            kind: harness::ContextEntryKind::Catalog {
+                title: title.into(),
+            },
+            content: harness::ContentRef::text(crate::blob_io::put_text(blobs, &body).await?),
+            preview: Some(title.to_owned()),
+            origin: Some(ORIGIN.into()),
+            provenance_ref: None,
+            token_estimate: None,
+        };
+        Ok(Some((format!("{title}:\n\n{body}"), entry)))
+    }
+}
+
+#[async_trait]
+impl McpInventoryResolver for RequestMcp<'_> {
+    async fn server_url(&self, id: &str) -> Result<Option<String>, McpInventoryError> {
+        let Some(url) = self.inventory.server_url(id).await? else {
+            self.warnings
+                .lock()
+                .unwrap()
+                .insert(id.into(), "server is no longer available".into());
+            return Ok(None);
+        };
+        let secrets = self.secrets.ok_or_else(|| {
+            McpInventoryError::new("provider-hosted MCP is unsupported by this adapter")
+        })?;
+        match crate::secrets::resolve_mcp_bearer(secrets, id, &url).await {
+            Ok(token) => {
+                self.tokens
+                    .lock()
+                    .unwrap()
+                    .insert((id.to_owned(), url.clone()), token);
+            }
+            Err(error) => {
+                self.warnings
+                    .lock()
+                    .unwrap()
+                    .insert(id.into(), error.mcp_notice().into());
+                return Ok(None);
+            }
+        }
+        Ok(Some(url))
+    }
+
+    async fn list_tools(
+        &self,
+        spec: &RemoteMcpToolSpec,
+    ) -> Result<Vec<RuntimeMcpTool>, McpInventoryError> {
+        let listing = self
+            .inventory
+            .list_tools_with_status(spec)
+            .await
+            .unwrap_or_else(|_| McpListing {
+                tools: Vec::new(),
+                warning: Some("tools/list failed"),
+            });
+        if let Some(reason) = listing.notice() {
+            self.warnings
+                .lock()
+                .unwrap()
+                .insert(spec.server_id.clone(), reason);
+        }
+        Ok(listing.tools)
+    }
 }
 
 /// The URL for a provider-hosted server in this request. A server with no usable
@@ -74,7 +254,7 @@ pub(crate) async fn provider_hosted_server_url(
     if server_url.is_none() {
         tracing::warn!(
             server_id = %spec.server_id,
-            "left out a provider-hosted MCP server with no usable record"
+            "left out an unavailable provider-hosted MCP server"
         );
     }
     Ok(server_url)

@@ -67,6 +67,20 @@ pub enum SecretResolveError {
     },
 }
 
+impl SecretResolveError {
+    /// Backend details may contain URLs, headers or remote response text.
+    pub fn mcp_notice(&self) -> &'static str {
+        match self {
+            Self::CredentialAbsent { .. } => "credential is not configured",
+            Self::NotFound { .. } => "credential was not found",
+            Self::UnsupportedNamespace { .. } => "credential type is unsupported",
+            Self::Backend { .. } => {
+                "credential resolution failed; check the credential or reconnect the server"
+            }
+        }
+    }
+}
+
 /// Names a credential a [`SecretResolver`] can resolve. It holds no secret value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretRef {
