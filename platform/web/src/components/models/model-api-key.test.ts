@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelOption } from "@/api";
-import { providerModelCatalog } from "./model-api-key";
+import { compatibleProviderPreset, providerModelCatalog } from "./model-api-key";
 
 const model = (
   providerId: string,
@@ -15,6 +15,12 @@ const model = (
   capabilities: {},
   source: "provider",
   fetchedAtMs: 1,
+});
+
+it("uses the OpenRouter API base shared by Chat Completions and Responses", () => {
+  expect(compatibleProviderPreset("openrouter")?.baseUrl).toBe(
+    "https://openrouter.ai/api/v1",
+  );
 });
 
 describe("provider model catalog", () => {
